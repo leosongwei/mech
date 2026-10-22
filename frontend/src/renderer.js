@@ -47,6 +47,7 @@ uniform sampler2D uHeight;
 uniform usampler2D uTiles;
 uniform vec2 uMapSize;
 uniform float uTile;
+uniform float uG;
 uniform vec3 uCam;
 out vec3 vNormal;
 out float vType;
@@ -69,7 +70,7 @@ void main(){
   vec2 c = aCell;
   vec2 a = abs(c);
   vec2 sg = sign(c);
-  const float G = 26.0;
+  float G = uG;
   float k = uTile * G / 0.6931472;
   vec2 off = sg * k * (pow(vec2(2.0), a / G) - 1.0);
   vec2 world = uCam.xz + off;
@@ -213,6 +214,16 @@ const STRIDE_FLOATS = 20;            // mat4 + vec4 colour
 const CHUNK_TILES = 64;              // 640 m prop chunks
 const DYN_CAP = [40000, 24000, 24000, 24000];
 
+// Optics: the radial terrain grid gets more rings per octave and a finer
+// index grid the more the sight magnifies, so the ground stays smooth when
+// 20x squeezes it into a three degree cone.  `k` is the half grid size.
+const TERRAIN_LOD = [
+  { g: 26, k: 128 },
+  { g: 52, k: 160 },
+  { g: 82, k: 192 },
+  { g: 116, k: 224 },
+];
+
 export class Renderer {
   constructor(canvas) {
     const gl = canvas.getContext('webgl2', { antialias: true, alpha: false, powerPreference: 'high-performance' });
@@ -240,7 +251,7 @@ export class Renderer {
     this.pTerrain = program(gl, TERRAIN_VS, TERRAIN_FS);
     this.pMesh = program(gl, MESH_VS, MESH_FS);
     this.uSky = this._uniforms(this.pSky, ['uInvVP', 'uCamPos', 'uSun']);
-    this.uTerrain = this._uniforms(this.pTerrain, ['uViewProj', 'uHeight', 'uTiles', 'uMapSize', 'uTile', 'uCam', 'uSun', 'uFogColor', 'uFogDensity', 'uFar']);
+    this.uTerrain = this._uniforms(this.pTerrain, ['uViewProj', 'uHeight', 'uTiles', 'uMapSize', 'uTile', 'uG', 'uCam', 'uSun', 'uFogColor', 'uFogDensity', 'uFar']);
     this.uMesh = this._uniforms(this.pMesh, ['uViewProj', 'uSun', 'uCamPos', 'uFogColor', 'uFogDensity', 'uFar']);
 
     // ---- primitive meshes in one VBO ---------------------------------
@@ -321,12 +332,21 @@ export class Renderer {
     [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) {
       gl.texParameteri(gl.TEXTURE_2D, k, v);
     }
-    this._buildTerrainGrid(128);
     this._buildProps(map);
+    this.setZoomLevel(0);
+  }
+
+  // rebuild the terrain grid for a new optics level (cheap, once per step)
+  setZoomLevel(level) {
+    const lod = TERRAIN_LOD[Math.max(0, Math.min(TERRAIN_LOD.length - 1, level))];
+    if (this.terrainG === lod.g) return;
+    this.terrainG = lod.g;
+    this._buildTerrainGrid(lod.k);
   }
 
   _buildTerrainGrid(K) {
     const gl = this.gl;
+    if (this.terrainVBO) gl.deleteBuffer(this.terrainVBO);
     const n = 2 * K + 1;
     const cells = new Float32Array(n * n * 2);
     let o = 0;
@@ -348,6 +368,7 @@ export class Renderer {
     this.terrainVBO = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, this.terrainVBO);
     gl.bufferData(gl.ARRAY_BUFFER, cells, gl.STATIC_DRAW);
+    if (this.terrainIBO) gl.deleteBuffer(this.terrainIBO);
     this.terrainIBO = gl.createBuffer();
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.terrainIBO);
     gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idx, gl.STATIC_DRAW);
@@ -536,6 +557,7 @@ export class Renderer {
     gl.uniformMatrix4fv(this.uTerrain.uViewProj, false, cam.viewProj);
     gl.uniform2f(this.uTerrain.uMapSize, this.map.w, this.map.h);
     gl.uniform1f(this.uTerrain.uTile, this.map.tile);
+    gl.uniform1f(this.uTerrain.uG, this.terrainG);
     gl.uniform3fv(this.uTerrain.uCam, cam.eye);
     gl.uniform3fv(this.uTerrain.uSun, this.sun);
     gl.uniform3fv(this.uTerrain.uFogColor, this.fogColor);

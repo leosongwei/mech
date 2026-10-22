@@ -58,12 +58,27 @@ later on the same map.
 | --- | --- |
 | `W A S D` | move, relative to the view; the legs turn towards the travel direction |
 | mouse | X = torso yaw, Y = arm elevation |
+| mouse wheel | sight magnification: 1x / 4x / 10x / 20x |
 | `ALT` + mouse | free look (torso and arms stay put) |
 | LMB / RMB | fire left / right arm |
 | `1`-`5` / `SHIFT`+`1`-`5` | buy a weapon for the left / right arm (at base or an owned town) |
 | lobby | callsign, side and initial arm loadout before deploying |
 | `H` | toggle the controls overlay |
 | `ESC` | release the mouse |
+
+## View
+
+First person from the cockpit: the eye sits at the mech's sensor height and
+looks exactly where the arms point, so the reticle is the centre of the screen
+at every magnification. Only the pilot's own machine is trimmed - hull and
+cockpit are skipped, the legs and the two weapon pods are drawn, the pods as a
+camera anchored view model so they read as hands in the lower corners.
+
+The wheel steps the optics through 1x / 4x / 10x / 20x. Magnification is a
+field of view division (`1.05 rad / zoom`), mouse sensitivity is divided by the
+same factor, and the radial terrain grid is rebuilt per step with more rings
+per octave (`uG`) so the ground does not collapse into a handful of triangles
+when 20x squeezes it into a three degree cone.
 
 ## Simulation model
 
@@ -116,9 +131,12 @@ and the enemy command base (6500 HP) as the win condition.
 
 ## Rendering
 
-* One static radial LOD grid is drawn for the whole 16 km map; heights are
-  fetched from an `R32F` texture in the vertex shader, tile colours and detail
-  noise are computed per pixel.
+* One radial LOD grid is drawn for the whole 16 km map; heights are fetched
+  from an `R32F` texture in the vertex shader, tile colours and detail noise
+  are computed per pixel. The ring spacing is `tile * 2^(ring/uG)`, so `uG`
+  selects how many rings one doubling of distance gets - the optics step
+  rebuilds the grid with a larger `uG` and a finer index grid as the sight
+  magnifies.
 * Units, props and projectiles are instanced primitives (`box`, `sphere`,
   `cone`, `cylinder`). Prop chunks (640 m) are frustum/distance culled on the
   CPU and submitted as a command list through `WEBGL_multi_draw`

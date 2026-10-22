@@ -3,6 +3,10 @@
 
 import { clamp, wrapPi } from './math.js';
 
+// optics steps selected with the wheel; sensitivity is divided by the
+// magnification so a 20x sight does not whip the torso around
+export const ZOOM_LEVELS = [1, 4, 10, 20];
+
 export class Input {
   constructor(canvas) {
     this.canvas = canvas;
@@ -16,6 +20,8 @@ export class Input {
     this.fireR = false;
     this.locked = false;
     this.sens = 0.0021;
+    this.zoomIdx = 0;
+    this.wheelAcc = 0;
     this.onBuy = null;
     this.onToggleHelp = null;
     this.enabled = false;
@@ -23,6 +29,7 @@ export class Input {
     window.addEventListener('keydown', (e) => this._key(e, true));
     window.addEventListener('keyup', (e) => this._key(e, false));
     window.addEventListener('mousemove', (e) => this._mouse(e));
+    window.addEventListener('wheel', (e) => this._wheel(e), { passive: false });
     canvas.addEventListener('mousedown', (e) => {
       if (!this.enabled) return;
       if (!this.locked) { canvas.requestPointerLock(); return; }
@@ -58,8 +65,8 @@ export class Input {
 
   _mouse(e) {
     if (!this.locked) return;
-    const dx = e.movementX || 0;
-    const dy = e.movementY || 0;
+    const dx = (e.movementX || 0) / this.zoom;
+    const dy = (e.movementY || 0) / this.zoom;
     if (this.alt) {
       this.freeYaw = wrapPi(this.freeYaw + dx * this.sens);
       this.freePitch = clamp(this.freePitch + dy * this.sens, -0.9, 0.9);
@@ -67,6 +74,21 @@ export class Input {
       this.yaw = wrapPi(this.yaw + dx * this.sens);
       this.pitch = clamp(this.pitch - dy * this.sens, -0.6, 0.9);
     }
+  }
+
+  _wheel(e) {
+    if (!this.enabled) return;
+    e.preventDefault();
+    // one notch (or a trackpad swipe) per step
+    this.wheelAcc += e.deltaY;
+    if (Math.abs(this.wheelAcc) < 40) return;
+    const dir = this.wheelAcc > 0 ? -1 : 1;
+    this.wheelAcc = 0;
+    this.zoomIdx = Math.max(0, Math.min(ZOOM_LEVELS.length - 1, this.zoomIdx + dir));
+  }
+
+  get zoom() {
+    return ZOOM_LEVELS[this.zoomIdx];
   }
 
   update(dt) {

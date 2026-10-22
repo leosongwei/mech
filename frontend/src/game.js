@@ -5,10 +5,12 @@ import { MapData, predictImpact } from './map.js';
 import { Input } from './input.js';
 import { GameAudio } from './audio.js';
 import { Renderer, makeCamera } from './renderer.js';
-import { drawUnits } from './scene.js';
+import { drawUnits, drawFirstPersonArms } from './scene.js';
 import { HUD } from './hud.js';
 import { Particles } from './particles.js';
-import { clamp, dirFrom, invert4, mat4, wrapPi } from './math.js';
+import { clamp, dirFrom, invert4, mat4 } from './math.js';
+
+const BASE_FOV = 1.05;              // 1x vertical field of view, radians
 
 export class Game {
   constructor() {
@@ -38,6 +40,8 @@ export class Game {
     this.helpOpen = false;
     this.started = false;
     this.winner = -1;
+    this.zoom = 1;              // smoothed, drives the field of view
+    this.zoomIdx = 0;           // optics step selected with the wheel
   }
 
   async boot() {
@@ -209,6 +213,11 @@ export class Game {
     this.fps = this.fps * 0.92 + (1 / Math.max(dt, 1e-3)) * 0.08;
 
     this.input.update(dt);
+    if (this.input.zoomIdx !== this.zoomIdx) {
+      this.zoomIdx = this.input.zoomIdx;
+      this.renderer.setZoomLevel(this.zoomIdx);
+    }
+    this.zoom += (this.input.zoom - this.zoom) * (1 - Math.exp(-dt * 22));
     for (const m of this.messages) m.life -= dt;
     this.messages = this.messages.filter((m) => m.life > 0);
     this.hitFlash = Math.max(0, this.hitFlash - dt * 1.6);
@@ -238,6 +247,7 @@ export class Game {
     this._aim(own);
     this._updateLockTone(own);
     drawUnits(this.renderer, this.net.entities, this.net.projectiles, own ? own.id : -1, this.defs.weapons, this.flashes);
+    if (own) drawFirstPersonArms(this.renderer, own, this.defs.weapons, this.flashes, cam.eye);
     this.particles.render(this.renderer);
     this.renderer.draw(cam);
 
@@ -387,48 +397,25 @@ export class Game {
       invert4(cam.invViewProj, cam.viewProj);
       return cam;
     }
-    const camPitch = clamp(this.input.pitch * 0.62 - 0.12 + this.input.freePitch * 0.8, -1.1, 0.9);
-    const yaw = this.input.viewYaw;
-    const dir = dirFrom(yaw, camPitch);
-    const target = [own.x, own.y + 6.2, own.z];
-    // pull the camera in when a building / tree / the ground sits between the
-    // mech and the default third person position
-    let dist = 22;
-    for (let d = 6; d <= 22; d += 2) {
-      const px = target[0] - dir[0] * d;
-      const pz = target[2] - dir[2] * d;
-      const py = target[1] - dir[1] * d + 3.5;
-      if (this._structureBlocked(px, py, pz)) {
-        dist = Math.max(5, d - 2);
-        break;
-      }
-      if (py < this.map.heightAt(px, pz) + 1.5) {
-        dist = Math.max(5, d - 2);
-        break;
-      }
-    }
-    let eye = [target[0] - dir[0] * dist, target[1] - dir[1] * dist + 3.5, target[2] - dir[2] * dist];
-    const ground = this.map.heightAt(eye[0], eye[2]) + 2.2;
-    if (eye[1] < ground) eye[1] = ground;
+    // first person: the eye sits in the cockpit and looks exactly where the
+    // arms point, so the reticle is the centre of the screen at every zoom
+    let yaw = this.input.viewYaw;
+    let pitch = clamp(this.input.pitch + this.input.freePitch * 0.8, -1.35, 1.35);
     if (this.shake > 0.01) {
-      const s = this.shake * 0.9;
-      eye = [eye[0] + (Math.random() - 0.5) * s, eye[1] + (Math.random() - 0.5) * s, eye[2] + (Math.random() - 0.5) * s];
+      // angular kick, scaled by the magnification so recoil does not blind
+      // the pilot through a 20x sight
+      const s = this.shake * 0.02 / this.zoom;
+      yaw += (Math.random() - 0.5) * s;
+      pitch += (Math.random() - 0.5) * s;
     }
+    const dir = dirFrom(yaw, pitch);
+    const eyeH = (this.defs.mech && this.defs.mech.eye) || 5.05;
+    const eye = [own.x, own.y + eyeH, own.z];
     const aspect = this.glCanvas.clientWidth / Math.max(1, this.glCanvas.clientHeight);
-    makeCamera(cam, eye, target, 1.05, aspect, 1, this.renderer.far);
+    const fov = clamp(BASE_FOV / this.zoom, 0.02, BASE_FOV);
+    makeCamera(cam, eye, [eye[0] + dir[0], eye[1] + dir[1], eye[2] + dir[2]], fov, aspect, 0.4, this.renderer.far);
     invert4(cam.invViewProj, cam.viewProj);
     return cam;
-  }
-
-  // command bases are drawn from primitives, not from tiles: treat them as
-  // solid so the chase camera never ends up inside a bunker
-  _structureBlocked(px, py, pz) {
-    for (const e of this.net.entities.values()) {
-      if (e.type !== 5) continue;
-      const dx = e.x - px, dz = e.z - pz;
-      if (dx * dx + dz * dz < 26 * 26 && py < e.y + 30) return true;
-    }
-    return false;
   }
 
   _hudState(own) {
@@ -456,6 +443,8 @@ export class Game {
       winner: m.winner !== undefined ? m.winner : this.winner,
       dead: !own,
       atBase,
+      zoom: this.zoom,
+      zoomIdx: this.zoomIdx,
       hitFlash: this.hitFlash,
       help: false,
       helpOpen: this.helpOpen,

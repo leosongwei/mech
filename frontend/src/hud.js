@@ -1,6 +1,7 @@
 // 2D HUD overlay: crosshairs, lock box, module health, weapons, minimap.
 
 import { FACTION_COLORS } from './scene.js';
+import { ZOOM_LEVELS } from './input.js';
 
 const ARM_COLORS = ['#5fe6ff', '#ffb04a'];
 const ARM_NAMES = ['L', 'R'];
@@ -72,6 +73,7 @@ export class HUD {
     this._minimap(s);
     this._topBar(s, w);
     this._weapons(s, w, h);
+    if (s.own) this._optics(s, w, h);
     this._modules(s, h);
     this._messages(s, w);
     this._status(s, w, h);
@@ -315,6 +317,43 @@ export class HUD {
     ctx.restore();
   }
 
+  // wheel driven sight magnification: 1x / 4x / 10x / 20x
+  _optics(s, w, h) {
+    const ctx = this.ctx;
+    const levels = ZOOM_LEVELS;
+    const idx = Math.max(0, Math.min(levels.length - 1, s.zoomIdx | 0));
+    const slot = 44;
+    const total = slot * levels.length;
+    const x0 = w / 2 - total / 2;
+    const y = h - 112;
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.font = '10px "Courier New", monospace';
+    ctx.fillStyle = 'rgba(150,190,175,0.55)';
+    ctx.fillText('OPTICS', w / 2, y - 14);
+    ctx.font = '12px "Courier New", monospace';
+    for (let i = 0; i < levels.length; i++) {
+      const cx = x0 + slot * i + slot / 2;
+      const on = i === idx;
+      if (on) {
+        ctx.fillStyle = 'rgba(95,230,255,0.14)';
+        ctx.fillRect(x0 + slot * i, y - 11, slot, 15);
+        ctx.strokeStyle = 'rgba(95,230,255,0.8)';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x0 + slot * i + 0.5, y - 10.5, slot - 1, 14);
+      }
+      ctx.fillStyle = on ? '#9ceaff' : `rgba(170,200,190,${0.34 + 0.16 * (i === idx - 1 || i === idx + 1 ? 1 : 0)})`;
+      ctx.fillText(`${levels[i]}x`, cx, y);
+    }
+    // live magnification while the sight is travelling between steps
+    if (Math.abs(s.zoom - levels[idx]) > 0.02) {
+      ctx.fillStyle = 'rgba(156,234,255,0.7)';
+      ctx.font = '10px "Courier New", monospace';
+      ctx.fillText(`${s.zoom.toFixed(1)}x`, w / 2, y + 20);
+    }
+    ctx.restore();
+  }
+
   _modules(s, h) {
     if (!s.own) return;
     const ctx = this.ctx;
@@ -446,6 +485,7 @@ export class HUD {
     const lines = [
       'W A S D      MOVE (relative to view)',
       'MOUSE        TORSO YAW / ARM ELEVATION',
+      'WHEEL        SCOPE 1x / 4x / 10x / 20x',
       'ALT + MOUSE  FREE LOOK',
       'LMB / RMB    LEFT / RIGHT ARM',
       '1-5          BUY LEFT ARM WEAPON (at base)',
@@ -454,13 +494,13 @@ export class HUD {
     ];
     ctx.save();
     ctx.fillStyle = 'rgba(6,12,16,0.8)';
-    ctx.fillRect(w / 2 - 230, h / 2 - 120, 460, 230);
+    ctx.fillRect(w / 2 - 230, h / 2 - 132, 460, 254);
     ctx.strokeStyle = 'rgba(120,220,160,0.5)';
-    ctx.strokeRect(w / 2 - 230, h / 2 - 120, 460, 230);
+    ctx.strokeRect(w / 2 - 230, h / 2 - 132, 460, 254);
     ctx.fillStyle = '#cfe6d6';
     ctx.font = '13px "Courier New", monospace';
     ctx.textAlign = 'left';
-    lines.forEach((l, i) => ctx.fillText(l, w / 2 - 205, h / 2 - 88 + i * 24));
+    lines.forEach((l, i) => ctx.fillText(l, w / 2 - 205, h / 2 - 100 + i * 24));
     ctx.restore();
   }
 }

@@ -1,0 +1,14 @@
+# python
+.venv/
+__pycache__/
+*.py[cod]
+
+# node
+node_modules/
+
+# compiled client (npm run build output, served from backend/assets)
+backend/assets/
+
+# logs / scratch
+*.log
+.DS_Store

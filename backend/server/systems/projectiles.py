@@ -1,0 +1,196 @@
+"""Projectile integration, guidance, collision and damage application."""
+
+from __future__ import annotations
+
+import math
+
+import numpy as np
+
+from .. import defs, mathutil as mu
+from .weapons import aim_of
+
+
+def _norm(v):
+    n = math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2])
+    if n < 1e-6:
+        return (1.0, 0.0, 0.0), 0.0
+    return (v[0] / n, v[1] / n, v[2] / n), n
+
+
+def _steer(v, desired, speed, turn_rate, dt):
+    cur, _ = _norm(v)
+    dn, _ = _norm(desired)
+    dot = max(-1.0, min(1.0, cur[0] * dn[0] + cur[1] * dn[1] + cur[2] * dn[2]))
+    ang = math.acos(dot)
+    if ang < 1e-4:
+        nd = dn
+    else:
+        f = min(1.0, turn_rate * dt / ang)
+        nd, _ = _norm((cur[0] + (dn[0] - cur[0]) * f,
+                       cur[1] + (dn[1] - cur[1]) * f,
+                       cur[2] + (dn[2] - cur[2]) * f))
+    return (nd[0] * speed, nd[1] * speed, nd[2] * speed)
+
+
+def run(world, dt):
+    e = world.ecs
+    pids = world.projectiles()
+    if pids.size == 0:
+        return
+    units = world.units()
+    terrain = world.terrain
+    pos = e["pos"]
+    vel = e["vel"]
+    faction = e["faction"]
+    kind = e["proj_kind"]
+    wid = e["proj_wid"]
+    life = e["proj_life"]
+    src = e["proj_src"]
+    age = e["proj_age"]
+    target = e["target"]
+    etype = e["etype"]
+    yaw = e["yaw"]
+
+    # ---- hit spheres of every unit, gathered once per tick --------------
+    sc = []
+    sr = []
+    su = []
+    sm = []
+    sf = []
+    if units.size:
+        for uid in units:
+            et = int(etype[uid])
+            for mod, c, r in mu.unit_spheres(et, pos[uid], float(yaw[uid])):
+                sc.append(c)
+                sr.append(r)
+                su.append(int(uid))
+                sm.append(mod)
+                sf.append(int(faction[uid]))
+    sph_c = np.asarray(sc, np.float32).reshape(-1, 3)
+    sph_r = np.asarray(sr, np.float32)
+    sph_u = np.asarray(su, np.int32)
+    sph_m = np.asarray(sm, np.int32)
+    sph_f = np.asarray(sf, np.int32)
+
+    for pid in pids:
+        if not e.alive[pid]:
+            continue
+        wd = defs.WEAPONS[int(wid[pid])]
+        k = int(kind[pid])
+        age[pid] = float(age[pid]) + dt
+        life[pid] = float(life[pid]) - dt
+        if life[pid] <= 0.0:
+            e.destroy(pid)
+            continue
+
+        p0 = pos[pid].copy()
+        v = vel[pid].copy()
+        sp, _ = _norm(v)
+        speed = float(np.linalg.norm(v))
+
+        if k == 0:                                  # ballistic bullet
+            v[1] -= wd["g"] * dt
+        elif k == 1:                                # unguided rocket
+            speed = min(wd["maxvel"], speed + wd["thrust"] * dt)
+            v = np.asarray(sp, np.float32) * speed
+            v[1] -= wd["g"] * dt
+        elif k == 2:                                # SACLOS, rides the sight line
+            shooter = int(src[pid])
+            aim_pt = None
+            if shooter >= 0 and e.alive[shooter] and int(etype[shooter]) not in (defs.ETYPE_BASE,):
+                origin, ay, ap = aim_of(world, shooter)
+                d = mu.dir_from(ay, ap)
+                rel = p0 - np.asarray(origin, np.float32)
+                proj = float(rel[0] * d[0] + rel[1] * d[1] + rel[2] * d[2])
+                proj = max(60.0, proj)
+                aim_pt = (origin[0] + d[0] * proj, origin[1] + d[1] * proj, origin[2] + d[2] * proj)
+            speed = min(wd["maxvel"], speed + wd["thrust"] * dt)
+            if aim_pt is not None:
+                desired = (aim_pt[0] - p0[0], aim_pt[1] - p0[1], aim_pt[2] - p0[2])
+                v = np.asarray(_steer(v, desired, speed, 1.35, dt), np.float32)
+            else:
+                v = np.asarray(sp, np.float32) * speed
+        elif k == 3:                                # top attack IR missile
+            tid = int(target[pid])
+            speed = min(wd["maxvel"], speed + wd["thrust"] * dt)
+            if tid >= 0 and e.alive[tid]:
+                tp = pos[tid]
+                th = defs.UNIT_DEFS.get(int(etype[tid]), {}).get("height", 6.0)
+                horiz = math.hypot(float(tp[0]) - p0[0], float(tp[2]) - p0[2])
+                if horiz < 520.0:
+                    aim_pt = (float(tp[0]), float(tp[1]) + th * 0.92, float(tp[2]))
+                else:
+                    aim_pt = (float(tp[0]), float(tp[1]) + 260.0, float(tp[2]))
+                desired = (aim_pt[0] - p0[0], aim_pt[1] - p0[1], aim_pt[2] - p0[2])
+                v = np.asarray(_steer(v, desired, speed, 1.9, dt), np.float32)
+            else:
+                v = np.asarray(sp, np.float32) * speed
+                v[1] -= 9.81 * dt
+        vel[pid] = v
+        p1 = p0 + v * dt
+        pos[pid] = p1
+
+        # ---- terrain / building collision --------------------------------
+        gh, gt, gp = terrain.ground_hit(p0, p1, 9.0)
+        best_t = gt if gh else 2.0
+        best_unit = -1
+        best_mod = 0
+        # ---- unit collision ---------------------------------------------
+        if sph_c.shape[0]:
+            seg = p1 - p0
+            l2 = float(seg @ seg)
+            if l2 > 1e-6:
+                rel = sph_c - p0
+                tt = np.clip((rel @ seg) / l2, 0.0, 1.0)
+                closest = p0 + seg[None, :] * tt[:, None]
+                dd = np.linalg.norm(sph_c - closest, axis=1)
+                pr = 0.35 if k == 0 else 0.6
+                m = dd < (sph_r + pr)
+                m &= sph_f != int(faction[pid])
+                if int(age[pid]) < 0.12:
+                    m &= sph_u != int(src[pid])
+                if m.any():
+                    cand = np.nonzero(m)[0]
+                    j = int(cand[np.argmin(tt[cand])])
+                    if float(tt[j]) < best_t:
+                        best_t = float(tt[j])
+                        best_unit = int(sph_u[j])
+                        best_mod = int(sph_m[j])
+        if best_t <= 1.0:
+            hitp = (float(p0[0] + (p1[0] - p0[0]) * best_t),
+                    float(p0[1] + (p1[1] - p0[1]) * best_t),
+                    float(p0[2] + (p1[2] - p0[2]) * best_t))
+            _impact(world, hitp, wd, pid, best_unit, best_mod)
+            e.destroy(pid)
+
+
+def _impact(world, p, wd, proj_id, direct_unit=-1, direct_mod=0):
+    e = world.ecs
+    shooter = int(e["proj_src"][proj_id])
+    pid = int(e["owner"][shooter]) if shooter >= 0 and e.alive[shooter] else -1
+    if pid < 0 and shooter >= 0:
+        pid = -1
+    r = float(wd["splash"])
+    world.emit("boom", x=p[0], y=p[1], z=p[2], r=r, wid=int(wd["wid"]),
+               big=1 if r >= 5.0 else 0)
+    if direct_unit >= 0:
+        world.damage(direct_unit, direct_mod, float(wd["dmg"]), pid)
+    if r <= 0.0:
+        return
+    spos = e["pos"]
+    sfact = int(e["faction"][shooter]) if shooter >= 0 and e.alive[shooter] else -1
+    for uid in world.units():
+        if uid == direct_unit:
+            continue
+        if sfact >= 0 and int(e["faction"][uid]) == sfact:
+            continue
+        best = 1e9
+        bmod = 0
+        for mod, c, rr in mu.unit_spheres(int(e["etype"][uid]), spos[uid], float(e["yaw"][uid])):
+            d = math.dist(p, c) - rr
+            if d < best:
+                best = d
+                bmod = mod
+        if best <= r:
+            dmg = float(wd["splash_dmg"]) * (1.0 - max(best, 0.0) / r)
+            world.damage(uid, bmod, dmg, pid)

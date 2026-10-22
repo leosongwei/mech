@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MECH - 16 km Front</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #0a0d10;
+               font-family: "Courier New", ui-monospace, monospace; color: #cfe6d6; }
+  #gl, #hud { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  #hud { pointer-events: none; }
+  #boot { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center;
+          justify-content: center; gap: 18px; background: radial-gradient(circle at 50% 35%, #16202a, #05070a 70%);
+          z-index: 10; transition: opacity .4s ease; }
+  #boot h1 { font-size: 54px; letter-spacing: 18px; margin: 0; color: #9fe8b8;
+             text-shadow: 0 0 22px rgba(120,255,170,.45); }
+  #boot p { margin: 2px; color: #7f9aa8; font-size: 13px; letter-spacing: 2px; }
+  #boot .keys { display: grid; grid-template-columns: auto auto; gap: 4px 18px; font-size: 13px;
+                color: #9ab7c4; margin-top: 12px; }
+  #boot .keys b { color: #cfe6d6; }
+  #boot button { margin-top: 18px; padding: 12px 38px; font-family: inherit; font-size: 16px;
+                 letter-spacing: 4px; color: #06110a; background: #7ce0a0; border: 0; cursor: pointer;
+                 border-radius: 2px; box-shadow: 0 0 26px rgba(120,255,170,.35); }
+  #boot button:hover { background: #a6f2bd; }
+  #boot.hidden { opacity: 0; pointer-events: none; }
+  #err { position: absolute; bottom: 8px; left: 8px; color: #ff8080; font-size: 12px; z-index: 20;
+         white-space: pre-wrap; }
+  #lobby { display: flex; flex-direction: column; gap: 12px; align-items: center;
+           background: rgba(10,18,24,.72); border: 1px solid rgba(120,220,160,.28);
+           padding: 16px 22px; border-radius: 3px; min-width: 460px; }
+  #lobby .row { display: flex; align-items: center; gap: 10px; width: 100%; }
+  #lobby .row > label { width: 92px; color: #8fb0a2; font-size: 12px; letter-spacing: 2px; }
+  #lobby input { flex: 1; background: #0b1418; border: 1px solid rgba(120,220,160,.3);
+                            color: #d8f5e2; font-family: inherit; font-size: 14px; padding: 7px 9px;
+                            letter-spacing: 2px; }
+  #lobby select { flex: 1; background: #0b1418; border: 1px solid rgba(120,220,160,.3);
+                  color: #d8f5e2; font-family: inherit; font-size: 13px; padding: 7px 8px; }
+  #lobby .fac { flex: 1; margin: 0; padding: 9px 0; font-family: inherit; font-size: 13px;
+                letter-spacing: 3px; cursor: pointer; background: #0b1418; color: #9ab7c4;
+                border: 1px solid rgba(120,220,160,.25); border-radius: 2px; box-shadow: none; }
+  #lobby .fac:hover { background: #12222a; }
+  #lobby .fac.on { color: #06110a; }
+  #lobby .fac[data-fac="0"].on { background: #e05a4a; border-color: #e05a4a; }
+  #lobby .fac[data-fac="1"].on { background: #5c8cf0; border-color: #5c8cf0; }
+  #lobby .fac[data-fac="-1"].on { background: #7ce0a0; border-color: #7ce0a0; }
+  #wdesc { font-size: 11px; color: #9ab7c4; line-height: 1.5; min-height: 32px; width: 100%; }
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<canvas id="hud"></canvas>
+<div id="boot">
+  <h1>MECH</h1>
+  <p>16 KM SQUARE FRONT &middot; RED VS BLUE &middot; THREE LANES</p>
+  <div class="keys">
+    <b>W A S D</b><span>move (relative to view)</span>
+    <b>MOUSE</b><span>torso yaw / arm elevation</span>
+    <b>ALT + MOUSE</b><span>free look</span>
+    <b>LMB / RMB</b><span>left arm / right arm</span>
+    <b>1-5 / SHIFT+1-5</b><span>buy left / right arm weapon (at base)</span>
+    <b>ESC</b><span>release mouse</span>
+  </div>
+  <div id="lobby">
+    <div class="row">
+      <label>PILOT ID</label>
+      <input id="pname" type="text" maxlength="16" spellcheck="false" />
+    </div>
+    <div class="row">
+      <label>SIDE</label>
+      <button class="fac" data-fac="0">RED</button>
+      <button class="fac" data-fac="1">BLUE</button>
+      <button class="fac on" data-fac="-1">AUTO</button>
+    </div>
+    <div class="row">
+      <label>LEFT ARM</label>
+      <select id="armL"></select>
+    </div>
+    <div class="row">
+      <label>RIGHT ARM</label>
+      <select id="armR"></select>
+    </div>
+    <div id="wdesc"></div>
+  </div>
+  <button id="startBtn">DEPLOY</button>
+  <div id="err"></div>
+<script>window.addEventListener("error",function(e){var el=document.getElementById("err");if(el)el.textContent="ERROR: "+(e.message||e.error)+" @"+(e.filename||"")+":"+(e.lineno||0);});window.addEventListener("unhandledrejection",function(e){var el=document.getElementById("err");if(el)el.textContent="REJECT: "+(e.reason&&e.reason.message||e.reason);});</script>
+</div>
+</body>
+</html>

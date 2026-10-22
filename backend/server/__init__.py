@@ -1,0 +1,1 @@
+"""MECH backend package."""

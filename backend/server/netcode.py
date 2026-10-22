@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import math
+import os
 import struct
 import zlib
 
@@ -55,6 +56,7 @@ def static_payload(world) -> dict:
                   muzzles={int(k): v for k, v in defs.MECH_ARM_MUZZLE.items()},
                   modules=defs.MODULE_NAMES),
         buyable=defs.BUYABLE,
+        debug=os.environ.get("MECH_DEBUG") == "1",
     )
 
 
@@ -127,6 +129,7 @@ def meta_payload(world, pl) -> dict:
         deaths=pl.deaths,
         score=pl.score,
         respawn=round(max(0.0, pl.respawn), 2),
+        god=bool(pl.god),
         hp=hp,
         lock_target=int(pl.lock_target) if pl.lock_progress > 0 else -1,
         lock_progress=round(float(pl.lock_progress), 3),

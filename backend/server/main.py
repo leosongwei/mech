@@ -243,6 +243,11 @@ async def ws_endpoint(ws: WebSocket):
             elif t == "respawn":
                 if pl.mech < 0:
                     pl.respawn = min(pl.respawn, 0.05)
+            elif t == "debug_restart" and os.environ.get("MECH_DEBUG") == "1":
+                # development helper: wipe the field and start a fresh round
+                world.reset_match()
+                client.offer("t", json.dumps(dict(t="info", msg="MATCH RESTARTED"),
+                                             default=_json_safe))
     except WebSocketDisconnect:
         pass
     except Exception:

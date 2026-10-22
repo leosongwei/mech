@@ -73,6 +73,7 @@ export class Game {
       };
       this.input.onToggleHelp = () => { this.helpOpen = !this.helpOpen; };
       this._setupLobby(init);
+      this._setupDebug(init);
       document.getElementById('startBtn').addEventListener('click', () => this.start());
       this.ready = true;
     } catch (err) {
@@ -140,6 +141,34 @@ export class Game {
     this.armL.addEventListener('change', describe);
     this.armR.addEventListener('change', describe);
     describe();
+  }
+
+  // --------------------------------------------------------- debug panel
+  // shipped from the server only when MECH_DEBUG=1: quick knobs for testing
+  _setupDebug(init) {
+    const el = document.getElementById('debug');
+    if (!el || !init.debug) return;
+    this.debugEl = el;
+    this.debugGod = el.querySelector('[data-dbg="god"]');
+    el.addEventListener('click', (e) => {
+      const kind = e.target && e.target.dataset ? e.target.dataset.dbg : null;
+      if (kind === 'respawn') {
+        this.net.send({ t: 'respawn' });
+      } else if (kind === 'restart') {
+        this.net.send({ t: 'debug_restart' });
+      } else if (kind === 'god') {
+        const on = !(this.net.meta && this.net.meta.god);
+        this.net.send({ t: 'debug_god', on });
+      }
+    });
+    el.classList.remove('hidden');
+  }
+
+  _syncDebug() {
+    if (!this.debugGod) return;
+    const on = !!(this.net.meta && this.net.meta.god);
+    this.debugGod.textContent = on ? 'GOD ON' : 'GOD OFF';
+    this.debugGod.classList.toggle('on', on);
   }
 
   start() {
@@ -234,6 +263,7 @@ export class Game {
 
     this._checkDamage(own);
     this._noLockFeedback(own, dt);
+    this._syncDebug();
 
     this.particles.update(dt);
     for (const [id, f] of this.flashes) {

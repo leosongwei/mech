@@ -329,8 +329,12 @@ class World:
                     return x, z
         return bx, bz
 
-    def lane_index_near(self, lane: int, x: float, z: float) -> int:
+    def lane_index_near(self, lane: int, x: float, z: float, faction: int = defs.FACTION_RED) -> int:
+        """Index into the lane as that faction walks it (blue's copy is
+        reversed, so its indices are measured from its own base)."""
         pts = self.lanes[lane % len(self.lanes)]
+        if faction == defs.FACTION_BLUE:
+            pts = self.lanes_rev[lane % len(self.lanes)]
         best_i, best_d = 0, 1e18
         for i, (px, pz) in enumerate(pts):
             d = (px - x) ** 2 + (pz - z) ** 2

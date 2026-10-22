@@ -79,9 +79,12 @@ def _faction_count(world, faction) -> int:
 
 
 def _front_index(world, faction, lane):
-    """Lane index of the most advanced friendly unit on that lane (or None)."""
+    """Lane index of the most advanced friendly unit on that lane (or None).
+
+    Both sides count along their own copy of the lane, which starts at their
+    own base - so "advanced" always means the largest index.
+    """
     e = world.ecs
-    pts = world.lanes[lane]
     best = None
     for eid in world.combat_units():
         if int(e["faction"][eid]) != faction or int(e["etype"][eid]) == defs.ETYPE_BASE:
@@ -89,12 +92,7 @@ def _front_index(world, faction, lane):
         if int(e["lane"][eid]) % len(world.lanes) != lane:
             continue
         i = int(e["path_i"][eid])
-        if best is None:
-            best = i
-        elif faction == defs.FACTION_RED:
-            best = max(best, i)
-        else:
-            best = min(best, i)
+        best = i if best is None else max(best, i)
     return best
 
 
@@ -103,11 +101,12 @@ def _reinforcement_point(world, faction, lane):
     sides keep meeting instead of walking 14 km towards each other."""
     base = world.terrain.bases[faction]
     pts = world.lanes[lane]
+    if faction == defs.FACTION_BLUE:
+        pts = world.lanes_rev[lane]
     i = _front_index(world, faction, lane)
     if i is None:
         return world._spawn_point(faction, base)
-    back = 10 if faction == defs.FACTION_RED else -10
-    i = max(0, min(len(pts) - 1, i - back))
+    i = max(0, min(len(pts) - 1, i - 10))
     px, pz = pts[i]
     for _ in range(16):
         ang = world.rng.random() * math.tau
@@ -147,7 +146,7 @@ def _waves(world, dt):
                         break
                 eid = world.spawn_unit(etype, faction, sx, sz, lane=lane)
                 e = world.ecs
-                e["path_i"][eid] = world.lane_index_near(lane, sx, sz)
+                e["path_i"][eid] = world.lane_index_near(lane, sx, sz, faction)
                 e["yaw"][eid] = math.atan2(
                     (world.terrain.bases[1 - faction][1] - sz),
                     (world.terrain.bases[1 - faction][0] - sx))

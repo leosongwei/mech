@@ -311,7 +311,7 @@ def generate(seed: int = 11) -> Terrain:
                 t = k / n
                 pts.append(((a[0] + (b[0] - a[0]) * t) * TILE,
                             (a[1] + (b[1] - a[1]) * t) * TILE))
-        pts.append(lane[-1])
+        pts.append((lane[-1][0] * TILE, lane[-1][1] * TILE))
         lanes.append([(float(x), float(z)) for x, z in pts])
 
     bases = {fac: (btx * TILE, bty * TILE) for fac, (btx, bty) in BASE_TILES.items()}

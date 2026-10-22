@@ -235,6 +235,11 @@ async def ws_endpoint(ws: WebSocket):
                     base = world.base_entity.get(1 - pl.faction)
                     if base is not None and world.ecs.alive[base]:
                         world.damage(base, 0, float(msg.get("base", 5000)), -1)
+            elif t == "debug_god" and os.environ.get("MECH_DEBUG") == "1":
+                # development helper: stop the AI from interrupting a test
+                pl.god = bool(msg.get("on", True))
+                client.offer("t", json.dumps(dict(t="info", msg="GOD MODE " + ("ON" if pl.god else "OFF")),
+                                             default=_json_safe))
             elif t == "respawn":
                 if pl.mech < 0:
                     pl.respawn = min(pl.respawn, 0.05)

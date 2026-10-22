@@ -87,9 +87,21 @@ export class MapData {
 // Ballistic prediction for direct fire weapons (bullets + unguided rockets).
 export function predictImpact(map, wd, ox, oy, oz, dir, units, out) {
   out = out || {};
-  let vx = dir[0] * wd.vel, vy = dir[1] * wd.vel, vz = dir[2] * wd.vel;
+  // the launcher's mechanical elevation: the rocket pod is sighted up so its
+  // slow round meets the cannon's line at 1 km, same bias the server applies
+  const bias = wd.bias || 0;
+  let dx = dir[0], dy0 = dir[1], dz = dir[2];
+  if (bias) {
+    const pitch = Math.asin(Math.max(-1, Math.min(1, dir[1]))) + bias;
+    const yaw = Math.atan2(dir[2], dir[0]);
+    const cp = Math.cos(pitch);
+    dx = cp * Math.cos(yaw); dy0 = Math.sin(pitch); dz = cp * Math.sin(yaw);
+  }
+  let vx = dx * wd.vel, vy = dy0 * wd.vel, vz = dz * wd.vel;
   let x = ox, y = oy, z = oz;
-  const dt = 1 / 90;
+  // the server integrates at 30 Hz: using the same step here keeps the
+  // predicted impact point identical to where the round really lands
+  const dt = 1 / 30;
   const maxT = Math.min(wd.life, wd.range / wd.vel);
   const near = [];
   if (units) {

@@ -31,6 +31,7 @@ class Player:
         self.loadout = [defs.WID_AC30, defs.WID_ROCKET]
         self.last_seq = 0
         self.score = 0
+        self.god = False        # debug: ignore all damage to this pilot
 
 
 class World:
@@ -191,6 +192,9 @@ class World:
         e = self.ecs
         if not e.alive[eid] or amount <= 0:
             return
+        pilot = self.players.get(int(e["owner"][eid]))
+        if pilot is not None and pilot.god:
+            return
         hp = e["hp"]
         etype = int(e["etype"][eid])
         if pid >= 0:
@@ -266,6 +270,23 @@ class World:
     # ------------------------------------------------------------------
     # helpers used by systems
     # ------------------------------------------------------------------
+    def _clear_spot(self, x: float, z: float, radius: float = 4.0) -> bool:
+        """True when a whole unit fits at (x, z) - the point test alone would
+        let a 1.9 m mech spawn on a tile corner and jam against a tree."""
+        t = self.terrain
+        if t.blocked(x, z):
+            return False
+        for k in range(6):
+            a = k * math.tau / 6.0
+            if t.blocked(x + math.cos(a) * radius, z + math.sin(a) * radius):
+                return False
+        # the command bases are drawn from primitives, not from tiles, so keep
+        # a margin around them as well
+        for bx, bz in t.bases.values():
+            if math.hypot(x - bx, z - bz) < 55.0:
+                return False
+        return True
+
     def _spawn_point(self, faction: int, fallback):
         towns = self.towns
         enemy_base = self.terrain.bases[1 - faction]
@@ -278,17 +299,35 @@ class World:
             if d < best_d:
                 best_d = d
                 best = t
+        # forward spawn: a ring around the town, never its centre - the middle
+        # of a town is exactly where the buildings are
         if best is not None and best_d > 900.0:
-            return best["x"], best["z"]
+            for _ in range(20):
+                ang = self.rng.random() * math.tau
+                r = self.rng.uniform(40.0, 85.0)
+                x = best["x"] + math.cos(ang) * r
+                z = best["z"] + math.sin(ang) * r
+                if self._clear_spot(x, z):
+                    return x, z
+        # home spawn: stand off the command base, its bunker and pylons are
+        # solid and a mech that materialises inside one never gets free
         bx, bz = fallback
-        for _ in range(12):
+        for _ in range(24):
             ang = self.rng.random() * math.tau
-            r = self.rng.uniform(46.0, 90.0)
+            r = self.rng.uniform(70.0, 130.0)
             x = bx + math.cos(ang) * r
             z = bz + math.sin(ang) * r
-            if not self.terrain.blocked(x, z):
+            if self._clear_spot(x, z):
                 return x, z
-        return bx + 60.0, bz + 60.0
+        # nothing random worked: walk outwards until the ground is free
+        for r in range(70, 420, 10):
+            for k in range(12):
+                ang = k * math.tau / 12.0
+                x = bx + math.cos(ang) * r
+                z = bz + math.sin(ang) * r
+                if self._clear_spot(x, z):
+                    return x, z
+        return bx, bz
 
     def lane_index_near(self, lane: int, x: float, z: float) -> int:
         pts = self.lanes[lane % len(self.lanes)]

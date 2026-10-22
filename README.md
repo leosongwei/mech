@@ -47,6 +47,7 @@ Then open <http://127.0.0.1:8010/>.  The lobby lets you pick a callsign, a side
 {"t":"debug_tp","dist":400}                          // teleport your mech
 {"t":"debug_hurt","module":1,"amount":300}           // damage your mech
 {"t":"debug_hurt","base":7000}                       // smash the enemy command base
+{"t":"debug_god","on":true}                          // ignore all damage while testing
 ```
 
 A destroyed command base ends the round; the match resets automatically 40 s
@@ -108,13 +109,14 @@ turn-rate limit.
 | --- | --- | --- | --- |
 | 30mm autocannon | ballistic | 3.2 km | 1080 m/s, 190 rpm, 3 m splash |
 | 12.7mm machine gun | ballistic | 1.8 km | 890 m/s, 680 rpm |
-| unguided rocket pod | rocket | 4 km | gravity + motor, 2 rockets per trigger |
+| unguided rocket pod | rocket | 4 km | one round per trigger pull, no reload, 20 in the pod; the launcher is sighted 2.5° up so it meets the cannon's line at 1 km |
 | SACLOS ATGM | beam rider | 3.75 km | steers onto your sight line, keep the reticle on target |
 | top-attack IR ATGM | lock-on | 4.75 km | acquisition cone + 1.1 s lock, then fire and forget, dives onto the roof |
 | 5.56 rifle / RPG | infantry | 450 / 500 m |  |
 
 * Direct-fire weapons show the predicted impact point and range (client side
-  ray march with the same gravity vector).
+  ray march at the server's 30 Hz step with the same gravity vector and the
+  same launch bias, so the reticle is where the round really lands).
 * Firing an IR missile without a lock does nothing: the HUD prints
   `NO LOCK` and plays a denial tone. While acquiring you hear interrupted
   beeps, once locked a steady tone plus a red diamond on the target.

@@ -37,6 +37,7 @@ def register(ecs):
     ecs.register("cool", np.float32, (2,), 0.0)
     ecs.register("reload_t", np.float32, (2,), 0.0)
     ecs.register("trigger", np.uint8, (), 0)         # bit0 left, bit1 right
+    ecs.register("trigger_prev", np.uint8, (), 0)    # last tick's bits, for semi auto
 
     # ---- ai -------------------------------------------------------------
     ecs.register("target", np.int32, (), -1)
@@ -60,7 +61,8 @@ def register(ecs):
 
 UNIT_COMPS = ["pos", "vel", "yaw", "pitch", "leg_yaw", "turret_yaw", "etype", "faction",
               "owner", "hp", "hpmax", "weapon", "ammo", "mag", "cool", "reload_t",
-              "trigger", "target", "ai_state", "ai_timer", "path_i", "lane", "flags"]
+              "trigger", "trigger_prev", "target", "ai_state", "ai_timer", "path_i", "lane",
+              "flags"]
 
 CIV_COMPS = UNIT_COMPS + ["home_x", "home_z"]
 

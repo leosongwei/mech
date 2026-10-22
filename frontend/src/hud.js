@@ -302,7 +302,8 @@ export class HUD {
         ctx.fillStyle = '#cfe6d6';
         ctx.font = '12px "Courier New", monospace';
         const mag = e.mag[arm], ammo = e.ammo[arm];
-        ctx.fillText(`${mag} / ${ammo}`, x0 + 8, y0 + 36);
+        // a weapon with no magazine (the rocket pod) shows a single pool
+        ctx.fillText(ammo > 0 ? `${mag} / ${ammo}` : `${mag}`, x0 + 8, y0 + 36);
         const reloading = (e.flags >> (2 + arm)) & 1;
         if (reloading) {
           ctx.fillStyle = '#ffcc66';

@@ -151,6 +151,10 @@ def _engage(world, eid, tid, eye, d, dist, tpos, tvel, dt):
                 t |= 2
         if etype == defs.ETYPE_APC and dist < 3500:
             t |= 2
+    # a semi automatic arm only fires on the rising edge of the trigger, so
+    # the AI has to let go of it every other tick
+    if (t & 2) and (world.tick & 1) and defs.WEAPONS[int(weapon[eid, 1])]["semi"]:
+        t &= ~2
     trigger[eid] = t
 
 

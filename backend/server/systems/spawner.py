@@ -109,11 +109,11 @@ def _reinforcement_point(world, faction, lane):
     back = 10 if faction == defs.FACTION_RED else -10
     i = max(0, min(len(pts) - 1, i - back))
     px, pz = pts[i]
-    for _ in range(10):
+    for _ in range(16):
         ang = world.rng.random() * math.tau
         r = world.rng.uniform(20.0, 90.0)
         x, z = px + math.cos(ang) * r, pz + math.sin(ang) * r
-        if not world.terrain.blocked(x, z):
+        if world._clear_spot(x, z):
             return x, z
     return px, pz
 
@@ -137,10 +137,14 @@ def _waves(world, dt):
             if world.wave % 4 == 0:
                 comp.append(defs.ETYPE_MECH)
             for k, etype in enumerate(comp):
-                ang = world.rng.random() * math.tau
-                r = world.rng.uniform(5.0, 45.0)
-                sx = x + math.cos(ang) * r
-                sz = z + math.sin(ang) * r
+                sx, sz = x, z
+                for _ in range(8):
+                    ang = world.rng.random() * math.tau
+                    r = world.rng.uniform(5.0, 45.0)
+                    sx = x + math.cos(ang) * r
+                    sz = z + math.sin(ang) * r
+                    if world._clear_spot(sx, sz, 3.0):
+                        break
                 eid = world.spawn_unit(etype, faction, sx, sz, lane=lane)
                 e = world.ecs
                 e["path_i"][eid] = world.lane_index_near(lane, sx, sz)

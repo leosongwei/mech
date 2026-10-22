@@ -47,6 +47,7 @@ def run(world, dt):
     ammo = e["ammo"]
     weapon = e["weapon"]
     trigger = e["trigger"]
+    trigger_prev = e["trigger_prev"]
     hp = e["hp"]
     etype = e["etype"]
     owner = e["owner"]
@@ -76,6 +77,10 @@ def run(world, dt):
                 if hp[eid, defs.MOD_LEFT if arm == 0 else defs.MOD_RIGHT] <= 0.0:
                     continue
             wd = defs.WEAPONS[wid]
+            # semi automatic arms fire once per pull: the trigger has to be
+            # released and pressed again, holding it does nothing
+            if wd["semi"] and (int(trigger_prev[eid]) >> arm) & 1:
+                continue
             if int(mag[eid, arm]) <= 0:
                 if int(ammo[eid, arm]) > 0:
                     reload_t[eid, arm] = wd["reload"]
@@ -93,6 +98,7 @@ def run(world, dt):
             fire(world, eid, arm, wid, wd, target)
             mag[eid, arm] = int(mag[eid, arm]) - 1
             cool[eid, arm] = 60.0 / max(wd["rpm"], 1.0)
+        trigger_prev[eid] = int(trigger[eid])
 
 
 def fire(world, eid: int, arm: int, wid: int, wd: dict, target: int = -1):
@@ -115,7 +121,9 @@ def fire(world, eid: int, arm: int, wid: int, wd: dict, target: int = -1):
     for k in range(n):
         sp = float(wd["spread"]) * (1.0 if k == 0 else 0.6)
         dy = yaw + world.rng.gauss(0.0, sp)
-        dp = pitch + world.rng.gauss(0.0, sp)
+        # `bias` is the mechanical elevation the launcher is sighted at: the
+        # rocket pod is tilted up so its slow round meets the cannon at 1 km
+        dp = pitch + float(wd["bias"]) + world.rng.gauss(0.0, sp)
         d = mu.dir_from(dy, dp)
         pid = e.create()
         for c in components.PROJ_COMPS:

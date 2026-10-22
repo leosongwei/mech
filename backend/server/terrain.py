@@ -283,10 +283,16 @@ def generate(seed: int = 11) -> Terrain:
         patch[mask & (patch == TILE_GRASS)] = TILE_TREE
 
     # ---- boulders --------------------------------------------------------
-    rx = rng.integers(2, w - 2, 900)
-    rz = rng.integers(2, d - 2, 900)
-    finite = tiles[rz, rx] == TILE_GRASS
-    tiles[rz[finite], rx[finite]] = TILE_ROCK
+    # rock fields instead of hundreds of single marbles scattered evenly over
+    # the map: a few outcrops of two to eight boulders each
+    for _ in range(80):
+        cx = int(rng.integers(6, w - 6))
+        cy = int(rng.integers(6, d - 6))
+        for _ in range(int(rng.integers(2, 9))):
+            rx = cx + int(rng.integers(-4, 5))
+            rz = cy + int(rng.integers(-4, 5))
+            if 2 <= rx < w - 2 and 2 <= rz < d - 2 and tiles[rz, rx] == TILE_GRASS:
+                tiles[rz, rx] = TILE_ROCK
 
     # keep lanes / towns / base pads clear of obstacles
     keep = _dilate(clear, 3)

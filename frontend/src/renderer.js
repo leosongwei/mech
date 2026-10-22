@@ -392,7 +392,7 @@ export class Renderer {
       const t = map.tiles[k];
       if (t === 3) { counts[MESH_CONE]++; counts[MESH_CYL]++; }
       else if (t === 2) counts[MESH_BOX]++;
-      else if (t === 4) counts[MESH_SPHERE]++;
+      else if (t === 4) counts[MESH_SPHERE] += 3;
     }
     const datas = counts.map((c, i) => new Float32Array(Math.max(1, c) * STRIDE_FLOATS));
     const fills = [0, 0, 0, 0];
@@ -438,9 +438,20 @@ export class Renderer {
               const g = 0.34 + r2 * 0.20;
               add(MESH_BOX, ci, x, y + sy * 0.5, z, 0, sx, sy, sz, [g, g * 0.94, g * 0.86]);
             } else {
-              const s = 5 + r1 * 6;
-              add(MESH_SPHERE, ci, x, y + s * 0.25, z, r2 * 6.283,
-                s, s * (0.7 + r2 * 0.5), s, [0.36 + r1 * 0.1, 0.36 + r1 * 0.1, 0.38 + r1 * 0.1]);
+              // a boulder is a couple of broken ellipsoids piled up, not one
+              // marble: same tile, but it reads as rock instead of a ball
+              const s = 3.6 + r1 * 4.4;
+              const rock = [0.31 + r1 * 0.08, 0.29 + r1 * 0.07, 0.27 + r2 * 0.06];
+              for (let q = 0; q < 3; q++) {
+                const h = hash(i + q * 3.1, j + q * 7.7);
+                const a = r2 * 6.283 + q * 2.1;
+                const off = s * 0.34 * q;
+                const w = s * (0.62 - q * 0.13) * (0.8 + h * 0.5);
+                add(MESH_SPHERE, ci,
+                  x + Math.cos(a) * off, y + w * 0.34, z + Math.sin(a) * off,
+                  a, w, w * (0.62 + h * 0.5), w,
+                  [rock[0] * (0.9 + h * 0.2), rock[1] * (0.9 + h * 0.2), rock[2] * (0.9 + h * 0.2)]);
+              }
             }
           }
         }

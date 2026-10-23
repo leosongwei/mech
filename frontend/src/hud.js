@@ -155,12 +155,10 @@ export class HUD {
       const stacked = other && Math.abs(other.screen[0] - x) < 80
         && Math.abs(other.screen[1] - y) < 24;
       const ly = y + 4 + (stacked && arm === 1 ? 14 : 0);
-      // red = the sight point is past what the fire control can zero for; a
-      // trailing + means the round expires in the air before it gets there,
-      // so the number is as far as it flies, not an impact
+      // past 4 km the sight ray finds nothing to range against: rangefinding
+      // drops out and the reading is a bare red dash
       if (c.far) ctx.fillStyle = FAR_COLOR;
-      const read = c.hit ? `${Math.round(c.dist)}m`
-        : c.far ? `${Math.round(c.dist)}m+` : '-';
+      const read = c.hit && !c.far ? `${Math.round(c.dist)}m` : '-';
       ctx.fillText(`${ARM_NAMES[arm]} ${read}`, x + r + 10, ly);
       ctx.restore();
     }

@@ -433,9 +433,9 @@ export class Game {
           theta === null ? dir : dirFrom(yaw, theta), units, {}, own.faction);
         hit = point.hit;
         dist = point.dist;
-        // red with a trailing + whenever the count is not an impact: either
-        // the sight point is out of reach, or the round expires in the air
-        // (aimed past the map edge / further than the fuse can carry it)
+        // no range when the count is not an impact: the sight point is past
+        // the fire control's reach, or the round expires in the air (aimed
+        // past the map edge / further than the fuse can carry it)
         far = fc.far || !point.hit;
         if (theta === null) {
           // nothing to zero on: the shot simply runs down the aim line, so the

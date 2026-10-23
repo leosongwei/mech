@@ -278,12 +278,13 @@ function projectile(R, p, defs) {
   if (p.kind === 0) {
     // tracer: a flat-shaded four-sided pyramid stretched along the flight
     // path, centred on the round and drawn unlit so it stays the weapon's
-    // colour. the bore sizes it, so a 12.7 mm round reads thinner than a
-    // 30 mm cannon shell
+    // colour. the flat face leads and the point trails, like the streak the
+    // eye keeps after the round has gone by. the bore sizes it, so a 12.7 mm
+    // round reads thinner than a 30 mm cannon shell
     const cal = (wd && wd.cal) || 12.7;
     const len = Math.min(16, speed * 0.014);
     const wid = Math.max(0.08, cal * 0.011);
-    at(R, 'pyramid', fake, yaw, FORWARD + pitch, 0, 0, 0, wid, len, wid, col);
+    at(R, 'pyramid', fake, yaw, FORWARD + pitch + Math.PI, 0, 0, 0, wid, len, wid, col);
   } else {
     at(R, 'cyl', fake, yaw, FORWARD + pitch, 0, 0, -0.6, 0.32, 3.2, 0.32, [0.78, 0.78, 0.8]);
     at(R, 'cone', fake, yaw, FORWARD + pitch, 0, 0, 1.4, 0.32, 1.1, 0.32, col);

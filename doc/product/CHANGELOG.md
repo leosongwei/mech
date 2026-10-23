@@ -11,6 +11,26 @@
 
 ---
 
+## 2026-10-23 · 新增靶场模式（服务端 `--range`）
+
+- 新增 `./dev.sh range`（会话 `mech-range`，端口 8011，日志 `/tmp/mech-range.log`）
+  与 `python run.py --range`：同一客户端接入另一张 **4 km × 4 km** 靶场地图。
+- 地图：西北一座 200 m 高山（带摆动山脚与两条支脉），其余为 9 m 起伏的平原，
+  全草地无掩体；玩家固定在南部中间蓝叉出生，面朝山顶，山距约 2.2 km。
+- 12 个蓝方 APC 靶位（山顶/山坡/山脚/平原散布），其中 2 条是 8 m/s 往返巡逻的
+  移动靶；靶子**不索敌不开火**，被击毁 3 s 后原位重生，击毁仍得 $180 赏金。
+- 靶场里阵营固定 RED、初始资金 $99999、**随处可换装**（`AT BASE - REARM:` 清单
+  常驻，不受 220 m 补给范围限制）；无波次、无城镇占领、无胜负；死亡 8 s 后回到
+  同一出生点，`RESTART` 重建靶子并 1 s 后重生。
+- 界面：启动页副标题改为 `WEAPON RANGE · 4 KM MAP · APC TARGETS · REARM ANYWHERE`，
+  状态行 `LOADING RANGE...`；顶部战况条 `WAVE n` 改为 `RANGE`，其下新增
+  `TARGETS n`（存活蓝方单位数）。
+- 涉及文件：`backend/server/terrain.py`、`backend/server/world.py`、
+  `backend/server/systems/range_targets.py`（新增）、`backend/server/systems/ai.py`、
+  `backend/server/systems/spawner.py`、`backend/server/main.py`、
+  `backend/server/netcode.py`、`backend/run.py`、`dev.sh`、
+  `frontend/src/game.js`、`frontend/src/hud.js`、`doc/product/*`、`AGENTS.md`
+
 ## 2026-10-23 · 建立产品文档
 
 - 新增本目录：交互流程、界面说明、单位参数、武器参数、改动登记。

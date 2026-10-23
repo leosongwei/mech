@@ -127,13 +127,21 @@ byobu session (falls back to plain `tmux` when `~/.byobu` is not writable):
 ./dev.sh dev        # build the client, then start the server (first run)
 ./dev.sh start      # start the server in session "mech"
 ./dev.sh attach     # attach to it (detach: F6 for byobu, Ctrl-a d for tmux)
-./dev.sh stop       # kill the session
+./dev.sh stop       # kill the session (battle and range)
 ./dev.sh status     # list sessions
+./dev.sh range      # weapon-range server in session "mech-range" (see below)
 tail -f /tmp/mech-server.log
 ```
 
 Then open <http://127.0.0.1:8010/>; the lobby picks callsign, side and the
 weapon in each arm before `DEPLOY`.
+
+`./dev.sh range` starts a second world (`run.py --range`, i.e. `MECH_RANGE=1`)
+on <http://127.0.0.1:8011>: a 4 km test map, one 200 m hill NW, plains
+elsewhere, 12 blue APC targets (2 patrolling) that respawn 3 s after dying and
+never shoot back. The player is locked to RED with $99999 and can rearm
+anywhere. Log: `/tmp/mech-range.log`, overrides `MECH_RANGE_PORT`
+(8011), `MECH_RANGE_LOG`. Product notes: `doc/product/range.md`.
 
 Environment overrides: `MECH_SESSION` (default `mech`), `MECH_PORT` (8010),
 `MECH_LOG` (`/tmp/mech-server.log`). `dev.sh` always sets `MECH_DEBUG=1`,

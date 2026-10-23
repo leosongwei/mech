@@ -96,7 +96,7 @@ def _raster_line(tiles: np.ndarray, a, b, value, step=0.5):
     ts = np.linspace(0.0, 1.0, n, dtype=np.float32)
     i = (ax + (bx - ax) * ts).astype(np.int32)
     j = (ay + (by - ay) * ts).astype(np.int32)
-    ok = (i >= 0) & (i < MAPW) & (j >= 0) & (j < MAPH)
+    ok = (i >= 0) & (i < tiles.shape[1]) & (j >= 0) & (j < tiles.shape[0])
     tiles[j[ok], i[ok]] = value
 
 
@@ -114,10 +114,10 @@ def _dilate(mask: np.ndarray, r: int) -> np.ndarray:
 
 class Terrain:
     def __init__(self, heights: np.ndarray, tiles: np.ndarray, lanes, towns, bases):
-        self.h = heights.astype(np.float32)      # (MAPH, MAPW) vertex heights
-        self.tiles = tiles.astype(np.uint8)      # (MAPH, MAPW)
-        self.w = MAPW
-        self.d = MAPH
+        self.h = heights.astype(np.float32)      # (d, w) vertex heights
+        self.tiles = tiles.astype(np.uint8)      # (d, w)
+        self.w = int(heights.shape[1])
+        self.d = int(heights.shape[0])
         self.lanes = lanes                       # list[list[(x, z)]] world metres
         self.towns = towns                       # list of dicts
         self.bases = bases                       # faction -> (x, z) metres
@@ -316,3 +316,67 @@ def generate(seed: int = 11) -> Terrain:
 
     bases = {fac: (btx * TILE, bty * TILE) for fac, (btx, bty) in BASE_TILES.items()}
     return Terrain(height, tiles, lanes, towns, bases)
+
+
+# ---------------------------------------------------------------------------
+# weapon range: a 4 km test map with a 200 m hill on the west side and open
+# plains on the east, so every weapon can be judged against both a mountainside
+# and flat ground from one vantage point
+# ---------------------------------------------------------------------------
+RANGE_TILES = 400                     # 400 x 10 m = 4 km square
+RANGE_SPAWN = (1900.0, 3050.0)        # south centre, the blue cross
+RANGE_HILL = (900.0, 1100.0, 200.0)   # centre x, centre z, peak height
+
+# APC posts: static ones hold a spot, patrols drive back and forth along x
+RANGE_POSTS = [
+    dict(x=950.0, z=1100.0, name="HILL TOP"),
+    dict(x=1200.0, z=1450.0, name="HILL SLOPE"),
+    dict(x=700.0, z=1750.0, name="HILL WEST"),
+    dict(x=1500.0, z=800.0, name="HILL RIDGE"),
+    dict(x=2150.0, z=2750.0, name="NEAR"),
+    dict(x=2450.0, z=1500.0, name="PLAIN MID"),
+    dict(x=3000.0, z=2050.0, name="PLAIN EAST"),
+    dict(x=2500.0, z=2450.0, name="PLAIN SOUTH"),
+    dict(x=3400.0, z=1200.0, name="PLAIN FAR"),
+    dict(x=3350.0, z=2650.0, name="PLAIN SE"),
+    dict(x=2500.0, z=1500.0, patrol=(2100.0, 2900.0), name="PATROL MID"),
+    dict(x=2900.0, z=2300.0, patrol=(2500.0, 3300.0), name="PATROL EAST"),
+]
+
+
+def generate_range(seed: int = 7) -> Terrain:
+    """Flat firing range: one big hill NW, plains everywhere else, no cover."""
+    rng = np.random.default_rng(seed)
+    n = RANGE_TILES
+    yy, xx = np.mgrid[0:n, 0:n].astype(np.float32)
+    xm = xx * TILE
+    zm = yy * TILE
+
+    hx, hz, peak = RANGE_HILL
+    dx = xm - hx
+    dz = zm - hz
+    r = np.hypot(dx, dz)
+    # a wobbly radius keeps the hill from being a perfect cone; the 1 m
+    # terracing below turns the slopes into the same faceted contours as the
+    # battle map
+    ang = np.arctan2(dz, dx)
+    wobble = 1.0 + 0.16 * np.sin(3.0 * ang + 0.7) + 0.09 * np.sin(5.0 * ang - 1.3)
+    radius = 980.0 * wobble
+    k = np.clip(1.0 - r / radius, 0.0, 1.0)
+    k = k * k * (3.0 - 2.0 * k)                       # smoothstep falloff
+    height = peak * k
+
+    # a low spur south of the main hill and a gentle shoulder north of it
+    for (sx, sz, sp, sr) in ((600.0, 2100.0, 45.0, 520.0), (1450.0, 420.0, 70.0, 600.0)):
+        sk = np.clip(1.0 - np.hypot(xm - sx, zm - sz) / sr, 0.0, 1.0)
+        height += sp * (sk * sk * (3.0 - 2.0 * sk))
+
+    # plains: a couple of metres of undulation so the ground is not a mirror
+    plains = _fbm(rng, n, n, octaves=4) * 9.0
+    blend = np.clip((xm - 1500.0) / 1600.0, 0.0, 1.0)
+    height = height + plains * (0.25 + 0.75 * blend)
+    height = np.round(_blur3(_blur3(height)))         # 1 m terraces
+
+    tiles = np.zeros((n, n), np.uint8)                # grass everywhere
+    bases = {fac: RANGE_SPAWN for fac in (0, 1)}
+    return Terrain(height, tiles, [], [], bases)

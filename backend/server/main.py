@@ -28,7 +28,7 @@ def _json_safe(obj):
 ASSETS = Path(__file__).resolve().parent.parent / "assets"
 
 app = FastAPI(title="MECH")
-world = World()
+world = World(mode="range" if os.environ.get("MECH_RANGE") == "1" else "battle")
 
 class Client:
     """Per connection outbound queue.
@@ -130,6 +130,8 @@ app.mount("/static", StaticFiles(directory=str(ASSETS)), name="static")
 
 
 def _at_base(world: World, pl) -> bool:
+    if world.mode == "range":
+        return True                 # tuning sandbox: rearm anywhere
     if pl.mech < 0 or not world.ecs.alive[pl.mech]:
         return False
     p = world.ecs["pos"][pl.mech]
@@ -169,6 +171,8 @@ async def ws_endpoint(ws: WebSocket):
                 fac = int(msg.get("faction", -1))
                 if fac in (defs.FACTION_RED, defs.FACTION_BLUE):
                     pl.faction = fac
+                if world.mode == "range":
+                    pl.faction = defs.FACTION_RED
                 name = str(msg.get("name", pl.name)).strip()
                 if name:
                     pl.name = name[:16]

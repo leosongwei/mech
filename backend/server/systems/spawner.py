@@ -19,6 +19,8 @@ def run(world, dt):
         return
     _income(world, dt)
     _respawn(world, dt)
+    if world.mode == "range":
+        return                      # no waves, no towns: range targets are rebuilt elsewhere
     _capture(world, dt)
     _waves(world, dt)
 

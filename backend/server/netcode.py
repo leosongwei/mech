@@ -57,6 +57,7 @@ def static_payload(world) -> dict:
                   modules=defs.MODULE_NAMES),
         buyable=defs.BUYABLE,
         debug=os.environ.get("MECH_DEBUG") == "1",
+        mode=world.mode,
     )
 
 

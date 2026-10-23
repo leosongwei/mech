@@ -8,6 +8,7 @@
 #   ./dev.sh status    list sessions
 #   ./dev.sh build     build the web client into backend/assets
 #   ./dev.sh dev       build once, then start the server
+#   ./dev.sh range     start a weapon range server on :8011 (4 km test map)
 #
 # The server is started exactly like the rest of this box's long running
 # processes: a detached byobu session that can be re-attached later.
@@ -33,7 +34,7 @@ mux() {
 
 cmd_start() {
   command -v "$PY" >/dev/null 2>&1 || { echo "missing venv: run  uv venv && uv pip install -r backend/pyproject.toml"; exit 1; }
-  if mux has-session -t "$SESSION" 2>/dev/null; then
+  if mux has-session -t "=$SESSION" 2>/dev/null; then
     echo "session '$SESSION' already running - use ./dev.sh attach"
     return 0
   fi
@@ -45,11 +46,36 @@ cmd_start() {
 }
 
 cmd_attach() {
-  mux attach -t "$SESSION"
+  mux attach -t "=$SESSION"
+}
+
+# weapon range: a second server on its own port, 4 km test map with APC targets
+cmd_range() {
+  local session="${SESSION}-range"
+  local port="${MECH_RANGE_PORT:-8011}"
+  local log="${MECH_RANGE_LOG:-/tmp/mech-range.log}"
+  command -v "$PY" >/dev/null 2>&1 || { echo "missing venv: run  uv venv && uv pip install -r backend/pyproject.toml"; exit 1; }
+  if mux has-session -t "=$session" 2>/dev/null; then
+    echo "session '$session' already running - tmux attach -t '$session'"
+    return 0
+  fi
+  mux new-session -A -d -s "$session" \
+    bash -ic "cd '$ROOT/backend' && MECH_DEBUG=1 exec '$PY' run.py --range --port '$port' 2>&1 | tee '$log'"
+  sleep 2
+  echo "MECH range server starting in session '$session' on http://127.0.0.1:$port"
+  echo "  attach: tmux attach -t '$session'      logs: tail -f $log"
 }
 
 cmd_stop() {
-  mux kill-session -t "$SESSION" 2>/dev/null && echo "session '$SESSION' stopped" || echo "session '$SESSION' not running"
+  local found=1
+  for name in "$SESSION" "${SESSION}-range"; do
+    if mux kill-session -t "=$name" 2>/dev/null; then
+      echo "session '$name' stopped"
+      found=0
+    fi
+  done
+  [ "$found" -eq 1 ] && echo "no session running"
+  return 0
 }
 
 cmd_status() {
@@ -68,5 +94,6 @@ case "${1:-start}" in
   status) cmd_status ;;
   build) cmd_build ;;
   dev) cmd_build; cmd_start ;;
-  *) echo "usage: $0 {start|attach|stop|status|build|dev}"; exit 1 ;;
+  range) cmd_range ;;
+  *) echo "usage: $0 {dev|start|attach|stop|status|build|range}"; exit 1 ;;
 esac

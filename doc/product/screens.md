@@ -17,8 +17,12 @@
 | LEFT ARM / RIGHT ARM | 下拉框，列出可购买武器：`名称  射程km` |
 | 武器说明 | 两行文本：`L 名称: 伤害, 射程, 射速[, lock-on] - 描述` |
 | DEPLOY | 绿色主按钮；点击后进入游戏并请求指针锁定 |
-| 状态行 | 连接进度：`CONNECTING...` → `LOADING 16 KM MAP...` → `READY` |
+| 状态行 | 连接进度：`CONNECTING...` → `LOADING 16 KM MAP...` → `READY`；靶场服务器为 `LOADING RANGE...` |
 | 错误行 | 左下角红字：启动异常（`BOOT ERROR:`）、运行时错误（`ERROR:`）、未处理拒绝（`REJECT:`） |
+
+靶场服务器（`--range`）下副标题改为
+`WEAPON RANGE · 4 KM MAP · APC TARGETS · REARM ANYWHERE`，大厅其余部分不变，
+但 SIDE 选择被忽略（固定红方），见 [range.md](range.md)。
 
 连接失败时状态行显示 `CONNECTION FAILED - IS THE SERVER RUNNING?`，DEPLOY 无效。
 
@@ -43,8 +47,10 @@ ENEMY BASE   ▇▇▇▇░░░░░░
 ```
 
 * `WAVE n`：当前波次；下一行为本局时长 `m:ss`。
+* 靶场模式下首行改为 `RANGE`，并在时长下方多一行 `TARGETS n`（当前存活的蓝方
+  单位数，正常为 12 个 APC 靶）。
 * 两条 150×5 的指挥部完整度条，按 `当前HP / 6500` 填充，颜色为阵营色，
-  上方标签为本方 `ALLIED BASE` / 敌方 `ENEMY BASE`。
+  上方标签为本方 `ALLIED BASE` / 敌方 `ENEMY BASE`。靶场没有指挥部，两条不显示。
 
 ### 2.3 资金与战绩（左侧，小地图下方）
 
@@ -52,7 +58,7 @@ ENEMY BASE   ▇▇▇▇░░░░░░
 * `KILLS n   DEATHS n   SCORE n`：个人战绩，SCORE 为赏金累计。
 * 其下为所有玩家的名字与 `击杀/死亡`，按颜色区分阵营。
 * 在补给范围内时追加黄字 `AT BASE - REARM:` 与购买清单
-  `[n] 武器名  $价格`，买不起的条目变灰。
+  `[n] 武器名  $价格`，买不起的条目变灰。靶场模式下清单常驻（随处可换装）。
 
 ### 2.4 模块状态（左下）
 

@@ -246,12 +246,18 @@ export class HUD {
     ctx.font = 'bold 15px "Courier New", monospace';
     ctx.fillStyle = '#d8f5e2';
     ctx.textAlign = 'center';
-    ctx.fillText(`WAVE ${m.wave || 0}`, w / 2, 26);
+    ctx.fillText(s.range ? 'RANGE' : `WAVE ${m.wave || 0}`, w / 2, 26);
     ctx.font = '12px "Courier New", monospace';
     const mm = Math.floor((m.time || 0) / 60);
     const ss = Math.floor((m.time || 0) % 60);
     ctx.fillStyle = 'rgba(200,230,210,0.7)';
     ctx.fillText(`${mm}:${ss < 10 ? '0' : ''}${ss}`, w / 2, 42);
+    if (s.range) {
+      let targets = 0;
+      for (const e of s.entities.values()) if (e.faction === 1) targets++;
+      ctx.fillStyle = 'rgba(200,230,210,0.55)';
+      ctx.fillText(`TARGETS ${targets}`, w / 2, 58);
+    }
 
     // base integrity bars
     let y = 58;

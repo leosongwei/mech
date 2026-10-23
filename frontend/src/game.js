@@ -42,6 +42,7 @@ export class Game {
     this.winner = -1;
     this.zoom = 1;              // smoothed, drives the field of view
     this.zoomIdx = 0;           // optics step selected with the wheel
+    this.range = false;         // weapon range mode (server started with --range)
   }
 
   async boot() {
@@ -54,7 +55,8 @@ export class Game {
       this.defs.mech = init.mech;
       this.buyable = init.buyable;
       this.playerFaction = init.faction;
-      this._status('LOADING 16 KM MAP...');
+      this.range = init.mode === 'range';
+      this._status(this.range ? 'LOADING RANGE...' : 'LOADING 16 KM MAP...');
       this.map = await MapData.load(init.map);
       this.renderer.setMap(this.map);
       this.hud.setMap(this.map);
@@ -72,6 +74,11 @@ export class Game {
         if (wid !== undefined) this.net.send({ t: 'buy', arm: right ? 1 : 0, weapon: wid });
       };
       this.input.onToggleHelp = () => { this.helpOpen = !this.helpOpen; };
+      if (this.range) {
+        // the lobby is the same, only the subtitle says what this server is
+        const sub = this.bootEl.querySelector('p');
+        if (sub) sub.textContent = 'WEAPON RANGE · 4 KM MAP · APC TARGETS · REARM ANYWHERE';
+      }
       this._setupLobby(init);
       this._setupDebug(init);
       document.getElementById('startBtn').addEventListener('click', () => this.start());
@@ -452,7 +459,8 @@ export class Game {
     const m = this.net.meta || {};
     const faction = m.faction !== undefined ? m.faction : this.playerFaction;
     let atBase = false;
-    if (own) {
+    if (this.range) atBase = true;      // range mode: rearm anywhere
+    if (own && !atBase) {
       const b = this.init.bases[faction];
       if (Math.hypot(own.x - b[0], own.z - b[1]) < 220) atBase = true;
       for (const t of m.towns || []) {
@@ -473,6 +481,7 @@ export class Game {
       winner: m.winner !== undefined ? m.winner : this.winner,
       dead: !own,
       atBase,
+      range: this.range,
       zoom: this.zoom,
       zoomIdx: this.zoomIdx,
       hitFlash: this.hitFlash,

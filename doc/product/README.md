@@ -12,6 +12,7 @@
 | [screens.md](screens.md) | 每个界面的构成与行为（大厅、HUD 各区块、死亡/胜负、帮助、调试面板） |
 | [units.md](units.md) | 每个单位的参数：血量、速度、体型、武器、AI 视野、赏金；机甲分模块与命中球 |
 | [weapons.md](weapons.md) | 每把武器的全参数表与开火机制（弹道、制导、半自动、溅射、锁定） |
+| [range.md](range.md) | 靶场模式（`--range`）：4 km 小地图、山与平原、12 个 APC 靶、随处换装 |
 | [CHANGELOG.md](CHANGELOG.md) | 产品改动登记表，按时间倒序 |
 
 ## 一句话产品

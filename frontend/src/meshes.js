@@ -94,6 +94,7 @@ export function buildMeshes() {
   }
 
   pushRock(meshes);
+  pushQuad(meshes);
   return meshes;
 }
 
@@ -148,3 +149,15 @@ export const MESH_SPHERE = 1;
 export const MESH_CONE = 2;
 export const MESH_CYL = 3;
 export const MESH_ROCK = 4;
+export const MESH_QUAD = 5;
+
+// A flat billboard: one unit square in the XY plane facing +Z, two triangles.
+// Tracers are drawn with it instead of a 12-sided cylinder, which cost ~10x
+// the vertices for a streak nobody ever sees from the side.
+export function pushQuad(meshes) {
+  const v = [];
+  const n = [0, 0, 1];
+  const c = [[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]];
+  for (const [x, y] of c) v.push(x, y, 0, n[0], n[1], n[2]);
+  meshes.push(v);
+}

@@ -11,7 +11,7 @@
 //   range works without z-fighting.
 
 import { compose, mat4, multiply, perspective, lookAt } from './math.js';
-import { buildMeshes, MESH_BOX, MESH_SPHERE, MESH_CONE, MESH_CYL, MESH_ROCK } from './meshes.js';
+import { buildMeshes, MESH_BOX, MESH_SPHERE, MESH_CONE, MESH_CYL, MESH_ROCK, MESH_QUAD } from './meshes.js';
 
 const SKY_VS = `#version 300 es
 in vec2 aPos;
@@ -216,7 +216,7 @@ function program(gl, vs, fs) {
 
 const STRIDE_FLOATS = 20;            // mat4 + vec4 colour
 const CHUNK_TILES = 64;              // 640 m prop chunks
-const DYN_CAP = [40000, 24000, 24000, 24000, 8000];
+const DYN_CAP = [40000, 24000, 24000, 24000, 8000, 32000];
 
 // Optics: the radial terrain grid gets more rings per octave and a finer
 // index grid the more the sight magnifies, so the ground stays smooth when
@@ -530,6 +530,39 @@ export class Renderer {
   sphere(px, py, pz, yaw, pitch, sx, sy, sz, r, g, b, a) { this.push(MESH_SPHERE, px, py, pz, yaw, pitch, sx, sy, sz, r, g, b, a); }
   cone(px, py, pz, yaw, pitch, sx, sy, sz, r, g, b, a) { this.push(MESH_CONE, px, py, pz, yaw, pitch, sx, sy, sz, r, g, b, a); }
   cyl(px, py, pz, yaw, pitch, sx, sy, sz, r, g, b, a) { this.push(MESH_CYL, px, py, pz, yaw, pitch, sx, sy, sz, r, g, b, a); }
+
+  // billboarded rectangle: `dir` is where the long edge points, `eye` is the
+  // camera, so the plate turns to face it every frame. costs two triangles,
+  // which is what a tracer streak actually needs
+  plate(px, py, pz, dx, dy, dz, ex, ey, ez, len, wid, r, g, b, a) {
+    const batch = this.dyn[MESH_QUAD];
+    if (!batch || batch.count >= batch.cap) return;
+    const vx = ex - px, vy = ey - py, vz = ez - pz;
+    // screen-right = dir x view
+    let rx = dy * vz - dz * vy;
+    let ry = dz * vx - dx * vz;
+    let rz = dx * vy - dy * vx;
+    const rl = Math.hypot(rx, ry, rz);
+    if (rl < 1e-6) {                      // looking straight down the barrel
+      rx = 0; ry = 1; rz = 0;
+    } else {
+      rx /= rl; ry /= rl; rz /= rl;
+    }
+    // face the camera: the part of the view vector square to the streak
+    const dot = dx * vx + dy * vy + dz * vz;
+    let nx = vx - dx * dot, ny = vy - dy * dot, nz = vz - dz * dot;
+    const nl = Math.hypot(nx, ny, nz) || 1;
+    nx /= nl; ny /= nl; nz /= nl;
+    const base = batch.count * STRIDE_FLOATS;
+    const d = batch.data;
+    d[base] = rx * wid; d[base + 1] = ry * wid; d[base + 2] = rz * wid; d[base + 3] = 0;
+    d[base + 4] = dx * len; d[base + 5] = dy * len; d[base + 6] = dz * len; d[base + 7] = 0;
+    d[base + 8] = nx; d[base + 9] = ny; d[base + 10] = nz; d[base + 11] = 0;
+    d[base + 12] = px; d[base + 13] = py; d[base + 14] = pz; d[base + 15] = 1;
+    d[base + 16] = r; d[base + 17] = g; d[base + 18] = b;
+    d[base + 19] = a === undefined ? 1 : a;
+    batch.count++;
+  }
 
   // ---------------------------------------------------------------- frame
   draw(cam) {

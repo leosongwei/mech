@@ -21,11 +21,11 @@
   55 m，之后指数收敛。
 - 制导点退化（导弹几乎已经在视线方向上）时保持原航向直飞，不再被强行掰向
   世界 +X 方向。
-- 增加真实感晃动：每发 SACLOS 都带一个**随机相位与频率**的侧向推力偏差
-  （`wob = 70 m/s²`、`wob_f = 0.5`），制导律每 tick 反向修正，于是弹道有几米的
-  缓慢蛇形（1 km 约 ±1 m、3 km 约 ±2.5 m），每发形状都不同；偏差始终被视线压住，
-  不会像旧制导那样发散。随机数存进新的 `proj_seed` 组件，由 `weapons.fire`
-  从世界随机源取。
+- 保留一点真实感：每发 SACLOS 都带一个**随机相位与频率**的侧向推力偏差
+  （`wob = 30 m/s²`、`wob_f = 1.5`），制导律每 tick 反向修正。手感按二代 SACLOS
+  （TOW）来——弹道基本笔直，只有 **±0.3–0.4 m、周期 1–2 s** 的细小起伏，
+  弹体不滚转，每发形状略有不同；偏差始终被视线压住，不会像旧制导那样发散。
+  随机数存进新的 `proj_seed` 组件，由 `weapons.fire` 从世界随机源取。
 - 涉及文件：`backend/server/systems/projectiles.py`、`systems/weapons.py`、
   `defs.py`、`components.py`、`doc/product/weapons.md`
 

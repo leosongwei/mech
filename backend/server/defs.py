@@ -70,7 +70,7 @@ WEAPONS = [
          desc="40 rounds, hold to fire, sighted to 1 km"),
     dict(wid=WID_SACLOS, key="saclos", name="SACLOS ATGM", kind="saclos", dmg=430, rpm=40, mag=2, reserve=8,
          reload=4.2, vel=70, spread=0.003, bias=0.0, g=0.0, thrust=190, maxvel=330, life=18.0,
-         wob=70.0, wob_f=0.5,
+         wob=30.0, wob_f=1.5,
          splash=6.0, splash_dmg=150, range=3750, cost=500, lock=0, lock_time=0, salvo=0, semi=0,
          color=(0.35, 1.0, 0.55), desc="Beam riding, keep the sight on target"),
     dict(wid=WID_TOPATTACK, key="topattack", name="TOP-ATTACK IR ATGM", kind="top", dmg=520, rpm=32, mag=2,

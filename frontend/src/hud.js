@@ -155,9 +155,13 @@ export class HUD {
       const stacked = other && Math.abs(other.screen[0] - x) < 80
         && Math.abs(other.screen[1] - y) < 24;
       const ly = y + 4 + (stacked && arm === 1 ? 14 : 0);
-      // red = the sight point is past what the fire control can zero for
+      // red = the sight point is past what the fire control can zero for; a
+      // trailing + means the round expires in the air before it gets there,
+      // so the number is as far as it flies, not an impact
       if (c.far) ctx.fillStyle = FAR_COLOR;
-      ctx.fillText(`${ARM_NAMES[arm]} ${c.hit ? Math.round(c.dist) + 'm' : '-'}`, x + r + 10, ly);
+      const read = c.hit ? `${Math.round(c.dist)}m`
+        : c.far ? `${Math.round(c.dist)}m+` : '-';
+      ctx.fillText(`${ARM_NAMES[arm]} ${read}`, x + r + 10, ly);
       ctx.restore();
     }
   }

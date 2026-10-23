@@ -1,4 +1,8 @@
-"""Reinforcements, town capture, respawns and income."""
+"""Battle mode: town capture and the reinforcement waves behind the front.
+
+Both sides count along their own copy of a lane, so "advanced" always means
+the largest index in that faction's list, never a mirrored position.
+"""
 
 from __future__ import annotations
 
@@ -6,7 +10,7 @@ import math
 
 import numpy as np
 
-from .. import defs
+from ... import defs
 
 WAVE_INTERVAL = 22.0
 CAPTURE_TIME = 9.0
@@ -17,29 +21,8 @@ UNIT_CAP = 120
 def run(world, dt):
     if world.winner >= 0:
         return
-    _income(world, dt)
-    _respawn(world, dt)
-    if world.mode == "range":
-        return                      # no waves, no towns: range targets are rebuilt elsewhere
     _capture(world, dt)
     _waves(world, dt)
-
-
-def _income(world, dt):
-    for pl in world.players.values():
-        pl.money += 4.0 * dt
-
-
-def _respawn(world, dt):
-    if world.winner >= 0:
-        return
-    for pl in world.players.values():
-        if pl.mech >= 0 and world.ecs.alive[pl.mech]:
-            continue
-        pl.respawn -= dt
-        if pl.respawn <= 0.0:
-            world.spawn_mech(pl)
-            world.emit("respawn", pid=pl.pid)
 
 
 def _capture(world, dt):
@@ -81,11 +64,7 @@ def _faction_count(world, faction) -> int:
 
 
 def _front_index(world, faction, lane):
-    """Lane index of the most advanced friendly unit on that lane (or None).
-
-    Both sides count along their own copy of the lane, which starts at their
-    own base - so "advanced" always means the largest index.
-    """
+    """Lane index of the most advanced friendly unit on that lane (or None)."""
     e = world.ecs
     best = None
     for eid in world.combat_units():
@@ -129,7 +108,6 @@ def _waves(world, dt):
     for faction in (defs.FACTION_RED, defs.FACTION_BLUE):
         if _faction_count(world, faction) > UNIT_CAP:
             continue
-        base = world.terrain.bases[faction]
         for lane in range(n_lanes):
             x, z = _reinforcement_point(world, faction, lane)
             comp = [defs.ETYPE_INF_RIFLE] * 4 + [defs.ETYPE_INF_ROCKET]
@@ -137,7 +115,7 @@ def _waves(world, dt):
                 comp.append(defs.ETYPE_APC)
             if world.wave % 4 == 0:
                 comp.append(defs.ETYPE_MECH)
-            for k, etype in enumerate(comp):
+            for etype in comp:
                 sx, sz = x, z
                 for _ in range(8):
                     ang = world.rng.random() * math.tau

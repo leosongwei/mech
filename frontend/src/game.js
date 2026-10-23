@@ -43,6 +43,8 @@ export class Game {
     this.zoom = 1;              // smoothed, drives the field of view
     this.zoomIdx = 0;           // optics step selected with the wheel
     this.range = false;         // weapon range mode (server started with --range)
+    this.lockFrac = 0.05;       // IR lock circle, as a fraction of the view width
+    this.wreckPuffs = new Map();    // per-hulk smoke timer
   }
 
   async boot() {
@@ -56,6 +58,7 @@ export class Game {
       this.buyable = init.buyable;
       this.playerFaction = init.faction;
       this.range = init.mode === 'range';
+      if (init.lock && init.lock.frac) this.lockFrac = init.lock.frac;
       this._status(this.range ? 'LOADING RANGE...' : 'LOADING 16 KM MAP...');
       this.map = await MapData.load(init.map);
       this.renderer.setMap(this.map);
@@ -278,6 +281,7 @@ export class Game {
       if (f.t <= 0) this.flashes.delete(id);
     }
     this._missileTrails();
+    this._wreckSmoke(dt);
     const cam = this._camera(own, dt);
     this.hud.resize();
     this.hud.vp = cam.viewProj;
@@ -304,6 +308,10 @@ export class Game {
       mx, mz,
       fl: this.input.fireL,
       fr: this.input.fireR,
+      // the IR lock circle is a fixed slice of the screen: the server needs
+      // the magnification and the viewport shape to match it
+      z: this.zoom,
+      a: this.glCanvas.clientWidth / Math.max(1, this.glCanvas.clientHeight),
     });
   }
 
@@ -316,6 +324,28 @@ export class Game {
       this._trailPos.set(p.id, this.particles.lastTrail || [p.x, p.y, p.z]);
     }
     if (this._trailPos.size > 200) this._trailPos.clear();
+  }
+
+  // burning hulls smoke until the server frees them
+  _wreckSmoke(dt) {
+    for (const e of this.net.entities.values()) {
+      if (e.type !== 7) continue;
+      const kind = (e.flags >> 4) & 3;
+      if (kind === 0) continue;
+      let t = (this.wreckPuffs.get(e.id) || Math.random() * 0.2) - dt;
+      if (t <= 0) {
+        t = 0.12 + Math.random() * 0.08;
+        const h = kind === 2 ? 2.2 : 1.8;
+        this.particles.smoke(e.x + (Math.random() - 0.5) * 0.8, e.y + h,
+          e.z + (Math.random() - 0.5) * 0.8, 0.9 + Math.random() * 0.5, 0.28);
+      }
+      this.wreckPuffs.set(e.id, t);
+    }
+    if (this.wreckPuffs.size > 64) {
+      for (const id of this.wreckPuffs.keys()) {
+        if (!this.net.entities.has(id)) this.wreckPuffs.delete(id);
+      }
+    }
   }
 
   _checkDamage(own) {
@@ -477,6 +507,7 @@ export class Game {
       playerFaction: faction,
       crosshairs: this.crosshairs,
       lock: this.lockInfo,
+      lockFrac: this.lockFrac,
       messages: this.messages,
       winner: m.winner !== undefined ? m.winner : this.winner,
       dead: !own,

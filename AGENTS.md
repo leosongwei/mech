@@ -8,7 +8,7 @@ RED vs BLUE.
 
 `doc/product/` is the Chinese product documentation and the source of truth for
 everything a player can see: interaction flow, every screen, and the full unit
-and weapon parameter tables (mirrors of `defs.py` / `spawner.py`).
+and weapon parameter tables (mirrors of `defs.py` and the mode systems).
 
 * **Before changing anything, read `doc/product/`** and check the change fits
   the documented rules.
@@ -17,7 +17,7 @@ and weapon parameter tables (mirrors of `defs.py` / `spawner.py`).
   at the top of `doc/product/CHANGELOG.md` in the same commit. That covers UI
   elements, copy, keybindings, unit/weapon numbers, spawn and rule timers,
   win conditions and debug UI.
-* Tuning changes in `defs.py` / `spawner.py` without the matching table update
+* Tuning changes in `defs.py` / mode systems without the matching table update
   count as unfinished work. Internal refactors with no player-visible effect do
   not need an entry.
 
@@ -38,7 +38,11 @@ backend/
     mathutil.py            # angles, lead solving, terrain helpers
     netcode.py             # init payload, binary snapshots, JSON meta
     main.py                # FastAPI: websockets, static files, 30 Hz game loop
-    systems/               # one module per mechanic, each exposes run(world, dt)
+    systems/               # mechanics shared by every mode, each exposes run(world, dt)
+    modes/                 # per-mode rule sets: map, setup, pipeline, spawn rules
+      base.py              #   Mode interface every mode implements
+      battle/              #   waves.py: town capture + reinforcement waves
+      range/               #   targets.py: passive APC targets on the 4 km map
   assets/                  # compiled client (webpack output, gitignored)
 frontend/
   webpack.config.js        # entry src/main.js -> ../backend/assets/bundle.js
@@ -64,12 +68,23 @@ frontend/
   (`ecs.query("etype", "hp")`). Never loop over 8192 slots per system; use the
   query results. Entities are created/destroyed through `ECS.create/destroy`.
 * **World** (`world.py`) owns terrain, players, the ECS and the system
-  pipeline, in this order: `player_input, ai, locking, weapons, movement,
-  projectiles, spawner`. `World.update(dt)` is the only entry point; the loop
-  in `main.py` calls it at a fixed 30 Hz (`TICK_DT = 1/30`).
+  pipeline. Shared order: `player_input`, the mode's pre-systems, `locking,
+  weapons, movement, projectiles, economy, debris`, then the mode's
+  post-systems. `World.update(dt)` is the only entry point; the loop in
+  `main.py` calls it at a fixed 30 Hz (`TICK_DT = 1/30`).
+* **Modes** (`modes/`) own everything that differs between game modes: the
+  map, what a fresh round spawns, the mode's own systems and the rules the
+  shared code asks about (`fixed_faction`, `start_money`, `rearm_anywhere`,
+  `restart_respawn`, `mech_spawn`). Adding a mode means adding a folder, never
+  another `if` in a shared system. Battle runs `ai` + `waves` (capture and
+  reinforcement waves); range runs `targets` and no AI at all.
 * **Players** are plain Python objects (`world.Player`) attached to a mech
-  entity through `owner`; `pl.mech` is -1 while dead. Respawn, income and
-  capture live in `systems/spawner.py`.
+  entity through `owner`; `pl.mech` is -1 while dead. Income and respawns live
+  in `systems/economy.py`; wreck/corpse cleanup in `systems/debris.py`.
+* **Debris** — `world.kill()` leaves an inert entity behind: a corpse
+  (`ETYPE_CORPSE`, 5 s) for infantry, a smoking hulk (`ETYPE_DEBRIS`, 10 s,
+  original model in snapshot `flags` bits 4-5) for vehicles and mechs.
+  `world.units()` excludes them; only `world.all_units()` (snapshot) sees them.
 * **Lanes** — `world.lanes` counts from the red base, `world.lanes_rev` from
   the blue base. Every per-faction lookup (spawn point, path index, "front
   line") must use the faction's own copy; mixing them mirrors positions across
@@ -190,7 +205,8 @@ when the code contains quotes.
   systems, short helper functions, comment density of the file you touch).
 * Units are metres and seconds; the map is 16 km square, the clock is 30 Hz.
 * Tuning values (damage, rpm, range, speeds, wave interval, capture time) live
-  in `defs.py` and at the top of `systems/spawner.py` — prefer changing them
-  there over editing the code paths.
+  in `defs.py` and at the top of the mode systems (`modes/battle/waves.py`,
+  `modes/range/targets.py`) — prefer changing them there over editing the code
+  paths.
 * A weapon is a real projectile: keep `kind` semantics
   (`bullet`/`rocket`/`saclos`/`top`) intact when adding or retuning one.

@@ -108,6 +108,19 @@ export class HUD {
     for (let arm = 0; arm < 2; arm++) {
       const c = s.crosshairs[arm];
       if (!c) continue;
+      const wid = s.own ? s.own.weapon[arm] : 0;
+      const wd = (s.weapons && s.weapons[wid]) || {};
+      if (wd.lock) {
+        // IR seeker: the reticle *is* the lock circle - anything inside it
+        // can be tracked, and a hull that leaves it drops the lock.  With a
+        // missile in each arm the two rings are the same size and stagger to
+        // their own side, each in its own hand's colour, so the pilot can
+        // tell which tube is tracking.
+        const both = s.own && s.weapons[s.own.weapon[0]] && s.weapons[s.own.weapon[0]].lock
+          && s.weapons[s.own.weapon[1]] && s.weapons[s.own.weapon[1]].lock;
+        this._seekerRing(s, c, arm, w, both ? (arm === 0 ? -0.4 : 0.4) : 0);
+        continue;
+      }
       const col = ARM_COLORS[arm];
       ctx.save();
       ctx.strokeStyle = col;
@@ -135,46 +148,92 @@ export class HUD {
       }
       ctx.globalAlpha = 0.85;
       ctx.font = '10px "Courier New", monospace';
-      ctx.fillText(`${ARM_NAMES[arm]} ${c.hit ? Math.round(c.dist) + 'm' : '-'}`, x + r + 10, y + 4);
+      // both reticles sit on the screen centre when the sight is level: push
+      // the right-arm label down so the two readings never overlap
+      const other = s.crosshairs[1 - arm];
+      const stacked = other && Math.abs(other.screen[0] - x) < 80
+        && Math.abs(other.screen[1] - y) < 24;
+      const ly = y + 4 + (stacked && arm === 1 ? 14 : 0);
+      ctx.fillText(`${ARM_NAMES[arm]} ${c.hit ? Math.round(c.dist) + 'm' : '-'}`, x + r + 10, ly);
       ctx.restore();
     }
   }
 
+  // 5% of the view width across: the seeker's field of view.  The ring keeps
+  // its arm colour (cyan left, amber right) in every state - a lock is shown
+  // by the thicker rim, the diamond and the full progress arc.  `shift` slides
+  // the ring sideways, in radii, when both arms carry a seeker.
+  _seekerRing(s, c, arm, w, shift) {
+    const ctx = this.ctx;
+    const r = 0.5 * (s.lockFrac || 0.05) * w;
+    const x = c.screen[0] + (shift || 0) * r;
+    const y = c.screen[1];
+    const col = ARM_COLORS[arm];
+    const L = s.lock;
+    const p = L ? Math.max(0, Math.min(1, L.progress)) : 0;
+    const locked = p >= 1;
+    const held = L && p > 0;
+    ctx.save();
+    // idle rim
+    ctx.globalAlpha = c.disabled ? 0.2 : 0.55;
+    ctx.strokeStyle = col;
+    ctx.lineWidth = 1.3;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, 6.284);
+    ctx.stroke();
+    if (held) {
+      // acquisition progress runs round the rim, in the arm's own colour
+      ctx.globalAlpha = c.disabled ? 0.2 : 1;
+      ctx.strokeStyle = col;
+      ctx.lineWidth = locked ? 3.2 : 2.4;
+      ctx.beginPath();
+      ctx.arc(x, y, r, -Math.PI / 2, -Math.PI / 2 + p * 6.284);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = c.disabled ? 0.2 : 0.95;
+    ctx.fillStyle = col;
+    ctx.beginPath();
+    ctx.arc(x, y, 1.5, 0, 6.284);
+    ctx.fill();
+    if (locked) {
+      ctx.beginPath();
+      ctx.moveTo(x, y - 6); ctx.lineTo(x + 6, y); ctx.lineTo(x, y + 6); ctx.lineTo(x - 6, y);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.globalAlpha = c.disabled ? 0.25 : 0.85;
+    ctx.fillStyle = col;
+    ctx.font = '10px "Courier New", monospace';
+    const label = L && L.dist ? `${Math.round(L.dist)}m` : '-';
+    ctx.fillText(`${ARM_NAMES[arm]} ${label}`, x + r + 8, y + (arm === 0 ? -4 : 16));
+    ctx.restore();
+  }
+
+  // the tracked hull: a small marker on the target itself, in the colour of
+  // the seeker that is tracking it, so the pilot can tell which vehicle was
+  // picked from inside the circle
   _lock(s) {
     const L = s.lock;
     if (!L || !L.screen) return;
     const ctx = this.ctx;
     const [x, y] = L.screen;
     const p = Math.max(0, Math.min(1, L.progress));
-    const size = 120 - 78 * p;
     const locked = p >= 1;
+    let arm = 0;
+    if (s.own && s.weapons) {
+      const w0 = s.weapons[s.own.weapon[0]] || {};
+      const w1 = s.weapons[s.own.weapon[1]] || {};
+      if (w1.lock && !w0.lock) arm = 1;
+    }
     ctx.save();
-    ctx.strokeStyle = locked ? '#ff3d6e' : '#e8f4ff';
-    ctx.lineWidth = locked ? 2 : 1.4;
-    ctx.globalAlpha = locked ? 1 : 0.85;
-    const half = size * 0.5;
-    const arm = 16;
+    ctx.strokeStyle = ARM_COLORS[arm];
+    ctx.lineWidth = locked ? 2 : 1.3;
+    ctx.globalAlpha = 0.9;
+    const m = locked ? 9 : 7;
     ctx.beginPath();
-    for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
-      const cx = x + sx * half, cy = y + sy * half;
-      ctx.moveTo(cx - sx * arm, cy);
-      ctx.lineTo(cx, cy);
-      ctx.lineTo(cx, cy - sy * arm);
-    }
+    ctx.moveTo(x, y - m); ctx.lineTo(x + m, y); ctx.lineTo(x, y + m); ctx.lineTo(x - m, y);
+    ctx.closePath();
     ctx.stroke();
-    if (locked) {
-      ctx.beginPath();
-      ctx.moveTo(x, y - 7); ctx.lineTo(x + 7, y); ctx.lineTo(x, y + 7); ctx.lineTo(x - 7, y);
-      ctx.closePath();
-      ctx.fillStyle = '#ff3d6e';
-      ctx.fill();
-      ctx.font = 'bold 12px "Courier New", monospace';
-      ctx.fillText('LOCK', x + half + 8, y - half + 10);
-    }
-    ctx.font = '10px "Courier New", monospace';
-    ctx.globalAlpha = 0.8;
-    ctx.fillStyle = locked ? '#ff8fa8' : '#e8f4ff';
-    ctx.fillText(`${Math.round(L.dist)}m  ${(p * 100) | 0}%`, x + half + 8, y + half);
     ctx.restore();
   }
 
@@ -254,7 +313,7 @@ export class HUD {
     ctx.fillText(`${mm}:${ss < 10 ? '0' : ''}${ss}`, w / 2, 42);
     if (s.range) {
       let targets = 0;
-      for (const e of s.entities.values()) if (e.faction === 1) targets++;
+      for (const e of s.entities.values()) if (e.type === 3) targets++;
       ctx.fillStyle = 'rgba(200,230,210,0.55)';
       ctx.fillText(`TARGETS ${targets}`, w / 2, 58);
     }

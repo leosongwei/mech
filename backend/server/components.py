@@ -51,6 +51,10 @@ def register(ecs):
     ecs.register("home_x", np.float32)               # wandering civilians
     ecs.register("home_z", np.float32)
 
+    # ---- debris ---------------------------------------------------------
+    ecs.register("wreck_t", np.float32)              # seconds left before it fades
+    ecs.register("wreck_kind", np.uint8)             # 0 infantry 1 apc 2 mech
+
     # ---- projectile -----------------------------------------------------
     ecs.register("proj_kind", np.uint8)              # 0 bullet 1 rocket 2 saclos 3 top
     ecs.register("proj_wid", np.uint8)
@@ -65,6 +69,9 @@ UNIT_COMPS = ["pos", "vel", "yaw", "pitch", "leg_yaw", "turret_yaw", "etype", "f
               "flags"]
 
 CIV_COMPS = UNIT_COMPS + ["home_x", "home_z"]
+
+DEBRIS_COMPS = ["pos", "vel", "yaw", "pitch", "leg_yaw", "turret_yaw", "etype", "faction",
+                "owner", "hp", "hpmax", "flags", "wreck_t", "wreck_kind"]
 
 PROJ_COMPS = ["pos", "vel", "faction", "proj_kind", "proj_wid", "proj_life", "proj_src",
               "proj_age", "target"]

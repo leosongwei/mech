@@ -58,12 +58,13 @@ def static_payload(world) -> dict:
         buyable=defs.BUYABLE,
         debug=os.environ.get("MECH_DEBUG") == "1",
         mode=world.mode,
+        lock=dict(frac=defs.LOCK_FRAC, fov=defs.BASE_FOV),
     )
 
 
 def snapshot_bytes(world) -> bytes:
     e = world.ecs
-    uids = world.units()
+    uids = world.all_units()
     pids = world.projectiles()
     arr = np.zeros(len(uids), UNIT_DTYPE)
     if len(uids):
@@ -78,6 +79,8 @@ def snapshot_bytes(world) -> bytes:
         flags |= ((trig >> 1) & 1).astype(np.uint8) << 1
         flags |= rel[:, 0].astype(np.uint8) << 2
         flags |= rel[:, 1].astype(np.uint8) << 3
+        # bits 4-5: what a wreck used to be (0 infantry, 1 apc, 2 mech)
+        flags |= (e["wreck_kind"][uids] & 3).astype(np.uint8) << 4
         arr["id"] = uids
         arr["type"] = e["etype"][uids]
         arr["faction"] = e["faction"][uids]

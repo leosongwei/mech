@@ -8,6 +8,12 @@ const METAL_D = [0.28, 0.30, 0.33];
 const METAL_L = [0.58, 0.60, 0.63];
 const GLASS = [0.10, 0.19, 0.25];
 const DEAD = [0.10, 0.10, 0.10];
+const HULK = [0.13, 0.12, 0.11];    // burnt metal: wrecks and corpses
+const SOOT = [0.09, 0.09, 0.09];
+
+function dim(c, k) {
+  return [c[0] * k, c[1] * k, c[2] * k];
+}
 
 export const FACTION_COLORS = {
   0: [0.84, 0.22, 0.16],
@@ -40,10 +46,41 @@ export function drawUnits(R, entities, projectiles, ownMechId, defs, flashes) {
       case 4: mech(R, e, defs, flashes, e.id === ownMechId); break;
       case 5: base(R, e); break;
       case 6: civilian(R, e); break;
+      case 7: wreck(R, e); break;
+      case 8: corpse(R, e); break;
       default: break;
     }
   }
   for (const p of projectiles) projectile(R, p, defs);
+}
+
+// A hulk: the same silhouette as the living machine, burnt down and dark.
+// The server encodes what it used to be in flags bits 4-5.
+function wreck(R, e) {
+  const kind = (e.flags >> 4) & 3;
+  const yaw = e.yaw;
+  const fac = dim(facColor(e), 0.32);
+  if (kind === 1) {                       // APC
+    at(R, 'box', e, yaw, 0.06, 0, 1.05, 0, 3.35, 0.9, 3.35, HULK);
+    at(R, 'box', e, yaw, 0.06, 0, 0.45, 0, 3.1, 0.4, 3.1, SOOT);
+    at(R, 'box', e, yaw, 0.06, 0, 1.7, -0.55, 2.4, 0.5, 2.4, fac);
+  } else {                                // mech, collapsed on its legs
+    for (const side of [-1, 1]) {
+      at(R, 'box', e, e.leg, 0, side * 1.05, 0.45, 0.3, 1.5, 0.7, 2.6, SOOT);
+    }
+    at(R, 'box', e, yaw, 0.18, 0, 1.1, 0, 2.6, 1.3, 2.9, HULK);
+    at(R, 'box', e, yaw, 0.18, 0, 1.95, 0.4, 2.0, 0.5, 2.2, fac);
+    at(R, 'sphere', e, yaw, 0, 0, 2.1, 0.75, 1.2, 0.7, 1.0, SOOT);
+  }
+}
+
+// Infantry toppled over: the body lies along its last facing.
+function corpse(R, e) {
+  const fac = dim(facColor(e), 0.45);
+  const yaw = e.yaw;
+  at(R, 'cone', e, yaw, FORWARD, 0, 0.24, 0, 0.6, 1.55, 0.6, fac);
+  at(R, 'sphere', e, yaw, 0, 0.95, 0.26, 0, 0.46, 0.4, 0.46, [0.32, 0.27, 0.22]);
+  at(R, 'cyl', e, yaw, FORWARD, -0.4, 0.14, 0.1, 0.1, 1.1, 0.1, SOOT);
 }
 
 // sphere head, cone torso, cylinder weapon

@@ -58,8 +58,6 @@ def run(world, dt):
         if t == defs.ETYPE_CIV:
             _civ(world, eid, civ_units, foe_arr, dt)
             continue
-        if world.mode == "range":
-            continue                     # range targets are driven by range_targets.py
 
         fac = int(faction[eid])
         d = defs.UNIT_DEFS[t]

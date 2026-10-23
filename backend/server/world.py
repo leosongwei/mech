@@ -7,8 +7,7 @@ import random
 
 import numpy as np
 
-from . import components, defs, mathutil as mu
-from . import terrain as terrain_mod
+from . import components, defs, mathutil as mu, modes
 from .ecs import ECS
 
 
@@ -31,16 +30,16 @@ class Player:
         self.loadout = [defs.WID_AC30, defs.WID_ROCKET]
         self.last_seq = 0
         self.score = 0
+        self.zoom = 1.0         # optics magnification, mirrored for the IR seeker
+        self.aspect = 16.0 / 9.0
         self.god = False        # debug: ignore all damage to this pilot
 
 
 class World:
     def __init__(self, seed: int = 11, mode: str = "battle"):
-        self.mode = mode
-        if mode == "range":
-            self.terrain = terrain_mod.generate_range(seed)
-        else:
-            self.terrain = terrain_mod.generate(seed)
+        self.mode_mod = modes.get(mode)
+        self.mode = self.mode_mod.name
+        self.terrain = self.mode_mod.terrain(seed)
         self.ecs = ECS(8192)
         components.register(self.ecs)
         self.rng = random.Random(2024)
@@ -58,62 +57,20 @@ class World:
         self.lanes = self.terrain.lanes
         self.lanes_rev = [list(reversed(l)) for l in self.terrain.lanes]
         self.base_entity = {}
-        self.range_posts: list[dict] = []
-        if mode == "range":
-            self.spawn_range_targets()
-        else:
-            self.spawn_bases()
-            self.spawn_civilians()
-            self.assign_home_towns()
+        self.targets = None
+        self.mode_mod.setup(self)
         self._build_pipeline()
 
     # ------------------------------------------------------------------
     # setup
     # ------------------------------------------------------------------
     def _build_pipeline(self):
-        from .systems import (ai, locking, movement, player_input, projectiles, range_targets,
-                             spawner, weapons)
-        self.systems = [player_input.run, ai.run, range_targets.run, locking.run, weapons.run,
-                        movement.run, projectiles.run, spawner.run]
-
-    def spawn_range_targets(self):
-        """Range mode: one APC per post, driven by systems/range_targets.py.
-
-        Static posts hold their ground, patrols drive back and forth; both are
-        passive so every round can be judged without return fire.
-        """
-        self.range_posts = [
-            dict(post, eid=-1, t=0.0, dir=1.0) for post in terrain_mod.RANGE_POSTS
-        ]
-
-    def spawn_bases(self):
-        for faction, (bx, bz) in self.terrain.bases.items():
-            eid = self.spawn_unit(defs.ETYPE_BASE, faction, bx, bz)
-            self.base_entity[faction] = eid
-            # decorative guard turret mechs stay at home
-            for k in range(2):
-                ang = self.rng.random() * math.tau
-                self.spawn_unit(defs.ETYPE_MECH, faction,
-                                bx + math.cos(ang) * 55.0, bz + math.sin(ang) * 55.0,
-                                hp_scale=1.0, lane=0)
-
-    def assign_home_towns(self):
-        """Both sides start holding their closest towns: staging areas for
-        reinforcements and forward respawn points."""
-        for faction in (defs.FACTION_RED, defs.FACTION_BLUE):
-            base = self.terrain.bases[faction]
-            nearest = sorted(self.towns, key=lambda t: math.dist((t["x"], t["z"]), base))
-            for town in nearest[:3]:
-                town["owner"] = faction
-                town["progress"] = 0.0
-
-    def spawn_civilians(self):
-        for town in self.towns:
-            for _ in range(self.rng.randint(1, 3)):
-                ang = self.rng.random() * math.tau
-                r = self.rng.uniform(15.0, 70.0)
-                self.spawn_unit(defs.ETYPE_CIV, defs.FACTION_CIV,
-                                town["x"] + math.cos(ang) * r, town["z"] + math.sin(ang) * r)
+        from .systems import debris, economy, locking, movement, player_input, projectiles, weapons
+        self.systems = [player_input.run]
+        self.systems += self.mode_mod.pre_systems()
+        self.systems += [locking.run, weapons.run, movement.run, projectiles.run,
+                         economy.run, debris.run]
+        self.systems += self.mode_mod.post_systems()
 
     # ------------------------------------------------------------------
     # entity factories
@@ -155,14 +112,13 @@ class World:
         return eid
 
     def spawn_mech(self, player: Player):
-        base = self.terrain.bases[player.faction]
-        if self.mode == "range":
-            # always the blue cross at the south edge, looking at the hill
-            x, z = terrain_mod.RANGE_SPAWN
-            yaw = math.atan2(terrain_mod.RANGE_HILL[1] - z, terrain_mod.RANGE_HILL[0] - x)
-        else:
+        spawn = self.mode_mod.mech_spawn(self, player)
+        if spawn is None:
+            base = self.terrain.bases[player.faction]
             x, z = self._spawn_point(player.faction, base)
             yaw = self.rng.random() * math.tau
+        else:
+            x, z, yaw = spawn
         eid = self.spawn_unit(defs.ETYPE_MECH, player.faction, x, z, owner=player.pid,
                               weapons=player.loadout)
         self.ecs["yaw"][eid] = yaw
@@ -183,11 +139,9 @@ class World:
         pid = self.next_pid
         self.next_pid += 1
         pl = Player(pid, name or f"PILOT-{pid}", faction)
-        if self.mode == "range":
-            # tuning sandbox: every weapon is affordable, and the side is fixed
-            # so the APC targets always count as hostile
-            pl.faction = defs.FACTION_RED
-            pl.money = 99999
+        if self.mode_mod.fixed_faction is not None:
+            pl.faction = self.mode_mod.fixed_faction
+        pl.money = self.mode_mod.start_money
         self.players[pid] = pl
         self.spawn_mech(pl)
         return pl
@@ -203,8 +157,15 @@ class World:
     # ------------------------------------------------------------------
     # queries
     # ------------------------------------------------------------------
-    def units(self) -> np.ndarray:
+    def all_units(self) -> np.ndarray:
+        """Every entity the client should see, including wrecks and corpses."""
         return self.ecs.query("etype", "hp")
+
+    def units(self) -> np.ndarray:
+        """Live units: debris is inert, so nothing may target or damage it."""
+        ids = self.all_units()
+        t = self.ecs["etype"][ids]
+        return ids[(t != defs.ETYPE_DEBRIS) & (t != defs.ETYPE_CORPSE)]
 
     def combat_units(self) -> np.ndarray:
         ids = self.units()
@@ -282,8 +243,36 @@ class World:
             self.end_timer = 40.0
             self.emit("gameover", winner=winner)
 
+        self._leave_debris(etype, faction, pos, float(e["yaw"][eid]))
         e.destroy(eid)
         self.last_hit.pop(eid, None)
+
+    def _leave_debris(self, etype: int, faction: int, pos, yaw: float):
+        """Corpse for infantry, smoking hulk for vehicles - purely visual."""
+        if etype in (defs.ETYPE_INF_RIFLE, defs.ETYPE_INF_ROCKET, defs.ETYPE_CIV):
+            kind, life = 0, defs.CORPSE_TIME
+            dtype = defs.ETYPE_CORPSE
+        elif etype == defs.ETYPE_APC:
+            kind, life = 1, defs.WRECK_TIME
+            dtype = defs.ETYPE_DEBRIS
+        elif etype == defs.ETYPE_MECH:
+            kind, life = 2, defs.WRECK_TIME
+            dtype = defs.ETYPE_DEBRIS
+        else:
+            return
+        e = self.ecs
+        eid = e.create()
+        for c in components.DEBRIS_COMPS:
+            e.add_comp(eid, c)
+        e["pos"][eid] = (float(pos[0]), self.terrain.height_at(float(pos[0]), float(pos[2])),
+                         float(pos[2]))
+        e["yaw"][eid] = yaw
+        e["leg_yaw"][eid] = yaw
+        e["turret_yaw"][eid] = yaw
+        e["etype"][eid] = dtype
+        e["faction"][eid] = faction
+        e["wreck_t"][eid] = life
+        e["wreck_kind"][eid] = kind
 
     def emit(self, kind: str, **data):
         # json.dumps cannot handle numpy scalars, so every payload is
@@ -394,21 +383,10 @@ class World:
         self.events.clear()
         self.winner = -1
         self.end_timer = 0.0
-        self.wave = 0
-        self.wave_timer = 8.0
-        for town in self.towns:
-            town["owner"] = -1
-            town["progress"] = 0.0
-        self.base_entity = {}
-        if self.mode == "range":
-            self.spawn_range_targets()
-        else:
-            self.spawn_bases()
-            self.spawn_civilians()
-            self.assign_home_towns()
+        self.mode_mod.setup(self)
         for pl in self.players.values():
             pl.mech = -1
-            pl.respawn = 1.0 if self.mode == "range" else 3.0
+            pl.respawn = self.mode_mod.restart_respawn
             pl.lock_target = -1
             pl.lock_progress = 0.0
         self.emit("newmatch")

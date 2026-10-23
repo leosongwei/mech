@@ -1,19 +1,39 @@
 """Infrared lock-on: the server owns the lock state, the client mirrors it.
 
-A player keeps the sight on a target for ``lock_time`` seconds; the progress is
-streamed back with the snapshot so the HUD can play the interrupted / steady
-tone and draw the lock box.  A little hysteresis keeps the current target once
-it is being tracked, so two nearby vehicles cannot make the tone stutter.
+The seeker only sees what sits inside the reticle circle: a target has to
+stay within 5% of the view width (``defs.LOCK_FRAC``) for ``lock_time``
+seconds, and the lock drops the moment it leaves the circle - there is no
+hysteresis to hold a strafing hull.  Infantry is too small and too cold for
+the seeker: only vehicles and mechs can be locked.
+
+The circle is a fixed fraction of the screen, so the angular cone shrinks as
+the optics zoom in; the pilot sends the zoom and the viewport aspect with
+every input message and the server keeps both numbers the same as the client.
 """
 
 from __future__ import annotations
+
+import math
 
 import numpy as np
 
 from .. import defs, mathutil as mu
 
-CONE = 0.04            # radians off the sight line (~2.3 degrees)
-KEEP_CONE = 0.10       # tracked target may drift this far before losing lock
+MIN_ZOOM = 1.0
+MAX_ZOOM = 20.0
+MIN_ASPECT = 0.4
+MAX_ASPECT = 4.0
+MIN_DIST = 20.0
+
+LOCKABLE = (defs.ETYPE_APC, defs.ETYPE_MECH)
+
+
+def cone_of(pl) -> float:
+    """Angular radius of the reticle circle, in radians."""
+    zoom = min(max(float(getattr(pl, "zoom", 1.0)), MIN_ZOOM), MAX_ZOOM)
+    aspect = min(max(float(getattr(pl, "aspect", 16.0 / 9.0)), MIN_ASPECT), MAX_ASPECT)
+    fov = defs.BASE_FOV / zoom
+    return math.atan(math.tan(fov * 0.5) * defs.LOCK_FRAC * aspect)
 
 
 def run(world, dt):
@@ -23,6 +43,7 @@ def run(world, dt):
     pitch = e["pitch"]
     faction = e["faction"]
     etype = e["etype"]
+    hp = e["hp"]
     ids = world.combat_units()
 
     for pl in world.players.values():
@@ -32,7 +53,7 @@ def run(world, dt):
         wd = None
         for arm in (0, 1):
             w = int(e["weapon"][eid, arm])
-            if w and defs.WEAPONS[w]["lock"] and e["hp"][eid, defs.MOD_LEFT if arm == 0 else defs.MOD_RIGHT] > 0:
+            if w and defs.WEAPONS[w]["lock"] and hp[eid, defs.MOD_LEFT if arm == 0 else defs.MOD_RIGHT] > 0:
                 wd = defs.WEAPONS[w]
         if wd is None:
             pl.lock_target = -1
@@ -41,6 +62,7 @@ def run(world, dt):
 
         origin = (float(pos[eid, 0]), float(pos[eid, 1]) + defs.MECH_EYE, float(pos[eid, 2]))
         d = np.asarray(mu.dir_from(float(yaw[eid]), float(pitch[eid])), np.float32)
+        cone = cone_of(pl)
 
         def angle_to(tid):
             tp = pos[tid]
@@ -52,31 +74,33 @@ def run(world, dt):
 
         tracked = pl.lock_target
         if tracked >= 0:
-            if (not e.alive[tracked]) or int(faction[tracked]) == int(faction[eid]):
+            # the hull left the circle (or died / turned friendly): drop it
+            if (not e.alive[tracked]) or int(faction[tracked]) == int(faction[eid]) \
+                    or int(etype[tracked]) not in LOCKABLE:
                 tracked = -1
-                pl.lock_target = -1
-                pl.lock_progress = 0.0
             else:
                 ang, dist = angle_to(tracked)
-                if ang > KEEP_CONE or dist > wd["range"]:
+                if ang > cone or dist > wd["range"]:
                     tracked = -1
-                    pl.lock_target = -1
-                    pl.lock_progress = 0.0
+            if tracked < 0:
+                pl.lock_target = -1
+                pl.lock_progress = 0.0
 
         if tracked < 0:
             best = -1
+            best_ang = cone
             if ids.size:
                 v = (pos[ids] - np.asarray(origin, np.float32)).astype(np.float32)
                 dist = np.linalg.norm(v, axis=1)
-                ok = (dist > 20.0) & (dist < wd["range"]) & (faction[ids] != int(faction[eid]))
                 et = etype[ids]
-                ok &= (et != defs.ETYPE_CIV) & (et != defs.ETYPE_BASE)
+                ok = (dist > MIN_DIST) & (dist < wd["range"]) & (faction[ids] != int(faction[eid]))
+                ok &= (et == defs.ETYPE_APC) | (et == defs.ETYPE_MECH)
                 if ok.any():
                     idx = np.nonzero(ok)[0]
                     vv = v[idx] / dist[idx, None]
                     ang = np.arccos(np.clip(vv @ d, -1.0, 1.0))
                     j = int(np.argmin(ang))
-                    if ang[j] < CONE:
+                    if ang[j] < best_ang:
                         best = int(ids[idx[j]])
             if best >= 0:
                 pl.lock_target = best

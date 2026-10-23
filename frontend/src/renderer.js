@@ -56,6 +56,10 @@ out float vViewZ;
 out float vDist;
 
 float texH(vec2 p){
+  // clamp the sample point, not just the texel index: the outer LOD rings
+  // reach well past the map edge, and an unbounded fraction here extrapolates
+  // the edge texels into kilometre-high spikes
+  p = clamp(p, vec2(0.0), vec2(uMapSize) - 1.001);
   ivec2 i = ivec2(floor(p));
   i = clamp(i, ivec2(0), ivec2(uMapSize) - 2);
   vec2 f = p - vec2(i);

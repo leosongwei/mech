@@ -26,7 +26,8 @@ ETYPE_APC = 3
 ETYPE_MECH = 4
 ETYPE_BASE = 5
 ETYPE_CIV = 6
-ETYPE_DEBRIS = 7          # inert wreck, purely visual
+ETYPE_DEBRIS = 7          # inert wreck (vehicle / mech hulk), purely visual
+ETYPE_CORPSE = 8          # fallen infantry, purely visual
 
 # mech module indices (health array slots)
 MOD_CHASSIS = 0
@@ -62,11 +63,11 @@ WEAPONS = [
          reserve=720, reload=3.4, vel=890, spread=0.0045, bias=0.0, g=9.81, thrust=0, maxvel=0,
          life=3.0, splash=0, splash_dmg=0, range=1800, cost=180, lock=0, lock_time=0, salvo=0,
          semi=0, color=(1.0, 0.68, 0.20), desc="1.8 km suppressive fire"),
-    dict(wid=WID_ROCKET, key="rocket", name="UNGUIDED ROCKET POD", kind="rocket", dmg=155, rpm=90, mag=20,
-         reserve=0, reload=0.0, vel=80, spread=0.0025, bias=0.0431, g=9.81, thrust=420, maxvel=520,
+    dict(wid=WID_ROCKET, key="rocket", name="UNGUIDED ROCKET POD", kind="rocket", dmg=155, rpm=200, mag=40,
+         reserve=0, reload=0.0, vel=80, spread=0.00175, bias=0.0431, g=9.81, thrust=420, maxvel=520,
          life=9.0, splash=8.0, splash_dmg=95, range=4000, cost=350, lock=0, lock_time=0, salvo=1,
-         semi=1, color=(1.0, 0.45, 0.15),
-         desc="Single shot, sighted to 1 km, drops past that"),
+         semi=0, color=(1.0, 0.45, 0.15),
+         desc="40 rounds, hold to fire, sighted to 1 km"),
     dict(wid=WID_SACLOS, key="saclos", name="SACLOS ATGM", kind="saclos", dmg=430, rpm=40, mag=2, reserve=8,
          reload=4.2, vel=70, spread=0.003, bias=0.0, g=0.0, thrust=190, maxvel=330, life=18.0,
          splash=6.0, splash_dmg=150, range=3750, cost=500, lock=0, lock_time=0, salvo=0, semi=0,
@@ -106,8 +107,10 @@ UNIT_DEFS = {
                      weapons=(WID_NONE, WID_NONE), ai_range=0, sight=0, reward=2000, splat=8.0),
     ETYPE_CIV: dict(name="CIVILIAN", hp=(60, 0, 0, 0), speed=4.0, radius=0.5, height=1.7,
                     weapons=(WID_NONE, WID_NONE), ai_range=0, sight=60, reward=0, splat=1.0),
-    ETYPE_DEBRIS: dict(name="WRECK", hp=(10 ** 6, 0, 0, 0), speed=0.0, radius=2.0, height=3.0,
+    ETYPE_DEBRIS: dict(name="WRECK", hp=(0, 0, 0, 0), speed=0.0, radius=2.0, height=2.6,
                        weapons=(WID_NONE, WID_NONE), ai_range=0, sight=0, reward=0, splat=2.0),
+    ETYPE_CORPSE: dict(name="CORPSE", hp=(0, 0, 0, 0), speed=0.0, radius=0.5, height=0.4,
+                       weapons=(WID_NONE, WID_NONE), ai_range=0, sight=0, reward=0, splat=1.0),
 }
 
 # mech geometry (metres, relative to the ground point under the entity)
@@ -123,3 +126,9 @@ MECH_ARM_MUZZLE = {MOD_LEFT: (-1.95, 4.30, 0.9), MOD_RIGHT: (1.95, 4.30, 0.9)}
 
 RESPAWN_TIME = 8.0
 BUILD_TIME = 5.0
+CORPSE_TIME = 5.0          # fallen infantry lingers this long
+WRECK_TIME = 10.0          # burning hulls linger this long
+
+# optics / IR seeker
+BASE_FOV = 1.05            # vertical field of view at 1x, radians
+LOCK_FRAC = 0.05           # lock circle diameter as a fraction of the view width

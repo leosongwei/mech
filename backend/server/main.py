@@ -28,7 +28,8 @@ def _json_safe(obj):
 ASSETS = Path(__file__).resolve().parent.parent / "assets"
 
 app = FastAPI(title="MECH")
-world = World(mode="range" if os.environ.get("MECH_RANGE") == "1" else "battle")
+MODE = os.environ.get("MECH_MODE") or ("range" if os.environ.get("MECH_RANGE") == "1" else "battle")
+world = World(mode=MODE)
 
 class Client:
     """Per connection outbound queue.
@@ -130,8 +131,8 @@ app.mount("/static", StaticFiles(directory=str(ASSETS)), name="static")
 
 
 def _at_base(world: World, pl) -> bool:
-    if world.mode == "range":
-        return True                 # tuning sandbox: rearm anywhere
+    if world.mode_mod.rearm_anywhere:
+        return True                 # range mode: rearm anywhere
     if pl.mech < 0 or not world.ecs.alive[pl.mech]:
         return False
     p = world.ecs["pos"][pl.mech]
@@ -165,14 +166,17 @@ async def ws_endpoint(ws: WebSocket):
                 pl.in_pitch = float(msg.get("pitch", 0.0))
                 pl.in_move = (float(msg.get("mx", 0.0)), float(msg.get("mz", 0.0)))
                 pl.fire = (bool(msg.get("fl", False)), bool(msg.get("fr", False)))
+                # optics + viewport aspect drive the IR lock circle
+                pl.zoom = max(1.0, min(20.0, float(msg.get("z", pl.zoom))))
+                pl.aspect = max(0.4, min(4.0, float(msg.get("a", pl.aspect))))
                 pl.name = str(msg.get("name", pl.name))[:16]
             elif t == "join":
                 # lobby: callsign, side and initial weapon loadout
                 fac = int(msg.get("faction", -1))
                 if fac in (defs.FACTION_RED, defs.FACTION_BLUE):
                     pl.faction = fac
-                if world.mode == "range":
-                    pl.faction = defs.FACTION_RED
+                if world.mode_mod.fixed_faction is not None:
+                    pl.faction = world.mode_mod.fixed_faction
                 name = str(msg.get("name", pl.name)).strip()
                 if name:
                     pl.name = name[:16]

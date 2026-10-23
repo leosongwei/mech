@@ -129,6 +129,25 @@ export class Particles {
     });
   }
 
+  // a lazy puff off a burning wreck
+  smoke(x, y, z, size, alpha) {
+    this._add({
+      x, y, z,
+      vx: (Math.random() - 0.5) * 0.35,
+      vy: 1.1 + Math.random() * 0.7,
+      vz: (Math.random() - 0.5) * 0.35,
+      life: 2.0 + Math.random() * 0.9,
+      max: 1,
+      size: size * (0.45 + Math.random() * 0.25),
+      grow: size * (0.75 + Math.random() * 0.35),
+      drag: 1.1,
+      col: SMOKE,
+      alpha: alpha === undefined ? 0.3 : alpha,
+      grav: -0.5,
+      mesh: 'sphere',
+    });
+  }
+
   update(dt) {
     const out = [];
     for (const p of this.list) {

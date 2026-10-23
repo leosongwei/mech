@@ -170,7 +170,7 @@ class World:
     def combat_units(self) -> np.ndarray:
         ids = self.units()
         t = self.ecs["etype"][ids]
-        keep = (t != defs.ETYPE_BASE) & (t != defs.ETYPE_CIV)
+        keep = (t != defs.ETYPE_BASE) & (t != defs.ETYPE_CIV) & (t != defs.ETYPE_BUNKER)
         return ids[keep]
 
     def projectiles(self) -> np.ndarray:
@@ -183,6 +183,8 @@ class World:
         e = self.ecs
         if not e.alive[eid] or amount <= 0:
             return
+        if int(e["etype"][eid]) == defs.ETYPE_BUNKER:
+            return                      # concrete: rounds hit it, nothing breaks
         pilot = self.players.get(int(e["owner"][eid]))
         if pilot is not None and pilot.god:
             return

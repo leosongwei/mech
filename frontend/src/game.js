@@ -1,7 +1,7 @@
 // Glue: connection, camera, aiming prediction, render loop and HUD state.
 
 import { Net } from './net.js';
-import { MapData, predictImpact } from './map.js';
+import { MapData, predictImpact, unitSpheres, zeroPitch } from './map.js';
 import { Input } from './input.js';
 import { GameAudio } from './audio.js';
 import { Renderer, makeCamera } from './renderer.js';
@@ -401,9 +401,13 @@ export class Game {
     const dir = dirFrom(yaw, pitch);
     const units = [];
     for (const e of this.net.entities.values()) {
-      if (e.id === own.id) continue;
-      const r = e.type === 5 ? 8 : e.type === 4 ? 2.6 : e.type === 3 ? 2.4 : 0.8;
-      units.push({ x: e.x, y: e.y + (e.type === 4 ? 3 : 1), z: e.z, r });
+      // wrecks and corpses are inert: rounds fly straight through them, so the
+      // sight ray and the impact prediction must ignore them too
+      if (e.id === own.id || e.type === 7 || e.type === 8) continue;
+      // per-sphere, exactly like the server's hit tests
+      for (const s of unitSpheres(e.type, e.x, e.y, e.z, e.yaw, this.init.mech.hitspheres)) {
+        units.push({ id: e.id, faction: e.faction, x: s.x, y: s.y, z: s.z, r: s.r });
+      }
     }
     for (let arm = 0; arm < 2; arm++) {
       const wid = own.weapon[arm];
@@ -415,7 +419,15 @@ export class Game {
       let hit = false;
       let dist = 0;
       if (wd && (wd.kind === 'bullet' || wd.kind === 'rocket')) {
-        point = predictImpact(this.map, wd, m[0], m[1], m[2], dir, units, {});
+        // fire control: the server zeroes the shot against whatever the muzzle
+        // points at, so predict with the elevation it is going to use.  bias is
+        // already inside the solution, hence the copy with bias 0
+        const z = this.init.zero || { margin: 1.2, max_elev: 1.05 };
+        const theta = zeroPitch(this.map, wd, yaw, pitch, m[0], m[1], m[2], units, own.id,
+          z.margin, z.max_elev, own.faction);
+        const shot = theta === null ? wd : { ...wd, bias: 0 };
+        point = predictImpact(this.map, shot, m[0], m[1], m[2],
+          theta === null ? dir : dirFrom(yaw, theta), units, {}, own.faction);
         hit = point.hit;
         dist = point.dist;
       } else if (wd) {

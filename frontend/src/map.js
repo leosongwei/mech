@@ -1,6 +1,8 @@
 // Client copy of the terrain + the same ballistics the server runs, so the
 // reticle impact marker agrees with the simulation.
 
+import { dirFrom } from './math.js';
+
 const TILE_GRASS = 0, TILE_ROAD = 1, TILE_BUILDING = 2, TILE_TREE = 3, TILE_ROCK = 4, TILE_BASE = 5, TILE_SOLID = 6;
 
 function b64ToBytes(b64) {
@@ -85,7 +87,7 @@ export class MapData {
 }
 
 // Ballistic prediction for direct fire weapons (bullets + unguided rockets).
-export function predictImpact(map, wd, ox, oy, oz, dir, units, out) {
+export function predictImpact(map, wd, ox, oy, oz, dir, units, out, faction) {
   out = out || {};
   // the launcher's mechanical elevation: the rocket pod is sighted up so its
   // slow round meets the cannon's line at 1 km, same bias the server applies
@@ -106,6 +108,7 @@ export function predictImpact(map, wd, ox, oy, oz, dir, units, out) {
   const near = [];
   if (units) {
     for (const u of units) {
+      if (faction !== undefined && u.faction === faction) continue;
       const d = Math.hypot(u.x - ox, u.z - oz);
       if (d < wd.range + 60) near.push(u);
     }
@@ -164,3 +167,126 @@ export function predictImpact(map, wd, ox, oy, oz, dir, units, out) {
 }
 
 export const TILES = { TILE_GRASS, TILE_ROAD, TILE_BUILDING, TILE_TREE, TILE_ROCK, TILE_BASE, TILE_SOLID };
+
+// Fire control, mirroring backend/server/ballistics.py: what the muzzle ray
+// runs into, and the elevation that drops the round on it.  Both sides have to
+// agree or the reticle lies about where the shot lands.
+const MARCH = 24;        // sight-ray resolution, metres
+const MIN_DIST = 25;
+
+export function sightPoint(map, ox, oy, oz, dir, maxDist, units, ignoreId, faction) {
+  let best = maxDist;
+  let point = null;
+  for (const u of units) {
+    if (u.id === ignoreId) continue;
+    if (faction !== undefined && u.faction === faction) continue;   // own rounds pass through
+    const vx = u.x - ox, vy = u.y - oy, vz = u.z - oz;
+    const b = vx * dir[0] + vy * dir[1] + vz * dir[2];
+    if (b < 0 || b - u.r > best) continue;
+    const disc = b * b - (vx * vx + vy * vy + vz * vz - u.r * u.r);
+    if (disc < 0) continue;
+    const t = b - Math.sqrt(disc);
+    if (t < 0 || t >= best) continue;
+    best = t;
+    point = { x: ox + dir[0] * t, y: oy + dir[1] * t, z: oz + dir[2] * t };
+  }
+  const limit = best;
+  for (let t0 = 0; t0 < limit; t0 += MARCH) {
+    const t1 = Math.min(limit, t0 + MARCH);
+    const x = ox + dir[0] * t1, y = oy + dir[1] * t1, z = oz + dir[2] * t1;
+    if (y > map.heightAt(x, z) && !map.blocked(x, z)) continue;
+    let a = t0, b = t1;
+    for (let i = 0; i < 6; i++) {
+      const m = 0.5 * (a + b);
+      const mx = ox + dir[0] * m, my = oy + dir[1] * m, mz = oz + dir[2] * m;
+      if (my > map.heightAt(mx, mz) && !map.blocked(mx, mz)) a = m; else b = m;
+    }
+    const t = 0.5 * (a + b);
+    return { x: ox + dir[0] * t, y: oy + dir[1] * t, z: oz + dir[2] * t };
+  }
+  return point;
+}
+
+// altitude of the round after `dist` metres of horizontal travel
+function altitudeAt(wd, ox, oy, oz, yaw, pitch, dist) {
+  const cp = Math.cos(pitch);
+  let vx = cp * Math.cos(yaw) * wd.vel, vy = Math.sin(pitch) * wd.vel, vz = cp * Math.sin(yaw) * wd.vel;
+  let x = ox, y = oy, z = oz;
+  const dt = 1 / 30;
+  const life = Math.min(wd.life, wd.range / Math.max(wd.vel, 1e-6));
+  let prevH = 0, prevY = y;
+  for (let t = 0; t < life; t += dt) {
+    if (wd.thrust) {
+      const speed = Math.hypot(vx, vy, vz);
+      const k = Math.min(wd.maxvel, speed + wd.thrust * dt) / Math.max(speed, 1e-6);
+      vx *= k; vy *= k; vz *= k;
+    }
+    vy -= wd.g * dt;
+    x += vx * dt; y += vy * dt; z += vz * dt;
+    const h = Math.hypot(x - ox, z - oz);
+    if (h >= dist) {
+      const span = h - prevH;
+      const f = span > 1e-6 ? (dist - prevH) / span : 1;
+      return prevY + (y - prevY) * f;
+    }
+    prevH = h; prevY = y;
+  }
+  return null;
+}
+
+export function solveElevation(wd, ox, oy, oz, yaw, pitch, target, maxElev) {
+  const d = Math.hypot(target.x - ox, target.z - oz);
+  if (d < MIN_DIST) return null;
+  const h = target.y - oy;
+  const g = wd.g, vel = wd.vel;
+  if (g > 0 && vel > 0 && !wd.thrust) {
+    if (d > vel * Math.min(wd.life, wd.range / vel)) return null;
+    const disc = vel ** 4 - g * (g * d * d + 2 * h * vel * vel);
+    if (disc < 0) return null;
+    return Math.atan2(vel * vel - Math.sqrt(disc), g * d);
+  }
+  let t0 = pitch, t1 = pitch + 0.02;
+  let y0 = altitudeAt(wd, ox, oy, oz, yaw, t0, d);
+  if (y0 === null) return null;
+  for (let i = 0; i < 6; i++) {
+    const y1 = altitudeAt(wd, ox, oy, oz, yaw, t1, d);
+    if (y1 === null) return null;
+    const err = h - y1;
+    if (Math.abs(err) < 0.1) return t1;
+    const dy = y1 - y0;
+    if (Math.abs(dy) < 1e-6) return null;
+    const t2 = Math.max(-1.2, Math.min(maxElev, t1 + err * (t1 - t0) / dy));
+    t0 = t1; y0 = y1; t1 = t2;
+  }
+  return Math.abs(t1) <= maxElev ? t1 : null;
+}
+
+// the elevation a zeroed shot of `wd` leaves at, or null for the plain aim
+export function zeroPitch(map, wd, yaw, pitch, ox, oy, oz, units, ignoreId, margin, maxElev, faction) {
+  const cap = wd.range * margin;
+  if (cap <= MIN_DIST) return null;
+  const p = sightPoint(map, ox, oy, oz, dirFrom(yaw, pitch), cap, units, ignoreId, faction);
+  if (!p) return null;
+  return solveElevation(wd, ox, oy, oz, yaw, pitch, p, maxElev);
+}
+
+// Hit spheres of a unit, mirroring mathutil.unit_spheres: the sight ray and
+// the impact prediction have to see the same bodies the server's rounds do,
+// otherwise the zeroing solution lands somewhere the reticle does not point
+const UNIT_SPHERES = {
+  1: [[0.9, 0.65]], 2: [[0.9, 0.65]], 3: [[1.1, 1.7], [2.4, 1.2]],
+  5: [[5.0, 8.5]], 6: [[0.9, 0.65]], 9: [[4.0, 5.0], [8.8, 3.6]],
+};
+const DEFAULT_SPHERES = [[1.0, 1.5]];
+
+export function unitSpheres(etype, x, y, z, yaw, mechSpheres) {
+  if (etype === 4 && mechSpheres) {
+    // (module, right offset, height, forward offset, radius)
+    const c = Math.cos(yaw), s = Math.sin(yaw);
+    return mechSpheres.map((m) => ({
+      x: x - s * m[1] + c * m[3], y: y + m[2], z: z + c * m[1] + s * m[3], r: m[4],
+    }));
+  }
+  const set = UNIT_SPHERES[etype] || DEFAULT_SPHERES;
+  return set.map((m) => ({ x, y: y + m[0], z, r: m[1] }));
+}

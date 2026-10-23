@@ -6,6 +6,8 @@
 const METAL = [0.44, 0.46, 0.48];
 const METAL_D = [0.28, 0.30, 0.33];
 const METAL_L = [0.58, 0.60, 0.63];
+const CONCRETE = [0.50, 0.51, 0.49];
+const CONCRETE_D = [0.37, 0.38, 0.37];
 const GLASS = [0.10, 0.19, 0.25];
 const DEAD = [0.10, 0.10, 0.10];
 const HULK = [0.13, 0.12, 0.11];    // burnt metal: wrecks and corpses
@@ -48,10 +50,23 @@ export function drawUnits(R, entities, projectiles, ownMechId, defs, flashes) {
       case 6: civilian(R, e); break;
       case 7: wreck(R, e); break;
       case 8: corpse(R, e); break;
+      case 9: bunker(R, e); break;
       default: break;
     }
   }
   for (const p of projectiles) projectile(R, p, defs);
+}
+
+// Indestructible blockhouse on a ridge: a squat concrete drum with an
+// observation deck and a red cap, so the zeroing reference reads at 2 km
+function bunker(R, e) {
+  const yaw = e.yaw;
+  at(R, 'cyl', e, yaw, 0, 0, 4.0, 0, 11, 8, 11, CONCRETE);
+  at(R, 'cyl', e, yaw, 0, 0, 9.3, 0, 8, 2.6, 8, CONCRETE_D);
+  at(R, 'box', e, yaw, 0, 0, 10.9, 0, 3.4, 0.6, 3.4, [0.78, 0.18, 0.12]);
+  for (let i = 0; i < 4; i++) {                 // firing slit on each face
+    at(R, 'box', e, yaw + i * Math.PI / 2, 0, 0, 5.0, 5.5, 3.6, 1.0, 0.5, SOOT);
+  }
 }
 
 // A hulk: the same silhouette as the living machine, burnt down and dark.

@@ -28,6 +28,7 @@ ETYPE_BASE = 5
 ETYPE_CIV = 6
 ETYPE_DEBRIS = 7          # inert wreck (vehicle / mech hulk), purely visual
 ETYPE_CORPSE = 8          # fallen infantry, purely visual
+ETYPE_BUNKER = 9          # indestructible building, a zeroing reference on the range
 
 # mech module indices (health array slots)
 MOD_CHASSIS = 0
@@ -99,6 +100,13 @@ WEAPONS = [
 # weapons a player may buy, in hotbar order
 BUYABLE = [WID_AC30, WID_MG127, WID_ROCKET, WID_SACLOS, WID_TOPATTACK]
 
+# fire control: guns and unguided rockets hold off for the drop so the round
+# lands on whatever the muzzle points at.  The sight ray reaches 20% past the
+# nominal range - `range` is an energy figure, not a hard stop - and the
+# elevation is capped so a wild solution cannot point the barrel at the sky
+ZERO_MARGIN = 1.2
+ZERO_MAX_ELEV = 1.05     # rad, ~60 deg
+
 # -------------------------------------------------------------- unit types
 UNIT_DEFS = {
     ETYPE_INF_RIFLE: dict(name="RIFLEMAN", hp=(80, 0, 0, 0), speed=5.5, radius=0.55, height=1.8,
@@ -121,6 +129,9 @@ UNIT_DEFS = {
                        weapons=(WID_NONE, WID_NONE), ai_range=0, sight=0, reward=0, splat=2.0),
     ETYPE_CORPSE: dict(name="CORPSE", hp=(0, 0, 0, 0), speed=0.0, radius=0.5, height=0.4,
                        weapons=(WID_NONE, WID_NONE), ai_range=0, sight=0, reward=0, splat=1.0),
+    # concrete blockhouse: rounds stop on it, damage does not
+    ETYPE_BUNKER: dict(name="BUNKER", hp=(999999, 0, 0, 0), speed=0.0, radius=6.0, height=9.0,
+                       weapons=(WID_NONE, WID_NONE), ai_range=0, sight=0, reward=0, splat=6.0),
 }
 
 # mech geometry (metres, relative to the ground point under the entity)

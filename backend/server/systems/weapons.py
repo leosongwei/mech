@@ -10,7 +10,7 @@ import math
 
 import numpy as np
 
-from .. import components, defs, mathutil as mu
+from .. import ballistics, components, defs, mathutil as mu
 
 KIND_ID = {"bullet": 0, "rocket": 1, "saclos": 2, "top": 3}
 
@@ -121,12 +121,20 @@ def fire(world, eid: int, arm: int, wid: int, wd: dict, target: int = -1):
         # guided rounds: launch upward, guidance takes over immediately
         pitch = max(pitch, 0.18)
 
+    # direct fire is zeroed: hold off for the drop so the round lands where
+    # the muzzle points.  `bias` was the launcher's mechanical sighting and is
+    # absorbed by the solution; guided rounds keep both as they are.
+    zero = None
+    if kind in (0, 1):
+        zero = ballistics.zero_pitch(world, origin, yaw, pitch, wd, ignore=eid,
+                                     faction=int(e["faction"][eid]))
+
     for k in range(n):
         sp = float(wd["spread"]) * (1.0 if k == 0 else 0.6)
         dy = yaw + world.rng.gauss(0.0, sp)
         # `bias` is the mechanical elevation the launcher is sighted at: the
         # rocket pod is tilted up so its slow round meets the cannon at 1 km
-        dp = pitch + float(wd["bias"]) + world.rng.gauss(0.0, sp)
+        dp = (pitch + float(wd["bias"]) if zero is None else zero) + world.rng.gauss(0.0, sp)
         d = mu.dir_from(dy, dp)
         pid = e.create()
         for c in components.PROJ_COMPS:

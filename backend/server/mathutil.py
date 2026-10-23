@@ -70,6 +70,9 @@ def unit_spheres(etype: int, pos, yaw: float):
         return [(0, (px, py + 1.1, pz), 1.7), (1, (px, py + 2.4, pz), 1.2)]
     if etype == defs.ETYPE_BASE:
         return [(0, (px, py + 5.0, pz), 8.5)]
+    if etype == defs.ETYPE_BUNKER:
+        # stepped blockhouse: a squat mass and the observation deck on top
+        return [(0, (px, py + 4.0, pz), 5.0), (0, (px, py + 8.8, pz), 3.6)]
     if etype == defs.ETYPE_INF_RIFLE or etype == defs.ETYPE_INF_ROCKET or etype == defs.ETYPE_CIV:
         return [(0, (px, py + 0.9, pz), 0.65)]
     return [(0, (px, py + 1.0, pz), 1.5)]

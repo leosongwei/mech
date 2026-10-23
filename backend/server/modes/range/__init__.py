@@ -7,6 +7,7 @@ import math
 from ... import defs
 from ... import terrain as terrain_mod
 from ..base import Mode
+from . import bunkers as bunkers_mod
 from . import targets as targets_mod
 
 
@@ -23,6 +24,7 @@ class Range(Mode):
     def setup(self, world):
         world.base_entity = {}
         world.targets = targets_mod.Targets(world)
+        world.bunkers = bunkers_mod.place(world)
 
     def pre_systems(self):
         return [targets_mod.run]

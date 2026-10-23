@@ -53,7 +53,7 @@ def run(world, dt):
         t = int(etype[eid])
         if int(owner[eid]) >= 0:
             continue                                   # player driven
-        if t == defs.ETYPE_BASE:
+        if t == defs.ETYPE_BASE or t == defs.ETYPE_BUNKER:
             continue
         if t == defs.ETYPE_CIV:
             _civ(world, eid, civ_units, foe_arr, dt)
@@ -122,12 +122,14 @@ def _engage(world, eid, tid, eye, d, dist, tpos, tvel, dt):
     hp = e["hp"]
     weapon = e["weapon"]
 
-    # aim at the intercept point of the primary weapon
+    # aim at the intercept point of the primary weapon.  no gravity lift here:
+    # the fire control zeroes the gun for the drop at shot time, so lifting the
+    # aim as well would double compensate
     w0 = int(weapon[eid, 0]) or defs.WID_AC30
     wd0 = defs.WEAPONS[w0]
     speed = wd0["vel"]
     aim = mu.solve_lead(eye, (float(tpos[0]), float(tpos[1]) + 2.0, float(tpos[2])),
-                        tvel, speed, wd0["g"])
+                        tvel, speed, 0.0)
     tx = aim[0] - eye[0]
     ty = aim[1] - eye[1]
     tz = aim[2] - eye[2]

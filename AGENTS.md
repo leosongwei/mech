@@ -36,13 +36,14 @@ backend/
     world.py               # World: terrain, players, spawning, damage, tick
     terrain.py             # 1600x1600 tiles of 10 m -> 16 km square map
     mathutil.py            # angles, lead solving, terrain helpers
+    ballistics.py          # fire control: muzzle sight point, zeroing elevation
     netcode.py             # init payload, binary snapshots, JSON meta
     main.py                # FastAPI: websockets, static files, 30 Hz game loop
     systems/               # mechanics shared by every mode, each exposes run(world, dt)
     modes/                 # per-mode rule sets: map, setup, pipeline, spawn rules
       base.py              #   Mode interface every mode implements
       battle/              #   waves.py: town capture + reinforcement waves
-      range/               #   targets.py: passive APC targets on the 4 km map
+      range/               #   targets.py: passive APC targets, bunkers.py: ridge blockhouses
   assets/                  # compiled client (webpack output, gitignored)
 frontend/
   webpack.config.js        # entry src/main.js -> ../backend/assets/bundle.js

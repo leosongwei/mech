@@ -32,7 +32,7 @@ def run(world, dt):
         et = int(etype[eid])
         x = float(pos[eid, 0])
         z = float(pos[eid, 2])
-        if et == defs.ETYPE_BASE:
+        if et == defs.ETYPE_BASE or et == defs.ETYPE_BUNKER:
             pos[eid, 1] = terrain.height_at(x, z)
             continue
 

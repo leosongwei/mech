@@ -11,6 +11,7 @@ import { Particles } from './particles.js';
 import { clamp, dirFrom, invert4, mat4 } from './math.js';
 
 const BASE_FOV = 1.05;              // 1x vertical field of view, radians
+const AIM_LINE = 60000;             // metres, "infinity" for an unzeroed reticle
 
 export class Game {
   constructor() {
@@ -436,6 +437,13 @@ export class Game {
         // the sight point is out of reach, or the round expires in the air
         // (aimed past the map edge / further than the fuse can carry it)
         far = fc.far || !point.hit;
+        if (theta === null) {
+          // nothing to zero on: the shot simply runs down the aim line, so the
+          // reticle belongs on that line at infinity -- hold the crosshair on
+          // the target and fire, no drop marker to aim off
+          point = { x: m[0] + dir[0] * AIM_LINE, y: m[1] + dir[1] * AIM_LINE,
+            z: m[2] + dir[2] * AIM_LINE };
+        }
       } else if (wd) {
         const near = Math.min(wd.range, 2400);
         point = { x: m[0] + dir[0] * near, y: m[1] + dir[1] * near, z: m[2] + dir[2] * near, hit: false, dist: near };

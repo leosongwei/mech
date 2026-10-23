@@ -141,10 +141,16 @@ def run(world, dt):
                 tp = pos[tid]
                 th = defs.UNIT_DEFS.get(int(etype[tid]), {}).get("height", 6.0)
                 horiz = math.hypot(float(tp[0]) - p0[0], float(tp[2]) - p0[2])
-                if horiz < 520.0:
+                # pop up to `climb` above the target while there is still
+                # `dive` metres to run, then break over onto the roof: steering
+                # at a point `cruise` of the way out keeps the climb steep
+                if horiz < float(wd.get("dive", 520.0)):
                     aim_pt = (float(tp[0]), float(tp[1]) + th * 0.92, float(tp[2]))
                 else:
-                    aim_pt = (float(tp[0]), float(tp[1]) + 260.0, float(tp[2]))
+                    f = float(wd.get("cruise", 0.35))
+                    aim_pt = (p0[0] + (float(tp[0]) - p0[0]) * f,
+                              float(tp[1]) + float(wd.get("climb", 260.0)),
+                              p0[2] + (float(tp[2]) - p0[2]) * f)
                 desired = (aim_pt[0] - p0[0], aim_pt[1] - p0[1], aim_pt[2] - p0[2])
                 v = np.asarray(_steer(v, desired, speed, 1.9, dt), np.float32)
             else:

@@ -63,20 +63,28 @@ WEAPONS = [
          reserve=720, reload=3.4, vel=890, spread=0.0045, bias=0.0, g=9.81, thrust=0, maxvel=0,
          life=3.0, splash=0, splash_dmg=0, range=1800, cost=180, lock=0, lock_time=0, salvo=0,
          semi=0, color=(1.0, 0.68, 0.20), desc="1.8 km suppressive fire"),
+    # S-8 class: a launch charge throws the 80 mm rocket out at ~55 m/s, the
+    # motor burns for a second and it leaves at 610 m/s
     dict(wid=WID_ROCKET, key="rocket", name="UNGUIDED ROCKET POD", kind="rocket", dmg=155, rpm=200, mag=40,
-         reserve=0, reload=0.0, vel=80, spread=0.00175, bias=0.0431, g=9.81, thrust=420, maxvel=520,
-         life=9.0, splash=8.0, splash_dmg=95, range=4000, cost=350, lock=0, lock_time=0, salvo=1,
+         reserve=0, reload=0.0, vel=55, spread=0.006, bias=0.0429, g=9.81, thrust=560, maxvel=610,
+         life=8.0, splash=8.0, splash_dmg=95, range=3200, cost=350, lock=0, lock_time=0, salvo=1,
          semi=0, color=(1.0, 0.45, 0.15),
          desc="40 rounds, hold to fire, sighted to 1 km"),
+    # TOW class: 65 m/s out of the tube, the flight motor takes it to 278 m/s
+    # about 2 s later, 3.75 km of wire
     dict(wid=WID_SACLOS, key="saclos", name="SACLOS ATGM", kind="saclos", dmg=430, rpm=40, mag=2, reserve=8,
-         reload=4.2, vel=70, spread=0.003, bias=0.0, g=0.0, thrust=190, maxvel=330, life=18.0,
+         reload=4.2, vel=65, spread=0.003, bias=0.0, g=0.0, thrust=110, maxvel=278, life=20.0,
          wob=30.0, wob_f=1.5,
          splash=6.0, splash_dmg=150, range=3750, cost=500, lock=0, lock_time=0, salvo=0, semi=0,
          color=(0.35, 1.0, 0.55), desc="Beam riding, keep the sight on target"),
+    # Javelin class: soft launch at 20 m/s, the motor lights off outside the
+    # tube and cruises at 190 m/s, climbing 150 m above the target before the
+    # dive; the seeker locks before the shot and needs the target in the circle
     dict(wid=WID_TOPATTACK, key="topattack", name="TOP-ATTACK IR ATGM", kind="top", dmg=520, rpm=32, mag=2,
-         reserve=8, reload=4.6, vel=55, spread=0.002, bias=0.0, g=0.0, thrust=170, maxvel=300,
-         life=22.0, splash=7.0, splash_dmg=190, range=4750, cost=700, lock=1, lock_time=1.1, salvo=0,
-         semi=0, color=(1.0, 0.35, 0.9), desc="4.75 km lock-on, fire and forget"),
+         reserve=8, reload=4.6, vel=20, spread=0.002, bias=0.0, g=0.0, thrust=170, maxvel=190,
+         life=20.0, climb=150.0, cruise=0.35, dive=220.0,
+         splash=7.0, splash_dmg=190, range=2500, cost=700, lock=1, lock_time=1.1, salvo=0,
+         semi=0, color=(1.0, 0.35, 0.9), desc="2.5 km lock-on, fire and forget"),
     dict(wid=WID_RIFLE556, key="rifle556", name="5.56mm RIFLE", kind="bullet", dmg=7, rpm=430, mag=30,
          reserve=900, reload=2.2, vel=900, spread=0.014, bias=0.0, g=9.81, thrust=0, maxvel=0,
          life=2.2, splash=0, splash_dmg=0, range=450, cost=-1, lock=0, lock_time=0, salvo=0,

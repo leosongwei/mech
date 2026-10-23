@@ -69,7 +69,7 @@ export class Input {
     const dy = (e.movementY || 0) / this.zoom;
     if (this.alt) {
       this.freeYaw = wrapPi(this.freeYaw + dx * this.sens);
-      this.freePitch = clamp(this.freePitch + dy * this.sens, -0.9, 0.9);
+      this.freePitch = clamp(this.freePitch - dy * this.sens, -0.9, 0.9);
     } else {
       this.yaw = wrapPi(this.yaw + dx * this.sens);
       this.pitch = clamp(this.pitch - dy * this.sens, -0.6, 0.9);

@@ -99,7 +99,7 @@ def _altitude_at(origin, yaw, pitch, wd, dist):
     g = float(wd["g"])
     thrust = float(wd.get("thrust", 0.0))
     maxvel = float(wd.get("maxvel", 0.0))
-    life = min(float(wd["life"]), float(wd["range"]) / max(float(wd["vel"]), 1.0))
+    life = float(wd["life"])
     prev_h = 0.0
     prev_y = y
     t = 0.0
@@ -136,7 +136,7 @@ def solve_elevation(origin, target, wd, yaw, pitch):
         # direct shot: closed form, low arc; half a step of Euler error over a
         # 3 km flight is under a metre, so no refinement is needed.  Anything
         # past the round's own reach cannot be zeroed for at all
-        if d > vel * min(float(wd["life"]), float(wd["range"]) / vel):
+        if d > vel * float(wd["life"]):
             return None
         disc = vel ** 4 - g * (g * d * d + 2.0 * h * vel * vel)
         if disc < 0.0:

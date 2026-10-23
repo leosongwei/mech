@@ -115,7 +115,7 @@ def fire(world, eid: int, arm: int, wid: int, wd: dict, target: int = -1):
 
     kind = KIND_ID.get(wd["kind"], 0)
     n = max(1, int(wd["salvo"]))
-    life = min(float(wd["life"]), float(wd["range"]) / max(float(wd["vel"]), 1.0))
+    life = float(wd["life"])
 
     if kind in (2, 3):
         # guided rounds: launch upward, guidance takes over immediately

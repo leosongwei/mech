@@ -104,13 +104,17 @@ export function predictImpact(map, wd, ox, oy, oz, dir, units, out, faction) {
   // the server integrates at 30 Hz: using the same step here keeps the
   // predicted impact point identical to where the round really lands
   const dt = 1 / 30;
-  const maxT = Math.min(wd.life, wd.range / wd.vel);
+  const maxT = wd.life;
+  // the round now lives long enough to fly 10 km, so the candidate cut has to
+  // follow the fuse too: a round that still has speed left can hit anything it
+  // can reach, not just what is inside its nominal `range`
+  const reach = wd.life * Math.max(wd.vel, wd.maxvel || 0);
   const near = [];
   if (units) {
     for (const u of units) {
       if (faction !== undefined && u.faction === faction) continue;
       const d = Math.hypot(u.x - ox, u.z - oz);
-      if (d < wd.range + 60) near.push(u);
+      if (d < reach + 60) near.push(u);
     }
   }
   for (let t = 0; t < maxT; t += dt) {
@@ -213,7 +217,7 @@ function altitudeAt(wd, ox, oy, oz, yaw, pitch, dist) {
   let vx = cp * Math.cos(yaw) * wd.vel, vy = Math.sin(pitch) * wd.vel, vz = cp * Math.sin(yaw) * wd.vel;
   let x = ox, y = oy, z = oz;
   const dt = 1 / 30;
-  const life = Math.min(wd.life, wd.range / Math.max(wd.vel, 1e-6));
+  const life = wd.life;
   let prevH = 0, prevY = y;
   for (let t = 0; t < life; t += dt) {
     if (wd.thrust) {
@@ -240,7 +244,7 @@ export function solveElevation(wd, ox, oy, oz, yaw, pitch, target, maxElev) {
   const h = target.y - oy;
   const g = wd.g, vel = wd.vel;
   if (g > 0 && vel > 0 && !wd.thrust) {
-    if (d > vel * Math.min(wd.life, wd.range / vel)) return null;
+    if (d > vel * wd.life) return null;
     const disc = vel ** 4 - g * (g * d * d + 2 * h * vel * vel);
     if (disc < 0) return null;
     return Math.atan2(vel * vel - Math.sqrt(disc), g * d);

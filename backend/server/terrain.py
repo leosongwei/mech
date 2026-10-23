@@ -144,6 +144,11 @@ class Terrain:
     def blocked(self, x: float, z: float) -> bool:
         return self.tile_type(x, z) in BLOCKING
 
+    def inside(self, x: float, z: float) -> bool:
+        """False once a point leaves the map: off the field there is no ground
+        to hit, only the edge height ``height_at`` keeps returning."""
+        return 0.0 <= x <= (self.w - 1) * TILE and 0.0 <= z <= (self.d - 1) * TILE
+
     # -- ray casts --------------------------------------------------------
     def ground_hit(self, p0, p1, step=12.0):
         """Return (hit, t, point) for the first ground contact on the segment."""

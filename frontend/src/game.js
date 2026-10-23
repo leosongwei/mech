@@ -432,7 +432,10 @@ export class Game {
           theta === null ? dir : dirFrom(yaw, theta), units, {}, own.faction);
         hit = point.hit;
         dist = point.dist;
-        far = fc.far;                 // out of reach: the reading goes red
+        // red with a trailing + whenever the count is not an impact: either
+        // the sight point is out of reach, or the round expires in the air
+        // (aimed past the map edge / further than the fuse can carry it)
+        far = fc.far || !point.hit;
       } else if (wd) {
         const near = Math.min(wd.range, 2400);
         point = { x: m[0] + dir[0] * near, y: m[1] + dir[1] * near, z: m[2] + dir[2] * near, hit: false, dist: near };

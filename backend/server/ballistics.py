@@ -69,6 +69,11 @@ def sight_point(world, origin, direction, max_dist, ignore=-1, faction=-1):
         x = origin[0] + direction[0] * t1
         y = origin[1] + direction[1] * t1
         z = origin[2] + direction[2] * t1
+        if not terrain.inside(x, z):
+            # the ray left the map: off the field there is nothing to zero on,
+            # so the shot just follows the aim line (the round expires in the
+            # air or drops away on its own)
+            return None
         if y <= terrain.height_at(x, z) or terrain.blocked(x, z):
             a, b = t0, t1
             for _ in range(6):

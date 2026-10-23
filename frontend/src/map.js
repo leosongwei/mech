@@ -59,6 +59,12 @@ export class MapData {
     return t === TILE_BUILDING || t === TILE_TREE || t === TILE_ROCK || t === TILE_SOLID;
   }
 
+  // mirrors Terrain.inside on the server: past the map edge there is no
+  // ground, heightAt just keeps handing back the border height
+  inside(x, z) {
+    return x >= 0 && z >= 0 && x <= (this.w - 1) * this.tile && z <= (this.h - 1) * this.tile;
+  }
+
   // march a segment and report the first ground contact
   groundHit(x0, y0, z0, x1, y1, z1, step) {
     step = step || 12;
@@ -144,7 +150,9 @@ export function predictImpact(map, wd, ox, oy, oz, dir, units, out, faction) {
         hitU = u;
       }
     }
-    const ground = map.heightAt(nx, nz);
+    // past the map edge the server finds no ground (terrain.ground_hit gives
+    // up outside the field), so the prediction must not stop there either
+    const ground = map.inside(nx, nz) ? map.heightAt(nx, nz) : -Infinity;
     const groundT = ny <= ground ? Math.max(0, (y - ground) / Math.max(y - ny, 1e-6)) : 2;
     if (bestT <= 1 && bestT <= groundT) {
       out.hit = true; out.unit = hitU;
@@ -198,6 +206,8 @@ export function sightPoint(map, ox, oy, oz, dir, maxDist, units, ignoreId, facti
   for (let t0 = 0; t0 < limit; t0 += MARCH) {
     const t1 = Math.min(limit, t0 + MARCH);
     const x = ox + dir[0] * t1, y = oy + dir[1] * t1, z = oz + dir[2] * t1;
+    // off the map there is nothing to zero on: the round follows the aim line
+    if (!map.inside(x, z)) return null;
     if (y > map.heightAt(x, z) && !map.blocked(x, z)) continue;
     let a = t0, b = t1;
     for (let i = 0; i < 6; i++) {

@@ -36,7 +36,7 @@ function at(R, shape, e, yaw, pitch, ox, oy, oz, sx, sy, sz, col, alpha) {
 
 const FORWARD = -Math.PI / 2;   // rotates a Y-axis primitive onto +X
 
-export function drawUnits(R, entities, projectiles, ownMechId, defs, flashes, eye) {
+export function drawUnits(R, entities, projectiles, ownMechId, defs, flashes) {
   R.beginDynamic();
   for (const e of entities.values()) {
     switch (e.type) {
@@ -51,7 +51,7 @@ export function drawUnits(R, entities, projectiles, ownMechId, defs, flashes, ey
       default: break;
     }
   }
-  for (const p of projectiles) projectile(R, p, defs, eye);
+  for (const p of projectiles) projectile(R, p, defs);
 }
 
 // A hulk: the same silhouette as the living machine, burnt down and dark.
@@ -267,7 +267,7 @@ function base(R, e) {
   at(R, 'sphere', e, 0, 0, 0, 45, 0, 2.5, 2.5, 2.5, [1.0, 0.35, 0.3]);
 }
 
-function projectile(R, p, defs, eye) {
+function projectile(R, p, defs) {
   const wd = (defs && defs[p.wid]) || null;
   const col = wd ? wd.color : [1, 0.8, 0.3];
   const speed = Math.hypot(p.vx, p.vy, p.vz);
@@ -276,12 +276,14 @@ function projectile(R, p, defs, eye) {
   const pitch = Math.asin(Math.max(-1, Math.min(1, p.vy / speed)));
   const fake = { x: p.x, y: p.y, z: p.z };
   if (p.kind === 0) {
-    // tracer: one billboarded rectangle along the flight path, centred on the
-    // round and always turned to face the camera. the colour is pushed past
-    // the lighting term so the streak stays a bright yellow in shadow
+    // tracer: a flat-shaded four-sided pyramid stretched along the flight
+    // path, centred on the round and drawn unlit so it stays the weapon's
+    // colour. the bore sizes it, so a 12.7 mm round reads thinner than a
+    // 30 mm cannon shell
+    const cal = (wd && wd.cal) || 12.7;
     const len = Math.min(16, speed * 0.014);
-    R.plate(p.x, p.y, p.z, p.vx / speed, p.vy / speed, p.vz / speed,
-      eye[0], eye[1], eye[2], len, 0.42, col[0] * 2.6, col[1] * 2.6, col[2] * 2.6, 1);
+    const wid = Math.max(0.08, cal * 0.011);
+    at(R, 'pyramid', fake, yaw, FORWARD + pitch, 0, 0, 0, wid, len, wid, col);
   } else {
     at(R, 'cyl', fake, yaw, FORWARD + pitch, 0, 0, -0.6, 0.32, 3.2, 0.32, [0.78, 0.78, 0.8]);
     at(R, 'cone', fake, yaw, FORWARD + pitch, 0, 0, 1.4, 0.32, 1.1, 0.32, col);

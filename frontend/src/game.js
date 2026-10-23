@@ -287,7 +287,7 @@ export class Game {
     this.hud.vp = cam.viewProj;
     this._aim(own);
     this._updateLockTone(own);
-    drawUnits(this.renderer, this.net.entities, this.net.projectiles, own ? own.id : -1, this.defs.weapons, this.flashes, cam.eye);
+    drawUnits(this.renderer, this.net.entities, this.net.projectiles, own ? own.id : -1, this.defs.weapons, this.flashes);
     if (own) drawFirstPersonArms(this.renderer, own, this.defs.weapons, this.flashes, cam.eye);
     this.particles.render(this.renderer);
     this.renderer.draw(cam);

@@ -48,27 +48,28 @@ WID_RPG = 7
 
 # kind: bullet (ballistic), rocket (unguided thrust), saclos (beam riding),
 #       top (infrared lock-on, top attack)
+# cal: bore in mm, only used to size the tracer the browser draws
 WEAPONS = [
     dict(wid=WID_NONE, key="none", name="EMPTY", kind="none", dmg=0, rpm=1, mag=0, reserve=0,
          reload=1, vel=1, spread=0, bias=0.0, g=0, thrust=0, maxvel=0, life=1, splash=0,
          splash_dmg=0, range=0, cost=0, lock=0, lock_time=0, salvo=0, semi=0,
-         color=(0.8, 0.8, 0.8), desc="No weapon fitted"),
+         color=(0.8, 0.8, 0.8), cal=0, desc="No weapon fitted"),
     # ranges/muzzle velocities follow real world hardware; range is the
     # distance at which the round still carries its nominal energy
     dict(wid=WID_AC30, key="ac30", name="30mm AUTOCANNON", kind="bullet", dmg=44, rpm=190, mag=50,
          reserve=250, reload=2.8, vel=1080, spread=0.0022, bias=0.0, g=9.81, thrust=0, maxvel=0,
          life=4.0, splash=3.0, splash_dmg=16, range=3200, cost=300, lock=0, lock_time=0, salvo=0,
-         semi=0, color=(1.0, 0.82, 0.25), desc="High velocity, 3.2 km effective"),
+         semi=0, color=(1.0, 0.82, 0.25), cal=30, desc="High velocity, 3.2 km effective"),
     dict(wid=WID_MG127, key="mg127", name="12.7mm MACHINE GUN", kind="bullet", dmg=15, rpm=680, mag=120,
          reserve=720, reload=3.4, vel=890, spread=0.0045, bias=0.0, g=9.81, thrust=0, maxvel=0,
          life=3.0, splash=0, splash_dmg=0, range=1800, cost=180, lock=0, lock_time=0, salvo=0,
-         semi=0, color=(1.0, 0.68, 0.20), desc="1.8 km suppressive fire"),
+         semi=0, color=(1.0, 0.68, 0.20), cal=12.7, desc="1.8 km suppressive fire"),
     # S-8 class: a launch charge throws the 80 mm rocket out at ~55 m/s, the
     # motor burns for a second and it leaves at 610 m/s
     dict(wid=WID_ROCKET, key="rocket", name="UNGUIDED ROCKET POD", kind="rocket", dmg=155, rpm=600, mag=40,
          reserve=0, reload=0.0, vel=55, spread=0.006, bias=0.0429, g=9.81, thrust=560, maxvel=610,
          life=8.0, splash=8.0, splash_dmg=95, range=3200, cost=350, lock=0, lock_time=0, salvo=1,
-         semi=0, color=(1.0, 0.45, 0.15),
+         semi=0, color=(1.0, 0.45, 0.15), cal=80,
          desc="40 rounds, hold to fire, sighted to 1 km"),
     # TOW class: 65 m/s out of the tube, the flight motor takes it to 278 m/s
     # about 2 s later, 3.75 km of wire
@@ -76,7 +77,7 @@ WEAPONS = [
          reload=4.2, vel=65, spread=0.003, bias=0.0, g=0.0, thrust=110, maxvel=278, life=20.0,
          wob=30.0, wob_f=1.5,
          splash=6.0, splash_dmg=150, range=3750, cost=500, lock=0, lock_time=0, salvo=0, semi=0,
-         color=(0.35, 1.0, 0.55), desc="Beam riding, keep the sight on target"),
+         color=(0.35, 1.0, 0.55), cal=152, desc="Beam riding, keep the sight on target"),
     # Javelin class: soft launch at 20 m/s, the motor lights off outside the
     # tube and cruises at 190 m/s, climbing 150 m above the target before the
     # dive; the seeker locks before the shot and needs the target in the circle
@@ -84,15 +85,15 @@ WEAPONS = [
          reserve=8, reload=4.6, vel=20, spread=0.002, bias=0.0, g=0.0, thrust=170, maxvel=190,
          life=20.0, climb=150.0, cruise=0.35, dive=220.0,
          splash=7.0, splash_dmg=190, range=2500, cost=700, lock=1, lock_time=1.1, salvo=0,
-         semi=0, color=(1.0, 0.35, 0.9), desc="2.5 km lock-on, fire and forget"),
+         semi=0, color=(1.0, 0.35, 0.9), cal=127, desc="2.5 km lock-on, fire and forget"),
     dict(wid=WID_RIFLE556, key="rifle556", name="5.56mm RIFLE", kind="bullet", dmg=7, rpm=430, mag=30,
          reserve=900, reload=2.2, vel=900, spread=0.014, bias=0.0, g=9.81, thrust=0, maxvel=0,
          life=2.2, splash=0, splash_dmg=0, range=450, cost=-1, lock=0, lock_time=0, salvo=0,
-         semi=0, color=(1.0, 0.9, 0.5), desc="450 m rifle"),
+         semi=0, color=(1.0, 0.9, 0.5), cal=5.56, desc="450 m rifle"),
     dict(wid=WID_RPG, key="rpg", name="RPG LAUNCHER", kind="rocket", dmg=135, rpm=25, mag=1, reserve=900,
          reload=6.5, vel=50, spread=0.016, bias=0.0, g=9.81, thrust=380, maxvel=300, life=6.0,
          splash=6.0, splash_dmg=70, range=500, cost=-1, lock=0, lock_time=0, salvo=0, semi=0,
-         color=(1.0, 0.5, 0.2), desc="500 m anti-tank rocket"),
+         color=(1.0, 0.5, 0.2), cal=85, desc="500 m anti-tank rocket"),
 ]
 
 # weapons a player may buy, in hotbar order

@@ -11,7 +11,7 @@
 //   range works without z-fighting.
 
 import { compose, mat4, multiply, perspective, lookAt } from './math.js';
-import { buildMeshes, MESH_BOX, MESH_SPHERE, MESH_CONE, MESH_CYL, MESH_ROCK, MESH_QUAD } from './meshes.js';
+import { buildMeshes, MESH_BOX, MESH_SPHERE, MESH_CONE, MESH_CYL, MESH_ROCK, MESH_PYRAMID } from './meshes.js';
 
 const SKY_VS = `#version 300 es
 in vec2 aPos;
@@ -181,13 +181,14 @@ uniform vec3 uCamPos;
 uniform vec3 uFogColor;
 uniform float uFogDensity;
 uniform float uFar;
+uniform float uUnlit;                // 1 = skip the lighting term (tracers)
 out vec4 fragColor;
 void main(){
   vec3 n = normalize(vNormal);
   vec3 v = normalize(uCamPos - vWorld);
   float diff = max(0.0, dot(n, uSun));
   float rim = pow(1.0 - max(0.0, dot(n, v)), 3.0) * 0.16;
-  vec3 c = vColor.rgb * (0.40 + 0.78 * diff + rim);
+  vec3 c = mix(vColor.rgb * (0.40 + 0.78 * diff + rim), vColor.rgb, uUnlit);
   float dist = distance(vWorld, uCamPos);
   float fog = 1.0 - exp(-dist * uFogDensity);
   c = mix(c, uFogColor, clamp(fog, 0.0, 1.0));
@@ -256,7 +257,7 @@ export class Renderer {
     this.pMesh = program(gl, MESH_VS, MESH_FS);
     this.uSky = this._uniforms(this.pSky, ['uInvVP', 'uCamPos', 'uSun']);
     this.uTerrain = this._uniforms(this.pTerrain, ['uViewProj', 'uHeight', 'uTiles', 'uMapSize', 'uTile', 'uG', 'uCam', 'uSun', 'uFogColor', 'uFogDensity', 'uFar']);
-    this.uMesh = this._uniforms(this.pMesh, ['uViewProj', 'uSun', 'uCamPos', 'uFogColor', 'uFogDensity', 'uFar']);
+    this.uMesh = this._uniforms(this.pMesh, ['uViewProj', 'uSun', 'uCamPos', 'uFogColor', 'uFogDensity', 'uFar', 'uUnlit']);
 
     // ---- primitive meshes in one VBO ---------------------------------
     const raw = buildMeshes();
@@ -531,38 +532,7 @@ export class Renderer {
   cone(px, py, pz, yaw, pitch, sx, sy, sz, r, g, b, a) { this.push(MESH_CONE, px, py, pz, yaw, pitch, sx, sy, sz, r, g, b, a); }
   cyl(px, py, pz, yaw, pitch, sx, sy, sz, r, g, b, a) { this.push(MESH_CYL, px, py, pz, yaw, pitch, sx, sy, sz, r, g, b, a); }
 
-  // billboarded rectangle: `dir` is where the long edge points, `eye` is the
-  // camera, so the plate turns to face it every frame. costs two triangles,
-  // which is what a tracer streak actually needs
-  plate(px, py, pz, dx, dy, dz, ex, ey, ez, len, wid, r, g, b, a) {
-    const batch = this.dyn[MESH_QUAD];
-    if (!batch || batch.count >= batch.cap) return;
-    const vx = ex - px, vy = ey - py, vz = ez - pz;
-    // screen-right = dir x view
-    let rx = dy * vz - dz * vy;
-    let ry = dz * vx - dx * vz;
-    let rz = dx * vy - dy * vx;
-    const rl = Math.hypot(rx, ry, rz);
-    if (rl < 1e-6) {                      // looking straight down the barrel
-      rx = 0; ry = 1; rz = 0;
-    } else {
-      rx /= rl; ry /= rl; rz /= rl;
-    }
-    // face the camera: the part of the view vector square to the streak
-    const dot = dx * vx + dy * vy + dz * vz;
-    let nx = vx - dx * dot, ny = vy - dy * dot, nz = vz - dz * dot;
-    const nl = Math.hypot(nx, ny, nz) || 1;
-    nx /= nl; ny /= nl; nz /= nl;
-    const base = batch.count * STRIDE_FLOATS;
-    const d = batch.data;
-    d[base] = rx * wid; d[base + 1] = ry * wid; d[base + 2] = rz * wid; d[base + 3] = 0;
-    d[base + 4] = dx * len; d[base + 5] = dy * len; d[base + 6] = dz * len; d[base + 7] = 0;
-    d[base + 8] = nx; d[base + 9] = ny; d[base + 10] = nz; d[base + 11] = 0;
-    d[base + 12] = px; d[base + 13] = py; d[base + 14] = pz; d[base + 15] = 1;
-    d[base + 16] = r; d[base + 17] = g; d[base + 18] = b;
-    d[base + 19] = a === undefined ? 1 : a;
-    batch.count++;
-  }
+  pyramid(px, py, pz, yaw, pitch, sx, sy, sz, r, g, b, a) { this.push(MESH_PYRAMID, px, py, pz, yaw, pitch, sx, sy, sz, r, g, b, a); }
 
   // ---------------------------------------------------------------- frame
   draw(cam) {
@@ -662,9 +632,10 @@ export class Renderer {
     }
   }
 
-  _submit(meshIndex, vbo, cmds) {
+  _submit(meshIndex, vbo, cmds, unlit) {
     const gl = this.gl;
     if (!cmds.length) return;
+    gl.uniform1f(this.uMesh.uUnlit, unlit ? 1 : 0);
     const first = this.meshFirst[meshIndex];
     const count = this.meshCount[meshIndex];
     if (this.multiFn && cmds.length > 1) {
@@ -747,7 +718,7 @@ export class Renderer {
       if (!batch.count) continue;
       gl.bindBuffer(gl.ARRAY_BUFFER, batch.vbo);
       gl.bufferSubData(gl.ARRAY_BUFFER, 0, batch.data.subarray(0, batch.count * STRIDE_FLOATS));
-      this._submit(m, batch.vbo, [{ first: 0, count: batch.count }]);
+      this._submit(m, batch.vbo, [{ first: 0, count: batch.count }], m === MESH_PYRAMID);
     }
   }
 }

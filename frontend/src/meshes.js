@@ -94,7 +94,7 @@ export function buildMeshes() {
   }
 
   pushRock(meshes);
-  pushQuad(meshes);
+  pushPyramid(meshes);
   return meshes;
 }
 
@@ -149,15 +149,31 @@ export const MESH_SPHERE = 1;
 export const MESH_CONE = 2;
 export const MESH_CYL = 3;
 export const MESH_ROCK = 4;
-export const MESH_QUAD = 5;
+export const MESH_PYRAMID = 5;
 
-// A flat billboard: one unit square in the XY plane facing +Z, two triangles.
-// Tracers are drawn with it instead of a 12-sided cylinder, which cost ~10x
-// the vertices for a streak nobody ever sees from the side.
-export function pushQuad(meshes) {
+// A four-sided pyramid: base radius 0.5 at y = -0.5, apex at y = +0.5, flat
+// shaded per face.  Six triangles, which is all a tracer needs - the streak is
+// stretched along its flight path and drawn unlit, so the facets only show in
+// the silhouette.
+export function pushPyramid(meshes) {
   const v = [];
-  const n = [0, 0, 1];
-  const c = [[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]];
-  for (const [x, y] of c) v.push(x, y, 0, n[0], n[1], n[2]);
+  const push = (p, n) => v.push(p[0], p[1], p[2], n[0], n[1], n[2]);
+  const apex = [0, 0.5, 0];
+  const corner = (i) => {
+    const a = (i / 4) * Math.PI * 2;
+    return [Math.cos(a) * 0.5, -0.5, Math.sin(a) * 0.5];
+  };
+  for (let i = 0; i < 4; i++) {
+    const p0 = corner(i), p1 = corner(i + 1);
+    const u = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
+    const w = [apex[0] - p0[0], apex[1] - p0[1], apex[2] - p0[2]];
+    let n = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]];
+    const l = Math.hypot(...n) || 1;
+    n = [n[0] / l, n[1] / l, n[2] / l];
+    push(p0, n); push(p1, n); push(apex, n);
+  }
+  const a = corner(0), b = corner(1), c = corner(2), d = corner(3);
+  push(a, [0, -1, 0]); push(b, [0, -1, 0]); push(c, [0, -1, 0]);
+  push(a, [0, -1, 0]); push(c, [0, -1, 0]); push(d, [0, -1, 0]);
   meshes.push(v);
 }

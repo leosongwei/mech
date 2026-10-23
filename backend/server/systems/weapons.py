@@ -85,7 +85,10 @@ def run(world, dt):
                 if int(ammo[eid, arm]) > 0:
                     reload_t[eid, arm] = wd["reload"]
                 continue
-            if float(cool[eid, arm]) > 0.0:
+            # a hair of float dust left over from the tick subtraction must
+            # not cost a whole tick: 600 rpm on a 30 Hz clock is exactly 3
+            # ticks, and 0.1 - 3 * dt rounds to a positive 1e-9
+            if float(cool[eid, arm]) > 1e-4:
                 continue
             target = -1
             if wd["lock"]:

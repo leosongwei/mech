@@ -65,7 +65,7 @@ WEAPONS = [
          semi=0, color=(1.0, 0.68, 0.20), desc="1.8 km suppressive fire"),
     # S-8 class: a launch charge throws the 80 mm rocket out at ~55 m/s, the
     # motor burns for a second and it leaves at 610 m/s
-    dict(wid=WID_ROCKET, key="rocket", name="UNGUIDED ROCKET POD", kind="rocket", dmg=155, rpm=200, mag=40,
+    dict(wid=WID_ROCKET, key="rocket", name="UNGUIDED ROCKET POD", kind="rocket", dmg=155, rpm=600, mag=40,
          reserve=0, reload=0.0, vel=55, spread=0.006, bias=0.0429, g=9.81, thrust=560, maxvel=610,
          life=8.0, splash=8.0, splash_dmg=95, range=3200, cost=350, lock=0, lock_time=0, salvo=1,
          semi=0, color=(1.0, 0.45, 0.15),

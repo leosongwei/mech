@@ -149,6 +149,10 @@ def solve_elevation(origin, target, wd, yaw, pitch):
         return math.atan2(vel * vel - math.sqrt(disc), g * d)
     # thrusting rocket: no closed form, and the altitude at range is a steep
     # function of the elevation, so walk it in with a secant instead of Newton
+    # `_altitude_at` gives an absolute height, so the walk compares it against
+    # the target's absolute height: `h` is the drop below the muzzle and only
+    # serves the closed form above.  Mixing the two put the round one muzzle
+    # height low, which for a slow launch is hundreds of metres short
     t0, t1 = float(pitch), float(pitch) + 0.02
     y0 = _altitude_at(origin, yaw, t0, wd, d)
     if y0 is None:
@@ -157,7 +161,7 @@ def solve_elevation(origin, target, wd, yaw, pitch):
         y1 = _altitude_at(origin, yaw, t1, wd, d)
         if y1 is None:
             return None
-        err = h - y1
+        err = float(target[1]) - y1
         if abs(err) < 0.1:
             return t1
         dy = y1 - y0

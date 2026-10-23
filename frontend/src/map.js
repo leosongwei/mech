@@ -259,13 +259,15 @@ export function solveElevation(wd, ox, oy, oz, yaw, pitch, target, maxElev) {
     if (disc < 0) return null;
     return Math.atan2(vel * vel - Math.sqrt(disc), g * d);
   }
+  // altitudeAt gives an absolute height: walk it against the target's absolute
+  // height, not the drop below the muzzle used by the closed form above
   let t0 = pitch, t1 = pitch + 0.02;
   let y0 = altitudeAt(wd, ox, oy, oz, yaw, t0, d);
   if (y0 === null) return null;
   for (let i = 0; i < 6; i++) {
     const y1 = altitudeAt(wd, ox, oy, oz, yaw, t1, d);
     if (y1 === null) return null;
-    const err = h - y1;
+    const err = target.y - y1;
     if (Math.abs(err) < 0.1) return t1;
     const dy = y1 - y0;
     if (Math.abs(dy) < 1e-6) return null;

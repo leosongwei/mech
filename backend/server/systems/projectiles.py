@@ -19,7 +19,9 @@ def _norm(v):
 
 def _steer(v, desired, speed, turn_rate, dt):
     cur, _ = _norm(v)
-    dn, _ = _norm(desired)
+    dn, want = _norm(desired)
+    if want < 1e-3:                     # already on the sight line
+        return (cur[0] * speed, cur[1] * speed, cur[2] * speed)
     dot = max(-1.0, min(1.0, cur[0] * dn[0] + cur[1] * dn[1] + cur[2] * dn[2]))
     ang = math.acos(dot)
     if ang < 1e-4:
@@ -47,6 +49,7 @@ def run(world, dt):
     life = e["proj_life"]
     src = e["proj_src"]
     age = e["proj_age"]
+    seed = e["proj_seed"]
     target = e["target"]
     etype = e["etype"]
     yaw = e["yaw"]
@@ -101,13 +104,34 @@ def run(world, dt):
                 origin, ay, ap = aim_of(world, shooter)
                 d = mu.dir_from(ay, ap)
                 rel = p0 - np.asarray(origin, np.float32)
-                proj = float(rel[0] * d[0] + rel[1] * d[1] + rel[2] * d[2])
-                proj = max(60.0, proj)
-                aim_pt = (origin[0] + d[0] * proj, origin[1] + d[1] * proj, origin[2] + d[2] * proj)
+                along = float(rel[0] * d[0] + rel[1] * d[1] + rel[2] * d[2])
+                # steer for a point well *ahead* on the sight line: the foot of
+                # the perpendicular sits 90 deg off the round's heading, so
+                # aiming there commands a full-rate turn for any lateral error
+                # and the round slithers across the beam instead of settling.
+                lead = max(0.0, along) + max(90.0, speed * 1.2)
+                aim_pt = (origin[0] + d[0] * lead, origin[1] + d[1] * lead,
+                          origin[2] + d[2] * lead)
             speed = min(wd["maxvel"], speed + wd["thrust"] * dt)
             if aim_pt is not None:
                 desired = (aim_pt[0] - p0[0], aim_pt[1] - p0[1], aim_pt[2] - p0[2])
                 v = np.asarray(_steer(v, desired, speed, 1.35, dt), np.float32)
+                # thrust misalignment / crosswind: a slow push square to the
+                # sight line, seeded per round, that the guidance has to chase
+                # down. the round wobbles on the way out instead of cutting a
+                # perfect line; the amplitude stays bounded because the beam
+                # always wins -- spread alone would just be noise
+                wob = wd.get("wob", 0.0)
+                side = math.hypot(d[0], d[2])
+                if wob and side > 1e-3:
+                    s = float(seed[pid])                       # random per round
+                    f = wd.get("wob_f", 1.0) * (0.75 + 0.5 * s)
+                    ph = s * math.tau
+                    a = (wob * (0.7 + 0.6 * ((s * 3.7) % 1.0))
+                         * (math.sin(age[pid] * f * 2.1 + ph)
+                            + 0.55 * math.sin(age[pid] * f * 5.3 + ph * 2.3)))
+                    v[0] -= d[2] / side * a * dt
+                    v[2] += d[0] / side * a * dt
             else:
                 v = np.asarray(sp, np.float32) * speed
         elif k == 3:                                # top attack IR missile

@@ -61,6 +61,7 @@ def register(ecs):
     ecs.register("proj_life", np.float32)
     ecs.register("proj_src", np.int32, (), -1)
     ecs.register("proj_age", np.float32)
+    ecs.register("proj_seed", np.float32)            # per round, drives the thrust jitter
 
 
 UNIT_COMPS = ["pos", "vel", "yaw", "pitch", "leg_yaw", "turret_yaw", "etype", "faction",
@@ -74,4 +75,4 @@ DEBRIS_COMPS = ["pos", "vel", "yaw", "pitch", "leg_yaw", "turret_yaw", "etype", 
                 "owner", "hp", "hpmax", "flags", "wreck_t", "wreck_kind"]
 
 PROJ_COMPS = ["pos", "vel", "faction", "proj_kind", "proj_wid", "proj_life", "proj_src",
-              "proj_age", "target"]
+              "proj_age", "proj_seed", "target"]

@@ -101,10 +101,10 @@ WEAPONS = [
 BUYABLE = [WID_AC30, WID_MG127, WID_ROCKET, WID_SACLOS, WID_TOPATTACK]
 
 # fire control: guns and unguided rockets hold off for the drop so the round
-# lands on whatever the muzzle points at.  The sight ray reaches 20% past the
-# nominal range - `range` is an energy figure, not a hard stop - and the
-# elevation is capped so a wild solution cannot point the barrel at the sky
-ZERO_MARGIN = 1.2
+# lands on whatever the muzzle points at.  Every ballistic weapon zeroes out
+# to the same 4 km, and the elevation is capped so a wild solution cannot
+# point the barrel at the sky
+ZERO_RANGE = 4000.0      # metres, the muzzle ray's length
 ZERO_MAX_ELEV = 1.05     # rad, ~60 deg
 
 # -------------------------------------------------------------- unit types

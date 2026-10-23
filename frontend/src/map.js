@@ -261,13 +261,14 @@ export function solveElevation(wd, ox, oy, oz, yaw, pitch, target, maxElev) {
   return Math.abs(t1) <= maxElev ? t1 : null;
 }
 
-// the elevation a zeroed shot of `wd` leaves at, or null for the plain aim
-export function zeroPitch(map, wd, yaw, pitch, ox, oy, oz, units, ignoreId, margin, maxElev, faction) {
-  const cap = wd.range * margin;
-  if (cap <= MIN_DIST) return null;
-  const p = sightPoint(map, ox, oy, oz, dirFrom(yaw, pitch), cap, units, ignoreId, faction);
-  if (!p) return null;
-  return solveElevation(wd, ox, oy, oz, yaw, pitch, p, maxElev);
+// the elevation a zeroed shot of `wd` leaves at, or null for the plain aim.
+// `far` marks a sight point the round cannot reach: the reticle then shows the
+// plain-aim impact and the HUD turns that reading red
+export function zeroPitch(map, wd, yaw, pitch, ox, oy, oz, units, ignoreId, maxDist, maxElev, faction) {
+  const p = sightPoint(map, ox, oy, oz, dirFrom(yaw, pitch), maxDist, units, ignoreId, faction);
+  if (!p) return { theta: null, far: false };        // sky: nothing to zero on
+  const theta = solveElevation(wd, ox, oy, oz, yaw, pitch, p, maxElev);
+  return { theta, far: theta === null };
 }
 
 // Hit spheres of a unit, mirroring mathutil.unit_spheres: the sight ray and

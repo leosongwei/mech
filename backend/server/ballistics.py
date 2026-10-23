@@ -1,11 +1,10 @@
 """Fire control: find what the muzzle is pointing at, and how high to hold.
 
 The sight point is the first thing the ray from the muzzle runs into - the
-ground, a building tile or a unit's hit sphere - out to `ZERO_MARGIN` times
-the weapon's nominal range.  The solver then returns the launch elevation that
-puts the round on that point, mirroring the integrator in
-``systems/projectiles.py`` (1/30 s semi-implicit Euler, same gravity and, for
-rockets, the same thrust curve).
+ground, a building tile or a unit's hit sphere - out to ``defs.ZERO_RANGE``.
+The solver then returns the launch elevation that puts the round on that
+point, mirroring the integrator in ``systems/projectiles.py`` (1/30 s
+semi-implicit Euler, same gravity and, for rockets, the same thrust curve).
 
 Only direct fire is zeroed: bullets and unguided rockets.  SACLOS and the
 infrared missile steer themselves and keep the plain aim.
@@ -166,10 +165,7 @@ def solve_elevation(origin, target, wd, yaw, pitch):
 
 def zero_pitch(world, origin, yaw, pitch, wd, ignore=-1, faction=-1):
     """Elevation for a zeroed shot of `wd`, or None to fire the plain aim."""
-    cap = float(wd["range"]) * defs.ZERO_MARGIN
-    if cap <= MIN_DIST:
-        return None
-    sp = sight_point(world, origin, mu.dir_from(yaw, pitch), cap, ignore, faction)
+    sp = sight_point(world, origin, mu.dir_from(yaw, pitch), defs.ZERO_RANGE, ignore, faction)
     if sp is None:
         return None
     return solve_elevation(origin, sp, wd, yaw, pitch)

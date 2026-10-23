@@ -418,28 +418,31 @@ export class Game {
       let point = null;
       let hit = false;
       let dist = 0;
+      let far = false;
       if (wd && (wd.kind === 'bullet' || wd.kind === 'rocket')) {
         // fire control: the server zeroes the shot against whatever the muzzle
         // points at, so predict with the elevation it is going to use.  bias is
         // already inside the solution, hence the copy with bias 0
-        const z = this.init.zero || { margin: 1.2, max_elev: 1.05 };
-        const theta = zeroPitch(this.map, wd, yaw, pitch, m[0], m[1], m[2], units, own.id,
-          z.margin, z.max_elev, own.faction);
+        const z = this.init.zero || { range: 4000, max_elev: 1.05 };
+        const fc = zeroPitch(this.map, wd, yaw, pitch, m[0], m[1], m[2], units, own.id,
+          z.range, z.max_elev, own.faction);
+        const theta = fc.theta;
         const shot = theta === null ? wd : { ...wd, bias: 0 };
         point = predictImpact(this.map, shot, m[0], m[1], m[2],
           theta === null ? dir : dirFrom(yaw, theta), units, {}, own.faction);
         hit = point.hit;
         dist = point.dist;
+        far = fc.far;                 // out of reach: the reading goes red
       } else if (wd) {
-        const far = Math.min(wd.range, 2400);
-        point = { x: m[0] + dir[0] * far, y: m[1] + dir[1] * far, z: m[2] + dir[2] * far, hit: false, dist: far };
-        dist = far;
+        const near = Math.min(wd.range, 2400);
+        point = { x: m[0] + dir[0] * near, y: m[1] + dir[1] * near, z: m[2] + dir[2] * near, hit: false, dist: near };
+        dist = near;
       }
       if (!point) continue;
       const scr = this.hud._project(point.x, point.y, point.z);
       this.crosshairs[arm] = {
         screen: scr || [this.hud.w / 2, this.hud.h / 2],
-        hit, dist, disabled,
+        hit, dist, disabled, far,
       };
     }
   }

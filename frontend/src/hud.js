@@ -5,6 +5,7 @@ import { ZOOM_LEVELS } from './input.js';
 
 const ARM_COLORS = ['#5fe6ff', '#ffb04a'];
 const ARM_NAMES = ['L', 'R'];
+const FAR_COLOR = '#ff4a4a';        // distance past the fire control's reach
 
 export class HUD {
   constructor(canvas) {
@@ -154,6 +155,8 @@ export class HUD {
       const stacked = other && Math.abs(other.screen[0] - x) < 80
         && Math.abs(other.screen[1] - y) < 24;
       const ly = y + 4 + (stacked && arm === 1 ? 14 : 0);
+      // red = the sight point is past what the fire control can zero for
+      if (c.far) ctx.fillStyle = FAR_COLOR;
       ctx.fillText(`${ARM_NAMES[arm]} ${c.hit ? Math.round(c.dist) + 'm' : '-'}`, x + r + 10, ly);
       ctx.restore();
     }

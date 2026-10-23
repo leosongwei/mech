@@ -4,10 +4,28 @@ Working notes for coding agents touching **MECH**, a browser-based mech
 shooter: numpy-ECS Python server, WebGL2 client, 16 km tile map, three lanes,
 RED vs BLUE.
 
+## Read `doc/product` first
+
+`doc/product/` is the Chinese product documentation and the source of truth for
+everything a player can see: interaction flow, every screen, and the full unit
+and weapon parameter tables (mirrors of `defs.py` / `spawner.py`).
+
+* **Before changing anything, read `doc/product/`** and check the change fits
+  the documented rules.
+* **Every product-facing change must be registered there**: update the relevant
+  page (`flow.md`, `screens.md`, `units.md`, `weapons.md`) and add a dated entry
+  at the top of `doc/product/CHANGELOG.md` in the same commit. That covers UI
+  elements, copy, keybindings, unit/weapon numbers, spawn and rule timers,
+  win conditions and debug UI.
+* Tuning changes in `defs.py` / `spawner.py` without the matching table update
+  count as unfinished work. Internal refactors with no player-visible effect do
+  not need an entry.
+
 ## Architecture
 
 ```
 dev.sh                     # build / start / attach / stop helper (byobu or tmux)
+doc/product/               # Chinese product docs: flow, screens, units, weapons, changelog
 backend/
   run.py                   # dev entry point: uvicorn server.main:app
   pyproject.toml           # fastapi, uvicorn[standard], numpy
@@ -158,7 +176,8 @@ when the code contains quotes.
 
 ## Conventions
 
-* Game text, comments, commit messages and docs are in English.
+* Game text, comments, commit messages and docs are in English — except
+  `doc/product/`, which is written in Chinese (UI strings quoted verbatim).
 * Minimal, scoped edits: match the surrounding style (numpy vectorised
   systems, short helper functions, comment density of the file you touch).
 * Units are metres and seconds; the map is 16 km square, the clock is 30 Hz.

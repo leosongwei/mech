@@ -3,7 +3,8 @@
 
 import { dirFrom } from './math.js';
 
-const TILE_GRASS = 0, TILE_ROAD = 1, TILE_BUILDING = 2, TILE_TREE = 3, TILE_ROCK = 4, TILE_BASE = 5, TILE_SOLID = 6;
+const TILE_GRASS = 0, TILE_ROAD = 1, TILE_BUILDING = 2, TILE_TREE = 3, TILE_ROCK = 4, TILE_BASE = 5, TILE_SOLID = 6,
+  TILE_FOREST = 7;
 
 function b64ToBytes(b64) {
   const bin = atob(b64);
@@ -28,13 +29,15 @@ export class MapData {
     this.tiles = tiles;          // Uint8Array(w*h)
   }
 
-  static async load(info) {
+  static async load(info, lanes) {
     const hBytes = await inflate(b64ToBytes(info.heights));
     const i16 = new Int16Array(hBytes.buffer, hBytes.byteOffset, hBytes.byteLength >> 1);
     const heights = new Float32Array(i16.length);
     for (let i = 0; i < i16.length; i++) heights[i] = i16[i];
     const tiles = await inflate(b64ToBytes(info.tiles));
-    return new MapData(info.w, info.h, info.tile, heights, tiles);
+    const map = new MapData(info.w, info.h, info.tile, heights, tiles);
+    map.lanes = lanes || [];     // road centrelines, in world metres
+    return map;
   }
 
   heightAt(x, z) {
@@ -56,7 +59,8 @@ export class MapData {
 
   blocked(x, z) {
     const t = this.tileAt(x, z);
-    return t === TILE_BUILDING || t === TILE_TREE || t === TILE_ROCK || t === TILE_SOLID;
+    return t === TILE_BUILDING || t === TILE_TREE || t === TILE_FOREST ||
+      t === TILE_ROCK || t === TILE_SOLID;
   }
 
   // mirrors Terrain.inside on the server: past the map edge there is no
@@ -178,7 +182,9 @@ export function predictImpact(map, wd, ox, oy, oz, dir, units, out, faction) {
   return out;
 }
 
-export const TILES = { TILE_GRASS, TILE_ROAD, TILE_BUILDING, TILE_TREE, TILE_ROCK, TILE_BASE, TILE_SOLID };
+export const TILES = {
+  TILE_GRASS, TILE_ROAD, TILE_BUILDING, TILE_TREE, TILE_ROCK, TILE_BASE, TILE_SOLID, TILE_FOREST,
+};
 
 // Fire control, mirroring backend/server/ballistics.py: what the muzzle ray
 // runs into, and the elevation that drops the round on it.  Both sides have to

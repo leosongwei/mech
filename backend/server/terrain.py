@@ -1,14 +1,16 @@
 """OpenTTD-ish tile terrain: heightfield, tile map, lanes and towns.
 
-The heightfield stores *vertex* heights (metres, quantised to 1 m steps) on a
-``W x H`` grid whose vertices sit at ``(i*TILE, j*TILE)``.  The tile map stores
-one byte per tile (``tiles[j, i]`` covering ``[i*TILE,(i+1)*TILE) square``).
+The heightfield stores *vertex* heights (metres, quantised to ``HSTEP`` steps so
+the ground reads as flat terraces joined by one-tile slopes - the angular
+OpenTTD look) on a ``W x H`` grid whose vertices sit at ``(i*TILE, j*TILE)``.
+The tile map stores one byte per tile (``tiles[j, i]`` covering
+``[i*TILE,(i+1)*TILE) square``).
 
-Map is 16000 x 16000 m made of 10 m tiles.  Both arrays are shipped to the
+Map is 16000 x 16000 m made of 16 m tiles.  Both arrays are shipped to the
 browser (zlib compressed) so client side prediction - ballistic impact
 markers, reticles - matches the server exactly.
 
-Everything is generated with numpy: 2.56 M tiles must never be touched by a
+Everything is generated with numpy: 1 M tiles must never be touched by a
 pure python loop.
 """
 
@@ -16,9 +18,11 @@ from __future__ import annotations
 
 import numpy as np
 
-TILE = 10.0
-MAPW = 1600
-MAPH = 1600
+TILE = 16.0
+MAPW = 1000
+MAPH = 1000
+HSTEP = 4.0             # height quantum: one 4 m step per 16 m tile is a
+                        # gentle 14 degree ramp, so terraces stay drivable
 
 TILE_GRASS = 0
 TILE_ROAD = 1
@@ -27,26 +31,27 @@ TILE_TREE = 3
 TILE_ROCK = 4
 TILE_BASE = 5
 TILE_SOLID = 6          # blocks movement, rendered as part of the base
+TILE_FOREST = 7         # thick stand: the client plants several trees per tile
 
-BLOCKING = (TILE_BUILDING, TILE_TREE, TILE_ROCK, TILE_SOLID)
+BLOCKING = (TILE_BUILDING, TILE_TREE, TILE_ROCK, TILE_SOLID, TILE_FOREST)
 
 # command bases (tile coordinates)
-BASE_TILES = {0: (300.0, 300.0), 1: (1300.0, 1300.0)}
+BASE_TILES = {0: (188.0, 188.0), 1: (812.0, 812.0)}
 
 # lane way points in tile coordinates (three classic lanes on a square map)
 LANE_TILES = [
-    [(300, 300), (1300, 300), (1300, 1300)],     # north lane
-    [(300, 300), (300, 1300), (1300, 1300)],     # west lane
-    [(300, 300), (800, 800), (1300, 1300)],      # mid lane
+    [(188, 188), (812, 188), (812, 812)],        # north lane
+    [(188, 188), (188, 812), (812, 812)],        # west lane
+    [(188, 188), (500, 500), (812, 812)],        # mid lane
 ]
 
 TOWN_SPOTS = [
-    (430, 300), (620, 300), (830, 300), (1040, 300), (1250, 300),
-    (300, 430), (300, 620), (300, 830), (300, 1040), (300, 1250),
-    (1300, 430), (1300, 620), (1300, 830), (1300, 1040), (1300, 1250),
-    (430, 1300), (620, 1300), (830, 1300), (1040, 1300), (1250, 1300),
-    (560, 560), (700, 700), (900, 900), (1040, 1040), (1180, 1180),
-    (620, 830), (830, 620), (980, 640), (640, 980),
+    (270, 188), (390, 188), (520, 188), (650, 188), (780, 188),
+    (188, 270), (188, 390), (188, 520), (188, 650), (188, 780),
+    (812, 270), (812, 390), (812, 520), (812, 650), (812, 780),
+    (270, 812), (390, 812), (520, 812), (650, 812), (780, 812),
+    (350, 350), (440, 440), (560, 560), (650, 650), (740, 740),
+    (390, 520), (520, 390), (610, 400), (400, 610),
 ]
 
 
@@ -102,6 +107,15 @@ def _raster_line(tiles: np.ndarray, a: tuple[float, float], b: tuple[float, floa
     tiles[j[ok], i[ok]] = value
 
 
+def _terrace(h: np.ndarray) -> np.ndarray:
+    """Snap a smooth heightfield to ``HSTEP`` platforms.
+
+    The whole map becomes flat terraces joined by gentle one-tile ramps: the
+    ground reads as cut out of blocks instead of a dune.
+    """
+    return (np.round(h / HSTEP) * HSTEP).astype(np.float32)
+
+
 def _dilate(mask: np.ndarray, r: int) -> np.ndarray:
     out = mask.copy()
     for _ in range(r):
@@ -154,7 +168,7 @@ class Terrain:
 
     # -- ray casts --------------------------------------------------------
     def ground_hit(self, p0: np.ndarray, p1: np.ndarray,
-                   step: float = 12.0,
+                   step: float = 8.0,
                    ) -> tuple[bool, float, np.ndarray | tuple[float, float, float]]:
         """Return (hit, t, point) for the first ground contact on the segment."""
         dx = p1[0] - p0[0]
@@ -180,9 +194,9 @@ class Terrain:
             if 0 <= i < self.w and 0 <= j < self.d:
                 ground = h[j, i]
                 if tiles[j, i] == TILE_BUILDING:
-                    ground += 11.0
-                elif tiles[j, i] == TILE_TREE:
-                    ground += 7.0
+                    ground += 13.0
+                elif tiles[j, i] == TILE_TREE or tiles[j, i] == TILE_FOREST:
+                    ground += 10.0
             else:
                 ground = 1e6
             if y <= ground:
@@ -200,7 +214,7 @@ class Terrain:
             prev = t
         return False, 1.0, p1
 
-    def los(self, a: np.ndarray, b: np.ndarray, step: float = 15.0) -> bool:
+    def los(self, a: np.ndarray, b: np.ndarray, step: float = 8.0) -> bool:
         hit, _, _ = self.ground_hit(a, b, step)
         return not hit
 
@@ -209,10 +223,15 @@ def generate(seed: int = 11) -> Terrain:
     rng = np.random.default_rng(seed)
     w, d = MAPW, MAPH
 
-    # layered terrain: broad hills + medium relief
+    # layered terrain: broad hills + medium relief.  The fbm field is stretched
+    # over its own percentiles so the map actually has ridges (~300 m) and
+    # plains (~20 m) instead of one gentle carpet: terraced afterwards, that
+    # contrast is what makes the ground read as cut blocks.
     base = _fbm(rng, w, d, octaves=6)
     relief = _fbm(rng, w, d, octaves=5)
-    height = base * 210.0 + (relief - 0.5) * 45.0
+    lo, hi = np.percentile(base, 8), np.percentile(base, 97)
+    base = np.clip((base - lo) / (hi - lo), 0.0, 1.0)
+    height = 20.0 + base ** 1.35 * 280.0 + (relief - 0.5) * 40.0
     height = _blur3(_blur3(height))
 
     tiles = np.zeros((d, w), np.uint8)
@@ -221,33 +240,30 @@ def generate(seed: int = 11) -> Terrain:
     yy, xx = np.mgrid[0:d, 0:w].astype(np.float32)
     for fac, (btx, bty) in BASE_TILES.items():
         bx, by = btx * TILE, bty * TILE
-        target = float(height[int(bty), int(btx)])
+        target = float(np.round(height[int(bty), int(btx)] / HSTEP) * HSTEP)
         dist = np.hypot(xx * TILE - bx, yy * TILE - by)
         k = np.clip(1.0 - dist / 600.0, 0.0, 1.0)
         k = k * k * (3 - 2 * k)
         height = height * (1 - k) + target * k
 
-    height = np.round(height)                       # 1 m terraces
-    height = np.round(_blur3(_blur3(height)))
-
     # ---- roads -----------------------------------------------------------
     road = np.zeros((d, w), bool)
-    lane_pts = []
     for lane in LANE_TILES:
         for a, b in zip(lane[:-1], lane[1:]):
-            n = int(max(abs(b[0] - a[0]), abs(b[1] - a[1])) + 1)
+            n = int(np.hypot(b[0] - a[0], b[1] - a[1]) * 2) + 2
             ts = np.linspace(0.0, 1.0, n, dtype=np.float32)
             i = (a[0] + (b[0] - a[0]) * ts).astype(np.int32)
             j = (a[1] + (b[1] - a[1]) * ts).astype(np.int32)
             ok = (i >= 0) & (i < w) & (j >= 0) & (j < d)
             road[j[ok], i[ok]] = True
-    road = _dilate(road, 1)
     tiles[road] = TILE_ROAD
 
     # flatten the road corridor so the lanes stay drivable
     flat = _blur3(_blur3(_blur3(height)))
     corridor = _dilate(road, 2)
     height = np.where(corridor, flat, height)
+
+    height = _terrace(height)                       # OpenTTD terraces
 
     # ---- base pads -------------------------------------------------------
     # the pad itself is drivable; the bunker core in the middle is solid so
@@ -279,18 +295,26 @@ def generate(seed: int = 11) -> Terrain:
             clear[j0:j1, i0:i1] = True
 
     # ---- forests ---------------------------------------------------------
-    for _ in range(260):
+    # a thick stand in the middle of every blob (several trees per tile) with a
+    # ragged edge of single-tree tiles, plus lone trees scattered over the
+    # plains: the countryside reads as groves instead of a painted texture
+    for _ in range(460):
         cx = int(rng.integers(6, w - 6))
         cy = int(rng.integers(6, d - 6))
-        rad = int(rng.integers(2, 14))
-        dens = float(rng.uniform(0.35, 0.9))
+        rad = int(rng.integers(2, 12))
         j0, j1 = max(1, cy - rad), min(d - 1, cy + rad + 1)
         i0, i1 = max(1, cx - rad), min(w - 1, cx + rad + 1)
         jj, ii = np.mgrid[j0:j1, i0:i1]
-        inside = (ii - cx) ** 2 + (jj - cy) ** 2 <= rad * rad
-        mask = inside & (rng.random(inside.shape) < dens)
+        r2 = (ii - cx) ** 2 + (jj - cy) ** 2
+        inside = r2 <= rad * rad
+        core = r2 <= (rad * 0.62) ** 2
         patch = tiles[j0:j1, i0:i1]
-        patch[mask & (patch == TILE_GRASS)] = TILE_TREE
+        edge = inside & (rng.random(inside.shape) < 0.62)
+        patch[edge & (patch == TILE_GRASS)] = TILE_TREE
+        patch[core & (patch == TILE_TREE)] = TILE_FOREST
+
+    lone = (rng.random((d, w)) < 0.0045) & (tiles == TILE_GRASS)
+    tiles[lone] = TILE_TREE
 
     # ---- boulders --------------------------------------------------------
     # rock fields instead of hundreds of single marbles scattered evenly over
@@ -306,7 +330,7 @@ def generate(seed: int = 11) -> Terrain:
 
     # keep lanes / towns / base pads clear of obstacles
     keep = _dilate(clear, 3)
-    dangerous = (tiles == TILE_TREE) | (tiles == TILE_ROCK)
+    dangerous = (tiles == TILE_TREE) | (tiles == TILE_FOREST) | (tiles == TILE_ROCK)
     tiles[keep & dangerous] = TILE_GRASS
     tiles[road] = TILE_ROAD
 
@@ -333,7 +357,7 @@ def generate(seed: int = 11) -> Terrain:
 # plains on the east, so every weapon can be judged against both a mountainside
 # and flat ground from one vantage point
 # ---------------------------------------------------------------------------
-RANGE_TILES = 400                     # 400 x 10 m = 4 km square
+RANGE_TILES = 250                     # 250 x 16 m = 4 km square
 RANGE_SPAWN = (1900.0, 3050.0)        # south centre, the blue cross
 RANGE_HILL = (900.0, 1100.0, 200.0)   # centre x, centre z, peak height
 
@@ -366,9 +390,8 @@ def generate_range(seed: int = 7) -> Terrain:
     dx = xm - hx
     dz = zm - hz
     r = np.hypot(dx, dz)
-    # a wobbly radius keeps the hill from being a perfect cone; the 1 m
-    # terracing below turns the slopes into the same faceted contours as the
-    # battle map
+    # a wobbly radius keeps the hill from being a perfect cone; the terracing
+    # below turns the slopes into the same faceted contours as the battle map
     ang = np.arctan2(dz, dx)
     wobble = 1.0 + 0.16 * np.sin(3.0 * ang + 0.7) + 0.09 * np.sin(5.0 * ang - 1.3)
     radius = 980.0 * wobble
@@ -385,7 +408,7 @@ def generate_range(seed: int = 7) -> Terrain:
     plains = _fbm(rng, n, n, octaves=4) * 9.0
     blend = np.clip((xm - 1500.0) / 1600.0, 0.0, 1.0)
     height = height + plains * (0.25 + 0.75 * blend)
-    height = np.round(_blur3(_blur3(height)))         # 1 m terraces
+    height = _terrace(_blur3(_blur3(height)))
 
     tiles = np.zeros((n, n), np.uint8)                # grass everywhere
     bases = {fac: RANGE_SPAWN for fac in (0, 1)}

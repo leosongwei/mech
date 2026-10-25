@@ -10,12 +10,12 @@ backend/               # FastAPI + simulation
   server/ecs.py        # numpy component registry, entity masks, queries
   server/components.py # every component the game declares
   server/systems/      # gameplay systems, one module per mechanic
-  server/terrain.py    # 1600x1600 tiles of 10 m -> 16 km square map
+  server/terrain.py    # 1000x1000 tiles of 16 m -> 16 km square map
   server/netcode.py    # init payload, binary snapshots, JSON meta
   server/main.py       # websockets + static files + 30 Hz game loop
   assets/              # compiled client (webpack output)
 frontend/              # webpack + WebGL2 client
-  src/renderer.js      # terrain LOD grid, instanced primitives, draw lists
+  src/renderer.js      # tiled terrain (near patch + far LOD), roads, instancing
   src/map.js           # client copy of terrain + identical ballistics
   src/scene.js         # unit models built from primitives
   src/hud.js           # crosshairs, lock box, module health, minimap
@@ -94,10 +94,13 @@ when 20x squeezes it into a three degree cone.
   simulation.
 * **Lobby.** the websocket `join` message carries callsign, side and the two
   arm weapons; the server respawns the mech accordingly.
-* **Terrain.** 1600×1600 vertex heightfield (1 m terraces) + a tile map
-  (`grass / road / building / tree / rock / base / solid`), three lanes with
-  towns along them, forests, boulders. Sent to the browser zlib-compressed, so
-  the client can predict ballistics with the server's exact numbers.
+* **Terrain.** 1000×1000 vertex heightfield quantised into 4 m terraces (the
+  angular OpenTTD look) + one byte per 16 m tile (`grass / road / building /
+  tree / forest / rock / base / solid`), three lanes with towns along them,
+  groves, boulders. Roads are drawn as ribbons along the lane polylines, so a
+  lane can cut diagonally across the grid. Both arrays are sent to the browser
+  zlib-compressed, so the client can predict ballistics with the server's
+  exact numbers.
 
 ## Combat
 

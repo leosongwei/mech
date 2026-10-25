@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from .world import World
 
 DT = 1 / 30.0            # same step as the projectile integrator
-MARCH = 24.0             # sight-ray resolution, metres
+MARCH = 8.0              # sight-ray resolution, metres (half a 16 m tile)
 MIN_DIST = 25.0          # closer than this the sight point is the mech itself
 ITERS = 4
 

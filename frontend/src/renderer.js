@@ -37,21 +37,19 @@ void main(){
   fragColor = vec4(sky, 1.0);
 }`;
 
+// Far ground: one static radial LOD grid around the eye.  Heights are sampled
+// in the vertex shader, so the 16 km map never touches the CPU.
 const TERRAIN_VS = `#version 300 es
 precision highp float;
 precision highp sampler2D;
-precision highp usampler2D;
 in vec2 aCell;
 uniform mat4 uViewProj;
 uniform sampler2D uHeight;
-uniform usampler2D uTiles;
 uniform vec2 uMapSize;
 uniform float uTile;
 uniform float uG;
 uniform vec3 uCam;
-out vec3 vNormal;
-out float vType;
-out vec2 vWP;
+out vec3 vWP;
 out float vViewZ;
 out float vDist;
 
@@ -78,38 +76,60 @@ void main(){
   float k = uTile * G / 0.6931472;
   vec2 off = sg * k * (pow(vec2(2.0), a / G) - 1.0);
   vec2 world = uCam.xz + off;
-  float spacing = uTile * pow(2.0, max(a.x, a.y) / G);
-  vec2 p = world / uTile;
-  float h = texH(p);
+  float h = texH(world / uTile);
   vec3 wp = vec3(world.x, h, world.y);
-
-  float eps = max(8.0, spacing * 1.5) / uTile;
-  float dhx = texH(p + vec2(eps, 0.0)) - texH(p - vec2(eps, 0.0));
-  float dhz = texH(p + vec2(0.0, eps)) - texH(p - vec2(0.0, eps));
-  float d = 2.0 * eps * uTile;
-  vNormal = normalize(vec3(-dhx / d, 1.0, -dhz / d));
-
-  ivec2 ti = clamp(ivec2(floor(p)), ivec2(0), ivec2(uMapSize) - 1);
-  vType = float(texelFetch(uTiles, ti, 0).r);
-  vWP = world;
-
   vec4 clip = uViewProj * vec4(wp, 1.0);
   gl_Position = clip;
+  vWP = wp;
   vViewZ = clip.w;
   vDist = distance(wp, uCam);
 }`;
 
+// Near ground: a patch of the tile grid that follows the eye.  The patch is
+// built once in tile-index space; moving it is a single uniform, and every
+// vertex lands exactly on a tile corner, so the terrain reads as flat blocks
+// joined by faceted slopes instead of a smooth carpet.
+const TILE_VS = `#version 300 es
+precision highp float;
+precision highp sampler2D;
+in vec2 aCell;
+uniform mat4 uViewProj;
+uniform sampler2D uHeight;
+uniform vec2 uMapSize;
+uniform vec2 uOrigin;              // tile index of the patch's first vertex
+uniform float uTile;
+uniform vec3 uCam;
+out vec3 vWP;
+out float vViewZ;
+out float vDist;
+
+void main(){
+  vec2 cell = clamp(uOrigin + aCell, vec2(0.0), uMapSize - 1.0);
+  float h = texelFetch(uHeight, ivec2(cell), 0).r;
+  vec3 wp = vec3(cell.x * uTile, h, cell.y * uTile);
+  vec4 clip = uViewProj * vec4(wp, 1.0);
+  gl_Position = clip;
+  vWP = wp;
+  vViewZ = clip.w;
+  vDist = distance(wp, uCam);
+}`;
+
+// Shared ground shading: flat per-triangle normals (derivatives), OpenTTD-ish
+// tile colours, the tile seam drawn only while a tile is big enough on screen.
 const TERRAIN_FS = `#version 300 es
 precision highp float;
-in vec3 vNormal;
-in float vType;
-in vec2 vWP;
+precision highp usampler2D;
+in vec3 vWP;
 in float vViewZ;
 in float vDist;
+uniform usampler2D uTiles;
+uniform vec2 uMapSize;
+uniform float uTile;
 uniform vec3 uSun;
 uniform vec3 uFogColor;
 uniform float uFogDensity;
 uniform float uFar;
+uniform vec4 uNear;                // covered patch (minx, minz, maxx, maxz)
 out vec4 fragColor;
 
 float hash21(vec2 p){
@@ -117,28 +137,96 @@ float hash21(vec2 p){
 }
 
 void main(){
-  vec3 n = normalize(vNormal);
-  float diff = max(0.0, dot(n, uSun));
-  int t = int(vType + 0.5);
-  float n1 = hash21(floor(vWP / 10.0));
-  float n2 = hash21(floor(vWP / 47.0));
+  // the tile patch covers this fragment: skip the coarse mesh under it
+  if (uNear.z > uNear.x &&
+      vWP.x > uNear.x && vWP.x < uNear.z &&
+      vWP.z > uNear.y && vWP.z < uNear.w) discard;
+
+  // ground faces up; the derivative is constant over a facet, so a tile is
+  // one flat shade and its sloped neighbour is a different one
+  vec3 n = normalize(cross(dFdx(vWP), dFdy(vWP)));
+  if (n.y < 0.0) n = -n;
+
+  vec2 p = vWP.xz / uTile;
+  ivec2 ti = clamp(ivec2(floor(p)), ivec2(0), ivec2(uMapSize) - 1);
+  int t = int(texelFetch(uTiles, ti, 0).r);
+
+  float tn = hash21(vec2(ti) + 0.5);                     // per tile mottle
+  float field = hash21(floor(vec2(ti) * 0.125) + 3.7);   // whole fields
+
+  // The seam is drawn in screen space - one pixel either side of the tile
+  // border, whatever the angle of the ground - and fades out once a whole
+  // tile shrinks to a handful of pixels.
+  vec2 f = fract(p);
+  vec2 fd = max(fwidth(p), vec2(1e-6));
+  vec2 toSeam = min(f, 1.0 - f) / fd;               // in pixels
+  float tilePx = 1.0 / max(fd.x, fd.y);             // tile size on screen
+  float line = (1.0 - smoothstep(0.7, 1.7, min(toSeam.x, toSeam.y))) *
+               clamp((tilePx - 6.0) / 10.0, 0.0, 1.0);
+
   vec3 col;
   if (t == 1) {
-    col = vec3(0.47, 0.43, 0.36) * (0.88 + 0.24 * n1);
+    col = vec3(0.30, 0.29, 0.27) * (0.90 + 0.20 * tn);
   } else if (t == 2) {
-    col = vec3(0.34, 0.32, 0.31);
-  } else if (t == 3) {
-    col = vec3(0.13, 0.22, 0.12);
+    col = vec3(0.44, 0.42, 0.38) * (0.90 + 0.20 * tn);
+  } else if (t == 3 || t == 7) {
+    col = mix(vec3(0.16, 0.25, 0.12), vec3(0.21, 0.31, 0.15), tn);
   } else if (t == 4) {
-    col = vec3(0.38, 0.38, 0.40) * (0.9 + 0.2 * n1);
+    col = vec3(0.35, 0.34, 0.31) * (0.86 + 0.22 * tn);
   } else if (t == 5 || t == 6) {
-    col = vec3(0.30, 0.31, 0.34) * (0.94 + 0.12 * n1);
+    col = vec3(0.34, 0.35, 0.36) * (0.94 + 0.12 * tn);
   } else {
-    float n3 = hash21(floor(vWP / 3.0));
-    col = mix(vec3(0.25, 0.36, 0.18), vec3(0.32, 0.43, 0.21), n2 * 0.6 + n1 * 0.4);
-    col *= 0.94 + 0.12 * n3;
+    // grass: a patchwork of fields with the odd mown strip, plus per tile noise
+    vec3 g1 = vec3(0.22, 0.34, 0.15);
+    vec3 g2 = vec3(0.30, 0.43, 0.19);
+    col = mix(g1, g2, field * 0.5 + tn * 0.5);
+    col *= 0.93 + 0.15 * tn;
   }
-  vec3 c = col * (0.36 + 0.82 * diff);
+  // steep facets fall into shade on their own, the way OpenTTD slopes read
+  float slope = 1.0 - clamp(n.y, 0.0, 1.0);
+  col *= 1.0 - 0.34 * smoothstep(0.10, 0.55, slope);
+  col *= 1.0 - 0.22 * line;
+
+  float diff = max(0.0, dot(n, uSun));
+  vec3 c = col * (0.44 + 0.70 * diff);
+  float fog = 1.0 - exp(-vDist * uFogDensity);
+  c = mix(c, uFogColor, clamp(fog, 0.0, 1.0));
+  fragColor = vec4(c, 1.0);
+  gl_FragDepth = log2(max(vViewZ, 1e-4)) / log2(uFar);
+}`;
+
+// Roads: a ribbon mesh laid on the ground along the lane polylines, so a leg
+// can run diagonally across the tile grid instead of stepping tile by tile.
+const ROAD_VS = `#version 300 es
+in vec3 aPos;
+in vec3 aCol;
+uniform mat4 uViewProj;
+uniform vec3 uCam;
+out vec3 vCol;
+out float vViewZ;
+out float vDist;
+void main(){
+  vec4 clip = uViewProj * vec4(aPos, 1.0);
+  gl_Position = clip;
+  vCol = aCol;
+  vViewZ = clip.w;
+  vDist = distance(aPos, uCam);
+}`;
+
+const ROAD_FS = `#version 300 es
+precision highp float;
+in vec3 vCol;
+in float vViewZ;
+in float vDist;
+uniform vec3 uSun;
+uniform vec3 uFogColor;
+uniform float uFogDensity;
+uniform float uFar;
+out vec4 fragColor;
+void main(){
+  vec3 n = normalize(vec3(0.0, 1.0, 0.0));
+  float diff = max(0.0, dot(n, uSun));
+  vec3 c = vCol * (0.44 + 0.70 * diff);
   float fog = 1.0 - exp(-vDist * uFogDensity);
   c = mix(c, uFogColor, clamp(fog, 0.0, 1.0));
   fragColor = vec4(c, 1.0);
@@ -216,7 +304,7 @@ function program(gl, vs, fs) {
 }
 
 const STRIDE_FLOATS = 20;            // mat4 + vec4 colour
-const CHUNK_TILES = 64;              // 640 m prop chunks
+const CHUNK_TILES = 40;              // 640 m prop chunks
 const DYN_CAP = [40000, 24000, 24000, 24000, 8000, 32000, 64];
 
 // Optics: the radial terrain grid gets more rings per octave and a finer
@@ -228,6 +316,10 @@ const TERRAIN_LOD = [
   { g: 82, k: 192 },
   { g: 116, k: 224 },
 ];
+
+// the tile patch that carries the near ground: TILE_PATCH tiles either way,
+// re-centred on the eye one whole tile at a time
+const TILE_PATCH = 48;
 
 export class Renderer {
   constructor(canvas) {
@@ -254,10 +346,15 @@ export class Renderer {
 
     this.pSky = program(gl, SKY_VS, SKY_FS);
     this.pTerrain = program(gl, TERRAIN_VS, TERRAIN_FS);
+    this.pTile = program(gl, TILE_VS, TERRAIN_FS);
+    this.pRoad = program(gl, ROAD_VS, ROAD_FS);
     this.pMesh = program(gl, MESH_VS, MESH_FS);
     this.uSky = this._uniforms(this.pSky, ['uInvVP', 'uCamPos', 'uSun']);
-    this.uTerrain = this._uniforms(this.pTerrain, ['uViewProj', 'uHeight', 'uTiles', 'uMapSize', 'uTile', 'uG', 'uCam', 'uSun', 'uFogColor', 'uFogDensity', 'uFar']);
+    this.uTerrain = this._uniforms(this.pTerrain, ['uViewProj', 'uHeight', 'uTiles', 'uMapSize', 'uTile', 'uG', 'uCam', 'uSun', 'uFogColor', 'uFogDensity', 'uFar', 'uNear']);
+    this.uTile = this._uniforms(this.pTile, ['uViewProj', 'uHeight', 'uTiles', 'uMapSize', 'uTile', 'uOrigin', 'uCam', 'uSun', 'uFogColor', 'uFogDensity', 'uFar', 'uNear']);
+    this.uRoad = this._uniforms(this.pRoad, ['uViewProj', 'uCam', 'uSun', 'uFogColor', 'uFogDensity', 'uFar']);
     this.uMesh = this._uniforms(this.pMesh, ['uViewProj', 'uSun', 'uCamPos', 'uFogColor', 'uFogDensity', 'uFar', 'uUnlit']);
+    this.tileOrigin = [0, 0];
 
     // ---- primitive meshes in one VBO ---------------------------------
     const raw = buildMeshes();
@@ -337,8 +434,42 @@ export class Renderer {
     [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) {
       gl.texParameteri(gl.TEXTURE_2D, k, v);
     }
+    this._buildTilePatch();
+    this._buildRoads(map);
     this._buildProps(map);
     this.setZoomLevel(0);
+  }
+
+  // The near ground: one patch of the tile grid, kept around the eye by a
+  // uniform.  Its vertices are tile corners, so the facets are the tiles.
+  _buildTilePatch() {
+    const gl = this.gl;
+    const K = TILE_PATCH;
+    const n = 2 * K;
+    const cells = new Float32Array((n + 1) * (n + 1) * 2);
+    let o = 0;
+    for (let j = 0; j <= n; j++) {
+      for (let i = 0; i <= n; i++) {
+        cells[o++] = i;
+        cells[o++] = j;
+      }
+    }
+    const idx = new Uint32Array(n * n * 6);
+    o = 0;
+    for (let j = 0; j < n; j++) {
+      for (let i = 0; i < n; i++) {
+        const a = j * (n + 1) + i, b = a + 1, c = a + n + 1, d = c + 1;
+        idx[o++] = a; idx[o++] = c; idx[o++] = b;
+        idx[o++] = b; idx[o++] = c; idx[o++] = d;
+      }
+    }
+    this.tileVBO = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.tileVBO);
+    gl.bufferData(gl.ARRAY_BUFFER, cells, gl.STATIC_DRAW);
+    this.tileIBO = gl.createBuffer();
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.tileIBO);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idx, gl.STATIC_DRAW);
+    this.tileIndexCount = idx.length;
   }
 
   // rebuild the terrain grid for a new optics level (cheap, once per step)
@@ -380,6 +511,97 @@ export class Renderer {
     this.terrainIndexCount = idx.length;
   }
 
+  // Roads are ribbons along the lane polylines: gravel shoulders, asphalt and
+  // a dashed centre line.  Being ribbons, a leg is free to cut diagonally
+  // across the tile grid instead of stepping tile by tile.
+  _buildRoads(map) {
+    const gl = this.gl;
+    const lanes = map.lanes || [];
+    const tile = map.tile;
+    // cross section from the left shoulder to the right one: gravel, asphalt,
+    // the dashed centre line, asphalt, gravel.  Each band is its own quad so
+    // the paint does not bleed into the asphalt.
+    const EDGE = [-8.0, -5.4, -0.8, 0.8, 5.4, 8.0];
+    const GRAVEL = [0.35, 0.32, 0.26];
+    const ASPHALT = [0.21, 0.205, 0.20];
+    const PAINT = [0.62, 0.60, 0.50];
+    const band = [GRAVEL, ASPHALT, PAINT, ASPHALT, GRAVEL];
+    const out = [];
+    const step = 8.0;                 // metres between cross sections
+    const hgt = (x, z) => {
+      const h = map.heights;
+      const fx = Math.min(Math.max(x / tile, 0), map.w - 1.001);
+      const fz = Math.min(Math.max(z / tile, 0), map.h - 1.001);
+      const i = fx | 0, j = fz | 0;
+      const tx = fx - i, tz = fz - j;
+      const a = h[j * map.w + i], b = h[j * map.w + i + 1];
+      const c = h[(j + 1) * map.w + i], d = h[(j + 1) * map.w + i + 1];
+      return (a * (1 - tx) + b * tx) * (1 - tz) + (c * (1 - tx) + d * tx) * tz;
+    };
+    const vert = (x, y, z, col, k, c) => {
+      // a little per-section grit so the surface is not a flat grey slab
+      const g = 0.94 + 0.12 * Math.abs(Math.sin(k * 12.9898 + c * 78.233) % 1);
+      out.push(x, y, z, col[0] * g, col[1] * g, col[2] * g);
+    };
+    for (const lane of lanes) {
+      if (lane.length < 2) continue;
+      // resample the polyline at a fixed spacing so corners are rounded off
+      const pts = [];
+      for (let k = 0; k < lane.length - 1; k++) {
+        const [ax, az] = lane[k];
+        const [bx, bz] = lane[k + 1];
+        const seg = Math.hypot(bx - ax, bz - az);
+        const n = Math.max(1, Math.round(seg / step));
+        for (let i = 0; i < n; i++) {
+          const t = i / n;
+          pts.push([ax + (bx - ax) * t, az + (bz - az) * t]);
+        }
+      }
+      pts.push(lane[lane.length - 1]);
+      // miter normals so the ribbon has no notch on the inside of a corner
+      const nrm = [];
+      for (let k = 0; k < pts.length; k++) {
+        const p0 = pts[Math.max(0, k - 1)];
+        const p1 = pts[Math.min(pts.length - 1, k + 1)];
+        let dx = p1[0] - p0[0], dz = p1[1] - p0[1];
+        const len = Math.hypot(dx, dz) || 1;
+        nrm.push([-dz / len, dx / len]);
+      }
+      const rows = [];
+      for (let k = 0; k < pts.length; k++) {
+        const [x, z] = pts[k];
+        const [nx, nz] = nrm[k];
+        const row = [];
+        for (let c = 0; c < EDGE.length; c++) {
+          const px = x + nx * EDGE[c];
+          const pz = z + nz * EDGE[c];
+          row.push([px, hgt(px, pz) + 0.30, pz]);
+        }
+        rows.push(row);
+      }
+      for (let k = 0; k < rows.length - 1; k++) {
+        // one 8 m dash every 24 m: the centre line is dashed
+        const dash = k % 3 === 0;
+        for (let b = 0; b < band.length; b++) {
+          const col = (b === 2 && !dash) ? ASPHALT : band[b];
+          const a0 = rows[k][b], a1 = rows[k][b + 1];
+          const b0 = rows[k + 1][b], b1 = rows[k + 1][b + 1];
+          vert(a0[0], a0[1], a0[2], col, k, b);
+          vert(b0[0], b0[1], b0[2], col, k, b);
+          vert(a1[0], a1[1], a1[2], col, k, b);
+          vert(a1[0], a1[1], a1[2], col, k, b);
+          vert(b0[0], b0[1], b0[2], col, k, b);
+          vert(b1[0], b1[1], b1[2], col, k, b);
+        }
+      }
+    }
+    this.roadCount = out.length / 6;
+    if (!this.roadCount) return;
+    this.roadVBO = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.roadVBO);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(out), gl.STATIC_DRAW);
+  }
+
   _buildProps(map) {
     const gl = this.gl;
     const w = map.w, h = map.h, tile = map.tile;
@@ -390,21 +612,99 @@ export class Renderer {
       return s - Math.floor(s);
     };
 
-    // each prop tile contributes meshes: tree = cone canopy + cylinder trunk,
-    // building = box, rock = squashed sphere
+    // One plan per tile, used twice: first to count the instances, then to
+    // fill them.  A tree tile grows a small stand of trunks and canopies, a
+    // forest tile a thick one - several trees share a single tile, the way
+    // OpenTTD plants them - and a building tile is a plain block with a roof.
+    const TRUNK = [0.26, 0.19, 0.13];
+    // house walls: concrete, sand, brick, slate
+    const HOUSES = [
+      [0.62, 0.60, 0.55], [0.72, 0.63, 0.48], [0.58, 0.40, 0.34], [0.44, 0.46, 0.48],
+    ];
+    const plant = (i, j, t, emit) => {
+      const x = (i + 0.5) * tile;
+      const z = (j + 0.5) * tile;
+      const y = map.heightAt(x, z);
+      const r1 = hash(i, j), r2 = hash(j * 1.7, i * 2.3);
+      if (t === 3 || t === 7) {
+        const n = t === 7 ? 3 + Math.floor(r1 * 3) : 1 + Math.floor(r1 * 2);
+        for (let q = 0; q < n; q++) {
+          const q1 = hash(i + q * 5.3, j + q * 1.9);
+          const q2 = hash(j + q * 3.7, i + q * 7.1);
+          const q3 = hash(i * 1.3 + q, j * 2.7 - q);
+          // trunks spread over the tile but never touch its border
+          const px = x + (q1 - 0.5) * tile * 0.66;
+          const pz = z + (q2 - 0.5) * tile * 0.66;
+          const py = map.heightAt(px, pz);
+          const broad = q3 > 0.45;
+          const tall = 10.0 + q3 * 8.0;                     // 10..18 m
+          const rad = tall * (broad ? 0.40 : 0.26) * (0.85 + q1 * 0.3);
+          const lean = (q2 - 0.5) * 0.10;
+          emit(MESH_CYL, px, py + tall * 0.20, pz, q1 * 6.283, lean,
+            0.7 + q3 * 0.5, tall * 0.40, 0.7 + q3 * 0.5, TRUNK);
+          if (broad) {
+            // broadleaf: a fat canopy ball sitting on the trunk
+            emit(MESH_SPHERE, px, py + tall * 0.60, pz, q1 * 6.283, lean,
+              rad, tall * 0.46, rad,
+              [0.12 + q2 * 0.08, 0.26 + q1 * 0.13, 0.10 + q3 * 0.06]);
+          } else {
+            // conifer: one narrow cone, skirt down to the trunk
+            emit(MESH_CONE, px, py + tall * 0.55, pz, q1 * 6.283, lean,
+              rad, tall * 0.80, rad,
+              [0.08 + q1 * 0.05, 0.19 + q2 * 0.14, 0.09 + q3 * 0.05]);
+          }
+        }
+      } else if (t === 2) {
+        // houses: a block from a small palette with a darker roof slab on top
+        const sx = tile * (0.60 + r1 * 0.26);
+        const sz = tile * (0.60 + r2 * 0.26);
+        const sy = 7.0 + r2 * 15.0;
+        const wall = HOUSES[Math.floor(r1 * HOUSES.length) % HOUSES.length];
+        emit(MESH_BOX, x, y + sy * 0.5, z, 0, 0, sx, sy, sz, wall);
+        emit(MESH_BOX, x, y + sy + 0.6, z, 0, 0, sx * 1.07, 1.2, sz * 1.07,
+          [wall[0] * 0.5, wall[1] * 0.5, wall[2] * 0.52]);
+        if (r2 > 0.55) {
+          // an annex half the size, pushed into one corner
+          const ax = x + (r1 - 0.5) * tile * 0.5;
+          const az = z + (r2 - 0.5) * tile * 0.5;
+          emit(MESH_BOX, ax, y + sy * 0.3, az, 0, 0, sx * 0.5, sy * 0.6, sz * 0.5,
+            [wall[0] * 0.92, wall[1] * 0.88, wall[2] * 0.84]);
+        }
+      } else if (t === 4) {
+        // two or three angular chunks per tile, tipped over at random angles,
+        // half sunk into the ground: low poly boulders
+        const sz0 = 4.6 + r1 * 5.0;
+        const rock = [0.30 + r1 * 0.08, 0.285 + r1 * 0.07, 0.265 + r2 * 0.06];
+        for (let q = 0; q < 3; q++) {
+          const h1 = hash(i + q * 3.1, j + q * 7.7);
+          const h2 = hash(j * 1.3 + q, i * 2.9 - q);
+          const a = r2 * 6.283 + q * 2.1;
+          const off = sz0 * 0.32 * q;
+          const bw = sz0 * (0.7 - q * 0.16) * (0.85 + h1 * 0.4);
+          const g = 0.88 + h2 * 0.24;
+          emit(MESH_ROCK,
+            x + Math.cos(a) * off, y + bw * 0.26, z + Math.sin(a) * off,
+            a, (h1 - 0.5) * 0.5, bw, bw * (0.62 + h2 * 0.5), bw,
+            [rock[0] * g, rock[1] * g, rock[2] * g]);
+        }
+      }
+    };
+
+    const want = (t) => t === 2 || t === 3 || t === 4 || t === 7;
     const counts = new Array(this.meshes.length).fill(0);
-    for (let k = 0; k < map.tiles.length; k++) {
-      const t = map.tiles[k];
-      if (t === 3) { counts[MESH_CONE]++; counts[MESH_CYL]++; }
-      else if (t === 2) counts[MESH_BOX]++;
-      else if (t === 4) counts[MESH_ROCK] += 3;
+    const tally = (mesh) => { counts[mesh]++; };
+    for (let j = 0; j < h; j++) {
+      for (let i = 0; i < w; i++) {
+        const t = map.tiles[j * w + i];
+        if (want(t)) plant(i, j, t, tally);
+      }
     }
     const datas = counts.map((c, i) => new Float32Array(Math.max(1, c) * STRIDE_FLOATS));
     const fills = new Array(this.meshes.length).fill(0);
     const chunkFirst = this.meshes.map(() => new Int32Array(nCx * nCz).fill(-1));
     const chunkCount = this.meshes.map(() => new Int32Array(nCx * nCz));
-
-    const add = (mesh, ci, x, y, z, yaw, sx, sy, sz, col, pitch) => {
+    let ci = 0;
+    const add = (mesh, x, y, z, yaw, pitch, sx, sy, sz, col) => {
       const arr = datas[mesh];
       const idx = fills[mesh];
       if ((idx + 1) * STRIDE_FLOATS > arr.length) return;
@@ -419,48 +719,13 @@ export class Renderer {
 
     for (let cz = 0; cz < nCz; cz++) {
       for (let cx = 0; cx < nCx; cx++) {
-        const ci = cz * nCx + cx;
+        ci = cz * nCx + cx;
         const i0 = cx * CHUNK_TILES, j0 = cz * CHUNK_TILES;
         const i1 = Math.min(w, i0 + CHUNK_TILES), j1 = Math.min(h, j0 + CHUNK_TILES);
         for (let j = j0; j < j1; j++) {
           for (let i = i0; i < i1; i++) {
             const t = map.tiles[j * w + i];
-            if (t !== 2 && t !== 3 && t !== 4) continue;
-            const x = (i + 0.5) * tile;
-            const z = (j + 0.5) * tile;
-            const y = map.heightAt(x, z);
-            const r1 = hash(i, j), r2 = hash(j * 1.7, i * 2.3);
-            if (t === 3) {
-              const hgt = 16 + r2 * 18;
-              const rad = 7 + r1 * 6;
-              add(MESH_CYL, ci, x, y + 2.5, z, 0, 1.6, 5, 1.6, [0.24, 0.18, 0.13]);
-              add(MESH_CONE, ci, x, y + 5 + hgt * 0.5, z, r1 * 6.283,
-                rad, hgt, rad, [0.09 + r1 * 0.05, 0.20 + r2 * 0.14, 0.09 + r2 * 0.05]);
-            } else if (t === 2) {
-              const sx = tile * (0.82 + r1 * 0.14);
-              const sz = tile * (0.82 + r2 * 0.14);
-              const sy = 10 + r1 * 26;
-              const g = 0.34 + r2 * 0.20;
-              add(MESH_BOX, ci, x, y + sy * 0.5, z, 0, sx, sy, sz, [g, g * 0.94, g * 0.86]);
-            } else {
-              // two or three angular chunks per tile, tipped over at random
-              // angles, half sunk into the ground: low poly boulders
-              const s = 4.6 + r1 * 5.0;
-              const rock = [0.30 + r1 * 0.08, 0.285 + r1 * 0.07, 0.265 + r2 * 0.06];
-              for (let q = 0; q < 3; q++) {
-                const h = hash(i + q * 3.1, j + q * 7.7);
-                const h2 = hash(j * 1.3 + q, i * 2.9 - q);
-                const a = r2 * 6.283 + q * 2.1;
-                const off = s * 0.32 * q;
-                const w = s * (0.7 - q * 0.16) * (0.85 + h * 0.4);
-                const g = 0.88 + h2 * 0.24;
-                add(MESH_ROCK, ci,
-                  x + Math.cos(a) * off, y + w * 0.26, z + Math.sin(a) * off,
-                  a, w, w * (0.62 + h2 * 0.5), w,
-                  [rock[0] * g, rock[1] * g, rock[2] * g],
-                  (h - 0.5) * 0.5);
-              }
-            }
+            if (want(t)) plant(i, j, t, add);
           }
         }
       }
@@ -575,23 +840,40 @@ export class Renderer {
 
   _drawTerrain(cam) {
     const gl = this.gl;
+    const tile = this.map.tile;
+    // the tile patch is centred on the eye, snapped to whole tiles so every
+    // vertex stays exactly on a tile corner
+    const K = TILE_PATCH;
+    const ox = Math.min(Math.max(Math.round(cam.eye[0] / tile) - K, 0), this.map.w - 1 - 2 * K);
+    const oz = Math.min(Math.max(Math.round(cam.eye[2] / tile) - K, 0), this.map.h - 1 - 2 * K);
+    this.tileOrigin = [ox, oz];
+    // world bounds of the patch, handed to the far program so it can cut the
+    // same rectangle out of its own mesh
+    const patch = [ox * tile, oz * tile, (ox + 2 * K) * tile, (oz + 2 * K) * tile];
+
+    const common = (u) => {
+      gl.uniformMatrix4fv(u.uViewProj, false, cam.viewProj);
+      gl.uniform2f(u.uMapSize, this.map.w, this.map.h);
+      gl.uniform1f(u.uTile, tile);
+      gl.uniform3fv(u.uCam, cam.eye);
+      gl.uniform3fv(u.uSun, this.sun);
+      gl.uniform3fv(u.uFogColor, this.fogColor);
+      gl.uniform1f(u.uFogDensity, this.fogDensity);
+      gl.uniform1f(u.uFar, this.far);
+      gl.uniform4f(u.uNear, patch[0], patch[1], patch[2], patch[3]);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, this.heightTex);
+      gl.uniform1i(u.uHeight, 0);
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, this.tileTex);
+      gl.uniform1i(u.uTiles, 1);
+    };
+
+    // far ground first, leaving the patch area to the tile grid
     gl.useProgram(this.pTerrain);
-    gl.uniformMatrix4fv(this.uTerrain.uViewProj, false, cam.viewProj);
-    gl.uniform2f(this.uTerrain.uMapSize, this.map.w, this.map.h);
-    gl.uniform1f(this.uTerrain.uTile, this.map.tile);
+    common(this.uTerrain);
     gl.uniform1f(this.uTerrain.uG, this.terrainG);
-    gl.uniform3fv(this.uTerrain.uCam, cam.eye);
-    gl.uniform3fv(this.uTerrain.uSun, this.sun);
-    gl.uniform3fv(this.uTerrain.uFogColor, this.fogColor);
-    gl.uniform1f(this.uTerrain.uFogDensity, this.fogDensity);
-    gl.uniform1f(this.uTerrain.uFar, this.far);
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, this.heightTex);
-    gl.uniform1i(this.uTerrain.uHeight, 0);
-    gl.activeTexture(gl.TEXTURE1);
-    gl.bindTexture(gl.TEXTURE_2D, this.tileTex);
-    gl.uniform1i(this.uTerrain.uTiles, 1);
-    const loc = gl.getAttribLocation(this.pTerrain, 'aCell');
+    let loc = gl.getAttribLocation(this.pTerrain, 'aCell');
     gl.bindBuffer(gl.ARRAY_BUFFER, this.terrainVBO);
     gl.enableVertexAttribArray(loc);
     gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
@@ -599,6 +881,43 @@ export class Renderer {
     gl.drawElements(gl.TRIANGLES, this.terrainIndexCount, gl.UNSIGNED_INT, 0);
     gl.disableVertexAttribArray(loc);
     this.stats.draws++;
+
+    // near ground: the tile grid, flat shaded facets and all.  Its own bounds
+    // are cleared in uNear, or it would discard every fragment it owns.
+    gl.useProgram(this.pTile);
+    common(this.uTile);
+    gl.uniform4f(this.uTile.uNear, 0, 0, -1, -1);
+    gl.uniform2f(this.uTile.uOrigin, ox, oz);
+    loc = gl.getAttribLocation(this.pTile, 'aCell');
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.tileVBO);
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.tileIBO);
+    gl.drawElements(gl.TRIANGLES, this.tileIndexCount, gl.UNSIGNED_INT, 0);
+    gl.disableVertexAttribArray(loc);
+    this.stats.draws++;
+
+    // then the roads laid on top of it
+    if (this.roadCount) {
+      gl.useProgram(this.pRoad);
+      gl.uniformMatrix4fv(this.uRoad.uViewProj, false, cam.viewProj);
+      gl.uniform3fv(this.uRoad.uCam, cam.eye);
+      gl.uniform3fv(this.uRoad.uSun, this.sun);
+      gl.uniform3fv(this.uRoad.uFogColor, this.fogColor);
+      gl.uniform1f(this.uRoad.uFogDensity, this.fogDensity);
+      gl.uniform1f(this.uRoad.uFar, this.far);
+      const aPos = gl.getAttribLocation(this.pRoad, 'aPos');
+      const aCol = gl.getAttribLocation(this.pRoad, 'aCol');
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.roadVBO);
+      gl.enableVertexAttribArray(aPos);
+      gl.vertexAttribPointer(aPos, 3, gl.FLOAT, false, 24, 0);
+      gl.enableVertexAttribArray(aCol);
+      gl.vertexAttribPointer(aCol, 3, gl.FLOAT, false, 24, 12);
+      gl.drawArrays(gl.TRIANGLES, 0, this.roadCount);
+      gl.disableVertexAttribArray(aPos);
+      gl.disableVertexAttribArray(aCol);
+      this.stats.draws++;
+    }
   }
 
   _setupMeshUniforms(cam) {

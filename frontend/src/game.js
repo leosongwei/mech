@@ -79,7 +79,7 @@ export class Game {
       this.range = init.mode === 'range';
       if (init.lock && init.lock.frac) this.lockFrac = init.lock.frac;
       this._status(this.range ? 'LOADING RANGE...' : 'LOADING 16 KM MAP...');
-      this.map = await MapData.load(init.map);
+      this.map = await MapData.load(init.map, init.lanes);
       this.renderer.setMap(this.map);
       this.hud.setMap(this.map);
       this._status('READY');

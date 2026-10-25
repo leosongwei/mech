@@ -34,7 +34,7 @@ backend/
     components.py          # every component the game declares
     defs.py                # entity types, weapons, unit stats, mech geometry
     world.py               # World: terrain, players, spawning, damage, tick
-    terrain.py             # 1600x1600 tiles of 10 m -> 16 km square map
+    terrain.py             # 1000x1000 tiles of 16 m -> 16 km square map
     mathutil.py            # angles, lead solving, terrain helpers
     ballistics.py          # fire control: muzzle sight point, zeroing elevation
     netcode.py             # init payload, binary snapshots, JSON meta
@@ -57,7 +57,7 @@ frontend/
     net.js                 # websocket, snapshot decode, interpolation
     map.js                 # client copy of terrain + identical ballistics
     scene.js               # unit models built from instanced primitives
-    renderer.js            # terrain LOD grid, instanced draws, multiDraw batching
+    renderer.js            # tiled near terrain + far LOD grid, roads, instanced draws
     hud.js                 # crosshair, lock box, module health, minimap
     meshes.js              # primitive meshes (box, sphere, cone, cylinder, rock)
     particles.js           # smoke, trails, impacts
@@ -125,11 +125,20 @@ frontend/
 
 * `game.js` sends input at 30 Hz (`{t:"in",yaw,pitch,mx,mz,fl,fr}`) and drives
   the frame: interpolate snapshots, aim, build the draw list, draw, HUD.
-* `renderer.js` renders the whole map as one radial LOD grid; heights come
-  from an `R32F` texture. Units/props/projectiles are instanced primitives
-  submitted through `WEBGL_multi_draw` with a per-command fallback.
+* `renderer.js` draws the ground twice: a radial LOD grid out to the horizon
+  (far) and a **tile-aligned patch** (`TILE_PATCH` tiles around the eye, moved
+  by the `uOrigin` uniform) that carries the OpenTTD look - every vertex is a
+  tile corner, so the per-triangle flat normal from the fragment derivatives
+  shades each tile/ramp as one facet. The far grid `discard`s the patch area
+  (`uNear`), the fragment shader draws the tile seam in screen space and fades
+  it out once a tile is only a few pixels wide. Heights come from an `R32F`
+  texture, tiles from an `R8UI` one. Roads are a ribbon mesh built from
+  `map.lanes` (`_buildRoads`, gravel/asphalt/dashed centre line) so a lane can
+  cut diagonally across the grid. Units/props/projectiles are instanced
+  primitives submitted through `WEBGL_multi_draw` with a per-command fallback.
   Prop instances are batched per mesh (`this.meshes.length` batches) and
-  culled in 640 m chunks by `_buildProps`.
+  culled in 640 m chunks (`CHUNK_TILES` = 40) by `_buildProps`, which plants
+  several trees per tree tile and a block plus roof per building tile.
 * `scene.js` builds unit models from primitives in a local frame: **+X
   forward, +Y up, +Z right** (see `math.js compose`). A Y-axis primitive is
   laid along the barrel with `pitch = FORWARD` (`-PI/2`); use

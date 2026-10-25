@@ -32,7 +32,7 @@ MAX_ZOOM = 20.0
 MIN_ASPECT = 0.4
 MAX_ASPECT = 4.0
 MIN_DIST = 20.0
-LOS_STEP = 8.0                  # ray march: under a tile, so a 10 m block
+LOS_STEP = 8.0                  # ray march: half a tile, so a 16 m block
                                 # can never slip between two samples
 
 

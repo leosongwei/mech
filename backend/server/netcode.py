@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from . import defs, shop
+from . import terrain as terrain_mod
 
 if TYPE_CHECKING:
     from .world import Player, World
@@ -56,7 +57,7 @@ def static_payload(world: World) -> dict:
     t = world.terrain
     heights = np.round(t.h).astype(np.int16)
     return dict(
-        map=dict(w=int(t.w), h=int(t.d), tile=float(10.0),
+        map=dict(w=int(t.w), h=int(t.d), tile=float(terrain_mod.TILE),
                  heights=_b64(heights), tiles=_b64(t.tiles)),
         weapons=defs.WEAPONS,
         units={int(k): v for k, v in defs.UNIT_DEFS.items()},

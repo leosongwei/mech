@@ -11,6 +11,21 @@
 
 ---
 
+## 2026-10-25 · 红外锁定要求通视：地形、建筑、树林后面的车锁不上，也藏不住
+
+- **锁定需要视线**：红外导引头不再"穿墙锁定"。选目标时从准星圈内角度最小的车
+  往外排，**跳过任何被地形、建筑或树林挡住的车**；已锁定的车滑到掩体后面也
+  **立刻脱锁**（进度清零），和离开圆圈一样的待遇。判定用 `Terrain.los()`
+  （每 8 m 一个采样点，比 10 m 的地块更密，薄楼也不会漏），和 AI 索敌同一套遮挡。
+- **飞行中的导引头同样吃地形**：攻顶导弹飞到一半，若与目标之间被山、楼或树林
+  挡住，导引头断锁、转惯性直飞（原来只有烟幕能致盲）。断锁日志统一成
+  `seeker of missile <id> lost the lock on mech <id>: smoke|terrain on the line of sight (...)`，
+  客户端的 `SEEKER BLINDED` 提示与 `__game.seekerLog`（新增 `why` 字段）都照旧。
+- 涉及文件：`backend/server/systems/locking.py`、`backend/server/systems/projectiles.py`、
+  `frontend/src/game.js`、`doc/product/{flow,screens,weapons,range}.md`
+
+---
+
 ## 2026-10-25 · 告警圈方向修正：正上方改为"我的视野方向"，方便还击
 
 - **告警圈方位修正**：激光告警短线和来袭导弹菱形之前整体**顺时针偏转 90°**——

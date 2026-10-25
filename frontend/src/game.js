@@ -274,10 +274,11 @@ export class Game {
           this.audio.hit();
         }
       } else if (ev.k === 'seeker') {
-        // an IR missile went dumb: its line of sight is full of smoke.  Kept
-        // on the game object so a console script can read the whole run back
+        // an IR missile went dumb: its line of sight is full of smoke or a
+        // ridge.  Kept on the game object so a console script can read the
+        // whole run back
         const rec = { t: Math.round(performance.now()), dist: ev.dist, mech: ev.tid,
-                      x: ev.x, y: ev.y, z: ev.z };
+                      why: ev.why, x: ev.x, y: ev.y, z: ev.z };
         this.seekerLog.push(rec);
         if (this.seekerLog.length > 64) this.seekerLog.shift();
         this._message(`SEEKER BLINDED ${ev.dist ? `(${Math.round(ev.dist)} m)` : ''}`, '#a9f0c0');

@@ -94,10 +94,10 @@ cd backend && MECH_DEBUG=1 ../.venv/bin/python run.py --range --port 8011
 
 * 发射事件写进服务器日志（logger `mech.range`）：
   `threat #n: top-attack missile <id> launched from the hill at mech <id>, 2200 m out`。
-* 导引头被烟幕挡住视线的瞬间，`systems/projectiles.py` 也会写一行（logger
-  `mech.smoke`）：
-  `seeker of missile <id> lost the lock on mech <id>: smoke on the line of sight (<d> m out, <t> s in the air)`。
-  这一行就是"烟幕打断锁定"的判定依据，可以直接
+* 导引头被烟幕**或地形**挡住视线的瞬间，`systems/projectiles.py` 也会写一行
+  （logger `mech.smoke`）：
+  `seeker of missile <id> lost the lock on mech <id>: smoke|terrain on the line of sight (<d> m out, <t> s in the air)`。
+  这一行就是"烟幕/地形打断锁定"的判定依据，可以直接
   `grep "mech.smoke" .run/mech-range.log`（或 `/tmp/mech-range.log`）看。
 * 客户端收到 `seeker` 事件时会提示 `SEEKER BLINDED (n m)`，并记在
   `__game.seekerLog` 里（最多 64 条）。
@@ -146,6 +146,8 @@ HUD 与战斗模式完全一致，只有两处不同：顶部战况条的 `WAVE 
 * 山脊碉堡：不可摧毁、轮廓顶着天际线，最适合验证**火控调零**——20x 下把准星
   压在碉堡上，弹着点应正好落在准星所指的位置（见 3.1 节）。
 * 平原：2 km 内的开阔射界，用来试导弹锁定、SACLOS 手动制导与溅射。
+* 山体遮挡：把准星对着山背面的 APC（HILL WEST / HILL RIDGE 之类），导引头圈
+  **不会收缩**——被地形挡住的靶子锁不上；锁定中的靶子开进山坳也会立刻脱锁。
 * 移动靶：PATROL MID / PATROL EAST 两条线，速度 8 m/s，用来练提前量。
 * 靶子不开火，可以反复盯同一辆 APC 打模块（车体 vs 炮塔命中球）测伤害。
 

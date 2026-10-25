@@ -6,6 +6,10 @@ seconds, and the lock drops the moment it leaves the circle - there is no
 hysteresis to hold a strafing hull.  Infantry is too small and too cold for
 the seeker: only vehicles and mechs can be locked.
 
+The seeker needs to see the hull: terrain, buildings and trees on the line
+of sight block the acquisition and break a lock that is already held, so a
+hull parked behind a ridge or a block is simply not lockable.
+
 The circle is a fixed fraction of the screen, so the angular cone shrinks as
 the optics zoom in; the pilot sends the zoom and the viewport aspect with
 every input message and the server keeps both numbers the same as the client.
@@ -28,6 +32,14 @@ MAX_ZOOM = 20.0
 MIN_ASPECT = 0.4
 MAX_ASPECT = 4.0
 MIN_DIST = 20.0
+LOS_STEP = 8.0                  # ray march: under a tile, so a 10 m block
+                                # can never slip between two samples
+
+
+def _sight_point(pos: np.ndarray, tid: int) -> tuple[float, float, float]:
+    """What the seeker looks at: the middle of the hull, not the tracks."""
+    tp = pos[tid]
+    return (float(tp[0]), float(tp[1]) + 1.5, float(tp[2]))
 
 def cone_of(pl: Player) -> float:
     """Angular radius of the reticle circle, in radians."""
@@ -65,8 +77,8 @@ def run(world: World, dt: float) -> None:
         cone = cone_of(pl)
 
         def angle_to(tid: int) -> tuple[float, float]:
-            tp = pos[tid]
-            v = np.array([tp[0] - origin[0], tp[1] + 1.5 - origin[1], tp[2] - origin[2]], np.float32)
+            sp = _sight_point(pos, tid)
+            v = np.array([sp[0] - origin[0], sp[1] - origin[1], sp[2] - origin[2]], np.float32)
             n = float(np.linalg.norm(v))
             if n < 1e-3:
                 return 99.0, 0.0
@@ -74,13 +86,15 @@ def run(world: World, dt: float) -> None:
 
         tracked = pl.lock_target
         if tracked >= 0:
-            # the hull left the circle (or died / turned friendly): drop it
+            # the hull left the circle (or died / turned friendly, or slid
+            # behind cover): drop it
             if (not e.alive[tracked]) or int(faction[tracked]) == int(faction[eid]) \
                     or not e.has(tracked, "lockable"):
                 tracked = -1
             else:
                 ang, dist = angle_to(tracked)
-                if ang > cone or dist > wd["range"]:
+                if ang > cone or dist > wd["range"] \
+                        or not world.terrain.los(origin, _sight_point(pos, tracked), LOS_STEP):
                     tracked = -1
             if tracked < 0:
                 pl.lock_target = -1
@@ -88,7 +102,6 @@ def run(world: World, dt: float) -> None:
 
         if tracked < 0:
             best = -1
-            best_ang = cone
             if ids.size:
                 v = (pos[ids] - np.asarray(origin, np.float32)).astype(np.float32)
                 dist = np.linalg.norm(v, axis=1)
@@ -97,9 +110,15 @@ def run(world: World, dt: float) -> None:
                     idx = np.nonzero(ok)[0]
                     vv = v[idx] / dist[idx, None]
                     ang = np.arccos(np.clip(vv @ d, -1.0, 1.0))
-                    j = int(np.argmin(ang))
-                    if ang[j] < best_ang:
-                        best = int(ids[idx[j]])
+                    # closest to the crosshair first, but a hull in cover is
+                    # never a candidate: take the first one the seeker can see
+                    for j in np.argsort(ang):
+                        if ang[j] >= cone:
+                            break
+                        cand = int(ids[idx[j]])
+                        if world.terrain.los(origin, _sight_point(pos, cand), LOS_STEP):
+                            best = cand
+                            break
             if best >= 0:
                 pl.lock_target = best
                 pl.lock_progress = 0.0

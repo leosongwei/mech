@@ -516,29 +516,30 @@ export class HUD {
     ctx.font = '9px "Courier New", monospace';
     ctx.fillStyle = 'rgba(160,200,185,0.7)';
     ctx.fillText('1 km', cx - 11, cy - R - 8);
-    // laser spokes
+    // laser spokes: bearing 0 is straight ahead (screen up), positive to the right
     for (const l of lasers) {
       const a = Math.atan2(l.z - own.z, l.x - own.x) - own.yaw;
       const ring = Math.min(R, (l.dist / 1000) * R);
+      const sx = Math.sin(a), sy = -Math.cos(a);
       ctx.globalAlpha = 0.85;
       ctx.strokeStyle = FAR_COLOR;
       ctx.lineWidth = 1.6;
       ctx.beginPath();
-      ctx.moveTo(cx + Math.cos(a) * ring, cy + Math.sin(a) * ring);
-      ctx.lineTo(cx + Math.cos(a) * (ring - 9), cy + Math.sin(a) * (ring - 9));
+      ctx.moveTo(cx + sx * ring, cy + sy * ring);
+      ctx.lineTo(cx + sx * (ring - 9), cy + sy * (ring - 9));
       ctx.stroke();
     }
     // missile diamonds
     for (const t of threats) {
       const a = Math.atan2(t.z - own.z, t.x - own.x) - own.yaw;
       const r = Math.min(R, (t.dist / 1000) * R);
-      const x = cx + Math.cos(a) * r;
-      const y = cy + Math.sin(a) * r;
+      const x = cx + Math.sin(a) * r;
+      const y = cy - Math.cos(a) * r;
       ctx.globalAlpha = 0.95;
       ctx.fillStyle = FAR_COLOR;
       ctx.save();
       ctx.translate(x, y);
-      ctx.rotate(a + Math.PI / 4);          // a square standing on its corner
+      ctx.rotate(a - Math.PI / 4);         // a square standing on its corner
       ctx.fillRect(-2.8, -2.8, 5.6, 5.6);
       ctx.restore();
     }

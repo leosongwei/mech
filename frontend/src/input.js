@@ -24,6 +24,14 @@ export class Input {
     this.wheelAcc = 0;
     this.onBuy = null;
     this.onToggleHelp = null;
+    this.onShop = null;             // B: open / close the rearm panel
+    this.onShopConfirm = null;      // ENTER while it is open
+    this.onShopCancel = null;       // ESC / B while it is open
+    this.onUiClick = null;          // mouse click in the panel, client pixels
+    this.uiOpen = false;            // set by the game: panel owns the mouse
+    this.mx = 0;
+    this.my = 0;
+    this.qPressed = false;          // one pull of the smoke trigger, sent once
     this.enabled = false;
 
     window.addEventListener('keydown', (e) => this._key(e, true));
@@ -32,6 +40,13 @@ export class Input {
     window.addEventListener('wheel', (e) => this._wheel(e), { passive: false });
     canvas.addEventListener('mousedown', (e) => {
       if (!this.enabled) return;
+      // the rearm panel is a normal mouse UI: no pointer lock, no trigger
+      if (this.uiOpen) {
+        this.mx = e.clientX; this.my = e.clientY;
+        if (this.onUiClick) this.onUiClick(e.clientX, e.clientY);
+        e.preventDefault();
+        return;
+      }
       if (!this.locked) { canvas.requestPointerLock(); return; }
       if (e.button === 0) this.fireL = true;
       if (e.button === 2) this.fireR = true;
@@ -49,12 +64,29 @@ export class Input {
 
   _key(e, down) {
     const code = e.code;
-    if (down && this.onBuy && /^Digit[1-5]$/.test(code)) {
+    if (this.uiOpen) {
+      // the panel takes the keyboard while it is up: ENTER buys, ESC drops it
+      if (down && code === 'Enter' && this.onShopConfirm) { this.onShopConfirm(); e.preventDefault(); return; }
+      if (down && (code === 'Escape' || code === 'KeyB') && this.onShopCancel) {
+        this.onShopCancel(); e.preventDefault(); return;
+      }
+      if (down && /^Digit[1-6]$/.test(code) && this.onBuy) {
+        // number keys pick the weapon for an arm while the panel is up
+        this.onBuy(parseInt(code.slice(5), 10) - 1, e.shiftKey);
+        e.preventDefault();
+        return;
+      }
+    }
+    if (down && code === 'KeyB' && this.onShop) { this.onShop(); e.preventDefault(); return; }
+    if (down && this.onBuy && /^Digit[1-6]$/.test(code)) {
       this.onBuy(parseInt(code.slice(5), 10) - 1, e.shiftKey);
       e.preventDefault();
       return;
     }
     if (down && code === 'KeyH' && this.onToggleHelp) this.onToggleHelp();
+    // one-shot keys: the browser repeats keydown while a key is held, so the
+    // pull is latched and the sender clears it
+    if (down && code === 'KeyQ' && !e.repeat) this.qPressed = true;
     if (code === 'AltLeft' || code === 'AltRight') {
       this.alt = down;
       e.preventDefault();
@@ -64,6 +96,7 @@ export class Input {
   }
 
   _mouse(e) {
+    if (this.uiOpen) { this.mx = e.clientX; this.my = e.clientY; return; }
     if (!this.locked) return;
     const dx = (e.movementX || 0) / this.zoom;
     const dy = (e.movementY || 0) / this.zoom;

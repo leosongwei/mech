@@ -32,6 +32,9 @@ class Player:
         self.score = 0
         self.zoom = 1.0         # optics magnification, mirrored for the IR seeker
         self.aspect = 16.0 / 9.0
+        self.smoke_q = False    # one press of Q, consumed by systems/smoke.py
+        self.smoke_cd = 0.0     # seconds until the next pull is allowed
+        self.smoke_charges = defs.SMOKE_CHARGES
         self.god = False        # debug: ignore all damage to this pilot
 
 
@@ -65,10 +68,11 @@ class World:
     # setup
     # ------------------------------------------------------------------
     def _build_pipeline(self):
-        from .systems import debris, economy, locking, movement, player_input, projectiles, weapons
+        from .systems import (debris, economy, locking, movement, player_input, projectiles,
+                              smoke, weapons)
         self.systems = [player_input.run]
         self.systems += self.mode_mod.pre_systems()
-        self.systems += [locking.run, weapons.run, movement.run, projectiles.run,
+        self.systems += [locking.run, smoke.run, weapons.run, movement.run, projectiles.run,
                          economy.run, debris.run]
         self.systems += self.mode_mod.post_systems()
 
@@ -83,6 +87,8 @@ class World:
         comps = components.CIV_COMPS if etype == defs.ETYPE_CIV else components.UNIT_COMPS
         for c in comps:
             e.add_comp(eid, c)
+        for tag in d["tags"]:
+            e.add_comp(eid, tag)                # identity: what this thing *is*
         yaw = self.rng.random() * math.tau
         e["pos"][eid] = (x, self.terrain.height_at(x, z), z)
         e["vel"][eid] = (0.0, 0.0, 0.0)
@@ -112,6 +118,9 @@ class World:
         return eid
 
     def spawn_mech(self, player: Player):
+        player.smoke_charges = defs.SMOKE_CHARGES
+        player.smoke_cd = 0.0
+        player.smoke_q = False
         spawn = self.mode_mod.mech_spawn(self, player)
         if spawn is None:
             base = self.terrain.bases[player.faction]
@@ -158,23 +167,32 @@ class World:
     # queries
     # ------------------------------------------------------------------
     def all_units(self) -> np.ndarray:
-        """Every entity the client should see, including wrecks and corpses."""
+        """Every entity the client draws as a unit row: hulls, wrecks, corpses."""
         return self.ecs.query("etype", "hp")
 
     def units(self) -> np.ndarray:
-        """Live units: debris is inert, so nothing may target or damage it."""
-        ids = self.all_units()
-        t = self.ecs["etype"][ids]
-        return ids[(t != defs.ETYPE_DEBRIS) & (t != defs.ETYPE_CORPSE)]
+        """Hulls: everything a round can hit and everything that can be damaged.
+
+        Wrecks and corpses dropped their `unit` tag when they died, so they are
+        not in here - no exclusion list needed.
+        """
+        return self.ecs.query("unit")
 
     def combat_units(self) -> np.ndarray:
-        ids = self.units()
-        t = self.ecs["etype"][ids]
-        keep = (t != defs.ETYPE_BASE) & (t != defs.ETYPE_CIV) & (t != defs.ETYPE_BUNKER)
-        return ids[keep]
+        """Fighters: the only things AI may target and the only things that hold a town."""
+        return self.ecs.query("combat")
+
+    def lockable_units(self) -> np.ndarray:
+        return self.ecs.query("lockable")
+
+    def movable(self) -> np.ndarray:
+        return self.ecs.query("moves")
 
     def projectiles(self) -> np.ndarray:
         return self.ecs.query("proj_kind")
+
+    def smoke_puffs(self) -> np.ndarray:
+        return self.ecs.query("smoke")
 
     # ------------------------------------------------------------------
     # damage
@@ -183,7 +201,7 @@ class World:
         e = self.ecs
         if not e.alive[eid] or amount <= 0:
             return
-        if int(e["etype"][eid]) == defs.ETYPE_BUNKER:
+        if e.has(eid, "invulnerable"):
             return                      # concrete: rounds hit it, nothing breaks
         pilot = self.players.get(int(e["owner"][eid]))
         if pilot is not None and pilot.god:

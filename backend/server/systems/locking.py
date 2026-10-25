@@ -25,9 +25,6 @@ MIN_ASPECT = 0.4
 MAX_ASPECT = 4.0
 MIN_DIST = 20.0
 
-LOCKABLE = (defs.ETYPE_APC, defs.ETYPE_MECH)
-
-
 def cone_of(pl) -> float:
     """Angular radius of the reticle circle, in radians."""
     zoom = min(max(float(getattr(pl, "zoom", 1.0)), MIN_ZOOM), MAX_ZOOM)
@@ -42,9 +39,8 @@ def run(world, dt):
     yaw = e["yaw"]
     pitch = e["pitch"]
     faction = e["faction"]
-    etype = e["etype"]
     hp = e["hp"]
-    ids = world.combat_units()
+    ids = world.lockable_units()
 
     for pl in world.players.values():
         eid = pl.mech
@@ -76,7 +72,7 @@ def run(world, dt):
         if tracked >= 0:
             # the hull left the circle (or died / turned friendly): drop it
             if (not e.alive[tracked]) or int(faction[tracked]) == int(faction[eid]) \
-                    or int(etype[tracked]) not in LOCKABLE:
+                    or not e.has(tracked, "lockable"):
                 tracked = -1
             else:
                 ang, dist = angle_to(tracked)
@@ -92,9 +88,7 @@ def run(world, dt):
             if ids.size:
                 v = (pos[ids] - np.asarray(origin, np.float32)).astype(np.float32)
                 dist = np.linalg.norm(v, axis=1)
-                et = etype[ids]
                 ok = (dist > MIN_DIST) & (dist < wd["range"]) & (faction[ids] != int(faction[eid]))
-                ok &= (et == defs.ETYPE_APC) | (et == defs.ETYPE_MECH)
                 if ok.any():
                     idx = np.nonzero(ok)[0]
                     vv = v[idx] / dist[idx, None]

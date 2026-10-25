@@ -54,8 +54,6 @@ def run(world, dt):
 
     for eid in ids:
         et = int(etype[eid])
-        if et in (defs.ETYPE_BASE, defs.ETYPE_CIV):
-            continue
         for arm in (0, 1):
             if cool[eid, arm] > 0.0:
                 cool[eid, arm] = max(0.0, float(cool[eid, arm]) - dt)

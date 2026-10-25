@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import math
 import os
 import time
@@ -16,8 +17,14 @@ from fastapi.staticfiles import StaticFiles
 
 import numpy as np
 
-from . import defs, netcode
+from . import defs, netcode, shop
 from .world import World
+
+# uvicorn only configures its own loggers; ours ("mech.*": smoke lock breaks,
+# range threats) need a handler of their own to land in the server log
+logging.basicConfig(level=logging.INFO,
+                    format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+
 
 def _json_safe(obj):
     """numpy scalars are not JSON serialisable - unwrap them."""
@@ -28,6 +35,22 @@ def _json_safe(obj):
 ASSETS = Path(__file__).resolve().parent.parent / "assets"
 
 app = FastAPI(title="MECH")
+
+
+@app.middleware("http")
+async def revalidate_assets(request, call_next):
+    """Make the browser revalidate the bundle instead of heuristically caching it.
+
+    A rebuild changes the file but not its URL, and without a Cache-Control
+    header browsers happily keep serving the old JavaScript for minutes - with
+    its own snapshot layout.  ``no-cache`` still allows a 304, so it costs one
+    round trip per file and the client is never stale.
+    """
+    response = await call_next(request)
+    path = request.url.path
+    if path == "/" or path.startswith("/static"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
 MODE = os.environ.get("MECH_MODE") or ("range" if os.environ.get("MECH_RANGE") == "1" else "battle")
 world = World(mode=MODE)
 
@@ -169,6 +192,9 @@ async def ws_endpoint(ws: WebSocket):
                 # optics + viewport aspect drive the IR lock circle
                 pl.zoom = max(1.0, min(20.0, float(msg.get("z", pl.zoom))))
                 pl.aspect = max(0.4, min(4.0, float(msg.get("a", pl.aspect))))
+                # Q: one-shot hot smoke, latched until systems/smoke.py eats it
+                if msg.get("q"):
+                    pl.smoke_q = True
                 pl.name = str(msg.get("name", pl.name))[:16]
             elif t == "join":
                 # lobby: callsign, side and initial weapon loadout
@@ -195,21 +221,42 @@ async def ws_endpoint(ws: WebSocket):
                 client.offer("t", json.dumps(dict(t="joined", pid=pl.pid, faction=int(pl.faction),
                                                   name=pl.name, loadout=pl.loadout),
                                              default=_json_safe))
+            elif t == "shop":
+                # the rearm panel: price the whole draft, buy it or refuse it
+                if not _at_base(world, pl):
+                    client.offer("t", json.dumps(dict(t="info", msg="SHOP DENIED - BE AT BASE / TOWN"),
+                                                 default=_json_safe))
+                else:
+                    req = shop.parse_request(msg)
+                    ok, note, _q = shop.deal(world, pl, req)
+                    client.offer("t", json.dumps(dict(t="info", msg=note if ok else
+                                                      f"SHOP DENIED - {note}"), default=_json_safe))
+                    if ok:
+                        client.offer("t", json.dumps(dict(t="shop", loadout=pl.loadout),
+                                                     default=_json_safe))
             elif t == "buy":
+                # hotbar shortcut: the same trade as the panel, one arm at a time
                 arm = int(msg.get("arm", 0)) & 1
                 wid = int(msg.get("weapon", 0))
-                wd = defs.WEAPONS[wid] if 0 <= wid < len(defs.WEAPONS) else None
-                if wd and wid in defs.BUYABLE and _at_base(world, pl) and pl.money >= wd["cost"]:
-                    pl.money -= wd["cost"]
-                    pl.loadout[arm] = wid
-                    if pl.mech >= 0 and world.ecs.alive[pl.mech]:
-                        world.ecs["weapon"][pl.mech, arm] = wid
-                        world.ecs["mag"][pl.mech, arm] = wd["mag"]
-                        world.ecs["ammo"][pl.mech, arm] = wd["reserve"]
-                        world.ecs["reload_t"][pl.mech, arm] = 0.0
-                    client.offer("t", json.dumps(dict(t="info", msg=f"FITTED {wd['name']}"), default=_json_safe))
+                req = shop.empty_request()
+                req["arms"][arm] = wid
+                if not _at_base(world, pl):
+                    client.offer("t", json.dumps(dict(t="info", msg="PURCHASE DENIED - BE AT BASE"),
+                                                 default=_json_safe))
                 else:
-                    client.offer("t", json.dumps(dict(t="info", msg="PURCHASE DENIED - NEED MONEY / BE AT BASE"), default=_json_safe))
+                    ok, note, _q = shop.deal(world, pl, req)
+                    client.offer("t", json.dumps(dict(t="info", msg=note if ok else
+                                                      f"PURCHASE DENIED - {note}"), default=_json_safe))
+            elif t == "buy_smoke":
+                req = shop.empty_request()
+                req["smoke"] = True
+                if not _at_base(world, pl):
+                    client.offer("t", json.dumps(dict(t="info", msg="PURCHASE DENIED - BE AT BASE"),
+                                                 default=_json_safe))
+                else:
+                    ok, note, _q = shop.deal(world, pl, req)
+                    client.offer("t", json.dumps(dict(t="info", msg=note if ok else
+                                                      f"PURCHASE DENIED - {note}"), default=_json_safe))
             elif t == "debug_spawn" and os.environ.get("MECH_DEBUG") == "1":
                 # development helper: drop a target in front of the player
                 if pl.mech >= 0 and world.ecs.alive[pl.mech]:

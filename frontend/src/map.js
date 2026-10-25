@@ -221,8 +221,9 @@ export function sightPoint(map, ox, oy, oz, dir, maxDist, units, ignoreId, facti
   return point;
 }
 
-// altitude of the round after `dist` metres of horizontal travel
-function altitudeAt(wd, ox, oy, oz, yaw, pitch, dist) {
+// height and flight time of the round once it has covered `dist` metres of
+// horizontal travel: the same step, gravity and thrust curve the server runs
+function flightTo(wd, ox, oy, oz, yaw, pitch, dist) {
   const cp = Math.cos(pitch);
   let vx = cp * Math.cos(yaw) * wd.vel, vy = Math.sin(pitch) * wd.vel, vz = cp * Math.sin(yaw) * wd.vel;
   let x = ox, y = oy, z = oz;
@@ -241,11 +242,23 @@ function altitudeAt(wd, ox, oy, oz, yaw, pitch, dist) {
     if (h >= dist) {
       const span = h - prevH;
       const f = span > 1e-6 ? (dist - prevH) / span : 1;
-      return prevY + (y - prevY) * f;
+      return { y: prevY + (y - prevY) * f, t: t + dt };
     }
     prevH = h; prevY = y;
   }
   return null;
+}
+
+// altitude of the round after `dist` metres of horizontal travel
+function altitudeAt(wd, ox, oy, oz, yaw, pitch, dist) {
+  const hit = flightTo(wd, ox, oy, oz, yaw, pitch, dist);
+  return hit ? hit.y : null;
+}
+
+// seconds of flight to reach `dist` metres of horizontal travel
+export function flightTime(wd, ox, oy, oz, yaw, pitch, dist) {
+  const hit = flightTo(wd, ox, oy, oz, yaw, pitch, dist);
+  return hit ? hit.t : null;
 }
 
 export function solveElevation(wd, ox, oy, oz, yaw, pitch, target, maxElev) {
@@ -275,6 +288,32 @@ export function solveElevation(wd, ox, oy, oz, yaw, pitch, target, maxElev) {
     t0 = t1; y0 = y1; t1 = t2;
   }
   return Math.abs(t1) <= maxElev ? t1 : null;
+}
+
+// The pre-aim solution of a moving target: the point in the world a round of
+// `wd` has to be aimed at to land on a hull driving at (vx, vz).  Because the
+// fire control zeroes the shot against whatever the muzzle ray hits, this is a
+// point and not an elevation - put the sights on it and the elevation follows.
+// The hull is assumed to stay on the ground, so its future height comes from
+// the terrain under the future position, not from a ballistic path.
+// Three passes are enough: the lead is small next to the range.
+export function intercept(wd, ox, oy, oz, tx, ty, tz, vx, vz, map, maxElev) {
+  const lift = ty - map.heightAt(tx, tz);        // hull centre above the ground
+  let ax = tx, ay = ty, az = tz, tof = 0;
+  for (let i = 0; i < 3; i++) {
+    const d = Math.hypot(ax - ox, az - oz);
+    if (d < MIN_DIST) return null;
+    const yaw = Math.atan2(az - oz, ax - ox);
+    const theta = solveElevation(wd, ox, oy, oz, yaw, 0, { x: ax, y: ay, z: az }, maxElev);
+    if (theta === null) return null;
+    const t = flightTime(wd, ox, oy, oz, yaw, theta, d);
+    if (t === null) return null;
+    tof = t;
+    ax = tx + vx * t;
+    az = tz + vz * t;
+    ay = map.heightAt(ax, az) + lift;
+  }
+  return { x: ax, y: ay, z: az, tof };
 }
 
 // the elevation a zeroed shot of `wd` leaves at, or null for the plain aim.

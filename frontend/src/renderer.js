@@ -11,7 +11,7 @@
 //   range works without z-fighting.
 
 import { compose, mat4, multiply, perspective, lookAt } from './math.js';
-import { buildMeshes, MESH_BOX, MESH_SPHERE, MESH_CONE, MESH_CYL, MESH_ROCK, MESH_PYRAMID } from './meshes.js';
+import { buildMeshes, MESH_BOX, MESH_SPHERE, MESH_CONE, MESH_CYL, MESH_ROCK, MESH_PYRAMID, MESH_SMOKE } from './meshes.js';
 
 const SKY_VS = `#version 300 es
 in vec2 aPos;
@@ -217,7 +217,7 @@ function program(gl, vs, fs) {
 
 const STRIDE_FLOATS = 20;            // mat4 + vec4 colour
 const CHUNK_TILES = 64;              // 640 m prop chunks
-const DYN_CAP = [40000, 24000, 24000, 24000, 8000, 32000];
+const DYN_CAP = [40000, 24000, 24000, 24000, 8000, 32000, 64];
 
 // Optics: the radial terrain grid gets more rings per octave and a finer
 // index grid the more the sight magnifies, so the ground stays smooth when
@@ -526,6 +526,7 @@ export class Renderer {
 
   sphereA(px, py, pz, yaw, pitch, sx, sy, sz, r, g, b, a) { this.pushA(MESH_SPHERE, px, py, pz, yaw, pitch, sx, sy, sz, r, g, b, a); }
   coneA(px, py, pz, yaw, pitch, sx, sy, sz, r, g, b, a) { this.pushA(MESH_CONE, px, py, pz, yaw, pitch, sx, sy, sz, r, g, b, a); }
+  smoke(px, py, pz, yaw, pitch, sx, sy, sz, r, g, b, a) { this.push(MESH_SMOKE, px, py, pz, yaw, pitch, sx, sy, sz, r, g, b, a); }
 
   box(px, py, pz, yaw, pitch, sx, sy, sz, r, g, b, a) { this.push(MESH_BOX, px, py, pz, yaw, pitch, sx, sy, sz, r, g, b, a); }
   sphere(px, py, pz, yaw, pitch, sx, sy, sz, r, g, b, a) { this.push(MESH_SPHERE, px, py, pz, yaw, pitch, sx, sy, sz, r, g, b, a); }

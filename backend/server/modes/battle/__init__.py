@@ -7,6 +7,7 @@ import math
 from ... import defs
 from ... import terrain as terrain_mod
 from ..base import Mode
+from ...systems import ai
 from . import waves
 
 
@@ -28,6 +29,12 @@ class Battle(Mode):
         self._spawn_bases(world)
         self._spawn_civilians(world)
         self._assign_home_towns(world)
+
+    def pre_systems(self):
+        # the battlefield AI drives every non-player hull: it wants to run
+        # before lock-on/weapons/movement so its velocity and trigger land in
+        # the same tick
+        return [ai.run]
 
     def post_systems(self):
         return [waves.run]

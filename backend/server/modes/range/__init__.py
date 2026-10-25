@@ -9,6 +9,7 @@ from ... import terrain as terrain_mod
 from ..base import Mode
 from . import bunkers as bunkers_mod
 from . import targets as targets_mod
+from . import threats as threats_mod
 
 
 class Range(Mode):
@@ -17,6 +18,7 @@ class Range(Mode):
     start_money = 99999
     restart_respawn = 1.0
     rearm_anywhere = True
+    smoke_cooldown = 2.0        # the smoke test wants a pull per threat
 
     def terrain(self, seed):
         return terrain_mod.generate_range(seed)
@@ -24,10 +26,11 @@ class Range(Mode):
     def setup(self, world):
         world.base_entity = {}
         world.targets = targets_mod.Targets(world)
+        world.threats = threats_mod.Threats(world)
         world.bunkers = bunkers_mod.place(world)
 
     def pre_systems(self):
-        return [targets_mod.run]
+        return [targets_mod.run, threats_mod.run]
 
     def mech_spawn(self, world, player):
         x, z = terrain_mod.RANGE_SPAWN

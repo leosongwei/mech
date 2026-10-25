@@ -95,6 +95,7 @@ export function buildMeshes() {
 
   pushRock(meshes);
   pushPyramid(meshes);
+  pushSmokeSphere(meshes);
   return meshes;
 }
 
@@ -150,6 +151,7 @@ export const MESH_CONE = 2;
 export const MESH_CYL = 3;
 export const MESH_ROCK = 4;
 export const MESH_PYRAMID = 5;
+export const MESH_SMOKE = 6;
 
 // A four-sided pyramid: base radius 0.5 at y = -0.5, apex at y = +0.5, flat
 // shaded per face.  Six triangles, which is all a tracer needs - the streak is
@@ -175,5 +177,28 @@ export function pushPyramid(meshes) {
   const a = corner(0), b = corner(1), c = corner(2), d = corner(3);
   push(a, [0, -1, 0]); push(b, [0, -1, 0]); push(c, [0, -1, 0]);
   push(a, [0, -1, 0]); push(c, [0, -1, 0]); push(d, [0, -1, 0]);
+  meshes.push(v);
+}
+
+// A rounder sphere for smoke: the pancake puffs are metres across and sit
+// right in front of the camera, where the 12x8 unit sphere reads as a
+// dodecagon and the silhouette gives the wall away.
+export function pushSmokeSphere(meshes) {
+  const v = [];
+  const SEG = 24, RING = 16;
+  const push = (p, n) => v.push(p[0], p[1], p[2], n[0], n[1], n[2]);
+  const at = (phi, th) => {
+    const n = [Math.sin(phi) * Math.cos(th), Math.cos(phi), Math.sin(phi) * Math.sin(th)];
+    return { p: [n[0] * 0.5, n[1] * 0.5, n[2] * 0.5], n };
+  };
+  for (let r = 0; r < RING; r++) {
+    const p0 = Math.PI * (r / RING), p1 = Math.PI * ((r + 1) / RING);
+    for (let s = 0; s < SEG; s++) {
+      const a0 = (s / SEG) * Math.PI * 2, a1 = ((s + 1) / SEG) * Math.PI * 2;
+      const A = at(p0, a0), B = at(p1, a0), C = at(p1, a1), D = at(p0, a1);
+      push(A.p, A.n); push(B.p, B.n); push(C.p, C.n);
+      push(A.p, A.n); push(C.p, C.n); push(D.p, D.n);
+    }
+  }
   meshes.push(v);
 }

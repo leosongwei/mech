@@ -88,6 +88,10 @@ class ECS:
             m |= self.bits[n]
         return bool(self.masks[eid] & np.uint64(m) == np.uint64(m))
 
+    def has_arr(self, ids, name: str) -> np.ndarray:
+        """Vectorised ``has``: which of ``ids`` own the component."""
+        return (self.masks[ids] & np.uint64(self.bits[name])) != 0
+
     # -- queries ----------------------------------------------------------
     def query(self, *names: str) -> np.ndarray:
         """Return ids of alive entities that own all listed components."""

@@ -12,13 +12,15 @@ import math
 import numpy as np
 
 from .. import defs, mathutil as mu
+from . import smoke
 
 ACQUIRE = 0.45
+SPOT_MEMORY = 4.0              # seconds an AI keeps firing at a lost target's spot
 
 
 def run(world, dt):
     e = world.ecs
-    ids = world.units()
+    ids = world.movable()          # player and AI hulls alike, civilians included
     if ids.size == 0:
         return
 
@@ -36,26 +38,30 @@ def run(world, dt):
     trigger = e["trigger"]
     path_i = e["path_i"]
     lane = e["lane"]
+    spot_x = e["spot_x"]
+    spot_y = e["spot_y"]
+    spot_z = e["spot_z"]
+    spot_t = e["spot_t"]
 
     terrain = world.terrain
+    # who may be shot at is a query, not a type switch: `combat` hulls only
+    # (wrecks, corpses, civilians and smoke are not in here by construction)
     foes = {f: [] for f in (defs.FACTION_RED, defs.FACTION_BLUE)}
-    civ_units = []
-    for eid in ids:
+    for eid in world.combat_units():
         f = int(faction[eid])
-        t = int(etype[eid])
-        if t == defs.ETYPE_CIV:
-            civ_units.append(eid)
-        if f in foes and t != defs.ETYPE_CIV:
+        if f in foes:
             foes[1 - f].append(eid)
     foe_arr = {f: np.asarray(v, np.int32) for f, v in foes.items()}
+
+    # anything that drives itself is ours to steer; a hull without `combat`
+    # is a civilian, which only wanders
+    civ_units = [int(i) for i in ids if not e.has(i, "combat")]
 
     for eid in ids:
         t = int(etype[eid])
         if int(owner[eid]) >= 0:
             continue                                   # player driven
-        if t == defs.ETYPE_BASE or t == defs.ETYPE_BUNKER:
-            continue
-        if t == defs.ETYPE_CIV:
+        if not e.has(eid, "combat"):
             _civ(world, eid, civ_units, foe_arr, dt)
             continue
 
@@ -76,28 +82,56 @@ def run(world, dt):
                 tid = -1
 
         moving = True
+        seen = False
         if tid >= 0:
             tpos = pos[tid]
             tvel = vel[tid]
             dist = math.dist((eye[0], eye[2]), (float(tpos[0]), float(tpos[2])))
-            if dist < d["ai_range"] and terrain.los(eye, (float(tpos[0]), float(tpos[1]) + d["height"] * 0.6, float(tpos[2]))):
+            if dist < d["ai_range"] and _sees(world, eye, (float(tpos[0]), float(tpos[1]) + d["height"] * 0.6, float(tpos[2]))):
                 moving = dist > d["ai_range"] * 0.55
+                seen = True
+                # remember the spot: if the sight breaks (smoke, a crest) the
+                # crew keeps shooting there for a few seconds
+                spot_x[eid] = float(tpos[0])
+                spot_y[eid] = float(tpos[1])
+                spot_z[eid] = float(tpos[2])
+                spot_t[eid] = SPOT_MEMORY
                 _engage(world, eid, tid, eye, d, dist, tpos, tvel, dt)
-            else:
-                moving = True
+        if not seen and float(spot_t[eid]) > 0.0:
+            # lost it: hose the spot where it was last seen
+            spot_t[eid] = float(spot_t[eid]) - dt
+            dist = math.dist((eye[0], eye[2]), (float(spot_x[eid]), float(spot_z[eid])))
+            if dist < d["ai_range"]:
+                _suppress(world, eid, eye, d, dist, dt)
+                moving = False
 
         if moving:
             trigger[eid] = 0
             _advance(world, eid, speed, dt)
 
-    _turn_legs(world, dt)
+
+def _sees(world, eye, point) -> bool:
+    """Line of sight: terrain, buildings *and* smoke."""
+    if not world.terrain.los(eye, point):
+        return False
+    return not smoke.blocks(world, eye, point)
 
 
 def _acquire(world, eid, foe_ids, eye, d):
-    """Nearest hostile unit with line of sight."""
+    """Nearest hostile unit with line of sight.
+
+    A hull may declare a restricted target list in its definition (`targets`):
+    a rifleman only picks a fight with other infantry and leaves armour alone,
+    because 15 hp in the open is not a threat to a tank and the crew knows it.
+    """
     if foe_ids.size == 0:
         return -1
     e = world.ecs
+    want = d.get("targets")
+    if want:
+        foe_ids = foe_ids[np.isin(e["etype"][foe_ids], np.asarray(want, np.uint8))]
+        if foe_ids.size == 0:
+            return -1
     pos = e["pos"]
     ds = np.hypot(pos[foe_ids, 0] - pos[eid, 0], pos[foe_ids, 2] - pos[eid, 2])
     order = np.argsort(ds)[:6]
@@ -107,19 +141,13 @@ def _acquire(world, eid, foe_ids, eye, d):
             break
         tid = int(foe_ids[k])
         tp = pos[tid]
-        if terrain.los(eye, (float(tp[0]), float(tp[1]) + 1.5, float(tp[2]))):
+        if _sees(world, eye, (float(tp[0]), float(tp[1]) + 1.5, float(tp[2]))):
             return tid
     return -1
 
 
 def _engage(world, eid, tid, eye, d, dist, tpos, tvel, dt):
     e = world.ecs
-    yaw = e["yaw"]
-    pitch = e["pitch"]
-    turret = e["turret_yaw"]
-    trigger = e["trigger"]
-    etype = int(e["etype"][eid])
-    hp = e["hp"]
     weapon = e["weapon"]
 
     # aim at the intercept point of the primary weapon.  no gravity lift here:
@@ -130,6 +158,26 @@ def _engage(world, eid, tid, eye, d, dist, tpos, tvel, dt):
     speed = wd0["vel"]
     aim = mu.solve_lead(eye, (float(tpos[0]), float(tpos[1]) + 2.0, float(tpos[2])),
                         tvel, speed, 0.0)
+    _aim_and_fire(world, eid, eye, d, dist, aim, dt)
+
+
+def _suppress(world, eid, eye, d, dist, dt):
+    """Keep firing at the spot where the target was last seen."""
+    e = world.ecs
+    aim = (float(e["spot_x"][eid]), float(e["spot_y"][eid]) + 1.5, float(e["spot_z"][eid]))
+    _aim_and_fire(world, eid, eye, d, dist, aim, dt)
+
+
+def _aim_and_fire(world, eid, eye, d, dist, aim, dt):
+    e = world.ecs
+    yaw = e["yaw"]
+    pitch = e["pitch"]
+    turret = e["turret_yaw"]
+    trigger = e["trigger"]
+    etype = int(e["etype"][eid])
+    hp = e["hp"]
+    weapon = e["weapon"]
+
     tx = aim[0] - eye[0]
     ty = aim[1] - eye[1]
     tz = aim[2] - eye[2]
@@ -226,22 +274,3 @@ def _civ(world, eid, civ_units, foe_arr, dt):
     vel[eid, 0] = math.cos(a) * 2.0
     vel[eid, 2] = math.sin(a) * 2.0
     e["yaw"][eid] = a
-
-
-def _turn_legs(world, dt):
-    e = world.ecs
-    ids = world.units()
-    vel = e["vel"]
-    leg = e["leg_yaw"]
-    etype = e["etype"]
-    for eid in ids:
-        t = int(etype[eid])
-        if t == defs.ETYPE_BASE:
-            continue
-        vx = float(vel[eid, 0])
-        vz = float(vel[eid, 2])
-        if abs(vx) < 0.05 and abs(vz) < 0.05:
-            continue
-        want = math.atan2(vz, vx)
-        rate = 2.6 if t == defs.ETYPE_MECH else 6.0
-        leg[eid] = mu.turn_toward(float(leg[eid]), want, rate * dt)

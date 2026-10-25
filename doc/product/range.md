@@ -87,6 +87,43 @@ cd backend && MECH_DEBUG=1 ../.venv/bin/python run.py --range --port 8011
   30mm / 12.7mm / 火箭巢的炮口射线命中碉堡时，弹应落在准星所指的那一点，
   落在山脊前或越过碉堡则是调零解算有问题。
 
+## 3.2 来袭导弹（烟幕对抗测试）
+
+靶场唯一会"还手"的东西：**每 10 s 从山顶（SUMMIT 上方 8 m）朝玩家发射一枚红外
+攻顶导弹**（就是可购买的那款 `TOP-ATTACK IR ATGM`，蓝方，锁在玩家身上）。
+
+* 发射事件写进服务器日志（logger `mech.range`）：
+  `threat #n: top-attack missile <id> launched from the hill at mech <id>, 2200 m out`。
+* 导引头被烟幕挡住视线的瞬间，`systems/projectiles.py` 也会写一行（logger
+  `mech.smoke`）：
+  `seeker of missile <id> lost the lock on mech <id>: smoke on the line of sight (<d> m out, <t> s in the air)`。
+  这一行就是"烟幕打断锁定"的判定依据，可以直接
+  `grep "mech.smoke" .run/mech-range.log`（或 `/tmp/mech-range.log`）看。
+* 客户端收到 `seeker` 事件时会提示 `SEEKER BLINDED (n m)`，并记在
+  `__game.seekerLog` 里（最多 64 条）。
+* 靶场的烟幕冷却缩短为 **2 s**（战斗模式是 18 s），库存同样是 10 次，可以在
+  换装面板（`B`）里按 `REARM SMOKE`（$250）续上。
+
+### 3.2.1 自动测试脚本
+
+`tools/smoke_lock_test.js`：把整个文件粘到浏览器控制台（靶场页面、已经 DEPLOY）
+就会自动跑一轮 A/B 对比——
+
+* 监听 `shot` 事件里的山顶发射，记下投影片 id；
+* 每第 3 发（`PULL_EVERY`）在发射后 **6 s** 朝山顶摆正炮塔并抛烟（直接走
+  `net.send`，所以标签页在后台也能跑），库存空了自动买 `SMOKE RACK x10`；
+* 跟踪每发导弹的结局：`BLIND`（脱锁，附距离）、`HIT`（在机体 40 m 内炸开）、
+  `NONE`（飞偏/自毁）。
+
+```js
+__smokeTest.summary()   // 打印表格与统计：BLIND / HIT / NONE 各几发
+__smokeTest.stop()      // 停止
+```
+
+典型结果：抛烟的那几发在 **880–950 m** 处脱锁（`BLIND`），没抛烟的对照组在
+机体旁边 1–2 m 炸开（`HIT`）；一发烟幕还会顺带盖住下一发在**发射瞬间**的视线
+（`BLIND ... 2201 m out, 0.0 s in the air`），这是正常现象。
+
 ## 4. 玩家
 
 | 项 | 靶场取值 |
@@ -94,7 +131,8 @@ cd backend && MECH_DEBUG=1 ../.venv/bin/python run.py --range --port 8011
 | 阵营 | 固定 RED（蓝方 APC 才算敌目标；大厅的 SIDE 选择被忽略） |
 | 初始资金 | **$99999**，足够买下任何武器组合 |
 | 收入 | 与战斗模式相同：$4/s |
-| 换装 | **随处可换**：不受基地/城镇 220 m 限制，`AT BASE - REARM:` 清单常驻，`1-5` / `SHIFT+1-5` 随时购买，立即生效并补满弹药 |
+| 换装 | **随处可换**：不受基地/城镇 220 m 限制，`[B] REARM / REPAIR` 提示常驻，`B` 随时打开换装面板（报价与结算规则同战斗模式），`1-5` / `SHIFT+1-5` 也能直接给某一臂换装 |
+| 烟幕冷却 | **2 s**（战斗模式 18 s），配合 10 s 一发的来袭导弹做对抗测试 |
 | 出生点 | 固定南部中间蓝叉，朝向山顶；死亡后仍回到这里（`RESPAWN_TIME` 8 s，调试面板 `RESPAWN` 可跳过） |
 | RESTART | 清场重建 12 个靶子，1 s 后玩家在出生点重生 |
 
@@ -121,5 +159,6 @@ HUD 与战斗模式完全一致，只有两处不同：顶部战况条的 `WAVE 
 | 补给范围 | 基地/城镇 220 m | 全图 |
 | 波次与占领 | 有 | 无 |
 | AI | 索敌开火 | 不跑 AI；靶子被击毁 3 s 后在随机位置重生 |
+| 敌方火力 | 三路推进的 AI | 每 10 s 一发锁在玩家身上的攻顶导弹（见 3.2） |
 | 出生点 | 最前线城镇或基地 | 固定南部蓝叉 |
 | 顶部战况条 | `WAVE n` | `RANGE` + `TARGETS n` |

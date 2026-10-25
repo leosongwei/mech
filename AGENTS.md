@@ -40,11 +40,15 @@ backend/
     netcode.py             # init payload, binary snapshots, JSON meta
     main.py                # FastAPI: websockets, static files, 30 Hz game loop
     systems/               # mechanics shared by every mode, each exposes run(world, dt)
+                         #   smoke.py: hot smoke canisters, opaque puffs, blocks(a, b)
     modes/                 # per-mode rule sets: map, setup, pipeline, spawn rules
       base.py              #   Mode interface every mode implements
       battle/              #   waves.py: town capture + reinforcement waves
-      range/               #   targets.py: passive APC targets, bunkers.py: ridge blockhouses
+      range/               #   targets.py: passive APC targets, bunkers.py: ridge blockhouses,
+                           #   threats.py: one incoming top-attack missile every 10 s
   assets/                  # compiled client (webpack output, gitignored)
+tools/
+  smoke_lock_test.js       # browser-console driver: range missile A/B smoke test
 frontend/
   webpack.config.js        # entry src/main.js -> ../backend/assets/bundle.js
   src/
@@ -66,12 +70,22 @@ frontend/
 
 * **ECS** — every component is one numpy array indexed by entity slot.
   Presence lives in a `uint64` mask per entity; queries return index arrays
-  (`ecs.query("etype", "hp")`). Never loop over 8192 slots per system; use the
-  query results. Entities are created/destroyed through `ECS.create/destroy`.
+  (`ecs.query("unit")`). Never loop over 8192 slots per system; use the query
+  results. Entities are created/destroyed through `ECS.create/destroy`.
+* **Identity is a component, never a type switch.** What an entity *is* comes
+  from the marker components its type declares in
+  `defs.UNIT_DEFS[...]["tags"]`: `unit` (a hull rounds stop on and damage
+  applies to), `combat` (may be targeted, may hold a town), `lockable` (IR
+  seeker), `moves` (locomotion), `invulnerable` (bunker). Systems ask for the
+  tag they can handle — `world.units()`, `combat_units()`, `lockable_units()`,
+  `movable()`, `smoke_puffs()` — so an entity that is not a unit (a smoke puff,
+  a shell) is invisible to combat code without any exclusion list. `etype` is
+  per-type *data* (hull geometry, hp slots, which arm fires what) and is only
+  read for that.
 * **World** (`world.py`) owns terrain, players, the ECS and the system
-  pipeline. Shared order: `player_input`, the mode's pre-systems, `locking,
-  weapons, movement, projectiles, economy, debris`, then the mode's
-  post-systems. `World.update(dt)` is the only entry point; the loop in
+  pipeline. Shared order: `player_input`, the mode's pre-systems (battle: `ai`),
+  `locking, smoke, weapons, movement, projectiles, economy, debris`, then the
+  mode's post-systems (battle: `waves`). `World.update(dt)` is the only entry point; the loop in
   `main.py` calls it at a fixed 30 Hz (`TICK_DT = 1/30`).
 * **Modes** (`modes/`) own everything that differs between game modes: the
   map, what a fresh round spawns, the mode's own systems and the rules the
@@ -84,8 +98,18 @@ frontend/
   in `systems/economy.py`; wreck/corpse cleanup in `systems/debris.py`.
 * **Debris** — `world.kill()` leaves an inert entity behind: a corpse
   (`ETYPE_CORPSE`, 5 s) for infantry, a smoking hulk (`ETYPE_DEBRIS`, 10 s,
-  original model in snapshot `flags` bits 4-5) for vehicles and mechs.
-  `world.units()` excludes them; only `world.all_units()` (snapshot) sees them.
+  original model in snapshot `flags` bits 4-5) for vehicles and mechs. They are
+  spawned without the `unit` tag, so `world.units()` (rounds, damage, AI,
+  capture) never sees them; only `world.all_units()` (the snapshot) does.
+* **Smoke** (`systems/smoke.py`) — a pull throws a lattice of `canister`
+  entities that closes the whole front hemisphere (14 of them, 50 m out); each
+  one trades its tag for `smoke` + `smoke_r` + `smoke_t`, a 45 m sphere that
+  bursts open fast and then creeps (`_radii(age)`) for its 5 s life. The puffs
+  are drawn **opaque** (solid pass, `renderer.smoke`), so a screen really hides
+  what is behind it and costs nothing to blend. It has no
+  `unit`/`faction`/`etype`, so nothing can target or hit it; only the missile
+  seekers and the AI look for it, through `smoke.blocks(world, a, b)`. It travels
+  in its own snapshot block.
 * **Lanes** — `world.lanes` counts from the red base, `world.lanes_rev` from
   the blue base. Every per-faction lookup (spawn point, path index, "front
   line") must use the faction's own copy; mixing them mirrors positions across
@@ -155,9 +179,13 @@ weapon in each arm before `DEPLOY`.
 `./dev.sh range` starts a second world (`run.py --range`, i.e. `MECH_RANGE=1`)
 on <http://127.0.0.1:8011>: a 4 km test map, one 200 m hill NW, plains
 elsewhere, 12 blue APC targets (2 patrolling) that respawn 3 s after dying and
-never shoot back. The player is locked to RED with $99999 and can rearm
-anywhere. Log: `/tmp/mech-range.log`, overrides `MECH_RANGE_PORT`
-(8011), `MECH_RANGE_LOG`. Product notes: `doc/product/range.md`.
+never shoot back, plus one IR top-attack missile from the hill at the player
+every 10 s so the hot smoke can be tested against a real seeker. The player is
+locked to RED with $99999, can rearm anywhere and the smoke cooldown is 2 s.
+Lock breaks are logged by `mech.smoke`, launches by `mech.range`; the browser
+script `tools/smoke_lock_test.js` drives a whole A/B run from the console. Log:
+`/tmp/mech-range.log`, overrides `MECH_RANGE_PORT` (8011), `MECH_RANGE_LOG`.
+Product notes: `doc/product/range.md`.
 
 Environment overrides: `MECH_SESSION` (default `mech`), `MECH_PORT` (8010),
 `MECH_LOG` (`/tmp/mech-server.log`). `dev.sh` always sets `MECH_DEBUG=1`,

@@ -17,6 +17,7 @@ class Mode:
     start_money = 600
     restart_respawn = 3.0       # seconds before players come back after a restart
     rearm_anywhere = False
+    smoke_cooldown = None       # None: defs.SMOKE_COOLDOWN
 
     def terrain(self, seed):
         raise NotImplementedError

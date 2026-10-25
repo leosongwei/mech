@@ -10,7 +10,7 @@ import zlib
 
 import numpy as np
 
-from . import defs
+from . import defs, shop
 
 MAGIC = 0x4D454348          # "MECH"
 SNAP_HZ = 15.0
@@ -30,8 +30,17 @@ PROJ_DTYPE = np.dtype([
     ("x", "<f4"), ("y", "<f4"), ("z", "<f4"),
     ("vx", "<f4"), ("vy", "<f4"), ("vz", "<f4"),
 ])
+# a canister in flight and a deployed puff travel in the same block; bit0 of
+# `flags` says which one it is
+SMOKE_DTYPE = np.dtype([
+    ("id", "<u2"), ("flags", "u1"), ("pad", "u1"),
+    ("x", "<f4"), ("y", "<f4"), ("z", "<f4"),
+    ("rx", "<f4"), ("ry", "<f4"), ("rz", "<f4"),
+    ("t", "<f4"),
+])
 assert UNIT_DTYPE.itemsize == 64, UNIT_DTYPE.itemsize
 assert PROJ_DTYPE.itemsize == 32, PROJ_DTYPE.itemsize
+assert SMOKE_DTYPE.itemsize == 32, SMOKE_DTYPE.itemsize
 
 
 def _b64(arr: np.ndarray) -> str:
@@ -52,10 +61,15 @@ def static_payload(world) -> dict:
         bases={int(k): v for k, v in t.bases.items()},
         lanes=t.lanes,
         towns=t.towns,
-        mech=dict(hitspheres=defs.MECH_HITSPHERES, eye=defs.MECH_EYE,
+        mech=dict(hp=list(defs.UNIT_DEFS[defs.ETYPE_MECH]["hp"]),
+                  hitspheres=defs.MECH_HITSPHERES, eye=defs.MECH_EYE,
                   muzzles={int(k): v for k, v in defs.MECH_ARM_MUZZLE.items()},
                   modules=defs.MODULE_NAMES),
         buyable=defs.BUYABLE,
+        rearm=dict(smoke_cost=defs.SMOKE_REFILL_COST,
+                   smoke_charges=defs.SMOKE_REFILL_CHARGES,
+                   sell_refund=defs.SELL_REFUND,
+                   repair_cost=defs.REPAIR_COST_PER_HP),
         debug=os.environ.get("MECH_DEBUG") == "1",
         mode=world.mode,
         lock=dict(frac=defs.LOCK_FRAC, fov=defs.BASE_FOV),
@@ -116,8 +130,30 @@ def snapshot_bytes(world) -> bytes:
         parr["vy"] = e["vel"][pids, 1]
         parr["vz"] = e["vel"][pids, 2]
 
-    header = struct.pack("<IIHH", MAGIC, world.tick, len(uids), len(pids))
-    return header + arr.tobytes() + parr.tobytes()
+    sids = world.ecs.query("smoke_r")          # canisters and puffs alike
+    sarr = np.zeros(len(sids), SMOKE_DTYPE)
+    if len(sids):
+        sarr["id"] = sids
+        flags = np.zeros(len(sids), np.uint8)
+        flags |= world.ecs.has_arr(sids, "canister").astype(np.uint8)
+        sarr["flags"] = flags
+        sarr["x"] = e["pos"][sids, 0]
+        sarr["y"] = e["pos"][sids, 1]
+        sarr["z"] = e["pos"][sids, 2]
+        sarr["rx"] = e["smoke_r"][sids, 0]
+        sarr["ry"] = e["smoke_r"][sids, 1]
+        sarr["rz"] = e["smoke_r"][sids, 2]
+        sarr["t"] = e["smoke_t"][sids]
+
+    header = struct.pack("<IIHHH", MAGIC, world.tick, len(uids), len(pids), len(sids))
+    return header + arr.tobytes() + parr.tobytes() + sarr.tobytes()
+
+
+def _arm_meta(world, pl, arm: int) -> dict:
+    """One arm as the rearm panel needs it: hardware, rounds, and its hp."""
+    s = shop.arm_state(world, pl, arm)
+    return dict(wid=s["wid"], hp=round(s["hp"]), hpmax=round(s["hpmax"]),
+                mag=s["mag"], reserve=s["reserve"])
 
 
 def meta_payload(world, pl) -> dict:
@@ -138,6 +174,9 @@ def meta_payload(world, pl) -> dict:
         hp=hp,
         lock_target=int(pl.lock_target) if pl.lock_progress > 0 else -1,
         lock_progress=round(float(pl.lock_progress), 3),
+        smoke=int(pl.smoke_charges),
+        arms=[_arm_meta(world, pl, arm) for arm in (0, 1)],
+        smoke_cd=round(max(0.0, float(pl.smoke_cd)), 1),
         wave=world.wave,
         time=round(world.time, 1),
         winner=int(world.winner),

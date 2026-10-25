@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 import math
 
 import numpy as np
 
 from .. import defs, mathutil as mu
+from . import smoke
 from .weapons import aim_of
+
+log = logging.getLogger("mech.smoke")
 
 
 def _norm(v):
@@ -137,6 +141,22 @@ def run(world, dt):
         elif k == 3:                                # top attack IR missile
             tid = int(target[pid])
             speed = min(wd["maxvel"], speed + wd["thrust"] * dt)
+            # the seeker needs to see the hull: a smoke puff on the line of
+            # sight blinds it, and the round coasts on its last heading like it
+            # does when the target dies
+            if tid >= 0 and e.alive[tid] and smoke.blocks(world, p0, pos[tid]):
+                # the seeker is blind: log it, the smoke test on the range is
+                # read straight out of the server log
+                tp = pos[tid]
+                log.info("seeker of missile %d lost the lock on mech %d: smoke "
+                         "on the line of sight (%.0f m out, %.1f s in the air)",
+                         pid, tid, math.dist(p0, tp), float(age[pid]))
+                lost = int(tid)
+                target[pid] = -1
+                tid = -1
+                world.emit("seeker", x=float(p0[0]), y=float(p0[1]), z=float(p0[2]),
+                           faction=int(faction[pid]), tid=lost, proj=int(pid),
+                           dist=round(math.dist(p0, tp), 1))
             if tid >= 0 and e.alive[tid]:
                 tp = pos[tid]
                 th = defs.UNIT_DEFS.get(int(etype[tid]), {}).get("height", 6.0)
@@ -202,7 +222,7 @@ def _impact(world, p, wd, proj_id, direct_unit=-1, direct_mod=0):
         pid = -1
     r = float(wd["splash"])
     world.emit("boom", x=p[0], y=p[1], z=p[2], r=r, wid=int(wd["wid"]),
-               big=1 if r >= 5.0 else 0)
+               big=1 if r >= 5.0 else 0, proj=int(proj_id))
     if direct_unit >= 0:
         world.damage(direct_unit, direct_mod, float(wd["dmg"]), pid)
     if r <= 0.0:

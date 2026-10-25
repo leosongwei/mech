@@ -9,10 +9,15 @@ Groups below are convenience lists used by the spawning factories.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 
+if TYPE_CHECKING:
+    from .ecs import ECS
 
-def register(ecs):
+
+def register(ecs: ECS) -> None:
     # ---- transform ------------------------------------------------------
     ecs.register("pos", np.float32, (3,), 0.0)
     ecs.register("vel", np.float32, (3,), 0.0)       # commanded velocity

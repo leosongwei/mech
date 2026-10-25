@@ -67,7 +67,8 @@ def _upsample(g: np.ndarray, w: int, h: int) -> np.ndarray:
     return top * (1 - fy)[:, None] + bot * fy[:, None]
 
 
-def _fbm(rng: np.random.Generator, w: int, h: int, octaves=6, base_res=2) -> np.ndarray:
+def _fbm(rng: np.random.Generator, w: int, h: int,
+         octaves: int = 6, base_res: int = 2) -> np.ndarray:
     out = np.zeros((h, w), np.float32)
     amp = 1.0
     total = 0.0
@@ -88,7 +89,8 @@ def _blur3(a: np.ndarray) -> np.ndarray:
     return (x[:-2, :] + 2.0 * x[1:-1, :] + x[2:, :]) * 0.25
 
 
-def _raster_line(tiles: np.ndarray, a, b, value, step=0.5):
+def _raster_line(tiles: np.ndarray, a: tuple[float, float], b: tuple[float, float],
+                 value: int, step: float = 0.5) -> None:
     """Draw a rasterised line of *value* into the tile map."""
     ax, ay = a
     bx, by = b
@@ -113,7 +115,8 @@ def _dilate(mask: np.ndarray, r: int) -> np.ndarray:
 
 
 class Terrain:
-    def __init__(self, heights: np.ndarray, tiles: np.ndarray, lanes, towns, bases):
+    def __init__(self, heights: np.ndarray, tiles: np.ndarray, lanes: list,
+                 towns: list[dict], bases: dict[int, tuple[float, float]]) -> None:
         self.h = heights.astype(np.float32)      # (d, w) vertex heights
         self.tiles = tiles.astype(np.uint8)      # (d, w)
         self.w = int(heights.shape[1])
@@ -150,7 +153,9 @@ class Terrain:
         return 0.0 <= x <= (self.w - 1) * TILE and 0.0 <= z <= (self.d - 1) * TILE
 
     # -- ray casts --------------------------------------------------------
-    def ground_hit(self, p0, p1, step=12.0):
+    def ground_hit(self, p0: np.ndarray, p1: np.ndarray,
+                   step: float = 12.0,
+                   ) -> tuple[bool, float, np.ndarray | tuple[float, float, float]]:
         """Return (hit, t, point) for the first ground contact on the segment."""
         dx = p1[0] - p0[0]
         dy = p1[1] - p0[1]
@@ -195,7 +200,7 @@ class Terrain:
             prev = t
         return False, 1.0, p1
 
-    def los(self, a, b, step=15.0) -> bool:
+    def los(self, a: np.ndarray, b: np.ndarray, step: float = 15.0) -> bool:
         hit, _, _ = self.ground_hit(a, b, step)
         return not hit
 

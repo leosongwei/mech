@@ -9,9 +9,13 @@ back - that is what the range is for.
 from __future__ import annotations
 
 import math
+from typing import TYPE_CHECKING
 
 from ... import defs
 from ... import terrain as terrain_mod
+
+if TYPE_CHECKING:
+    from ...world import World
 
 STATIC_TARGETS = 10
 MOVING_TARGETS = 2
@@ -28,12 +32,12 @@ PATROL_MAX = 420.0
 TILE = terrain_mod.TILE
 
 
-def run(world, dt):
+def run(world: World, dt: float) -> None:
     world.targets.update(world, dt)
 
 
 class Targets:
-    def __init__(self, world):
+    def __init__(self, world: World) -> None:
         self.slots = []
         posts = list(terrain_mod.RANGE_POSTS)
         for post in posts:
@@ -49,7 +53,7 @@ class Targets:
         for slot in self.slots:
             slot["eid"] = _spawn(world, slot)
 
-    def update(self, world, dt):
+    def update(self, world: World, dt: float) -> None:
         for slot in self.slots:
             eid = int(slot["eid"])
             if eid >= 0 and world.ecs.alive[eid]:
@@ -62,7 +66,7 @@ class Targets:
                 slot["eid"] = _spawn(world, slot)
 
 
-def _spawn(world, slot) -> int:
+def _spawn(world: World, slot: dict) -> int:
     x = float(slot["x"])
     z = float(slot["z"])
     eid = world.spawn_unit(defs.ETYPE_APC, defs.FACTION_BLUE, x, z)
@@ -76,14 +80,14 @@ def _spawn(world, slot) -> int:
     return eid
 
 
-def _leg_yaw(slot) -> float:
+def _leg_yaw(slot: dict) -> float:
     """Heading of a patrol: along x or z, whichever the span runs on."""
     if slot.get("axis", "x") == "x":
         return 0.0 if slot["dir"] > 0 else math.pi
     return -math.pi / 2 if slot["dir"] > 0 else math.pi / 2
 
 
-def _drive(world, slot, eid, dt):
+def _drive(world: World, slot: dict, eid: int, dt: float) -> None:
     e = world.ecs
     e["vel"][eid, 0] = 0.0
     e["vel"][eid, 2] = 0.0
@@ -106,7 +110,7 @@ def _drive(world, slot, eid, dt):
     e["turret_yaw"][eid] = yaw
 
 
-def _place(world, slot):
+def _place(world: World, slot: dict) -> None:
     """Pick a fresh random spot for a destroyed slot."""
     if slot["role"] == "moving":
         x, z, axis, lo, hi = _random_patrol(world)
@@ -116,7 +120,7 @@ def _place(world, slot):
         slot.update(x=x, z=z)
 
 
-def _random_spot(world):
+def _random_spot(world: World) -> tuple[float, float]:
     size = world.terrain.w * TILE
     px, pz = world.terrain.bases[defs.FACTION_RED]
     others = _occupied(world)
@@ -134,7 +138,7 @@ def _random_spot(world):
     return size * 0.75, size * 0.5
 
 
-def _random_patrol(world):
+def _random_patrol(world: World) -> tuple[float, float, str, float, float]:
     """A patrol leg somewhere random: 400-840 m of straight, flat ground."""
     size = world.terrain.w * TILE
     x, z = _random_spot(world)
@@ -151,7 +155,7 @@ def _random_patrol(world):
     return x, z, axis, lo, hi
 
 
-def _occupied(world):
+def _occupied(world: World) -> list[tuple[float, float]]:
     """Spots a fresh target may not reuse: other live APCs and the wrecks of the
     ones just destroyed (a new hull on top of its own burning hulk reads as a
     single glitchy vehicle)."""
@@ -162,7 +166,7 @@ def _occupied(world):
     return [(float(e["pos"][eid, 0]), float(e["pos"][eid, 2])) for eid in ids[take]]
 
 
-def _flat_enough(world, x, z):
+def _flat_enough(world: World, x: float, z: float) -> bool:
     h = world.terrain.height_at(x, z)
     for dx, dz in ((25.0, 0.0), (-25.0, 0.0), (0.0, 25.0), (0.0, -25.0)):
         if abs(world.terrain.height_at(x + dx, z + dz) - h) > MAX_SLOPE:

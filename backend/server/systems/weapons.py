@@ -7,15 +7,19 @@ player-input / AI systems, ballistics live in the projectile system.
 from __future__ import annotations
 
 import math
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from .. import ballistics, components, defs, mathutil as mu
 
+if TYPE_CHECKING:
+    from ..world import World
+
 KIND_ID = {"bullet": 0, "rocket": 1, "saclos": 2, "top": 3}
 
 
-def aim_of(world, eid):
+def aim_of(world: World, eid: int) -> tuple[tuple[float, float, float], float, float]:
     """(origin, yaw, pitch) used by every weapon of this unit."""
     e = world.ecs
     pos = e["pos"][eid]
@@ -36,7 +40,7 @@ def aim_of(world, eid):
             float(e["yaw"][eid]), float(e["pitch"][eid]))
 
 
-def run(world, dt):
+def run(world: World, dt: float) -> None:
     e = world.ecs
     ids = world.units()
     if ids.size == 0:
@@ -102,7 +106,7 @@ def run(world, dt):
         trigger_prev[eid] = int(trigger[eid])
 
 
-def fire(world, eid: int, arm: int, wid: int, wd: dict, target: int = -1):
+def fire(world: World, eid: int, arm: int, wid: int, wd: dict, target: int = -1) -> None:
     """Spawn the projectile(s) of one trigger pull."""
     e = world.ecs
     pos = e["pos"]

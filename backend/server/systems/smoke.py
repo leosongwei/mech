@@ -15,19 +15,23 @@ which asks ``world.smoke_blocks()`` directly.
 from __future__ import annotations
 
 import math
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from .. import components, defs, mathutil as mu
 
+if TYPE_CHECKING:
+    from ..world import World
 
-def run(world, dt):
+
+def run(world: World, dt: float) -> None:
     _launch(world, dt)
     _fly(world, dt)
     _fade(world, dt)
 
 
-def _launch(world, dt):
+def _launch(world: World, dt: float) -> None:
     """Turn a pilot's Q press into a fan of canisters."""
     e = world.ecs
     for pl in world.players.values():
@@ -48,7 +52,7 @@ def _launch(world, dt):
         world.emit("smoke", eid=int(eid), charges=int(pl.smoke_charges))
 
 
-def throw(world, eid: int):
+def throw(world: World, eid: int) -> None:
     """Spawn the canister fan of the hull `eid`."""
     e = world.ecs
     px = float(e["pos"][eid, 0])
@@ -72,7 +76,7 @@ def throw(world, eid: int):
         e["smoke_r"][cid] = _radii(0.0)
 
 
-def _radii(age):
+def _radii(age: float) -> tuple[float, float, float]:
     """Puff semiaxes `age` seconds after the pop.
 
     A canister is a small charge: it bursts the smoke out fast and the puff
@@ -84,7 +88,7 @@ def _radii(age):
     return (defs.SMOKE_FLAT[0] * f, defs.SMOKE_FLAT[1] * f, defs.SMOKE_FLAT[0] * f)
 
 
-def _fly(world, dt):
+def _fly(world: World, dt: float) -> None:
     """Canisters: a short ballistic hop, then pop into smoke."""
     e = world.ecs
     ids = e.query("canister")
@@ -105,7 +109,7 @@ def _fly(world, dt):
         pos[cid, 2] += vel[cid, 2] * dt
 
 
-def _pop(world, cid: int):
+def _pop(world: World, cid: int) -> None:
     """The canister stops where it is and starts making smoke."""
     e = world.ecs
     e.remove_comp(cid, "canister")
@@ -118,7 +122,7 @@ def _pop(world, cid: int):
     e["smoke_r"][cid] = _radii(0.0)
 
 
-def _fade(world, dt):
+def _fade(world: World, dt: float) -> None:
     """Deployed puffs burst open, creep for a while, then go away."""
     e = world.ecs
     ids = e.query("smoke")
@@ -135,7 +139,8 @@ def _fade(world, dt):
         rad[sid] = _radii(defs.SMOKE_LIFE - float(t[sid]))
 
 
-def blocks(world, a, b) -> bool:
+def blocks(world: World, a: tuple[float, float, float],
+           b: tuple[float, float, float]) -> bool:
     """True when the segment a->b passes through any deployed puff.
 
     The puff is an ellipsoid, so the segment is scaled into the unit sphere

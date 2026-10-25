@@ -14,10 +14,14 @@ every input message and the server keeps both numbers the same as the client.
 from __future__ import annotations
 
 import math
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from .. import defs, mathutil as mu
+
+if TYPE_CHECKING:
+    from ..world import Player, World
 
 MIN_ZOOM = 1.0
 MAX_ZOOM = 20.0
@@ -25,7 +29,7 @@ MIN_ASPECT = 0.4
 MAX_ASPECT = 4.0
 MIN_DIST = 20.0
 
-def cone_of(pl) -> float:
+def cone_of(pl: Player) -> float:
     """Angular radius of the reticle circle, in radians."""
     zoom = min(max(float(getattr(pl, "zoom", 1.0)), MIN_ZOOM), MAX_ZOOM)
     aspect = min(max(float(getattr(pl, "aspect", 16.0 / 9.0)), MIN_ASPECT), MAX_ASPECT)
@@ -33,7 +37,7 @@ def cone_of(pl) -> float:
     return math.atan(math.tan(fov * 0.5) * defs.LOCK_FRAC * aspect)
 
 
-def run(world, dt):
+def run(world: World, dt: float) -> None:
     e = world.ecs
     pos = e["pos"]
     yaw = e["yaw"]
@@ -60,7 +64,7 @@ def run(world, dt):
         d = np.asarray(mu.dir_from(float(yaw[eid]), float(pitch[eid])), np.float32)
         cone = cone_of(pl)
 
-        def angle_to(tid):
+        def angle_to(tid: int) -> tuple[float, float]:
             tp = pos[tid]
             v = np.array([tp[0] - origin[0], tp[1] + 1.5 - origin[1], tp[2] - origin[2]], np.float32)
             n = float(np.linalg.norm(v))

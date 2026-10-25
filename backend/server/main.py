@@ -10,15 +10,16 @@ import os
 import time
 import traceback
 from pathlib import Path
+from typing import Awaitable, Callable
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 import numpy as np
 
 from . import defs, netcode, shop
-from .world import World
+from .world import Player, World
 
 # uvicorn only configures its own loggers; ours ("mech.*": smoke lock breaks,
 # range threats) need a handler of their own to land in the server log
@@ -26,7 +27,7 @@ logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 
-def _json_safe(obj):
+def _json_safe(obj: object) -> object:
     """numpy scalars are not JSON serialisable - unwrap them."""
     if isinstance(obj, np.generic):
         return obj.item()
@@ -38,7 +39,8 @@ app = FastAPI(title="MECH")
 
 
 @app.middleware("http")
-async def revalidate_assets(request, call_next):
+async def revalidate_assets(request: Request,
+                           call_next: Callable[[Request], Awaitable[Response]]) -> Response:
     """Make the browser revalidate the bundle instead of heuristically caching it.
 
     A rebuild changes the file but not its URL, and without a Cache-Control
@@ -51,8 +53,9 @@ async def revalidate_assets(request, call_next):
     if path == "/" or path.startswith("/static"):
         response.headers["Cache-Control"] = "no-cache"
     return response
-MODE = os.environ.get("MECH_MODE") or ("range" if os.environ.get("MECH_RANGE") == "1" else "battle")
-world = World(mode=MODE)
+MODE: str = os.environ.get("MECH_MODE") or (
+    "range" if os.environ.get("MECH_RANGE") == "1" else "battle")
+world: World = World(mode=MODE)
 
 class Client:
     """Per connection outbound queue.
@@ -62,19 +65,19 @@ class Client:
     dropped when the socket falls behind.
     """
 
-    def __init__(self, ws, pid: int):
-        self.ws = ws
-        self.pid = pid
+    def __init__(self, ws: WebSocket, pid: int) -> None:
+        self.ws: WebSocket = ws
+        self.pid: int = pid
         self.q: asyncio.Queue = asyncio.Queue(maxsize=24)
-        self.dropped = 0
+        self.dropped: int = 0
 
-    def offer(self, kind: str, data):
+    def offer(self, kind: str, data: bytes | str) -> None:
         try:
             self.q.put_nowait((kind, data))
         except asyncio.QueueFull:
             self.dropped += 1
 
-    async def writer(self):
+    async def writer(self) -> None:
         try:
             while True:
                 kind, data = await self.q.get()
@@ -94,7 +97,7 @@ SNAP_EVERY = 2          # 15 Hz snapshots
 META_EVERY = 3          # 10 Hz meta
 
 
-async def broadcast(tick: int):
+async def broadcast(tick: int) -> None:
     if not CONNECTIONS:
         return
     snap = None
@@ -117,7 +120,7 @@ async def broadcast(tick: int):
             client.offer("t", json.dumps(netcode.meta_payload(world, pl), default=_json_safe))
 
 
-async def game_loop():
+async def game_loop() -> None:
     await asyncio.sleep(0.2)
     next_t = time.perf_counter()
     while True:
@@ -137,12 +140,12 @@ async def game_loop():
 
 
 @app.on_event("startup")
-async def _startup():
+async def _startup() -> None:
     asyncio.get_event_loop().create_task(game_loop())
 
 
 @app.get("/")
-async def index():
+async def index() -> Response:
     f = ASSETS / "index.html"
     if f.exists():
         return FileResponse(f)
@@ -153,7 +156,7 @@ async def index():
 app.mount("/static", StaticFiles(directory=str(ASSETS)), name="static")
 
 
-def _at_base(world: World, pl) -> bool:
+def _at_base(world: World, pl: Player) -> bool:
     if world.mode_mod.rearm_anywhere:
         return True                 # range mode: rearm anywhere
     if pl.mech < 0 or not world.ecs.alive[pl.mech]:
@@ -169,7 +172,7 @@ def _at_base(world: World, pl) -> bool:
 
 
 @app.websocket("/ws")
-async def ws_endpoint(ws: WebSocket):
+async def ws_endpoint(ws: WebSocket) -> None:
     await ws.accept()
     pl = world.add_player("PILOT")
     client = Client(ws, pl.pid)

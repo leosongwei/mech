@@ -7,10 +7,14 @@ the largest index in that faction's list, never a mirrored position.
 from __future__ import annotations
 
 import math
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from ... import defs
+
+if TYPE_CHECKING:
+    from ...world import World
 
 WAVE_INTERVAL = 22.0
 CAPTURE_TIME = 9.0
@@ -18,14 +22,14 @@ CAPTURE_RADIUS = 170.0
 UNIT_CAP = 120
 
 
-def run(world, dt):
+def run(world: World, dt: float) -> None:
     if world.winner >= 0:
         return
     _capture(world, dt)
     _waves(world, dt)
 
 
-def _capture(world, dt):
+def _capture(world: World, dt: float) -> None:
     e = world.ecs
     ids = world.combat_units()
     if ids.size == 0:
@@ -57,13 +61,13 @@ def _capture(world, dt):
             world.emit("capture", x=town["x"], z=town["z"], faction=int(holder))
 
 
-def _faction_count(world, faction) -> int:
+def _faction_count(world: World, faction: int) -> int:
     e = world.ecs
     ids = world.combat_units()
     return int((e["faction"][ids] == faction).sum())
 
 
-def _front_index(world, faction, lane):
+def _front_index(world: World, faction: int, lane: int) -> int | None:
     """Lane index of the most advanced friendly unit on that lane (or None)."""
     e = world.ecs
     best = None
@@ -77,7 +81,7 @@ def _front_index(world, faction, lane):
     return best
 
 
-def _reinforcement_point(world, faction, lane):
+def _reinforcement_point(world: World, faction: int, lane: int) -> tuple[float, float]:
     """Waves are airlifted to just behind the current front line so the two
     sides keep meeting instead of walking 14 km towards each other."""
     base = world.terrain.bases[faction]
@@ -98,7 +102,7 @@ def _reinforcement_point(world, faction, lane):
     return px, pz
 
 
-def _waves(world, dt):
+def _waves(world: World, dt: float) -> None:
     world.wave_timer -= dt
     if world.wave_timer > 0.0:
         return

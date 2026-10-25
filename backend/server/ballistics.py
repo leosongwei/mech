@@ -13,8 +13,12 @@ infrared missile steer themselves and keep the plain aim.
 from __future__ import annotations
 
 import math
+from typing import TYPE_CHECKING
 
 from . import defs, mathutil as mu
+
+if TYPE_CHECKING:
+    from .world import World
 
 DT = 1 / 30.0            # same step as the projectile integrator
 MARCH = 24.0             # sight-ray resolution, metres
@@ -22,7 +26,8 @@ MIN_DIST = 25.0          # closer than this the sight point is the mech itself
 ITERS = 4
 
 
-def _ray_sphere(o, d, c, r):
+def _ray_sphere(o: tuple[float, float, float], d: tuple[float, float, float],
+                c: tuple[float, float, float], r: float) -> float | None:
     """Distance along the ray to the near intersection, or None."""
     ox, oy, oz = o[0] - c[0], o[1] - c[1], o[2] - c[2]
     b = ox * d[0] + oy * d[1] + oz * d[2]
@@ -33,7 +38,9 @@ def _ray_sphere(o, d, c, r):
     return t if t >= 0.0 else None
 
 
-def _unit_hit(world, origin, direction, max_dist, ignore, faction=-1):
+def _unit_hit(world: World, origin: tuple[float, float, float],
+              direction: tuple[float, float, float], max_dist: float, ignore: int,
+              faction: int = -1) -> tuple[tuple[float, float, float] | None, float]:
     e = world.ecs
     ids = world.units()
     if ids.size == 0:
@@ -59,7 +66,9 @@ def _unit_hit(world, origin, direction, max_dist, ignore, faction=-1):
     return best, best_t
 
 
-def sight_point(world, origin, direction, max_dist, ignore=-1, faction=-1):
+def sight_point(world: World, origin: tuple[float, float, float],
+                direction: tuple[float, float, float], max_dist: float,
+                ignore: int = -1, faction: int = -1) -> tuple[float, float, float] | None:
     """First contact of the muzzle ray, or None if it reaches max_dist."""
     unit_pt, limit = _unit_hit(world, origin, direction, max_dist, ignore, faction)
     terrain = world.terrain
@@ -92,7 +101,8 @@ def sight_point(world, origin, direction, max_dist, ignore=-1, faction=-1):
     return unit_pt
 
 
-def _altitude_at(origin, yaw, pitch, wd, dist):
+def _altitude_at(origin: tuple[float, float, float], yaw: float, pitch: float,
+                 wd: dict, dist: float) -> float | None:
     """Height of the round once it has covered `dist` metres horizontally.
 
     None when the round expires (or never gets that far) first.
@@ -129,7 +139,9 @@ def _altitude_at(origin, yaw, pitch, wd, dist):
     return None
 
 
-def solve_elevation(origin, target, wd, yaw, pitch):
+def solve_elevation(origin: tuple[float, float, float],
+                    target: tuple[float, float, float], wd: dict, yaw: float,
+                    pitch: float) -> float | None:
     """Launch elevation that drops the round on `target`, or None."""
     d = math.hypot(target[0] - origin[0], target[2] - origin[2])
     if d < MIN_DIST:
@@ -172,7 +184,9 @@ def solve_elevation(origin, target, wd, yaw, pitch):
     return t1 if abs(t1) <= defs.ZERO_MAX_ELEV else None
 
 
-def zero_pitch(world, origin, yaw, pitch, wd, ignore=-1, faction=-1):
+def zero_pitch(world: World, origin: tuple[float, float, float], yaw: float,
+               pitch: float, wd: dict, ignore: int = -1,
+               faction: int = -1) -> float | None:
     """Elevation for a zeroed shot of `wd`, or None to fire the plain aim."""
     sp = sight_point(world, origin, mu.dir_from(yaw, pitch), defs.ZERO_RANGE, ignore, faction)
     if sp is None:

@@ -3,18 +3,23 @@
 from __future__ import annotations
 
 import math
+from typing import TYPE_CHECKING
 
 from .. import defs, mathutil as mu
 from ..terrain import TILE
 
+if TYPE_CHECKING:
+    from ..terrain import Terrain
+    from ..world import World
 
-def _blocked(terrain, x, z, rad) -> bool:
+
+def _blocked(terrain: Terrain, x: float, z: float, rad: float) -> bool:
     return (terrain.blocked(x, z) or terrain.blocked(x + rad, z) or
             terrain.blocked(x - rad, z) or terrain.blocked(x, z + rad) or
             terrain.blocked(x, z - rad))
 
 
-def _turn_legs(world, dt):
+def _turn_legs(world: World, dt: float) -> None:
     """Swing every unit's legs/steering towards the direction it was told to go.
 
     Locomotion, not AI: the hull turns its own legs in every mode, which is why
@@ -36,7 +41,7 @@ def _turn_legs(world, dt):
         leg[eid] = mu.turn_toward(float(leg[eid]), want, rate * dt)
 
 
-def run(world, dt):
+def run(world: World, dt: float) -> None:
     e = world.ecs
     ids = world.movable()          # only hulls with locomotion are integrated
     if ids.size == 0:

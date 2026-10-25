@@ -20,8 +20,12 @@ have to stay in step with ``frontend/src/shop.js``.
 from __future__ import annotations
 
 import math
+from typing import TYPE_CHECKING, Any
 
 from . import defs
+
+if TYPE_CHECKING:
+    from .world import Player, World
 
 ARM_NAMES = ("L-ARM", "R-ARM")
 
@@ -33,11 +37,11 @@ def _r(v: float) -> int:
 MODULE_OF_ARM = (defs.MOD_LEFT, defs.MOD_RIGHT)
 
 
-def empty_request() -> dict:
+def empty_request() -> dict[str, Any]:
     return dict(arms=[-1, -1], rearm=[False, False], repair=False, smoke=False)
 
 
-def parse_request(msg: dict) -> dict:
+def parse_request(msg: dict[str, Any]) -> dict[str, Any]:
     """Take the client's draft and keep only what it is allowed to ask for."""
     req = empty_request()
     arms = msg.get("arms")
@@ -58,7 +62,7 @@ def parse_request(msg: dict) -> dict:
     return req
 
 
-def arm_state(world, pl, arm: int) -> dict:
+def arm_state(world: World, pl: Player, arm: int) -> dict[str, Any]:
     """What one arm holds right now: hardware, rounds and how much of it is left."""
     e = world.ecs
     wid = int(pl.loadout[arm])
@@ -77,7 +81,7 @@ def arm_state(world, pl, arm: int) -> dict:
                 mag=mag, reserve=reserve, rounds=mag + reserve)
 
 
-def quote(world, pl, req: dict) -> dict:
+def quote(world: World, pl: Player, req: dict[str, Any]) -> dict[str, Any]:
     """Price a whole draft.  ``delta`` per line is what it adds to the bill."""
     mid = pl.mech
     if mid < 0 or not world.ecs.alive[mid]:
@@ -147,7 +151,7 @@ def quote(world, pl, req: dict) -> dict:
     return dict(ok=True, error="", lines=lines, total=int(total))
 
 
-def deal(world, pl, req: dict) -> tuple[bool, str, dict]:
+def deal(world: World, pl: Player, req: dict[str, Any]) -> tuple[bool, str, dict[str, Any]]:
     """Quote the draft and, if it is affordable, make every change at once."""
     q = quote(world, pl, req)
     if not q["ok"]:

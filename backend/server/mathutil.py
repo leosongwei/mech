@@ -9,7 +9,7 @@ import numpy as np
 from . import defs
 
 
-def dir_from(yaw: float, pitch: float):
+def dir_from(yaw: float, pitch: float) -> tuple[float, float, float]:
     cp = math.cos(pitch)
     return (cp * math.cos(yaw), math.sin(pitch), cp * math.sin(yaw))
 
@@ -18,7 +18,7 @@ def yaw_of(dx: float, dz: float) -> float:
     return math.atan2(dz, dx)
 
 
-def angles_to(dx: float, dy: float, dz: float):
+def angles_to(dx: float, dy: float, dz: float) -> tuple[float, float]:
     """Yaw / pitch that point along the given vector."""
     horiz = math.hypot(dx, dz)
     yaw = math.atan2(dz, dx)
@@ -41,7 +41,8 @@ def turn_toward(cur: float, target: float, max_step: float) -> float:
     return wrap_pi(cur + math.copysign(max_step, d))
 
 
-def muzzle_point(pos, yaw, module, arm_pitch=0.0):
+def muzzle_point(pos: np.ndarray, yaw: float, module: int,
+                 arm_pitch: float = 0.0) -> tuple[float, float, float]:
     """World position of the barrel tip of the given mech arm."""
     off = defs.MECH_ARM_MUZZLE.get(module, (0.0, 4.3, 0.9))
     rx, ry, rz = off
@@ -54,7 +55,8 @@ def muzzle_point(pos, yaw, module, arm_pitch=0.0):
             pos[2] + rzw * rx + fz * rz)
 
 
-def unit_spheres(etype: int, pos, yaw: float):
+def unit_spheres(etype: int, pos: np.ndarray,
+                 yaw: float) -> list[tuple[int, tuple[float, float, float], float]]:
     """List of (module, center, radius) hit spheres for a unit type."""
     px, py, pz = float(pos[0]), float(pos[1]), float(pos[2])
     if etype == defs.ETYPE_MECH:
@@ -78,7 +80,9 @@ def unit_spheres(etype: int, pos, yaw: float):
     return [(0, (px, py + 1.0, pz), 1.5)]
 
 
-def solve_lead(origin, tpos, tvel, speed, gravity, iters=3):
+def solve_lead(origin: np.ndarray, tpos: np.ndarray, tvel: np.ndarray | None,
+               speed: float, gravity: float, iters: int = 3,
+               ) -> tuple[float, float, float]:
     """Iteratively solve the intercept point for a ballistic projectile."""
     ox, oy, oz = origin
     tx, ty, tz = tpos

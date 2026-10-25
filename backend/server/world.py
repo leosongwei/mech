@@ -4,73 +4,79 @@ from __future__ import annotations
 
 import math
 import random
+from typing import TYPE_CHECKING, Callable
 
 import numpy as np
 
 from . import components, defs, mathutil as mu, modes
 from .ecs import ECS
 
+if TYPE_CHECKING:
+    from .modes import Mode
+    from .terrain import Terrain
+
 
 class Player:
-    def __init__(self, pid: int, name: str, faction: int):
-        self.pid = pid
-        self.name = name
-        self.faction = faction
-        self.mech = -1
-        self.money = 600
-        self.kills = 0
-        self.deaths = 0
-        self.respawn = 0.0
-        self.in_yaw = 0.0
-        self.in_pitch = 0.0
-        self.in_move = (0.0, 0.0)
-        self.fire = (False, False)
-        self.lock_target = -1
-        self.lock_progress = 0.0
-        self.loadout = [defs.WID_AC30, defs.WID_ROCKET]
-        self.last_seq = 0
-        self.score = 0
-        self.zoom = 1.0         # optics magnification, mirrored for the IR seeker
-        self.aspect = 16.0 / 9.0
-        self.smoke_q = False    # one press of Q, consumed by systems/smoke.py
-        self.smoke_cd = 0.0     # seconds until the next pull is allowed
-        self.smoke_charges = defs.SMOKE_CHARGES
-        self.god = False        # debug: ignore all damage to this pilot
+    def __init__(self, pid: int, name: str, faction: int) -> None:
+        self.pid: int = pid
+        self.name: str = name
+        self.faction: int = faction
+        self.mech: int = -1                  # entity id, -1 while dead
+        self.money: float = 600.0
+        self.kills: int = 0
+        self.deaths: int = 0
+        self.respawn: float = 0.0
+        self.in_yaw: float = 0.0
+        self.in_pitch: float = 0.0
+        self.in_move: tuple[float, float] = (0.0, 0.0)
+        self.fire: tuple[bool, bool] = (False, False)
+        self.lock_target: int = -1
+        self.lock_progress: float = 0.0
+        self.loadout: list[int] = [defs.WID_AC30, defs.WID_ROCKET]
+        self.last_seq: int = 0
+        self.score: int = 0
+        self.zoom: float = 1.0         # optics magnification, mirrored for the IR seeker
+        self.aspect: float = 16.0 / 9.0
+        self.smoke_q: bool = False     # one press of Q, consumed by systems/smoke.py
+        self.smoke_cd: float = 0.0     # seconds until the next pull is allowed
+        self.smoke_charges: int = defs.SMOKE_CHARGES
+        self.god: bool = False         # debug: ignore all damage to this pilot
 
 
 class World:
-    def __init__(self, seed: int = 11, mode: str = "battle"):
-        self.mode_mod = modes.get(mode)
-        self.mode = self.mode_mod.name
-        self.terrain = self.mode_mod.terrain(seed)
-        self.ecs = ECS(8192)
+    def __init__(self, seed: int = 11, mode: str = "battle") -> None:
+        self.mode_mod: Mode = modes.get(mode)
+        self.mode: str = self.mode_mod.name
+        self.terrain: Terrain = self.mode_mod.terrain(seed)
+        self.ecs: ECS = ECS(8192)
         components.register(self.ecs)
-        self.rng = random.Random(2024)
+        self.rng: random.Random = random.Random(2024)
         self.players: dict[int, Player] = {}
-        self.next_pid = 1
-        self.time = 0.0
-        self.tick = 0
-        self.wave = 0
-        self.wave_timer = 8.0
-        self.winner = -1
-        self.end_timer = 0.0
+        self.next_pid: int = 1
+        self.time: float = 0.0
+        self.tick: int = 0
+        self.wave: int = 0
+        self.wave_timer: float = 8.0
+        self.winner: int = -1
+        self.end_timer: float = 0.0
         self.events: list[dict] = []
         self.last_hit: dict[int, int] = {}
-        self.towns = self.terrain.towns
-        self.lanes = self.terrain.lanes
-        self.lanes_rev = [list(reversed(l)) for l in self.terrain.lanes]
-        self.base_entity = {}
-        self.targets = None
+        self.towns: list[dict] = self.terrain.towns
+        self.lanes: list[list[tuple[float, float]]] = self.terrain.lanes
+        self.lanes_rev: list[list[tuple[float, float]]] = [
+            list(reversed(l)) for l in self.terrain.lanes]
+        self.base_entity: dict[int, int] = {}
+        self.targets: object | None = None      # range mode only
         self.mode_mod.setup(self)
         self._build_pipeline()
 
     # ------------------------------------------------------------------
     # setup
     # ------------------------------------------------------------------
-    def _build_pipeline(self):
+    def _build_pipeline(self) -> None:
         from .systems import (debris, economy, locking, movement, player_input, projectiles,
                               smoke, weapons)
-        self.systems = [player_input.run]
+        self.systems: list[Callable[[World, float], None]] = [player_input.run]
         self.systems += self.mode_mod.pre_systems()
         self.systems += [locking.run, smoke.run, weapons.run, movement.run, projectiles.run,
                          economy.run, debris.run]
@@ -80,7 +86,8 @@ class World:
     # entity factories
     # ------------------------------------------------------------------
     def spawn_unit(self, etype: int, faction: int, x: float, z: float, owner: int = -1,
-                   weapons=None, hp_scale: float = 1.0, lane: int = -1):
+                   weapons: list[int] | None = None, hp_scale: float = 1.0,
+                   lane: int = -1) -> int:
         e = self.ecs
         d = defs.UNIT_DEFS[etype]
         eid = e.create()
@@ -117,7 +124,7 @@ class World:
             e["home_z"][eid] = z
         return eid
 
-    def spawn_mech(self, player: Player):
+    def spawn_mech(self, player: Player) -> int:
         player.smoke_charges = defs.SMOKE_CHARGES
         player.smoke_cd = 0.0
         player.smoke_q = False
@@ -155,7 +162,7 @@ class World:
         self.spawn_mech(pl)
         return pl
 
-    def remove_player(self, pid: int):
+    def remove_player(self, pid: int) -> None:
         pl = self.players.pop(pid, None)
         if not pl:
             return
@@ -197,7 +204,7 @@ class World:
     # ------------------------------------------------------------------
     # damage
     # ------------------------------------------------------------------
-    def damage(self, eid: int, module: int, amount: float, pid: int = -1):
+    def damage(self, eid: int, module: int, amount: float, pid: int = -1) -> None:
         e = self.ecs
         if not e.alive[eid] or amount <= 0:
             return
@@ -227,7 +234,7 @@ class World:
         if dead:
             self.kill(eid, pid)
 
-    def kill(self, eid: int, pid: int = -1):
+    def kill(self, eid: int, pid: int = -1) -> None:
         e = self.ecs
         if not e.alive[eid]:
             return
@@ -267,7 +274,7 @@ class World:
         e.destroy(eid)
         self.last_hit.pop(eid, None)
 
-    def _leave_debris(self, etype: int, faction: int, pos, yaw: float):
+    def _leave_debris(self, etype: int, faction: int, pos: np.ndarray, yaw: float) -> None:
         """Corpse for infantry, smoking hulk for vehicles - purely visual."""
         if etype in (defs.ETYPE_INF_RIFLE, defs.ETYPE_INF_ROCKET, defs.ETYPE_CIV):
             kind, life = 0, defs.CORPSE_TIME
@@ -294,7 +301,7 @@ class World:
         e["wreck_t"][eid] = life
         e["wreck_kind"][eid] = kind
 
-    def emit(self, kind: str, **data):
+    def emit(self, kind: str, **data: object) -> None:
         # json.dumps cannot handle numpy scalars, so every payload is
         # normalised to plain python types on the way out
         msg = {"t": "fx", "k": kind}
@@ -326,7 +333,7 @@ class World:
                 return False
         return True
 
-    def _spawn_point(self, faction: int, fallback):
+    def _spawn_point(self, faction: int, fallback: tuple[float, float]) -> tuple[float, float]:
         towns = self.towns
         enemy_base = self.terrain.bases[1 - faction]
         best = None
@@ -384,9 +391,12 @@ class World:
     # ------------------------------------------------------------------
     # tick
     # ------------------------------------------------------------------
-    def update(self, dt: float):
+    def update(self, dt: float) -> None:
         self.time += dt
         self.tick += 1
+        # per-tick scratch: a system that spawns the replacement of a dead slot
+        # must not see last tick's deaths
+        self.ecs.destroyed.clear()
         for system in self.systems:
             system(self, dt)
         if self.winner >= 0:
@@ -394,7 +404,7 @@ class World:
             if self.end_timer <= 0.0:
                 self.reset_match()
 
-    def reset_match(self):
+    def reset_match(self) -> None:
         """Wipe the battlefield and start a fresh round on the same map."""
         e = self.ecs
         for eid in list(e.query()):

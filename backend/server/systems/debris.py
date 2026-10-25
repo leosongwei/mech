@@ -8,8 +8,13 @@ nothing can target, hit or capture with them.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 
-def run(world, dt):
+if TYPE_CHECKING:
+    from ..world import World
+
+
+def run(world: World, dt: float) -> None:
     e = world.ecs
     ids = e.query("wreck_t")
     if ids.size == 0:

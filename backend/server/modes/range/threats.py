@@ -12,10 +12,14 @@ from __future__ import annotations
 
 import logging
 import math
+from typing import TYPE_CHECKING
 
 from ... import components, defs
 from ... import mathutil as mu
 from ... import terrain as terrain_mod
+
+if TYPE_CHECKING:
+    from ...world import World
 
 log = logging.getLogger("mech.range")
 
@@ -24,16 +28,16 @@ THREAT_ALT = 8.0            # metres above the hill top the round leaves from
 THREAT_PITCH = 0.35         # soft launch, points the seeker at the sky
 
 
-def run(world, dt):
+def run(world: World, dt: float) -> None:
     world.threats.update(world, dt)
 
 
 class Threats:
-    def __init__(self, world):
+    def __init__(self, world: World) -> None:
         self.timer = THREAT_PERIOD * 0.5    # first one comes early
         self.count = 0
 
-    def update(self, world, dt):
+    def update(self, world: World, dt: float) -> None:
         self.timer -= dt
         if self.timer > 0.0:
             return
@@ -44,7 +48,7 @@ class Threats:
             if eid >= 0 and e.alive[eid]:
                 self.launch(world, eid)
 
-    def launch(self, world, eid: int):
+    def launch(self, world: World, eid: int) -> None:
         """Throw one missile at the mech `eid` from the hill top."""
         e = world.ecs
         hx, hz, peak = terrain_mod.RANGE_HILL

@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ..world import World
+
 INCOME = 4.0        # $/s
 
 
-def run(world, dt):
+def run(world: World, dt: float) -> None:
     if world.winner >= 0:
         return
     for pl in world.players.values():

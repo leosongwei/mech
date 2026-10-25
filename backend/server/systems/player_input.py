@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import math
+from typing import TYPE_CHECKING
 
 from .. import defs, mathutil as mu
 
+if TYPE_CHECKING:
+    from ..world import World
 
-def run(world, dt):
+
+def run(world: World, dt: float) -> None:
     e = world.ecs
     pos = e["pos"]
     vel = e["vel"]

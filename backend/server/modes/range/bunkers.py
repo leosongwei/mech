@@ -9,8 +9,13 @@ concrete takes no damage - the range is for measuring, not for scoring.
 from __future__ import annotations
 
 import math
+from typing import TYPE_CHECKING
 
 from ... import defs
+
+if TYPE_CHECKING:
+    from ...terrain import Terrain
+    from ...world import World
 
 # search boxes (x, z) for the local high point, metres on the map
 BUNKER_ANCHORS = (
@@ -25,7 +30,7 @@ SEARCH = 160.0           # half width of the search box around an anchor
 GRID = 10.0              # resolution of that search
 
 
-def place(world):
+def place(world: World) -> list[int]:
     """Spawn one bunker per anchor and return their entity ids."""
     e = world.ecs
     terrain = world.terrain
@@ -42,7 +47,7 @@ def place(world):
     return ids
 
 
-def _high_point(terrain, ax, az):
+def _high_point(terrain: Terrain, ax: float, az: float) -> tuple[float, float]:
     """Highest tile in the anchor's search box: the crest it should sit on."""
     best_h = -1.0
     best = (ax, az)

@@ -23,19 +23,23 @@ MAX_COMPONENTS = 64
 
 
 class ECS:
-    def __init__(self, capacity: int = 8192):
-        self.capacity = capacity
-        self.alive = np.zeros(capacity, bool)
-        self.masks = np.zeros(capacity, np.uint64)
-        self.free = list(range(capacity - 1, -1, -1))
+    def __init__(self, capacity: int = 8192) -> None:
+        self.capacity: int = capacity
+        self.alive: np.ndarray = np.zeros(capacity, bool)
+        self.masks: np.ndarray = np.zeros(capacity, np.uint64)
+        self.free: list[int] = list(range(capacity - 1, -1, -1))
         self.comps: dict[str, np.ndarray] = {}
         self.defaults: dict[str, object] = {}
         self.bits: dict[str, int] = {}
-        self._next_bit = 0
-        self.destroyed: list[int] = []      # ids freed during the current tick
+        self._next_bit: int = 0
+        # ids freed during the current tick, for observers that want to know who
+        # died; ``World.update`` clears the list at the top of every tick, so a
+        # slot that is recycled in the same tick is alive again but still listed
+        self.destroyed: list[int] = []
 
     # -- registration -----------------------------------------------------
-    def register(self, name: str, dtype, shape=(), default=0):
+    def register(self, name: str, dtype: np.dtype | type | str,
+                 shape: tuple[int, ...] = (), default: object = 0) -> np.ndarray:
         if self._next_bit >= MAX_COMPONENTS:
             raise RuntimeError("too many components")
         if shape:
@@ -66,7 +70,7 @@ class ECS:
             arr[eid] = self.defaults[name]
         return eid
 
-    def destroy(self, eid: int):
+    def destroy(self, eid: int) -> None:
         if not self.alive[eid]:
             return
         self.alive[eid] = False
@@ -76,10 +80,10 @@ class ECS:
         self.free.append(eid)
         self.destroyed.append(eid)
 
-    def add_comp(self, eid: int, name: str):
+    def add_comp(self, eid: int, name: str) -> None:
         self.masks[eid] |= np.uint64(self.bits[name])
 
-    def remove_comp(self, eid: int, name: str):
+    def remove_comp(self, eid: int, name: str) -> None:
         self.masks[eid] &= ~np.uint64(self.bits[name])
 
     def has(self, eid: int, *names: str) -> bool:
@@ -88,7 +92,7 @@ class ECS:
             m |= self.bits[n]
         return bool(self.masks[eid] & np.uint64(m) == np.uint64(m))
 
-    def has_arr(self, ids, name: str) -> np.ndarray:
+    def has_arr(self, ids: np.ndarray, name: str) -> np.ndarray:
         """Vectorised ``has``: which of ``ids`` own the component."""
         return (self.masks[ids] & np.uint64(self.bits[name])) != 0
 

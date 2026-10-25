@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import math
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -11,17 +12,21 @@ from .. import defs, mathutil as mu
 from . import smoke
 from .weapons import aim_of
 
+if TYPE_CHECKING:
+    from ..world import World
+
 log = logging.getLogger("mech.smoke")
 
 
-def _norm(v):
+def _norm(v: np.ndarray | tuple[float, float, float]) -> tuple[tuple[float, float, float], float]:
     n = math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2])
     if n < 1e-6:
         return (1.0, 0.0, 0.0), 0.0
     return (v[0] / n, v[1] / n, v[2] / n), n
 
 
-def _steer(v, desired, speed, turn_rate, dt):
+def _steer(v: np.ndarray, desired: tuple[float, float, float], speed: float,
+           turn_rate: float, dt: float) -> tuple[float, float, float]:
     cur, _ = _norm(v)
     dn, want = _norm(desired)
     if want < 1e-3:                     # already on the sight line
@@ -38,7 +43,7 @@ def _steer(v, desired, speed, turn_rate, dt):
     return (nd[0] * speed, nd[1] * speed, nd[2] * speed)
 
 
-def run(world, dt):
+def run(world: World, dt: float) -> None:
     e = world.ecs
     pids = world.projectiles()
     if pids.size == 0:
@@ -214,7 +219,8 @@ def run(world, dt):
             e.destroy(pid)
 
 
-def _impact(world, p, wd, proj_id, direct_unit=-1, direct_mod=0):
+def _impact(world: World, p: tuple[float, float, float], wd: dict, proj_id: int,
+            direct_unit: int = -1, direct_mod: int = 0) -> None:
     e = world.ecs
     shooter = int(e["proj_src"][proj_id])
     pid = int(e["owner"][shooter]) if shooter >= 0 and e.alive[shooter] else -1

@@ -8,17 +8,21 @@ enemy command base.
 from __future__ import annotations
 
 import math
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from .. import defs, mathutil as mu
 from . import smoke
 
+if TYPE_CHECKING:
+    from ..world import World
+
 ACQUIRE = 0.45
 SPOT_MEMORY = 4.0              # seconds an AI keeps firing at a lost target's spot
 
 
-def run(world, dt):
+def run(world: World, dt: float) -> None:
     e = world.ecs
     ids = world.movable()          # player and AI hulls alike, civilians included
     if ids.size == 0:
@@ -110,14 +114,16 @@ def run(world, dt):
             _advance(world, eid, speed, dt)
 
 
-def _sees(world, eye, point) -> bool:
+def _sees(world: World, eye: tuple[float, float, float],
+          point: tuple[float, float, float]) -> bool:
     """Line of sight: terrain, buildings *and* smoke."""
     if not world.terrain.los(eye, point):
         return False
     return not smoke.blocks(world, eye, point)
 
 
-def _acquire(world, eid, foe_ids, eye, d):
+def _acquire(world: World, eid: int, foe_ids: np.ndarray,
+             eye: tuple[float, float, float], d: dict) -> int:
     """Nearest hostile unit with line of sight.
 
     A hull may declare a restricted target list in its definition (`targets`):
@@ -146,7 +152,9 @@ def _acquire(world, eid, foe_ids, eye, d):
     return -1
 
 
-def _engage(world, eid, tid, eye, d, dist, tpos, tvel, dt):
+def _engage(world: World, eid: int, tid: int, eye: tuple[float, float, float],
+            d: dict, dist: float, tpos: np.ndarray, tvel: np.ndarray,
+            dt: float) -> None:
     e = world.ecs
     weapon = e["weapon"]
 
@@ -161,14 +169,17 @@ def _engage(world, eid, tid, eye, d, dist, tpos, tvel, dt):
     _aim_and_fire(world, eid, eye, d, dist, aim, dt)
 
 
-def _suppress(world, eid, eye, d, dist, dt):
+def _suppress(world: World, eid: int, eye: tuple[float, float, float], d: dict,
+              dist: float, dt: float) -> None:
     """Keep firing at the spot where the target was last seen."""
     e = world.ecs
     aim = (float(e["spot_x"][eid]), float(e["spot_y"][eid]) + 1.5, float(e["spot_z"][eid]))
     _aim_and_fire(world, eid, eye, d, dist, aim, dt)
 
 
-def _aim_and_fire(world, eid, eye, d, dist, aim, dt):
+def _aim_and_fire(world: World, eid: int, eye: tuple[float, float, float],
+                  d: dict, dist: float, aim: tuple[float, float, float],
+                  dt: float) -> None:
     e = world.ecs
     yaw = e["yaw"]
     pitch = e["pitch"]
@@ -208,7 +219,7 @@ def _aim_and_fire(world, eid, eye, d, dist, aim, dt):
     trigger[eid] = t
 
 
-def _advance(world, eid, speed, dt):
+def _advance(world: World, eid: int, speed: float, dt: float) -> None:
     e = world.ecs
     pos = e["pos"]
     vel = e["vel"]
@@ -254,7 +265,8 @@ def _advance(world, eid, speed, dt):
     vel[eid, 2] = dz * speed
 
 
-def _civ(world, eid, civ_units, foe_arr, dt):
+def _civ(world: World, eid: int, civ_units: list[int],
+         foe_arr: dict[int, np.ndarray], dt: float) -> None:
     e = world.ecs
     pos = e["pos"]
     vel = e["vel"]

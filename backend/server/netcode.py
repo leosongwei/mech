@@ -7,10 +7,14 @@ import math
 import os
 import struct
 import zlib
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from . import defs, shop
+
+if TYPE_CHECKING:
+    from .world import Player, World
 
 MAGIC = 0x4D454348          # "MECH"
 SNAP_HZ = 15.0
@@ -47,7 +51,7 @@ def _b64(arr: np.ndarray) -> str:
     return base64.b64encode(zlib.compress(arr.tobytes(), 6)).decode("ascii")
 
 
-def static_payload(world) -> dict:
+def static_payload(world: World) -> dict:
     """Everything the client needs once (map, definitions)."""
     t = world.terrain
     heights = np.round(t.h).astype(np.int16)
@@ -77,7 +81,7 @@ def static_payload(world) -> dict:
     )
 
 
-def snapshot_bytes(world) -> bytes:
+def snapshot_bytes(world: World) -> bytes:
     e = world.ecs
     uids = world.all_units()
     pids = world.projectiles()
@@ -149,14 +153,14 @@ def snapshot_bytes(world) -> bytes:
     return header + arr.tobytes() + parr.tobytes() + sarr.tobytes()
 
 
-def _arm_meta(world, pl, arm: int) -> dict:
+def _arm_meta(world: World, pl: Player, arm: int) -> dict:
     """One arm as the rearm panel needs it: hardware, rounds, and its hp."""
     s = shop.arm_state(world, pl, arm)
     return dict(wid=s["wid"], hp=round(s["hp"]), hpmax=round(s["hpmax"]),
                 mag=s["mag"], reserve=s["reserve"])
 
 
-def meta_payload(world, pl) -> dict:
+def meta_payload(world: World, pl: Player) -> dict:
     e = world.ecs
     mech_ok = pl.mech >= 0 and e.alive[pl.mech]
     hp = e["hp"][pl.mech].tolist() if mech_ok else [0, 0, 0, 0]

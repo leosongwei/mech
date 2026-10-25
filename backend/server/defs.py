@@ -209,7 +209,7 @@ SMOKE_REFILL_COST = 250       # $ for a fresh rack at the base
 SMOKE_REFILL_CHARGES = 10     # pulls the refilled rack holds
 
 
-def _smoke_fan():
+def _smoke_fan() -> tuple[tuple[float, float], ...]:
     """Canister lattice covering the whole front hemisphere.
 
     Three rows of elevation plus one puff over the roof.  Every puff is a

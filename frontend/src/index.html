@@ -44,28 +44,11 @@
   #lobby .fac[data-fac="1"].on { background: #5c8cf0; border-color: #5c8cf0; }
   #lobby .fac[data-fac="-1"].on { background: #7ce0a0; border-color: #7ce0a0; }
   #wdesc { font-size: 11px; color: #9ab7c4; line-height: 1.5; min-height: 32px; width: 100%; }
-  #debug { position: absolute; top: 8px; right: 8px; z-index: 5; display: flex; flex-direction: column;
-           gap: 5px; padding: 7px 7px 9px; background: rgba(10,18,24,.7);
-           border: 1px solid rgba(120,220,160,.28); border-radius: 3px; }
-  #debug b { font-weight: normal; font-size: 10px; letter-spacing: 3px; color: #7ce0a0;
-             text-align: center; }
-  #debug button { padding: 5px 16px; font-family: inherit; font-size: 11px; letter-spacing: 2px;
-                  color: #9ab7c4; background: #0b1418; border: 1px solid rgba(120,220,160,.25);
-                  border-radius: 2px; cursor: pointer; }
-  #debug button:hover { background: #12222a; color: #cfe6d6; }
-  #debug button.on { background: #7ce0a0; border-color: #7ce0a0; color: #06110a; }
-  #debug.hidden { display: none; }
 </style>
 </head>
 <body>
 <canvas id="gl"></canvas>
 <canvas id="hud"></canvas>
-<div id="debug" class="hidden">
-  <b>DEBUG</b>
-  <button data-dbg="respawn">RESPAWN</button>
-  <button data-dbg="restart">RESTART</button>
-  <button data-dbg="god">GOD OFF</button>
-</div>
 <div id="boot">
   <h1>MECH</h1>
   <p>16 KM SQUARE FRONT &middot; RED VS BLUE &middot; THREE LANES</p>
@@ -79,7 +62,7 @@
     <b>B</b><span>rearm / repair panel (at base or an owned town)</span>
     <b>1-5 / SHIFT+1-5</b><span>quick-fit a weapon, or pick one in the panel</span>
     <b>ENTER / ESC</b><span>confirm / cancel in the panel</span>
-    <b>ESC</b><span>release mouse</span>
+    <b>ESC</b><span>release mouse &mdash; then click the gear (top right)</span>
   </div>
   <div id="lobby">
     <div class="row">

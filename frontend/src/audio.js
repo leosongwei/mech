@@ -12,6 +12,33 @@ const WARBLE_SLOW = 0.25;
 const WARBLE_FAST = 0.083;
 const UPLINK_VOL = 0.05;            // a lock is a warning, not an emergency
 const MISSILE_VOL = 0.06;           // the trill sits a little above it
+// Master gain for a full volume slider.  The per-cue mixes above were tuned
+// 3x too quiet against the rest of the game, so the whole bus sits at 1.65 at
+// the default 50%; the top of the slider is twice that again, and the settings
+// menu scales the bus from 0 to MASTER_GAIN.
+const MASTER_GAIN = 3.3;
+const DEFAULT_VOLUME = 0.5;
+const VOLUME_KEY = 'mech.volume';
+
+// speed of sound in air at 20 C, m/s
+export const SOUND_SPEED = 343;
+
+// Distance attenuation: inverse square, anchored where the pilot can still
+// judge it - a bang 1 km out is heard at half level - and clamped to full
+// inside ~700 m.  Each doubling past 1 km costs 6 dB (2 km = 12.5%, 3 km =
+// 5.6%), so gunfire across the map is still there, just distant.
+export function attenuation(dist) {
+  const r = Math.max(1, dist);
+  return Math.min(1, 500000 / (r * r));
+}
+
+function storedVolume() {
+  try {
+    const v = parseFloat(localStorage.getItem(VOLUME_KEY));
+    if (isFinite(v) && v >= 0 && v <= 1) return v;
+  } catch (e) { /* private mode: no storage, keep the default */ }
+  return DEFAULT_VOLUME;
+}
 
 export class GameAudio {
   constructor() {
@@ -23,6 +50,14 @@ export class GameAudio {
     this.warbles = {};
     this.beepTimer = 0;
     this.mode = 'none';
+    this.volume = storedVolume();   // 0..1, the settings menu's master slider
+  }
+
+  // 0..1, applied to every voice at once; remembered across reloads
+  setVolume(v) {
+    this.volume = Math.max(0, Math.min(1, v));
+    try { localStorage.setItem(VOLUME_KEY, String(this.volume)); } catch (e) { }
+    if (this.master) this.master.gain.value = MASTER_GAIN * this.volume;
   }
 
   ensure() {
@@ -31,7 +66,7 @@ export class GameAudio {
     if (!AC) return;
     this.ctx = new AC();
     this.master = this.ctx.createGain();
-    this.master.gain.value = 0.55;
+    this.master.gain.value = MASTER_GAIN * this.volume;
     this.master.connect(this.ctx.destination);
     const len = this.ctx.sampleRate * 1.2;
     const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);

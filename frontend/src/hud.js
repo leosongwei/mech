@@ -2,6 +2,7 @@
 
 import { FACTION_COLORS } from './scene.js';
 import { ZOOM_LEVELS } from './input.js';
+import { drawIcon } from './icons.js';
 
 const ARM_COLORS = ['#5fe6ff', '#ffb04a'];
 const ARM_NAMES = ['L', 'R'];
@@ -96,7 +97,9 @@ export class HUD {
     }
     if (s.dead) this._death(s, w, h);
     if (s.winner >= 0) this._gameover(s, w, h);
+    if (!s.shopOpen && !s.settingsOpen) this._gear(s, w, h);
     if (s.shopOpen) this._shop(s, w, h);
+    if (s.settingsOpen) this._settings(s, w, h);
     if (s.help) this._help(w, h);
   }
 
@@ -615,7 +618,8 @@ export class HUD {
     ctx.save();
     ctx.textAlign = 'right';
     ctx.font = '12px "Courier New", monospace';
-    let y = 40;
+    // clear of the gear button in the corner
+    let y = 62;
     for (let i = s.messages.length - 1; i >= 0 && i > s.messages.length - 8; i--) {
       const m = s.messages[i];
       const a = Math.max(0, Math.min(1, m.life));
@@ -764,38 +768,7 @@ export class HUD {
     ctx.lineWidth = 1.6;
     ctx.strokeRect(px + 0.5, py + 0.5, pw - 1, ph - 1);
 
-    const hover = (x, y, bw, bh) =>
-      mouse[0] >= x && mouse[0] <= x + bw && mouse[1] >= y && mouse[1] <= y + bh;
-
-    const btn = (id, x, y, bw, bh, lines, opts) => {
-      opts = opts || {};
-      const hv = hover(x, y, bw, bh);
-      // a dead button still swallows the click, so it cannot fall through to
-      // whatever is underneath it
-      this.hot.push({ id: opts.disabled ? 'disabled' : id, x, y, w: bw, h: bh });
-      ctx.fillStyle = opts.disabled ? 'rgba(18,24,26,0.5)'
-        : hv ? 'rgba(66,120,92,0.5)' : 'rgba(14,26,28,0.7)';
-      ctx.fillRect(x, y, bw, bh);
-      ctx.strokeStyle = opts.active ? '#ffcf5a'
-        : opts.disabled ? 'rgba(120,140,130,0.3)' : 'rgba(150,230,190,0.7)';
-      ctx.lineWidth = opts.active ? 2.2 : 1.2;
-      ctx.strokeRect(x + 0.5, y + 0.5, bw - 1, bh - 1);
-      ctx.textAlign = 'center';
-      const ls = lines || [];
-      const lh = fs * 1.4;
-      let ty = y + bh / 2 - (ls.length - 1) * lh / 2;
-      for (let i = 0; i < ls.length; i++) {
-        const big = i === 0;
-        let size = big ? fs * 1.05 : fs * 0.78;
-        const est = ls[i].length * size * 0.62;      // Courier New is monospaced
-        if (est > bw - 12) size = Math.max(7.5, size * (bw - 12) / est);
-        ctx.font = `${big ? 'bold ' : ''}${size}px "Courier New", monospace`;
-        ctx.fillStyle = opts.disabled ? 'rgba(150,166,158,0.5)'
-          : big ? '#e8fff2' : 'rgba(196,224,208,0.85)';
-        ctx.fillText(ls[i], x + bw / 2, ty);
-        ty += lh;
-      }
-    };
+    const btn = (id, x, y, bw, bh, lines, opts) => this._btn(mouse, fs, id, x, y, bw, bh, lines, opts);
 
     // header: money on the left, close cross top right
     ctx.textAlign = 'left';
@@ -953,6 +926,198 @@ export class HUD {
       ctx.stroke();
     }
     ctx.restore();
+  }
+
+  // The gear in the top-right corner: the one HUD button, and the way into the
+  // settings panel.  It needs a free pointer (ESC), so it sits dim until the
+  // mouse is released and brightens under the cursor.
+  _gear(s, w, h) {
+    const ctx = this.ctx;
+    const mouse = s.mouse || [-1, -1];
+    const S = 32;
+    const x = w - S - 10;
+    const y = 10;
+    const hv = mouse[0] >= x && mouse[0] <= x + S && mouse[1] >= y && mouse[1] <= y + S;
+    this.gearRect = { x, y, w: S, h: S };
+    const cx = x + S / 2;
+    const cy = y + S / 2;
+    ctx.save();
+    ctx.fillStyle = hv ? 'rgba(66,120,92,0.75)' : 'rgba(10,18,24,0.62)';
+    ctx.fillRect(x, y, S, S);
+    ctx.strokeStyle = hv ? 'rgba(180,245,205,0.95)' : 'rgba(120,220,160,0.45)';
+    ctx.lineWidth = 1.2;
+    ctx.strokeRect(x + 0.5, y + 0.5, S - 1, S - 1);
+    const rgba = hv ? '#e8fff2' : 'rgba(190,226,204,0.8)';
+    // the Material Symbols gear, or a plain toothed wheel for the first frames
+    // before the subset font lands (and if it ever fails to load)
+    if (!drawIcon(ctx, 'settings', cx, cy, S * 0.62, rgba)) {
+      ctx.fillStyle = rgba;
+      for (let i = 0; i < 8; i++) {
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate((i * Math.PI) / 4);
+        ctx.fillRect(-2, -11, 4, 4);
+        ctx.restore();
+      }
+      ctx.beginPath();
+      ctx.arc(cx, cy, 7.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = hv ? 'rgba(20,40,30,0.95)' : 'rgba(10,18,24,0.9)';
+      ctx.beginPath();
+      ctx.arc(cx, cy, 3.4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  // ------------------------------------------------------------- settings
+  // The gear opens the options panel: the master volume and, when the server was
+  // started with MECH_DEBUG=1, the debug knobs.  Same mouse machinery as the
+  // rearm panel; the game maps the clicks back through hitUi/volRect.
+  _settings(s, w, h) {
+    const ctx = this.ctx;
+    const mouse = s.mouse || [-1, -1];
+    const dbg = !!s.debug;
+    const vol = s.volume === undefined ? 1 : s.volume;
+    const god = !!(s.meta && s.meta.god);
+    const pw = Math.min(560, w * 0.84);
+    const fs = Math.max(11, Math.min(15, pw * 0.03));
+    const pad = fs * 1.5;
+    const rowH = fs * 2.4;
+    const closeH = fs * 2.2;
+    // the panel is as tall as its content, so the debug block costs nothing
+    // when the server shipped without it
+    let contentH = fs * 2.6 + fs * 1.5 + rowH + fs * 1.4 + closeH;
+    if (dbg) contentH += fs * 1.5 + rowH + fs * 1.4;
+    const ph = Math.min(h * 0.92, contentH + pad * 2);
+    const px = (w - pw) / 2;
+    const py = (h - ph) / 2;
+    const cx = px + pad;
+    const cw = pw - pad * 2;
+    const btn = (id, x, y, bw, bh, lines, opts) => this._btn(mouse, fs, id, x, y, bw, bh, lines, opts);
+
+    this.hot = [];
+    this.volRect = null;
+    ctx.save();
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = 'rgba(4,8,10,0.55)';
+    ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = 'rgba(10,18,20,0.96)';
+    ctx.fillRect(px, py, pw, ph);
+    ctx.strokeStyle = 'rgba(140,225,180,0.7)';
+    ctx.lineWidth = 1.6;
+    ctx.strokeRect(px + 0.5, py + 0.5, pw - 1, ph - 1);
+
+    let y = py + pad;
+    ctx.textAlign = 'left';
+    ctx.font = `bold ${fs * 1.35}px "Courier New", monospace`;
+    ctx.fillStyle = '#a9f0c0';
+    ctx.fillText('SETTINGS', cx, y + fs * 0.95);
+    y += fs * 2.6;
+
+    // close cross in the corner (the CLOSE button below does the same thing)
+    const xw = rowH * 0.84;
+    btn('close', px + pw - pad - xw, py + pad - fs * 0.3, xw, xw, [], {});
+    const xc = px + pw - pad - xw / 2;
+    const yc = py + pad - fs * 0.3 + xw / 2;
+    if (!drawIcon(ctx, 'close', xc, yc, xw * 0.55, '#e8fff2')) {
+      ctx.strokeStyle = '#e8fff2';
+      ctx.lineWidth = 1.6;
+      const d = xw * 0.22;
+      ctx.beginPath();
+      ctx.moveTo(xc - d, yc - d); ctx.lineTo(xc + d, yc + d);
+      ctx.moveTo(xc + d, yc - d); ctx.lineTo(xc - d, yc + d);
+      ctx.stroke();
+    }
+
+    // ---- sound: the master slider, a step either side and the number on it
+    ctx.font = `bold ${fs * 0.85}px "Courier New", monospace`;
+    ctx.fillStyle = 'rgba(180,210,195,0.75)';
+    ctx.fillText('SOUND', cx, y + fs * 0.45);
+    y += fs * 1.5;
+    drawIcon(ctx, 'volume_up', cx + fs * 0.9, y + rowH / 2, fs * 1.5, 'rgba(190,226,204,0.8)');
+    const step = fs * 3;
+    btn('vol-', cx + fs * 1.9, y, step, rowH, ['-'], { disabled: vol <= 0 });
+    const barX = cx + fs * 1.9 + step + fs * 0.5;
+    const barW = cw - fs * 1.9 - step * 2 - fs;
+    btn('vol', barX, y, barW, rowH, [], {});
+    ctx.fillStyle = 'rgba(124,224,160,0.45)';
+    ctx.fillRect(barX + 2, y + 2, Math.max(0, (barW - 4) * vol), rowH - 4);
+    ctx.textAlign = 'center';
+    ctx.font = `bold ${fs * 0.95}px "Courier New", monospace`;
+    ctx.fillStyle = '#e8fff2';
+    ctx.fillText(`MASTER ${Math.round(vol * 100)}%`, barX + barW / 2, y + rowH / 2);
+    btn('vol+', barX + barW + fs * 0.5, y, step, rowH, ['+'], { disabled: vol >= 1 });
+    this.volRect = { x: barX, w: barW };
+    y += rowH + fs * 1.4;
+
+    // ---- debug: only when the server says the messages are accepted
+    if (dbg) {
+      ctx.textAlign = 'left';
+      ctx.font = `bold ${fs * 0.85}px "Courier New", monospace`;
+      ctx.fillStyle = 'rgba(180,210,195,0.75)';
+      ctx.fillText('DEBUG', cx, y + fs * 0.45);
+      y += fs * 1.5;
+      const gap = fs * 0.6;
+      const bw = (cw - gap * 2) / 3;
+      btn('respawn', cx, y, bw, rowH, ['RESPAWN', 'skip the timer'], {});
+      btn('restart', cx + bw + gap, y, bw, rowH, ['RESTART', 'fresh round'], {});
+      btn('god', cx + (bw + gap) * 2, y, bw, rowH,
+        [god ? 'GOD ON' : 'GOD OFF', god ? 'no damage' : 'take damage'], { active: god });
+      y += rowH + fs * 1.4;
+    }
+
+    btn('close', px + (pw - cw * 0.4) / 2, y, cw * 0.4, closeH, ['CLOSE', '(ESC)'], {});
+
+    // the cursor, since the pointer lock is released while the panel is up
+    if (mouse[0] >= 0) {
+      ctx.textAlign = 'left';
+      ctx.strokeStyle = '#e8fff2';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(mouse[0] - 7, mouse[1]);
+      ctx.lineTo(mouse[0] + 7, mouse[1]);
+      ctx.moveTo(mouse[0], mouse[1] - 7);
+      ctx.lineTo(mouse[0], mouse[1] + 7);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  _hover(mouse, x, y, bw, bh) {
+    return mouse[0] >= x && mouse[0] <= x + bw && mouse[1] >= y && mouse[1] <= y + bh;
+  }
+
+  // one clickable box: pushes its rectangle into `this.hot`, draws the frame and
+  // up to three lines of text.  A dead button still swallows the click, so it
+  // cannot fall through to whatever is underneath it.
+  _btn(mouse, fs, id, x, y, bw, bh, lines, opts) {
+    const ctx = this.ctx;
+    opts = opts || {};
+    const hv = this._hover(mouse, x, y, bw, bh);
+    this.hot.push({ id: opts.disabled ? 'disabled' : id, x, y, w: bw, h: bh });
+    ctx.fillStyle = opts.disabled ? 'rgba(18,24,26,0.5)'
+      : hv ? 'rgba(66,120,92,0.5)' : 'rgba(14,26,28,0.7)';
+    ctx.fillRect(x, y, bw, bh);
+    ctx.strokeStyle = opts.active ? '#ffcf5a'
+      : opts.disabled ? 'rgba(120,140,130,0.3)' : 'rgba(150,230,190,0.7)';
+    ctx.lineWidth = opts.active ? 2.2 : 1.2;
+    ctx.strokeRect(x + 0.5, y + 0.5, bw - 1, bh - 1);
+    ctx.textAlign = 'center';
+    const ls = lines || [];
+    const lh = fs * 1.4;
+    let ty = y + bh / 2 - (ls.length - 1) * lh / 2;
+    for (let i = 0; i < ls.length; i++) {
+      const big = i === 0;
+      let size = big ? fs * 1.05 : fs * 0.78;
+      const est = ls[i].length * size * 0.62;        // Courier New is monospaced
+      if (est > bw - 12) size = Math.max(7.5, size * (bw - 12) / est);
+      ctx.font = `${big ? 'bold ' : ''}${size}px "Courier New", monospace`;
+      ctx.fillStyle = opts.disabled ? 'rgba(150,166,158,0.5)'
+        : big ? '#e8fff2' : 'rgba(196,224,208,0.85)';
+      ctx.fillText(ls[i], x + bw / 2, ty);
+      ty += lh;
+    }
   }
 
   // last box wins: small arrows are pushed after the frame they sit in

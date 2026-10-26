@@ -24,11 +24,14 @@ export class Input {
     this.wheelAcc = 0;
     this.onBuy = null;
     this.onToggleHelp = null;
+    this.onSettings = null;         // ESC while the settings panel is up
+    this.onHudClick = null;         // click on a HUD button, pointer not locked
     this.onShop = null;             // B: open / close the rearm panel
     this.onShopConfirm = null;      // ENTER while it is open
     this.onShopCancel = null;       // ESC / B while it is open
     this.onUiClick = null;          // mouse click in the panel, client pixels
     this.uiOpen = false;            // set by the game: panel owns the mouse
+    this.uiKind = null;             // 'shop' or 'settings': what that panel is
     this.mx = 0;
     this.my = 0;
     this.qPressed = false;          // one pull of the smoke trigger, sent once
@@ -47,7 +50,14 @@ export class Input {
         e.preventDefault();
         return;
       }
-      if (!this.locked) { canvas.requestPointerLock(); return; }
+      if (!this.locked) {
+        // the mouse is free: a click either takes a HUD button or grabs the
+        // pointer back for the cockpit
+        this.mx = e.clientX; this.my = e.clientY;
+        if (this.onHudClick && this.onHudClick(e.clientX, e.clientY)) { e.preventDefault(); return; }
+        canvas.requestPointerLock();
+        return;
+      }
       if (e.button === 0) this.fireL = true;
       if (e.button === 2) this.fireR = true;
     });
@@ -65,7 +75,16 @@ export class Input {
   _key(e, down) {
     const code = e.code;
     if (this.uiOpen) {
-      // the panel takes the keyboard while it is up: ENTER buys, ESC drops it
+      // the panel takes the keyboard while it is up
+      if (this.uiKind === 'settings') {
+        // the settings panel is modal: nothing else reaches the game from here
+        if (down && code === 'Escape' && this.onSettings) {
+          this.onSettings();
+          e.preventDefault();
+        }
+        return;
+      }
+      // ENTER buys, ESC drops the rearm panel
       if (down && code === 'Enter' && this.onShopConfirm) { this.onShopConfirm(); e.preventDefault(); return; }
       if (down && (code === 'Escape' || code === 'KeyB') && this.onShopCancel) {
         this.onShopCancel(); e.preventDefault(); return;
@@ -97,7 +116,11 @@ export class Input {
 
   _mouse(e) {
     if (this.uiOpen) { this.mx = e.clientX; this.my = e.clientY; return; }
-    if (!this.locked) return;
+    if (!this.locked) {
+      // free pointer: only the HUD buttons want it, and they highlight on hover
+      this.mx = e.clientX; this.my = e.clientY;
+      return;
+    }
     const dx = (e.movementX || 0) / this.zoom;
     const dy = (e.movementY || 0) / this.zoom;
     if (this.alt) {

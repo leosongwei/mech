@@ -51,19 +51,23 @@ tools/
   smoke_lock_test.js       # browser-console driver: range missile A/B smoke test
 frontend/
   webpack.config.js        # entry src/main.js -> ../backend/assets/bundle.js
+  icons.json               # single source of truth for every HUD icon glyph
+  scripts/                 # fetch-material-icons.sh: rebuild the font subset
+  vendor/material-symbols/ # committed Material Symbols subset (a few KB) + LICENSE
   src/
     main.js                # boots Game, exposes it as window.__game
-    game.js                # client loop, input -> server, camera, fx, debug panel
+    game.js                # client loop, input -> server, camera, fx, settings menu
+    icons.js               # icons.json -> glyph strings, FontFace loader, drawIcon()
     net.js                 # websocket, snapshot decode, interpolation
     map.js                 # client copy of terrain + identical ballistics
     scene.js               # unit models built from instanced primitives
     renderer.js            # tiled near terrain + far LOD grid, roads, instanced draws
-    hud.js                 # crosshair, lock box, module health, minimap
+    hud.js                 # crosshair, lock box, module health, minimap, panels
     meshes.js              # primitive meshes (box, sphere, cone, cylinder, rock)
     particles.js           # smoke, trails, impacts
     math.js                # mat4, lookAt, compose, dirFrom, angles
     input.js               # pointer lock, keys, wheel, buy hotkeys
-    audio.js               # WebAudio cues
+    audio.js               # WebAudio cues, master gain + volume setting, SOUND_SPEED + attenuation()
 ```
 
 ### Server
@@ -117,9 +121,36 @@ frontend/
 * **Netcode** — one init payload with the map and all definitions, then binary
   snapshots at 15 Hz (`SNAP_EVERY`) and JSON meta at 10 Hz (`META_EVERY`).
   Entity state is authoritative on the server; the client only interpolates.
-* **Debug messages** are accepted only when `MECH_DEBUG=1`:
-  `debug_spawn`, `debug_tp`, `debug_hurt`, `debug_god`, `debug_restart`
-  (see `main.py`). `respawn` (skip the death timer) is always allowed.
+* **Debug messages** are accepted only when `MECH_DEBUG=1` (see `main.py`),
+  except `respawn`, which is always allowed. All of them are sent from the
+  console as `g.net.send({t: '...', ...})`; the payloads are in
+  [Debug knobs](#debug-knobs) below.
+
+### Debug knobs
+
+Everything here is one websocket message from the browser console
+(`const g = window.__game`). The three that have a button live in the **gear
+menu** (top right of the HUD, needs a free pointer: press `ESC`):
+`RESPAWN`, `RESTART`, `GOD ON/OFF`.
+
+| Message | Payload | Effect |
+| --- | --- | --- |
+| `respawn` | — | skips the 3 s death timer on the next tick (always allowed) |
+| `debug_restart` | — | wipes the field and starts a fresh round, same map (`world.reset_match()`); info `MATCH RESTARTED` |
+| `debug_god` | `on: true/false` | stops the AI / damage from interrupting a test; meta `god` mirrors it (the menu button reads that back) |
+| `debug_spawn` | `etype` (default `3` APC), `dist` (m, default `800`), `angle` (rad, relative to your yaw), `faction` (default the enemy), `weapons` (optional list) | spawns a unit `dist` metres ahead |
+| `debug_tp` | `dist` (m, default `300`), `angle` (rad, relative to your yaw) | teleports the mech forward along its yaw |
+| `debug_hurt` | `module` (`0` hull / `1` torso / `2` left arm / `3` right arm, default `1`), `amount` (default `100`), `base` (damage to the *enemy* command base) | wounds the player or the enemy base |
+
+Entity types for `debug_spawn` come from `defs.py`: `1` rifleman, `2` AT
+rifleman, `3` APC, `4` mech, `5` command base, `6` civilian, `9` bunker.
+
+```js
+g.net.send({ t: 'debug_spawn', etype: 3, dist: 400, angle: 0.3 });  // APC 400 m ahead
+g.net.send({ t: 'debug_hurt', module: 2, amount: 999 });            // blow off the left arm
+g.net.send({ t: 'debug_tp', dist: 1500 });                         // hop 1.5 km forward
+g.net.send({ t: 'debug_god', on: true });                          // then confirm g.net.meta.god
+```
 
 ### Client
 
@@ -146,8 +177,32 @@ frontend/
 * `map.js` must stay ballistically identical to the server: same gravity,
   same 1/30 step, same launch bias (`wd.bias`), otherwise the predicted impact
   point drifts off the real one.
+* **Sound is not immediate.** Gunfire and explosions go through
+  `game._sound(x, y, z, play)` -> `game.sounds`, a list of acoustic events in
+  the air (emit position + time, 20 s TTL). `_pumpSounds()` runs every frame and
+  compares the wavefront radius (`SOUND_SPEED` = 343 m/s x age) with the
+  distance to the mech's **current** position: the event plays (at
+  `attenuation(dist)`, inverse square anchored at 1 km = 50%) and leaves the
+  list when the front catches up. Using the live position is what makes a
+  180 km/h hull hear a bang where it actually caught up with it - never cache
+  the distance at emit time. Flashes, impacts, screen shake and the electronic
+  cues (lock tone, RWR alarms, kill/denied chimes) stay immediate.
+* The **gear** in the top-right corner is the only HUD click target: it needs a
+  free pointer (`ESC`) and opens the settings panel (`hud._settings`), the
+  master volume plus the debug buttons. `input.onHudClick` fires for canvas
+  clicks while the pointer is free and returns `true` when the HUD took the
+  click; everything else keeps its old meaning (a click re-grabs the pointer).
+* **Icons** are Material Symbols glyphs drawn from a font, not hand-built
+  canvas shapes: `frontend/icons.json` is the single source of truth,
+  `src/icons.js` derives the glyph strings from it and loads the vendored
+  subset (`FontFace`), and `scripts/fetch-material-icons.sh` regenerates
+  `frontend/vendor/material-symbols/material-symbols-outlined.woff2` (a few KB,
+  committed). Adding an icon = an entry in `icons.json` + re-running that
+  script; `drawIcon()` returns `false` while the face is loading, so callers
+  keep a primitive fallback for the first frames.
 * `window.__game` (`game.js` instance) is exposed for automation: `g.input`,
-  `g.net.send(...)`, `g.net.meta`, `g.net.entities`, `g.renderer`.
+  `g.net.send(...)`, `g.net.meta`, `g.net.entities`, `g.renderer`,
+  `g.settingsOpen`, `g.audio.setVolume(0..1)`.
 
 ## Build
 
@@ -198,8 +253,9 @@ Product notes: `doc/product/range.md`.
 
 Environment overrides: `MECH_SESSION` (default `mech`), `MECH_PORT` (8010),
 `MECH_LOG` (`/tmp/mech-server.log`). `dev.sh` always sets `MECH_DEBUG=1`,
-which unlocks the debug websocket messages and the top-right debug panel
-(RESPAWN / RESTART / GOD).
+which unlocks the debug websocket messages and the DEBUG block of the settings
+menu (gear, top right: RESPAWN / RESTART / GOD). Without it the menu keeps the
+volume slider only.
 
 Equivalent raw tmux invocation:
 

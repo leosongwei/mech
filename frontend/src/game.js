@@ -3,7 +3,7 @@
 import { Net } from './net.js';
 import { MapData, intercept, predictImpact, unitSpheres, zeroPitch } from './map.js';
 import { Input } from './input.js';
-import { GameAudio } from './audio.js';
+import { GameAudio, SOUND_SPEED, attenuation } from './audio.js';
 import { Renderer, makeCamera } from './renderer.js';
 import { drawUnits, drawFirstPersonArms } from './scene.js';
 import { HUD } from './hud.js';
@@ -22,6 +22,8 @@ const LASER_RANGE = 3400;           // longest sight an enemy could shoot at
 const LASER_CONE = 0.05;            // rad, "his gun is pointed at me"
 const SMOKE_RGB = [0.58, 0.52, 0.44];   // dirt brown, like the charge it is
 const SMOKE_END_SHRINK = 0.35;      // s, last moments of a puff (it is opaque)
+const SOUND_TTL = 20;               // s, a bang still in the air after this is dropped
+const SOUND_FLOOR = 0.02;           // quieter than this on arrival, do not bother
 
 export class Game {
   constructor() {
@@ -61,6 +63,9 @@ export class Game {
     this.wreckPuffs = new Map();    // per-hulk smoke timer
     this.seekerLog = [];            // every IR lock the smoke broke, oldest first
     this.shopOpen = false;          // rearm panel (B) is up: the mouse is a cursor
+    this.sounds = [];               // acoustic events in the air, oldest first
+    this.settingsOpen = false;      // options panel (gear): volume + debug knobs
+    this.debug = false;             // server started with MECH_DEBUG=1
     this.shopDraft = emptyDraft();  // edits waiting for CONFIRM
     this.shopDrop = -1;             // which arm's weapon list is pulled down
   }
@@ -105,15 +110,18 @@ export class Game {
       this.input.onShop = () => this._shopToggle();
       this.input.onShopConfirm = () => this._shopConfirm();
       this.input.onShopCancel = () => this._shopClose();
-      this.input.onUiClick = (x, y) => this._shopClick(x, y);
+      this.input.onUiClick = (x, y) =>
+        (this.settingsOpen ? this._settingsClick(x, y) : this._shopClick(x, y));
       this.input.onToggleHelp = () => { this.helpOpen = !this.helpOpen; };
+      this.input.onSettings = () => this._settingsToggle();
+      this.input.onHudClick = (x, y) => this._hudClick(x, y);
       if (this.range) {
         // the lobby is the same, only the subtitle says what this server is
         const sub = this.bootEl.querySelector('p');
         if (sub) sub.textContent = 'WEAPON RANGE · 4 KM MAP · APC TARGETS · REARM ANYWHERE';
       }
       this._setupLobby(init);
-      this._setupDebug(init);
+      this.debug = !!init.debug;
       document.getElementById('startBtn').addEventListener('click', () => this.start());
       this.ready = true;
     } catch (err) {
@@ -183,34 +191,6 @@ export class Game {
     describe();
   }
 
-  // --------------------------------------------------------- debug panel
-  // shipped from the server only when MECH_DEBUG=1: quick knobs for testing
-  _setupDebug(init) {
-    const el = document.getElementById('debug');
-    if (!el || !init.debug) return;
-    this.debugEl = el;
-    this.debugGod = el.querySelector('[data-dbg="god"]');
-    el.addEventListener('click', (e) => {
-      const kind = e.target && e.target.dataset ? e.target.dataset.dbg : null;
-      if (kind === 'respawn') {
-        this.net.send({ t: 'respawn' });
-      } else if (kind === 'restart') {
-        this.net.send({ t: 'debug_restart' });
-      } else if (kind === 'god') {
-        const on = !(this.net.meta && this.net.meta.god);
-        this.net.send({ t: 'debug_god', on });
-      }
-    });
-    el.classList.remove('hidden');
-  }
-
-  _syncDebug() {
-    if (!this.debugGod) return;
-    const on = !!(this.net.meta && this.net.meta.god);
-    this.debugGod.textContent = on ? 'GOD ON' : 'GOD OFF';
-    this.debugGod.classList.toggle('on', on);
-  }
-
   start() {
     if (!this.ready) return;
     this.started = true;
@@ -250,24 +230,56 @@ export class Game {
     if (this.messages.length > 40) this.messages.shift();
   }
 
+  // -------------------------------------------------------------- acoustics
+  // A bang is not a point event: it leaves the source as a sphere growing at
+  // the speed of sound.  Every acoustic cue goes on this list with where and
+  // when it happened, and each frame the sphere is compared with where the mech
+  // is *now* - so a hull that has driven on since the shell landed hears it
+  // once the wavefront actually catches up (running away delays it, closing on
+  // it hurries it), and the volume is the level at that arrival distance.
+  // No Doppler: the pitch is whatever the synth produced.
+  _sound(x, y, z, play) {
+    this.sounds.push({ t0: performance.now() / 1000, x, y, z, play });
+  }
+
+  _pumpSounds() {
+    const list = this.sounds;
+    if (!list.length) return;
+    const own = this.ownEntity();
+    const now = performance.now() / 1000;
+    let n = 0;
+    for (let i = 0; i < list.length; i++) {
+      const s = list[i];
+      const age = now - s.t0;
+      if (age > SOUND_TTL) continue;              // nobody could still hear it
+      // no mech, no ear: the event just ages out (a dead pilot hears nothing)
+      const dist = own ? Math.hypot(s.x - own.x, s.y - own.y, s.z - own.z) : Infinity;
+      if (age * SOUND_SPEED >= dist) {
+        const vol = attenuation(dist);
+        if (vol > SOUND_FLOOR) s.play(vol);
+        continue;                                 // arrived: off the list
+      }
+      list[n++] = s;
+    }
+    list.length = n;
+  }
+
   _fx(events) {
     const own = this.ownEntity();
     for (const ev of events) {
       if (ev.k === 'boom') {
         const wd = this.defs.weapons[ev.wid] || {};
+        // the flash and the kick are light and physics: immediate, the bang
+        // comes later
         this.particles.impact(ev.x, ev.y, ev.z, ev.r || 1, !!ev.big || (wd.splash || 0) >= 5, wd.kind);
         const d = own ? Math.hypot(ev.x - own.x, ev.z - own.z) : 3000;
-        const vol = clamp(1 - d / 1400, 0, 1);
-        if (vol > 0.02) this.audio.boom(vol, ev.big);
         this.shake = Math.min(1.2, this.shake + clamp(1 - d / 300, 0, 1) * (ev.big ? 0.9 : 0.35));
+        this._sound(ev.x, ev.y, ev.z, (vol) => this.audio.boom(vol, ev.big));
       } else if (ev.k === 'shot') {
         if (ev.eid !== undefined) this.flashes.set(ev.eid, { t: 0.07, arm: ev.arm });
-        const d = own ? Math.hypot(ev.x - own.x, ev.z - own.z) : 3000;
-        const vol = clamp(1 - d / 700, 0, 1);
-        if (vol > 0.05) {
-          const wd = this.defs.weapons[ev.wid];
-          this.audio.shot(ev.wid, wd ? wd.kind : 'bullet', vol * 0.6);
-        }
+        const kind = (this.defs.weapons[ev.wid] || {}).kind || 'bullet';
+        this._sound(ev.x, ev.y, ev.z,
+          (vol) => this.audio.shot(ev.wid, kind, vol * 0.6));
       } else if (ev.k === 'kill') {
         if (ev.pid === this.init.pid) {
           this._message(`+$${ev.reward} KILL`, '#a9f0c0');
@@ -318,6 +330,7 @@ export class Game {
     this.shake = Math.max(0, this.shake - dt * 2.2);
 
     this.net.interpolate(1 - Math.exp(-dt * 14));
+    this._pumpSounds();
     this._sendInput(dt);
 
     const own = this.ownEntity();
@@ -329,7 +342,6 @@ export class Game {
     if (this.shopOpen && !own) this._shopClose();
     this._checkDamage(own);
     this._noLockFeedback(own, dt);
-    this._syncDebug();
 
     this.particles.update(dt);
     for (const [id, f] of this.flashes) {
@@ -725,6 +737,7 @@ export class Game {
   _shopToggle() {
     if (!this.started) return;
     if (this.shopOpen) { this._shopClose(); return; }
+    if (this.settingsOpen) this._settingsClose();
     if (!this.ownEntity()) return;
     if (!this._hudState(this.ownEntity()).atBase) {
       this._message('REARM ONLY AT BASE OR AN OWNED TOWN', '#ff9a9a');
@@ -734,6 +747,8 @@ export class Game {
     this.shopDraft = emptyDraft();
     this.shopDrop = -1;
     this.input.uiOpen = true;
+    this.input.uiKind = 'shop';
+    this.input.keys.clear();
     this.input.fireL = this.input.fireR = false;
     this.input.qPressed = false;
     if (document.pointerLockElement) document.exitPointerLock();
@@ -744,8 +759,69 @@ export class Game {
     this.shopOpen = false;
     this.shopDrop = -1;
     this.input.uiOpen = false;
+    this.input.uiKind = null;
     this.hud.hot = [];
     if (this.ownEntity() && this.started) this._lockPointer();
+  }
+
+  // ------------------------------------------------------------- settings
+  // The gear in the top-right corner opens the options panel: the master
+  // volume, plus the debug knobs when the server runs with MECH_DEBUG=1.  It
+  // needs a free pointer, so it is clickable right after ESC; like the rearm
+  // panel it owns the mouse while it is up.
+
+  // clicks on the HUD while the pointer is free; true when the click was taken
+  _hudClick(x, y) {
+    const r = this.hud.gearRect;
+    if (!r || x < r.x || x > r.x + r.w || y < r.y || y > r.y + r.h) return false;
+    this._settingsToggle();
+    return true;
+  }
+
+  _settingsToggle() {
+    if (!this.started) return;
+    if (this.settingsOpen) { this._settingsClose(); return; }
+    if (this.shopOpen) this._shopClose();
+    this.settingsOpen = true;
+    this.input.uiOpen = true;
+    this.input.uiKind = 'settings';
+    this.input.keys.clear();
+    this.input.fireL = this.input.fireR = false;
+    this.input.qPressed = false;
+    if (document.pointerLockElement) document.exitPointerLock();
+  }
+
+  _settingsClose() {
+    if (!this.settingsOpen) return;
+    this.settingsOpen = false;
+    this.input.uiOpen = false;
+    this.input.uiKind = null;
+    this.hud.hot = [];
+    if (this.ownEntity() && this.started) this._lockPointer();
+  }
+
+  _settingsClick(x, y) {
+    if (!this.settingsOpen) return;
+    const id = this.hud.hitUi(x, y);
+    if (!id) return;
+    if (id === 'vol' || id === 'vol-' || id === 'vol+') {
+      // the bar is an absolute control, the two buttons a 5% step
+      const r = this.hud.volRect;
+      const step = (id === 'vol-' ? -0.05 : id === 'vol+' ? 0.05 : 0);
+      const v = step ? this.audio.volume + step : (r && r.w ? (x - r.x) / r.w : 0);
+      this.audio.setVolume(v);
+      return;
+    }
+    if (id === 'respawn') {
+      this.net.send({ t: 'respawn' });
+    } else if (id === 'restart') {
+      this.net.send({ t: 'debug_restart' });
+    } else if (id === 'god') {
+      const on = !(this.net.meta && this.net.meta.god);
+      this.net.send({ t: 'debug_god', on });
+    } else if (id === 'close') {
+      this._settingsClose();
+    }
   }
 
   _shopConfirm() {
@@ -879,6 +955,9 @@ export class Game {
       atBase,
       mechHp: (this.defs.mech && this.defs.mech.hp) || [700, 900, 450, 450],
       shopOpen: this.shopOpen,
+      settingsOpen: this.settingsOpen,
+      volume: this.audio.volume,
+      debug: this.debug,
       shopDraft: this.shopDraft,
       shopDrop: this.shopDrop,
       shopQuote: this.shopOpen ? quote(this._shopCfg(), m, this.shopDraft) : null,

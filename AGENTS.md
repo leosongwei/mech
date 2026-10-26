@@ -378,12 +378,13 @@ g.__cam = (eye, yaw, pitch) => { g._camera = (own, dt) => {
 g.__cam([x, y, z], Math.PI / 4, -0.45);      // yaw: dirFrom convention
 ```
 
-* `_camera` is a shoulder camera: it adds `defs.mech.eye` (5.05 m) plus
-  `CAM_UP` (1.5 m) to `own.y` and steps `CAM_BACK` (2.6 m) *backwards* along the
-  view yaw, hence the `- 5.05` above (the eye then lands 1.5 m higher and 2.6 m
-  behind - close enough for scenery). The pilot's own machine is drawn like any
-  other unit, in full: there is **no separate first-person view model**, so the
-  barrels on screen are the barrels the rounds leave from.
+* `_camera` is a cockpit camera sitting on the canopy dome: it adds
+  `defs.mech.eye` (5.05 m) plus `CAM_UP` (1.2 m) to `own.y` and steps `CAM_FWD`
+  (0.75 m) along the view yaw, hence the `- 5.05` above (the eye then lands
+  1.2 m higher and 0.75 m ahead - close enough for scenery). The pilot's own
+  machine is drawn like any other unit, in full: there is **no separate
+  first-person view model**, so the barrels on screen are the barrels the
+  rounds leave from.
 * `input.pitch` is a plain field (settable), `input.viewYaw` is not: writing
   `g.input.viewYaw = ...` does nothing and the eye keeps looking along
   `input.yaw`, which is the *last thing sent to the server* - a still mech can

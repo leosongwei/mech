@@ -28,9 +28,11 @@ const SHAKE_BOOM_BIG = 0.225;       // near blast, big round (a quarter of the o
 const SHAKE_BOOM_SMALL = 0.0875;    // near blast, shell hit
 const SHAKE_LAUNCH = 0.5;           // own missile leaving the tube
 const SHAKE_GUN = 0.12;             // own cannon round, "slight" (a burst adds up)
-const CAM_UP = 1.5;                 // m, the eye sits this far above the canopy
-const CAM_BACK = 2.6;               // m behind the hull centre, so the machine
-                                    // shows in the lower frame like a shoulder
+const CAM_UP = 1.2;                 // m above the mech's eye point: the canopy
+                                    // dome is centred 5.15 m up with a 0.9 m
+                                    // radius, so the eye rides 0.2 m over it
+const CAM_FWD = 0.75;               // m ahead of the hull centre: straight over
+                                    // the middle of that dome
 
 export class Game {
   constructor() {
@@ -919,11 +921,11 @@ export class Game {
       invert4(cam.invViewProj, cam.viewProj);
       return cam;
     }
-    // shoulder camera: the eye rides just above the canopy and a little behind
-    // the hull centre, and looks exactly where the arms point, so the reticle
-    // is the centre of the screen at every zoom.  The machine itself is drawn
-    // in full (no separate view model), which is what makes the barrels, the
-    // hull and the muzzle flashes all sit where the rounds really come out.
+    // cockpit camera: the eye sits on top of the canopy dome and looks exactly
+    // where the arms point, so the reticle is the centre of the screen at every
+    // zoom.  The machine itself is drawn in full (no separate view model), which
+    // is what makes the barrels, the hull and the muzzle flashes all sit where
+    // the rounds really come out.
     let yaw = this.input.viewYaw;
     let pitch = clamp(this.input.pitch + this.input.freePitch * 0.8, -1.35, 1.35);
     if (this.shake > 0.01) {
@@ -935,7 +937,7 @@ export class Game {
     }
     const dir = dirFrom(yaw, pitch);
     const eyeH = ((this.defs.mech && this.defs.mech.eye) || 5.05) + CAM_UP;
-    const eye = [own.x - Math.cos(yaw) * CAM_BACK, own.y + eyeH, own.z - Math.sin(yaw) * CAM_BACK];
+    const eye = [own.x + Math.cos(yaw) * CAM_FWD, own.y + eyeH, own.z + Math.sin(yaw) * CAM_FWD];
     const aspect = this.glCanvas.clientWidth / Math.max(1, this.glCanvas.clientHeight);
     const fov = clamp(BASE_FOV / this.zoom, 0.02, BASE_FOV);
     makeCamera(cam, eye, [eye[0] + dir[0], eye[1] + dir[1], eye[2] + dir[2]], fov, aspect, 0.4, this.renderer.far);

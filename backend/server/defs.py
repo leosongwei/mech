@@ -61,8 +61,12 @@ WEAPONS = [
     # distance at which the round still carries its nominal energy, while life
     # is a hand-written estimate of 10 km of flight: 10000 m / the round's
     # speed, rounded.  Nothing is meant to expire in the air inside the map
-    dict(wid=WID_AC30, key="ac30", name="30mm AUTOCANNON", kind="bullet", dmg=44, rpm=190, mag=50,
-         reserve=250, reload=2.8, vel=1080, spread=0.0011, bias=0.0, g=9.81, thrust=0, maxvel=0,
+    # one belt of 300, no reload: the magazine boundary is gone, so a pull of
+    # the trigger runs the whole load downrange and the gun only goes quiet
+    # when the arm is dry.  Full load is still 300 rounds, so the price of a
+    # fresh weapon and its ammunition did not move
+    dict(wid=WID_AC30, key="ac30", name="30mm AUTOCANNON", kind="bullet", dmg=44, rpm=190, mag=300,
+         reserve=0, reload=0.0, vel=1080, spread=0.0011, bias=0.0, g=9.81, thrust=0, maxvel=0,
          life=9.3, splash=3.0, splash_dmg=16, range=3200, cost=300, ammo_cost=0.5, lock=0, lock_time=0, salvo=0,
          semi=0, color=(1.0, 0.82, 0.25), cal=30, desc="High velocity, 3.2 km effective"),
     # one belt of 1500, no reload: the gun runs dry and that is it.  1800 rpm is

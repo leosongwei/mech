@@ -190,7 +190,8 @@ export class Game {
     const describe = () => {
       const a = defs[parseInt(this.armL.value, 10)] || {};
       const b = defs[parseInt(this.armR.value, 10)] || {};
-      const fmt = (w) => `${w.name}: ${w.dmg} dmg, ${(w.range / 1000).toFixed(2)} km, ` +
+      const fmt = (w) => `${w.name}: AP ${w.ap} / AD ${w.ad}` +
+        `${w.ed ? ` / ED ${w.ed} @ ${w.er}m` : ''}, ${(w.range / 1000).toFixed(2)} km, ` +
         `${w.rpm} rpm${w.lock ? ', lock-on' : ''} - ${w.desc}`;
       document.getElementById('wdesc').innerHTML =
         `L &nbsp;${fmt(a)}<br>R &nbsp;${fmt(b)}`;
@@ -280,7 +281,7 @@ export class Game {
         const wd = this.defs.weapons[ev.wid] || {};
         // the flash and the kick are light and physics: immediate, the bang
         // comes later
-        this.particles.impact(ev.x, ev.y, ev.z, ev.r || 1, !!ev.big || (wd.splash || 0) >= 5, wd.kind);
+        this.particles.impact(ev.x, ev.y, ev.z, ev.r || 1, !!ev.big || (wd.er || 0) >= 5, wd.kind);
         const d = own ? Math.hypot(ev.x - own.x, ev.z - own.z) : 3000;
         this.shake = Math.min(1.2, this.shake + clamp(1 - d / 300, 0, 1)
           * (ev.big ? SHAKE_BOOM_BIG : SHAKE_BOOM_SMALL));
@@ -962,6 +963,7 @@ export class Game {
       own,
       entities: this.net.entities,
       weapons: this.defs.weapons,
+      units: this.defs.units,
       buyable: this.buyable,
       rearm: this.rearm,
       towns: m.towns || [],
@@ -982,7 +984,7 @@ export class Game {
       winner: m.winner !== undefined ? m.winner : this.winner,
       dead: !own,
       atBase,
-      mechHp: (this.defs.mech && this.defs.mech.hp) || [700, 900, 450, 450],
+      mechHp: (this.defs.mech && this.defs.mech.hp) || [100, 0, 50, 50],
       shopOpen: this.shopOpen,
       settingsOpen: this.settingsOpen,
       volume: this.audio.volume,

@@ -100,6 +100,18 @@ frontend/
 * **Players** are plain Python objects (`world.Player`) attached to a mech
   entity through `owner`; `pl.mech` is -1 while dead. Income and respawns live
   in `systems/economy.py`; wreck/corpse cleanup in `systems/debris.py`.
+* **Damage** is two halves, never one number. `defs.pen_damage(ap, ad, dp)`:
+  beating the target's `dp` outright delivers the full `ad`, beating only half
+  of it shaves `ad/5`, anything duller does nothing. `defs.blast_damage(ed, de,
+  er, dist)` falls off linearly to `er` and always keeps `max(e - de, e/5)`. A
+  round *landing* on a unit takes `world.hit()` (both halves); a unit merely
+  near the burst takes `world.splash()` (blast only - a charge going off a few
+  metres away cannot punch a plate). `world.damage()` stays the raw hp
+  subtractor and is what debug knobs use.
+* **One hull pool.** A mech's chassis and torso share `hp[MOD_CHASSIS]`; a hit
+  on either body sphere, and a hit on an arm that is already gone, is charged
+  there. `MOD_TORSO`'s health slot is unused (0) - it only names the upper hit
+  sphere. Arms keep their own 50.
 * **Debris** — `world.kill()` leaves an inert entity behind: a corpse
   (`ETYPE_CORPSE`, 5 s) for infantry, a smoking hulk (`ETYPE_DEBRIS`, 10 s,
   original model in snapshot `flags` bits 4-5) for vehicles and mechs. They are
@@ -170,7 +182,7 @@ menu** (top right of the HUD, needs a free pointer: press `ESC`):
 | `debug_god` | `on: true/false` | stops the AI / damage from interrupting a test; meta `god` mirrors it (the menu button reads that back) |
 | `debug_spawn` | `etype` (default `3` APC), `dist` (m, default `800`), `angle` (rad, relative to your yaw), `faction` (default the enemy), `weapons` (optional list) | spawns a unit `dist` metres ahead |
 | `debug_tp` | `dist` (m, default `300`), `angle` (rad, relative to your yaw) | teleports the mech forward along its yaw |
-| `debug_hurt` | `module` (`0` hull / `1` torso / `2` left arm / `3` right arm, default `1`), `amount` (default `100`), `base` (damage to the *enemy* command base) | wounds the player or the enemy base |
+| `debug_hurt` | `module` (`0` hull / `1` torso, which charges the hull pool / `2` left arm / `3` right arm, default `1`), `amount` (default `100` = a whole hull), `base` (damage to the *enemy* command base) | wounds the player or the enemy base |
 
 Entity types for `debug_spawn` come from `defs.py`: `1` rifleman, `2` AT
 rifleman, `3` APC, `4` mech, `5` command base, `6` civilian, `9` bunker.

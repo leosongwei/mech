@@ -204,6 +204,32 @@ class World:
     # ------------------------------------------------------------------
     # damage
     # ------------------------------------------------------------------
+    def hit(self, eid: int, module: int, wd: dict, dist: float = 0.0, pid: int = -1) -> None:
+        """Resolve one round landing on a unit: penetration plus blast.
+
+        `dist` is how far the target's nearest surface is from the burst, in
+        metres - 0 for a direct hit - and the blast half falls off to nothing
+        over the weapon's `er`.
+        """
+        e = self.ecs
+        if not e.alive[eid] or (wd["ad"] <= 0.0 and wd["ed"] <= 0.0):
+            return
+        amount = defs.hit_damage(wd, defs.UNIT_DEFS[int(e["etype"][eid])], dist)
+        self.damage(eid, module, amount, pid)
+
+    def splash(self, eid: int, module: int, wd: dict, dist: float, pid: int = -1) -> None:
+        """Blast-only damage for a unit near (not under) a burst.
+
+        A charge going off a few metres away cannot punch a plate, so the
+        penetration half of `hit` does not apply here.
+        """
+        e = self.ecs
+        if not e.alive[eid] or wd["ed"] <= 0.0:
+            return
+        amount = defs.blast_damage(float(wd["ed"]), float(defs.UNIT_DEFS[int(e["etype"][eid])]["de"]),
+                                   float(wd["er"]), dist)
+        self.damage(eid, module, amount, pid)
+
     def damage(self, eid: int, module: int, amount: float, pid: int = -1) -> None:
         e = self.ecs
         if not e.alive[eid] or amount <= 0:
@@ -218,10 +244,12 @@ class World:
         if pid >= 0:
             self.last_hit[eid] = pid
         if etype == defs.ETYPE_MECH:
-            if hp[eid, module] <= 0.0:
-                module = defs.MOD_TORSO
+            # one hull pool: the torso charges the chassis, and so does a round
+            # that hits an arm that is already gone
+            if module == defs.MOD_TORSO or hp[eid, module] <= 0.0:
+                module = defs.MOD_CHASSIS
             hp[eid, module] = max(0.0, float(hp[eid, module]) - amount)
-            dead = hp[eid, defs.MOD_TORSO] <= 0.0 or hp[eid, defs.MOD_CHASSIS] <= 0.0
+            dead = hp[eid, defs.MOD_CHASSIS] <= 0.0
             if hp[eid, defs.MOD_LEFT] <= 0.0:
                 e["mag"][eid, 0] = 0
                 e["ammo"][eid, 0] = 0

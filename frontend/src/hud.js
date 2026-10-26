@@ -386,7 +386,8 @@ export class HUD {
     for (const e of s.entities.values()) {
       if (e.type !== 5) continue;
       const f = FACTION_COLORS[e.faction];
-      const ratio = Math.max(0, Math.min(1, e.hp[0] / 6500));
+      const maxHp = ((s.units || {})[5] || {}).hp;
+      const ratio = Math.max(0, Math.min(1, e.hp[0] / ((maxHp && maxHp[0]) || 3000)));
       const bw = 150;
       const bx = w / 2 - bw / 2;
       ctx.fillStyle = 'rgba(0,0,0,0.45)';
@@ -619,13 +620,17 @@ export class HUD {
     if (!s.own) return;
     const ctx = this.ctx;
     const e = s.own;
-    const labels = ['CHASSIS', 'TORSO', 'L.ARM', 'R.ARM'];
-    const maxes = [700, 900, 450, 450];
-    const x0 = 16, y0 = h - 138;
+    // the hull is one pool (chassis + torso share it), so slot 1 has nothing
+    // of its own to show; the arms are slot 2 and 3
+    const bars = [[0, 'HULL'], [2, 'L.ARM'], [3, 'R.ARM']];
+    const maxes = s.mechHp || [];
+    const x0 = 16, y0 = h - 118;
     ctx.save();
     ctx.font = '11px "Courier New", monospace';
-    for (let i = 0; i < 4; i++) {
-      const r = Math.max(0, Math.min(1, e.hp[i] / maxes[i]));
+    for (let i = 0; i < bars.length; i++) {
+      const slot = bars[i][0];
+      const max = Math.max(1, maxes[slot] || 1);
+      const r = Math.max(0, Math.min(1, e.hp[slot] / max));
       const y = y0 + i * 20;
       ctx.fillStyle = 'rgba(8,14,18,0.6)';
       ctx.fillRect(x0, y, 168, 15);
@@ -633,9 +638,9 @@ export class HUD {
       ctx.fillStyle = col;
       ctx.fillRect(x0, y, 168 * r, 15);
       ctx.fillStyle = '#e8f4ee';
-      ctx.fillText(labels[i], x0 + 6, y + 11);
+      ctx.fillText(bars[i][1], x0 + 6, y + 11);
       ctx.fillStyle = 'rgba(230,245,238,0.85)';
-      ctx.fillText(`${Math.round(e.hp[i])}`, x0 + 128, y + 11);
+      ctx.fillText(`${Math.round(e.hp[slot])}`, x0 + 128, y + 11);
     }
     ctx.restore();
   }

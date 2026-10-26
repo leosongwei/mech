@@ -32,12 +32,15 @@ ETYPE_DEBRIS = 7          # inert wreck (vehicle / mech hulk), purely visual
 ETYPE_CORPSE = 8          # fallen infantry, purely visual
 ETYPE_BUNKER = 9          # indestructible building, a zeroing reference on the range
 
-# mech module indices (health array slots)
+# mech module indices (hit geometry and health array slots).  A hit on either
+# body sphere - the chassis or the torso on top of it - is charged to the one
+# hull pool at MOD_CHASSIS; MOD_TORSO only exists so the geometry can name the
+# upper sphere, and its health slot is unused.
 MOD_CHASSIS = 0
 MOD_TORSO = 1
 MOD_LEFT = 2
 MOD_RIGHT = 3
-MODULE_NAMES = ["CHASSIS", "TORSO", "L.ARM", "R.ARM"]
+MODULE_NAMES = ["HULL", "TORSO", "L.ARM", "R.ARM"]
 
 # ----------------------------------------------------------------- weapons
 WID_NONE = 0
@@ -52,10 +55,14 @@ WID_RPG = 7
 # kind: bullet (ballistic), rocket (unguided thrust), saclos (beam riding),
 #       top (infrared lock-on, top attack)
 # cal: bore in mm, only used to size the tracer the browser draws
+# ap / ad: Armour Piercing power and the Armour-piercing Damage it delivers
+#          behind the plate, both measured against a target's `dp`
+# ed / er: Explosive Damage at the centre of the blast and the radius (m) it
+#          falls off to nothing over, measured against a target's `de`
 WEAPONS = [
-    dict(wid=WID_NONE, key="none", name="EMPTY", kind="none", dmg=0, rpm=1, mag=0, reserve=0,
-         reload=1, vel=1, spread=0, bias=0.0, g=0, thrust=0, maxvel=0, life=1, splash=0,
-         splash_dmg=0, range=0, cost=0, ammo_cost=0, lock=0, lock_time=0, salvo=0, semi=0,
+    dict(wid=WID_NONE, key="none", name="EMPTY", kind="none", ap=0, ad=0, ed=0, er=0,
+         rpm=1, mag=0, reserve=0, reload=1, vel=1, spread=0, bias=0.0, g=0, thrust=0, maxvel=0,
+         life=1, range=0, cost=0, ammo_cost=0, lock=0, lock_time=0, salvo=0, semi=0,
          color=(0.8, 0.8, 0.8), cal=0, desc="No weapon fitted"),
     # ranges/muzzle velocities follow real world hardware; range is the
     # distance at which the round still carries its nominal energy, while life
@@ -65,48 +72,90 @@ WEAPONS = [
     # the trigger runs the whole load downrange and the gun only goes quiet
     # when the arm is dry.  Full load is still 300 rounds, so the price of a
     # fresh weapon and its ammunition did not move
-    dict(wid=WID_AC30, key="ac30", name="30mm AUTOCANNON", kind="bullet", dmg=44, rpm=190, mag=300,
-         reserve=0, reload=0.0, vel=1080, spread=0.0011, bias=0.0, g=9.81, thrust=0, maxvel=0,
-         life=9.3, splash=3.0, splash_dmg=16, range=3200, cost=300, ammo_cost=0.5, lock=0, lock_time=0, salvo=0,
-         semi=0, color=(1.0, 0.82, 0.25), cal=30, desc="High velocity, 3.2 km effective"),
+    dict(wid=WID_AC30, key="ac30", name="30mm AUTOCANNON", kind="bullet", ap=15, ad=10, ed=15, er=5.0,
+         rpm=190, mag=300, reserve=0, reload=0.0, vel=1080, spread=0.0011, bias=0.0, g=9.81,
+         thrust=0, maxvel=0, life=9.3, range=3200, cost=300, ammo_cost=0.5, lock=0, lock_time=0,
+         salvo=0, semi=0, color=(1.0, 0.82, 0.25), cal=30,
+         desc="High velocity, 3.2 km effective"),
     # one belt of 1500, no reload: the gun runs dry and that is it.  1800 rpm is
     # exactly one round per tick, the fastest the 30 Hz clock can fire - twice
     # the cadence of the old 680 rpm (which quantised to one round every 3 ticks)
-    dict(wid=WID_MG127, key="mg127", name="12.7mm MACHINE GUN", kind="bullet", dmg=15, rpm=1800, mag=1500,
-         reserve=0, reload=0.0, vel=890, spread=0.00225, bias=0.0, g=9.81, thrust=0, maxvel=0,
-         life=11.2, splash=0, splash_dmg=0, range=1800, cost=180, ammo_cost=0.1, lock=0, lock_time=0, salvo=0,
-         semi=0, color=(1.0, 0.68, 0.20), cal=12.7, desc="1.8 km suppressive fire"),
+    dict(wid=WID_MG127, key="mg127", name="12.7mm MACHINE GUN", kind="bullet", ap=8, ad=10, ed=0, er=0,
+         rpm=1800, mag=1500, reserve=0, reload=0.0, vel=890, spread=0.00225, bias=0.0, g=9.81,
+         thrust=0, maxvel=0, life=11.2, range=1800, cost=180, ammo_cost=0.1, lock=0, lock_time=0,
+         salvo=0, semi=0, color=(1.0, 0.68, 0.20), cal=12.7,
+         desc="1.8 km suppressive fire"),
     # S-8 class: a launch charge throws the 80 mm rocket out at ~55 m/s, the
-    # motor burns for a second and it leaves at 610 m/s
-    dict(wid=WID_ROCKET, key="rocket", name="UNGUIDED ROCKET POD", kind="rocket", dmg=155, rpm=600, mag=40,
-         reserve=0, reload=0.0, vel=55, spread=0.003, bias=0.0429, g=9.81, thrust=560, maxvel=610,
-         life=16.4, splash=8.0, splash_dmg=95, range=3200, cost=350, ammo_cost=4.0, lock=0, lock_time=0, salvo=1,
+    # motor burns for a second and it leaves at 610 m/s.  A small shaped charge
+    # plus a lot of frag: it is the pod's *burst*, not the single round, that
+    # kills - three rockets on the hull, two on an arm
+    dict(wid=WID_ROCKET, key="rocket", name="UNGUIDED ROCKET POD", kind="rocket", ap=40, ad=20, ed=35, er=8.0,
+         rpm=600, mag=40, reserve=0, reload=0.0, vel=55, spread=0.003, bias=0.0429, g=9.81, thrust=560,
+         maxvel=610, life=16.4, range=3200, cost=350, ammo_cost=4.0, lock=0, lock_time=0, salvo=1,
          semi=0, color=(1.0, 0.45, 0.15), cal=80,
          desc="40 rounds, hold to fire, sighted to 1 km"),
     # TOW class: 65 m/s out of the tube, the flight motor takes it to 278 m/s
-    # about 2 s later, 3.75 km of wire
-    dict(wid=WID_SACLOS, key="saclos", name="SACLOS ATGM", kind="saclos", dmg=430, rpm=40, mag=2, reserve=8,
-         reload=4.2, vel=65, spread=0.003, bias=0.0, g=0.0, thrust=110, maxvel=278, life=36.0,
-         wob=30.0, wob_f=1.5,
-         splash=6.0, splash_dmg=150, range=3750, cost=500, ammo_cost=30.0, lock=0, lock_time=0, salvo=0, semi=0,
-         color=(0.35, 1.0, 0.55), cal=152, desc="Beam riding, keep the sight on target"),
+    # about 2 s later, 3.75 km of wire.  A tandem HEAT warhead: one hit takes a
+    # mech or an APC apart, but the operator has to keep the sight on it
+    dict(wid=WID_SACLOS, key="saclos", name="SACLOS ATGM", kind="saclos", ap=800, ad=60, ed=80, er=6.0,
+         rpm=40, mag=2, reserve=8, reload=4.2, vel=65, spread=0.003, bias=0.0, g=0.0, thrust=110,
+         maxvel=278, life=36.0, wob=30.0, wob_f=1.5, range=3750, cost=500, ammo_cost=30.0, lock=0,
+         lock_time=0, salvo=0, semi=0, color=(0.35, 1.0, 0.55), cal=152,
+         desc="Beam riding, keep the sight on target"),
     # Javelin class: soft launch at 20 m/s, the motor lights off outside the
     # tube and cruises at 190 m/s, climbing 150 m above the target before the
-    # dive; the seeker locks before the shot and needs the target in the circle
-    dict(wid=WID_TOPATTACK, key="topattack", name="TOP-ATTACK IR ATGM", kind="top", dmg=520, rpm=32, mag=2,
-         reserve=8, reload=4.6, vel=20, spread=0.002, bias=0.0, g=0.0, thrust=170, maxvel=190,
-         life=52.6, climb=150.0, cruise=0.35, dive=220.0,
-         splash=7.0, splash_dmg=190, range=2500, cost=700, ammo_cost=45.0, lock=1, lock_time=1.1, salvo=0,
-         semi=0, color=(1.0, 0.35, 0.9), cal=127, desc="2.5 km lock-on, fire and forget"),
-    dict(wid=WID_RIFLE556, key="rifle556", name="5.56mm RIFLE", kind="bullet", dmg=7, rpm=430, mag=30,
-         reserve=900, reload=2.2, vel=900, spread=0.007, bias=0.0, g=9.81, thrust=0, maxvel=0,
-         life=11.1, splash=0, splash_dmg=0, range=450, cost=-1, ammo_cost=0.05, lock=0, lock_time=0, salvo=0,
+    # dive; the seeker locks before the shot and needs the target in the circle.
+    # Fire and forget, so it is the softer of the two missiles: two hits
+    dict(wid=WID_TOPATTACK, key="topattack", name="TOP-ATTACK IR ATGM", kind="top", ap=900, ad=50, ed=60,
+         er=7.0, rpm=32, mag=2, reserve=8, reload=4.6, vel=20, spread=0.002, bias=0.0, g=0.0, thrust=170,
+         maxvel=190, life=52.6, climb=150.0, cruise=0.35, dive=220.0, range=2500, cost=700, ammo_cost=45.0,
+         lock=1, lock_time=1.1, salvo=0, semi=0, color=(1.0, 0.35, 0.9), cal=127,
+         desc="2.5 km lock-on, fire and forget"),
+    dict(wid=WID_RIFLE556, key="rifle556", name="5.56mm RIFLE", kind="bullet", ap=5, ad=4, ed=0, er=0,
+         rpm=430, mag=30, reserve=900, reload=2.2, vel=900, spread=0.007, bias=0.0, g=9.81, thrust=0,
+         maxvel=0, life=11.1, range=450, cost=-1, ammo_cost=0.05, lock=0, lock_time=0, salvo=0,
          semi=0, color=(1.0, 0.9, 0.5), cal=5.56, desc="450 m rifle"),
-    dict(wid=WID_RPG, key="rpg", name="RPG LAUNCHER", kind="rocket", dmg=135, rpm=25, mag=1, reserve=900,
-         reload=6.5, vel=50, spread=0.008, bias=0.0, g=9.81, thrust=380, maxvel=300, life=33.3,
-         splash=6.0, splash_dmg=70, range=500, cost=-1, ammo_cost=8.0, lock=0, lock_time=0, salvo=0, semi=0,
-         color=(1.0, 0.5, 0.2), cal=85, desc="500 m anti-tank rocket"),
+    dict(wid=WID_RPG, key="rpg", name="RPG LAUNCHER", kind="rocket", ap=100, ad=40, ed=20, er=3.0,
+         rpm=25, mag=1, reserve=900, reload=6.5, vel=50, spread=0.008, bias=0.0, g=9.81, thrust=380,
+         maxvel=300, life=33.3, range=500, cost=-1, ammo_cost=8.0, lock=0, lock_time=0, salvo=0,
+         semi=0, color=(1.0, 0.5, 0.2), cal=85, desc="500 m anti-tank rocket"),
 ]
+
+
+# ------------------------------------------------------------------ damage
+# A hit resolves in two independent halves and the target takes the sum:
+#
+#   penetration   the round's AP against the target's DP.  A round that beats
+#                 DP outright puts its full AD through the plate; one that only
+#                 beats half of it shaves AD/5 (12.7 mm against a mech: 2
+#                 points); anything duller does not even scratch the paint.
+#   blast         the charge's ED against the target's DE, falling off linearly
+#                 to nothing at ER.  Explosives always tear *something* off, so
+#                 the result never drops below a fifth of the charge that
+#                 actually arrived.
+def pen_damage(ap: float, ad: float, dp: float) -> float:
+    if ap > dp:
+        return ad
+    if ap > dp * 0.5:
+        return ad / 5.0
+    return 0.0
+
+
+def blast_damage(ed: float, de: float, er: float, dist: float) -> float:
+    if ed <= 0.0:
+        return 0.0
+    if er > 0.0:
+        e = ed * max(0.0, 1.0 - max(dist, 0.0) / er)
+    else:
+        e = ed if dist <= 0.0 else 0.0
+    return max(e - de, e / 5.0)
+
+
+def hit_damage(wd: dict, unit: dict, dist: float = 0.0) -> float:
+    """Damage one hit of `wd` does to a `unit`, `dist` metres from the blast."""
+    return (pen_damage(float(wd["ap"]), float(wd["ad"]), float(unit["dp"]))
+            + blast_damage(float(wd["ed"]), float(unit["de"]), float(wd["er"]), dist))
+
 
 # weapons a player may buy, in hotbar order
 BUYABLE = [WID_AC30, WID_MG127, WID_ROCKET, WID_SACLOS, WID_TOPATTACK]
@@ -138,47 +187,68 @@ ZERO_MAX_ELEV = 1.05     # rad, ~60 deg
 #   invulnerable  rounds stop on it, damage does nothing
 # Anything without `unit` (a smoke puff, a shell) can never be mistaken for a
 # soldier, because no query ever returns it for one.
+#
+# `dp` / `de` are the two defences every hit is measured against: `dp` soaks
+# penetration (see `pen_damage`), `de` soaks blast (`blast_damage`).
+# `hp` is one row per health slot: every unit except the mech has a single slot
+# (index 0), the mech has the hull pool at MOD_CHASSIS and one arm at each of
+# MOD_LEFT / MOD_RIGHT.  MOD_TORSO is hit geometry only - the torso no longer
+# has a health pool of its own, it shares the chassis one.
 UNIT_DEFS = {
-    # 15 hp is a deliberate knife edge: one 12.7 mm round (15) kills outright,
-    # while a rifle (7) needs exactly three - two leave him standing.  Infantry
-    # is therefore no threat to armour at all, and is gone the moment anything
-    # with a heavy machine gun looks at it.
-    ETYPE_INF_RIFLE: dict(name="RIFLEMAN", hp=(15, 0, 0, 0), speed=5.5, radius=0.55, height=1.8,
+    # 10 hp is a deliberate knife edge: one 12.7 mm round (AD 10) kills
+    # outright, while a rifle (AD 4) needs exactly three - two leave him
+    # standing.  Infantry is therefore no threat to armour at all, and is gone
+    # the moment anything with a heavy machine gun looks at it.
+    ETYPE_INF_RIFLE: dict(name="RIFLEMAN", hp=(10, 0, 0, 0), dp=1, de=1,
+                          speed=5.5, radius=0.55, height=1.8,
                           weapons=(WID_RIFLE556, WID_NONE), ai_range=420, sight=600, reward=45,
                           splat=1.0, targets=(ETYPE_INF_RIFLE, ETYPE_INF_ROCKET),
                           tags=("unit", "combat", "moves")),
-    ETYPE_INF_ROCKET: dict(name="AT RIFLEMAN", hp=(15, 0, 0, 0), speed=5.0, radius=0.55, height=1.8,
+    ETYPE_INF_ROCKET: dict(name="AT RIFLEMAN", hp=(10, 0, 0, 0), dp=1, de=1,
+                           speed=5.0, radius=0.55, height=1.8,
                            weapons=(WID_RPG, WID_NONE), ai_range=480, sight=650, reward=70,
                            splat=1.0, tags=("unit", "combat", "moves")),
-    ETYPE_APC: dict(name="APC", hp=(420, 140, 0, 0), speed=15.0, radius=2.2, height=2.8,
+    # one hull pool: the turret is hit geometry, not a second health bar
+    ETYPE_APC: dict(name="APC", hp=(100, 0, 0, 0), dp=10, de=20,
+                    speed=15.0, radius=2.2, height=2.8,
                     weapons=(WID_MG127, WID_SACLOS), ai_range=1800, sight=2600, reward=180,
                     splat=3.0, tags=("unit", "combat", "lockable", "moves")),
-    ETYPE_MECH: dict(name="MECH", hp=(700, 900, 450, 450), speed=50.0, radius=1.9, height=6.5,
+    # hull pool 100 (chassis + torso), one arm 50 each; armour of a light tank
+    ETYPE_MECH: dict(name="MECH", hp=(100, 0, 50, 50), dp=10, de=20,
+                     speed=50.0, radius=1.9, height=6.5,
                      weapons=(WID_AC30, WID_ROCKET), ai_range=2600, sight=3400, reward=350,
                      splat=4.0, tags=("unit", "combat", "lockable", "moves")),
-    # the objective: a target, but it never moves and cannot be locked
-    ETYPE_BASE: dict(name="COMMAND BASE", hp=(6500, 0, 0, 0), speed=0.0, radius=7.0, height=12.0,
+    # the objective: a target, but it never moves and cannot be locked.  3000 hp
+    # behind 80 of plate: neither 80 mm rockets (AP 40) nor 30 mm rounds (AP 15)
+    # get through, so both only do their blast - which prices the base at
+    # exactly 200 rockets (15 each) or 1000 cannon rounds (3 each)
+    ETYPE_BASE: dict(name="COMMAND BASE", hp=(3000, 0, 0, 0), dp=80, de=20,
+                     speed=0.0, radius=7.0, height=12.0,
                      weapons=(WID_NONE, WID_NONE), ai_range=0, sight=0, reward=2000, splat=8.0,
                      tags=("unit", "combat")),
-    ETYPE_CIV: dict(name="CIVILIAN", hp=(60, 0, 0, 0), speed=4.0, radius=0.5, height=1.7,
+    ETYPE_CIV: dict(name="CIVILIAN", hp=(10, 0, 0, 0), dp=1, de=1,
+                    speed=4.0, radius=0.5, height=1.7,
                     weapons=(WID_NONE, WID_NONE), ai_range=0, sight=60, reward=0, splat=1.0,
                     tags=("unit", "moves")),
     # inert: drawn by the client, but not a unit any more
-    ETYPE_DEBRIS: dict(name="WRECK", hp=(0, 0, 0, 0), speed=0.0, radius=2.0, height=2.6,
+    ETYPE_DEBRIS: dict(name="WRECK", hp=(0, 0, 0, 0), dp=0, de=0,
+                       speed=0.0, radius=2.0, height=2.6,
                        weapons=(WID_NONE, WID_NONE), ai_range=0, sight=0, reward=0, splat=2.0,
                        tags=()),
-    ETYPE_CORPSE: dict(name="CORPSE", hp=(0, 0, 0, 0), speed=0.0, radius=0.5, height=0.4,
+    ETYPE_CORPSE: dict(name="CORPSE", hp=(0, 0, 0, 0), dp=0, de=0,
+                       speed=0.0, radius=0.5, height=0.4,
                        weapons=(WID_NONE, WID_NONE), ai_range=0, sight=0, reward=0, splat=1.0,
                        tags=()),
     # concrete blockhouse: rounds stop on it, damage does not
-    ETYPE_BUNKER: dict(name="BUNKER", hp=(999999, 0, 0, 0), speed=0.0, radius=6.0, height=9.0,
+    ETYPE_BUNKER: dict(name="BUNKER", hp=(999999, 0, 0, 0), dp=1000, de=1000,
+                       speed=0.0, radius=6.0, height=9.0,
                        weapons=(WID_NONE, WID_NONE), ai_range=0, sight=0, reward=0, splat=6.0,
                        tags=("unit", "invulnerable")),
 }
 
 # repair: welding a mech from nothing back to full armour costs
-# REPAIR_FULL_COST, split evenly over its 2500 points (chassis 700 + torso 900 +
-# both arms 450).  Kept as a total so the bill stays sane if the hp table moves.
+# REPAIR_FULL_COST, split evenly over its 200 points (hull 100 + both arms 50).
+# Kept as a total so the bill stays sane if the hp table moves.
 REPAIR_FULL_COST = 400.0
 REPAIR_COST_PER_HP = REPAIR_FULL_COST / max(1.0, float(sum(UNIT_DEFS[ETYPE_MECH]["hp"])))
 

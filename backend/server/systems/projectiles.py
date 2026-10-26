@@ -234,12 +234,12 @@ def _impact(world: World, p: tuple[float, float, float], wd: dict, proj_id: int,
     pid = int(e["owner"][shooter]) if shooter >= 0 and e.alive[shooter] else -1
     if pid < 0 and shooter >= 0:
         pid = -1
-    r = float(wd["splash"])
+    r = float(wd["er"])
     world.emit("boom", x=p[0], y=p[1], z=p[2], r=r, wid=int(wd["wid"]),
                big=1 if r >= 5.0 else 0, proj=int(proj_id))
     if direct_unit >= 0:
-        world.damage(direct_unit, direct_mod, float(wd["dmg"]), pid)
-    if r <= 0.0:
+        world.hit(direct_unit, direct_mod, wd, 0.0, pid)
+    if r <= 0.0 or float(wd["ed"]) <= 0.0:
         return
     spos = e["pos"]
     sfact = int(e["faction"][shooter]) if shooter >= 0 and e.alive[shooter] else -1
@@ -256,5 +256,4 @@ def _impact(world: World, p: tuple[float, float, float], wd: dict, proj_id: int,
                 best = d
                 bmod = mod
         if best <= r:
-            dmg = float(wd["splash_dmg"]) * (1.0 - max(best, 0.0) / r)
-            world.damage(uid, bmod, dmg, pid)
+            world.splash(uid, bmod, wd, max(best, 0.0), pid)

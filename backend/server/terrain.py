@@ -35,14 +35,41 @@ TILE_FOREST = 7         # thick stand: the client plants several trees per tile
 
 BLOCKING = (TILE_BUILDING, TILE_TREE, TILE_ROCK, TILE_SOLID, TILE_FOREST)
 
+# A road tile is a set of pieces, the way OpenTTD composes one from ROADBITS:
+# each of the four cardinal bits is the half of the tile that reaches that
+# edge, so one bit is a straight, two adjacent bits an elbow, three a T and
+# four a crossroads.  OpenTTD has no diagonal road at all; the two diagonal
+# bits are ours - a 45 degree band that enters one edge in the middle and
+# leaves through the middle of the next, so a staircase of them is one
+# continuous diagonal road instead of the tile by tile stair you would
+# otherwise have to drive.
+ROAD_N = 1              # half piece out to the north edge  (-z)
+ROAD_E = 2              # ... east  (+x)
+ROAD_S = 4              # ... south (+z)
+ROAD_W = 8              # ... west  (-x)
+ROAD_D_WS = 16          # west edge middle -> south edge middle (SW corner)
+ROAD_D_NE = 32          # north edge middle -> east edge middle (NE corner)
+ROAD_DIAG = ROAD_D_WS | ROAD_D_NE
+ROAD_STRAIGHT = ROAD_N | ROAD_E | ROAD_S | ROAD_W
+
+ROAD_WEIGHT = 100       # how hard a road tile outweighs its verges when the
+                        # corridor is flattened: the asphalt stays level
+BUILDING_H = 8.0        # wall height of a building tile the map did not size
+TREE_H = 10.0           # a tree stand is one flat obstacle: rounds burst in it
+FLOOR_H = 4.0           # one storey of a town building
+
 # command bases (tile coordinates)
 BASE_TILES = {0: (188.0, 188.0), 1: (812.0, 812.0)}
 
-# lane way points in tile coordinates (three classic lanes on a square map)
+# lane way points in tile coordinates (three classic lanes on a square map).
+# A way point times TILE is a world position, so the half tile in every
+# coordinate keeps the traffic on the *centre* of a road tile - which is where
+# the tile pieces put the asphalt - and the diagonal lane on the centre of its
+# 45 degree band.
 LANE_TILES = [
-    [(188, 188), (812, 188), (812, 812)],        # north lane
-    [(188, 188), (188, 812), (812, 812)],        # west lane
-    [(188, 188), (500, 500), (812, 812)],        # mid lane
+    [(188.5, 188.5), (812.5, 188.5), (812.5, 812.5)],     # north lane
+    [(188.5, 188.5), (188.5, 812.5), (812.5, 812.5)],     # west lane
+    [(188.0, 188.5), (500.0, 500.5), (812.0, 812.5)],     # mid lane
 ]
 
 TOWN_SPOTS = [
@@ -53,6 +80,7 @@ TOWN_SPOTS = [
     (350, 350), (440, 440), (560, 560), (650, 650), (740, 740),
     (390, 520), (520, 390), (610, 400), (400, 610),
 ]
+
 
 
 def _upsample(g: np.ndarray, w: int, h: int) -> np.ndarray:
@@ -116,6 +144,57 @@ def _terrace(h: np.ndarray) -> np.ndarray:
     return (np.round(h / HSTEP) * HSTEP).astype(np.float32)
 
 
+def _road_leg(roads: np.ndarray, a: tuple[float, float],
+              b: tuple[float, float]) -> None:
+    """Lay the pieces of one lane leg into the road bit map.
+
+    A leg is either along an axis - laid as half-tile pieces, so it elbows and
+    crosses whatever it meets - or a 45 degree run, laid as the two diagonal
+    pieces a staircase needs: one tile cuts its south-west corner, the next its
+    north-east one, and the pair repeats.  Both ends of every piece sit in the
+    middle of a tile edge, so consecutive pieces join full width.
+    """
+    (ax, ay), (bx, by) = a, b
+    dx, dy = bx - ax, by - ay
+    if dx == 0 and dy == 0:
+        return
+    if dx == 0 or dy == 0:
+        # the leg runs down the middle of a row or a column of tiles
+        i0, i1 = int(np.floor(min(ax, bx))), int(np.floor(max(ax, bx)))
+        j0, j1 = int(np.floor(min(ay, by))), int(np.floor(max(ay, by)))
+        n = max(i1 - i0, j1 - j0)
+        sx = (dx > 0) - (dx < 0)
+        sy = (dy > 0) - (dy < 0)
+        if sx > 0:
+            back, fwd = ROAD_W, ROAD_E
+        elif sx < 0:
+            back, fwd = ROAD_E, ROAD_W
+        elif sy > 0:
+            back, fwd = ROAD_N, ROAD_S
+        else:
+            back, fwd = ROAD_S, ROAD_N
+        si, sj = (i0 if sx >= 0 else i1), (j0 if sy >= 0 else j1)
+        for k in range(n + 1):
+            i, j = si + k * sx, sj + k * sy
+            if k > 0:
+                roads[j, i] |= back
+            if k < n:
+                roads[j, i] |= fwd
+    elif abs(dx) == abs(dy):
+        sx = (dx > 0) - (dx < 0)
+        sy = (dy > 0) - (dy < 0)
+        if sx * sy < 0:
+            raise ValueError(f"lane leg {a}->{b}: only south-east diagonals exist")
+        n = int(round(abs(dx)))
+        i0, j0 = int(np.floor(ax)), int(np.floor(ay))
+        for k in range(n):
+            i, j = i0 + k * sx, j0 + k * sy
+            roads[j, i] |= ROAD_D_WS
+            roads[j + sy, i] |= ROAD_D_NE
+    else:
+        raise ValueError(f"lane leg {a}->{b} is neither axis aligned nor 45 degrees")
+
+
 def _dilate(mask: np.ndarray, r: int) -> np.ndarray:
     out = mask.copy()
     for _ in range(r):
@@ -130,7 +209,9 @@ def _dilate(mask: np.ndarray, r: int) -> np.ndarray:
 
 class Terrain:
     def __init__(self, heights: np.ndarray, tiles: np.ndarray, lanes: list,
-                 towns: list[dict], bases: dict[int, tuple[float, float]]) -> None:
+                 towns: list[dict], bases: dict[int, tuple[float, float]],
+                 roads: np.ndarray | None = None,
+                 walls: np.ndarray | None = None) -> None:
         self.h = heights.astype(np.float32)      # (d, w) vertex heights
         self.tiles = tiles.astype(np.uint8)      # (d, w)
         self.w = int(heights.shape[1])
@@ -138,6 +219,13 @@ class Terrain:
         self.lanes = lanes                       # list[list[(x, z)]] world metres
         self.towns = towns                       # list of dicts
         self.bases = bases                       # faction -> (x, z) metres
+        # road pieces per tile (ROAD_* bits) and the wall column of every
+        # building tile in metres, so the client draws exactly what stops a
+        # round instead of guessing a height of its own
+        self.roads = (np.zeros((self.d, self.w), np.uint8) if roads is None
+                      else roads.astype(np.uint8))
+        self.walls = (np.zeros((self.d, self.w), np.uint8) if walls is None
+                      else walls.astype(np.uint8))
 
     # -- sampling ---------------------------------------------------------
     def height_at(self, x: float, z: float) -> float:
@@ -150,6 +238,28 @@ class Terrain:
         h = self.h
         return float((h[j, i] * (1 - tx) + h[j, i + 1] * tx) * (1 - tz) +
                      (h[j + 1, i] * (1 - tx) + h[j + 1, i + 1] * tx) * tz)
+
+    def wall_at(self, x: float, z: float) -> float:
+        """Height of the obstacle standing on the ground at (x, z).
+
+        A building is a solid column up to its roof, a tree stand is one flat
+        obstacle; everything else is bare ground.  Off the field nothing flies
+        on, which the caller reads as an immediate hit.
+        """
+        i = int(np.floor(x / TILE))
+        j = int(np.floor(z / TILE))
+        if i < 0 or j < 0 or i >= self.w or j >= self.d:
+            return 1e6
+        t = self.tiles[j, i]
+        if t == TILE_BUILDING:
+            return float(self.walls[j, i]) or BUILDING_H
+        if t == TILE_TREE or t == TILE_FOREST:
+            return TREE_H
+        return 0.0
+
+    def obstacle_at(self, x: float, z: float) -> float:
+        """The height a round coming in from above is stopped at."""
+        return self.height_at(x, z) + self.wall_at(x, z)
 
     def tile_type(self, x: float, z: float) -> int:
         i = int(x / TILE)
@@ -167,51 +277,70 @@ class Terrain:
         return 0.0 <= x <= (self.w - 1) * TILE and 0.0 <= z <= (self.d - 1) * TILE
 
     # -- ray casts --------------------------------------------------------
+    def _spans(self, p0: np.ndarray, dx: float, dz: float):
+        """Yield ``(t_enter, t_exit, i, j)`` for every tile the segment crosses.
+
+        The ground is sampled inside each of them, so the walk cannot step over
+        a tile: a 12.7 mm round covers 26 m in one 30 Hz tick, more than a whole
+        16 m tile, and a fixed sampling spacing would let it fly straight
+        through a building and burst behind it.
+        """
+        x, z = float(p0[0]), float(p0[2])
+        i = int(np.floor(x / TILE))
+        j = int(np.floor(z / TILE))
+        sx = 1 if dx > 0 else -1
+        sz = 1 if dz > 0 else -1
+        tx = ((i + (1 if dx > 0 else 0)) * TILE - x) / dx if dx else 2.0
+        tz = ((j + (1 if dz > 0 else 0)) * TILE - z) / dz if dz else 2.0
+        t = 0.0
+        while True:
+            tn = min(tx, tz, 1.0)
+            yield t, tn, i, j
+            if tn >= 1.0:
+                return
+            t = tn
+            if tx <= tz:
+                i += sx
+                tx = ((i + (1 if dx > 0 else 0)) * TILE - x) / dx
+            else:
+                j += sz
+                tz = ((j + (1 if dz > 0 else 0)) * TILE - z) / dz
+
     def ground_hit(self, p0: np.ndarray, p1: np.ndarray,
                    step: float = 8.0,
                    ) -> tuple[bool, float, np.ndarray | tuple[float, float, float]]:
-        """Return (hit, t, point) for the first ground contact on the segment."""
-        dx = p1[0] - p0[0]
-        dy = p1[1] - p0[1]
-        dz = p1[2] - p0[2]
+        """Return (hit, t, point) for the first ground contact on the segment.
+
+        Buildings and tree stands count as ground: the wall of a building is a
+        vertical step at the tile border, so a round fired into a facade bursts
+        on the face - where the smoke can be seen - instead of inside the hull.
+        """
+        dx = float(p1[0] - p0[0])
+        dy = float(p1[1] - p0[1])
+        dz = float(p1[2] - p0[2])
         dist = (dx * dx + dy * dy + dz * dz) ** 0.5
         if dist < 1e-4:
             return False, 0.0, p0
-        n = max(1, int(dist / step))
-        ground0 = self.height_at(p0[0], p0[2]) + 1.0
-        if p0[1] <= ground0:
+        if p0[1] <= self.obstacle_at(p0[0], p0[2]) + 1.0:
             return True, 0.0, p0
         prev = 0.0
-        h = self.h
-        tiles = self.tiles
-        for k in range(1, n + 1):
-            t = k / n
-            x = p0[0] + dx * t
-            z = p0[2] + dz * t
-            y = p0[1] + dy * t
-            i = int(x / TILE)
-            j = int(z / TILE)
-            if 0 <= i < self.w and 0 <= j < self.d:
-                ground = h[j, i]
-                if tiles[j, i] == TILE_BUILDING:
-                    ground += 13.0
-                elif tiles[j, i] == TILE_TREE or tiles[j, i] == TILE_FOREST:
-                    ground += 10.0
-            else:
-                ground = 1e6
-            if y <= ground:
+        for ta, tb, _i, _j in self._spans(p0, dx, dz):
+            n = max(1, int((tb - ta) * dist / step + 0.5))
+            for k in range(1, n + 1):
+                t = ta + (tb - ta) * k / n
+                if p0[1] + dy * t > self.obstacle_at(p0[0] + dx * t, p0[2] + dz * t):
+                    prev = t
+                    continue
                 a, b = prev, t
-                for _ in range(4):
+                for _ in range(6):
                     m = (a + b) * 0.5
-                    my = p0[1] + dy * m
-                    mg = self.height_at(p0[0] + dx * m, p0[2] + dz * m)
-                    if my > mg:
+                    if (p0[1] + dy * m >
+                            self.obstacle_at(p0[0] + dx * m, p0[2] + dz * m)):
                         a = m
                     else:
                         b = m
                 t = (a + b) * 0.5
                 return True, t, (p0[0] + dx * t, p0[1] + dy * t, p0[2] + dz * t)
-            prev = t
         return False, 1.0, p1
 
     def los(self, a: np.ndarray, b: np.ndarray, step: float = 8.0) -> bool:
@@ -247,23 +376,42 @@ def generate(seed: int = 11) -> Terrain:
         height = height * (1 - k) + target * k
 
     # ---- roads -----------------------------------------------------------
-    road = np.zeros((d, w), bool)
+    # one bit per road piece: the client draws exactly these pieces, so the
+    # surface it lays on the ground is the tile map, not a ribbon of its own
+    roads = np.zeros((d, w), np.uint8)
     for lane in LANE_TILES:
         for a, b in zip(lane[:-1], lane[1:]):
-            n = int(np.hypot(b[0] - a[0], b[1] - a[1]) * 2) + 2
-            ts = np.linspace(0.0, 1.0, n, dtype=np.float32)
-            i = (a[0] + (b[0] - a[0]) * ts).astype(np.int32)
-            j = (a[1] + (b[1] - a[1]) * ts).astype(np.int32)
-            ok = (i >= 0) & (i < w) & (j >= 0) & (j < d)
-            road[j[ok], i[ok]] = True
+            _road_leg(roads, a, b)
+    road = roads != 0
     tiles[road] = TILE_ROAD
 
-    # flatten the road corridor so the lanes stay drivable
-    flat = _blur3(_blur3(_blur3(height)))
+    # ---- road corridor ---------------------------------------------------
+    # Cut the roads into the ground.  Every tile of the asphalt is made dead
+    # flat - all four of its corners take one terraced height - and the tiles
+    # beside it are averaged into it, so what the asphalt is laid on is a run
+    # of neat plateaus instead of four corners of four different slopes meeting
+    # under the road.  That is what keeps the surface from breaking up at the
+    # tile diagonals.  A road tile outvotes the tiles around it, so the road
+    # itself never bends: where it changes level, the verges do.
+    height = _terrace(height)
     corridor = _dilate(road, 2)
-    height = np.where(corridor, flat, height)
+    htile = np.round(_blur3(_blur3(_blur3(height))) / HSTEP) * HSTEP
 
-    height = _terrace(height)                       # OpenTTD terraces
+    def corner_sum(mask: np.ndarray, value: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        acc = np.zeros((d + 1, w + 1), np.float32)
+        cnt = np.zeros((d + 1, w + 1), np.float32)
+        for dj in (0, 1):
+            for di in (0, 1):
+                acc[dj:dj + d, di:di + w] += np.where(mask, value, 0.0)
+                cnt[dj:dj + d, di:di + w] += mask
+        return acc, cnt
+
+    ra, rn = corner_sum(road, htile)
+    ca, cn = corner_sum(corridor, htile)
+    acc = ra * ROAD_WEIGHT + ca
+    cnt = rn * ROAD_WEIGHT + cn
+    flat = np.round(acc / np.maximum(cnt, 1.0) / HSTEP) * HSTEP
+    height = np.where(cnt[:d, :w] > 0.0, flat[:d, :w], height)
 
     # ---- base pads -------------------------------------------------------
     # the pad itself is drivable; the bunker core in the middle is solid so
@@ -274,6 +422,13 @@ def generate(seed: int = 11) -> Terrain:
         tiles[max(0, j0 - 2):j0 + 3, max(0, i0 - 2):i0 + 3] = TILE_SOLID
 
     # ---- towns -----------------------------------------------------------
+    # buildings keep one tile off a straight road but two off a diagonal one:
+    # the diagonal piece reaches into the tile corners, so a house beside it
+    # would stand in the roadway and wedge a hull against its wall
+    straight_road = (roads & ROAD_STRAIGHT) != 0
+    diag_road = (roads & ROAD_DIAG) != 0
+    no_build = _dilate(straight_road, 1) | _dilate(diag_road, 2)
+    walls = np.zeros((d, w), np.uint8)
     towns = []
     clear = road.copy()
     for (tx, ty) in TOWN_SPOTS:
@@ -281,7 +436,7 @@ def generate(seed: int = 11) -> Terrain:
         cy = int(ty + rng.integers(-4, 5))
         towns.append(dict(x=cx * TILE, z=cy * TILE, tile_x=cx, tile_y=cy,
                           owner=-1, progress=0.0, name=f"T{len(towns):02d}"))
-        for _ in range(int(rng.integers(4, 9))):
+        for _ in range(int(rng.integers(6, 12))):
             bw = int(rng.integers(1, 4))
             bh = int(rng.integers(1, 4))
             bx = int(cx + rng.integers(-8, 9))
@@ -290,9 +445,15 @@ def generate(seed: int = 11) -> Terrain:
             j0, j1 = max(1, by), min(d - 2, by + bh)
             if i1 <= i0 or j1 <= j0:
                 continue
+            if no_build[j0:j1, i0:i1].any():
+                continue
             patch = tiles[j0:j1, i0:i1]
             patch[(patch != TILE_ROAD) & (patch != TILE_BASE)] = TILE_BUILDING
             clear[j0:j1, i0:i1] = True
+            # one block is one building: its storey count is the wall column
+            # every tile of it is raised to, which is also what stops a round
+            storeys = int(rng.integers(2, 7))          # 2..6 floors
+            walls[j0:j1, i0:i1][patch == TILE_BUILDING] = int(storeys * FLOOR_H)
 
     # ---- forests ---------------------------------------------------------
     # a thick stand in the middle of every blob (several trees per tile) with a
@@ -333,6 +494,7 @@ def generate(seed: int = 11) -> Terrain:
     dangerous = (tiles == TILE_TREE) | (tiles == TILE_FOREST) | (tiles == TILE_ROCK)
     tiles[keep & dangerous] = TILE_GRASS
     tiles[road] = TILE_ROAD
+    walls[tiles != TILE_BUILDING] = 0
 
     # ---- world space lane way points -------------------------------------
     lanes = []
@@ -349,7 +511,7 @@ def generate(seed: int = 11) -> Terrain:
         lanes.append([(float(x), float(z)) for x, z in pts])
 
     bases = {fac: (btx * TILE, bty * TILE) for fac, (btx, bty) in BASE_TILES.items()}
-    return Terrain(height, tiles, lanes, towns, bases)
+    return Terrain(height, tiles, lanes, towns, bases, roads, walls)
 
 
 # ---------------------------------------------------------------------------

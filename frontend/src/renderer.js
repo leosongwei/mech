@@ -11,7 +11,8 @@
 //   range works without z-fighting.
 
 import { compose, mat4, multiply, perspective, lookAt } from './math.js';
-import { buildMeshes, MESH_BOX, MESH_SPHERE, MESH_CONE, MESH_CYL, MESH_ROCK, MESH_PYRAMID, MESH_SMOKE } from './meshes.js';
+import { buildMeshes, MESH_BOX, MESH_SPHERE, MESH_CONE, MESH_CYL, MESH_ROCK, MESH_PYRAMID, MESH_SMOKE, MESH_FACADE } from './meshes.js';
+import { ROAD_N, ROAD_E, ROAD_S, ROAD_W, ROAD_D_WS, ROAD_D_NE } from './map.js';
 
 const SKY_VS = `#version 300 es
 in vec2 aPos;
@@ -164,10 +165,11 @@ void main(){
   float line = (1.0 - smoothstep(0.7, 1.7, min(toSeam.x, toSeam.y))) *
                clamp((tilePx - 6.0) / 10.0, 0.0, 1.0);
 
+  // a road tile is grass with asphalt laid on it by the road pass, the way an
+  // OpenTTD road tile is its ground sprite plus the road: painting the whole
+  // tile grey would show a 16 m swath under a 10 m road
   vec3 col;
-  if (t == 1) {
-    col = vec3(0.30, 0.29, 0.27) * (0.90 + 0.20 * tn);
-  } else if (t == 2) {
+  if (t == 2) {
     col = vec3(0.44, 0.42, 0.38) * (0.90 + 0.20 * tn);
   } else if (t == 3 || t == 7) {
     col = mix(vec3(0.16, 0.25, 0.12), vec3(0.21, 0.31, 0.15), tn);
@@ -247,12 +249,16 @@ out vec3 vNormal;
 out vec4 vColor;
 out vec3 vWorld;
 out float vViewZ;
+out vec3 vLocal;               // position in the primitive's unit cube
+out vec3 vScale;               // the instance's size in metres
 void main(){
   vec4 wp = iM0 * aPos.x + iM1 * aPos.y + iM2 * aPos.z + iM3;
   mat3 nm = mat3(normalize(iM0.xyz), normalize(iM1.xyz), normalize(iM2.xyz));
   vNormal = normalize(nm * aNormal);
   vColor = iColor;
   vWorld = wp.xyz;
+  vLocal = aPos;
+  vScale = vec3(length(iM0.xyz), length(iM1.xyz), length(iM2.xyz));
   vec4 clip = uViewProj * wp;
   gl_Position = clip;
   vViewZ = clip.w;
@@ -264,19 +270,51 @@ in vec3 vNormal;
 in vec4 vColor;
 in vec3 vWorld;
 in float vViewZ;
+in vec3 vLocal;
+in vec3 vScale;
 uniform vec3 uSun;
 uniform vec3 uCamPos;
 uniform vec3 uFogColor;
 uniform float uFogDensity;
 uniform float uFar;
 uniform float uUnlit;                // 1 = skip the lighting term (tracers)
+uniform float uFacade;               // 1 = paint storeys and windows on the walls
 out vec4 fragColor;
+
+// A plain cube read as a house: a darker plinth, a cornice under the roof and
+// a grid of windows, measured on the instance's own walls so every building
+// gets the rows its height affords.
+vec3 facade(vec3 wall, vec3 n, vec3 lp, vec3 sc) {
+  if (abs(n.y) > 0.5) return wall * (n.y > 0.0 ? 0.74 : 0.88);
+  float up = lp.y * sc.y + sc.y * 0.5;                    // metres above the base
+  float along = abs(n.x) > 0.5 ? lp.z * sc.z : lp.x * sc.x;
+  float plinth = step(up, 1.2);
+  float cornice = step(sc.y - 0.9, up);
+  vec3 c = mix(wall, wall * 0.70, plinth);
+  c = mix(c, wall * 0.86, cornice);
+  // one window band per storey (the wall columns are 4 m floors), 3.2 m apart
+  float rowv = fract(up / 4.0);
+  float colu = fract(along / 3.2);
+  float win = step(0.30, rowv) * step(rowv, 0.76) *
+              step(0.22, colu) * step(colu, 0.78) *
+              step(1.6, up) * step(up, sc.y - 1.3);
+  float frame = step(0.24, rowv) * step(rowv, 0.82) *
+                step(0.16, colu) * step(colu, 0.84) *
+                step(1.6, up) * step(up, sc.y - 1.3);
+  c = mix(c, wall * 1.20, frame * 0.45);
+  float id = floor(up * 0.25) * 7.0 + floor(along / 3.2);
+  float r = fract(sin(id * 12.9898) * 43758.5453);
+  vec3 glass = mix(vec3(0.10, 0.13, 0.18), vec3(0.21, 0.27, 0.33), r);
+  return mix(c, glass, win);
+}
+
 void main(){
   vec3 n = normalize(vNormal);
   vec3 v = normalize(uCamPos - vWorld);
   float diff = max(0.0, dot(n, uSun));
   float rim = pow(1.0 - max(0.0, dot(n, v)), 3.0) * 0.16;
-  vec3 c = mix(vColor.rgb * (0.40 + 0.78 * diff + rim), vColor.rgb, uUnlit);
+  vec3 albedo = uFacade > 0.5 ? facade(vColor.rgb, n, vLocal, vScale) : vColor.rgb;
+  vec3 c = mix(albedo * (0.40 + 0.78 * diff + rim), vColor.rgb, uUnlit);
   float dist = distance(vWorld, uCamPos);
   float fog = 1.0 - exp(-dist * uFogDensity);
   c = mix(c, uFogColor, clamp(fog, 0.0, 1.0));
@@ -305,7 +343,7 @@ function program(gl, vs, fs) {
 
 const STRIDE_FLOATS = 20;            // mat4 + vec4 colour
 const CHUNK_TILES = 40;              // 640 m prop chunks
-const DYN_CAP = [40000, 24000, 24000, 24000, 8000, 32000, 64];
+const DYN_CAP = [40000, 24000, 24000, 24000, 8000, 32000, 64, 64];
 
 // Optics: the radial terrain grid gets more rings per octave and a finer
 // index grid the more the sight magnifies, so the ground stays smooth when
@@ -353,7 +391,7 @@ export class Renderer {
     this.uTerrain = this._uniforms(this.pTerrain, ['uViewProj', 'uHeight', 'uTiles', 'uMapSize', 'uTile', 'uG', 'uCam', 'uSun', 'uFogColor', 'uFogDensity', 'uFar', 'uNear']);
     this.uTile = this._uniforms(this.pTile, ['uViewProj', 'uHeight', 'uTiles', 'uMapSize', 'uTile', 'uOrigin', 'uCam', 'uSun', 'uFogColor', 'uFogDensity', 'uFar', 'uNear']);
     this.uRoad = this._uniforms(this.pRoad, ['uViewProj', 'uCam', 'uSun', 'uFogColor', 'uFogDensity', 'uFar']);
-    this.uMesh = this._uniforms(this.pMesh, ['uViewProj', 'uSun', 'uCamPos', 'uFogColor', 'uFogDensity', 'uFar', 'uUnlit']);
+    this.uMesh = this._uniforms(this.pMesh, ['uViewProj', 'uSun', 'uCamPos', 'uFogColor', 'uFogDensity', 'uFar', 'uUnlit', 'uFacade']);
     this.tileOrigin = [0, 0];
 
     // ---- primitive meshes in one VBO ---------------------------------
@@ -511,90 +549,132 @@ export class Renderer {
     this.terrainIndexCount = idx.length;
   }
 
-  // Roads are ribbons along the lane polylines: gravel shoulders, asphalt and
-  // a dashed centre line.  Being ribbons, a leg is free to cut diagonally
-  // across the tile grid instead of stepping tile by tile.
+  // Roads are laid tile by tile out of the same pieces the server stores: one
+  // quad per cardinal bit (so a straight is two of them, an elbow two adjacent
+  // ones, a crossroads four) and one 45 degree band per diagonal bit.  Every
+  // vertex sits on the flat facet the terrain draws under it, so the asphalt
+  // hugs the terraces instead of floating over them, and the seam between two
+  // road tiles is a tile border - which is the whole OpenTTD look.
   _buildRoads(map) {
     const gl = this.gl;
-    const lanes = map.lanes || [];
-    const tile = map.tile;
-    // cross section from the left shoulder to the right one: gravel, asphalt,
-    // the dashed centre line, asphalt, gravel.  Each band is its own quad so
-    // the paint does not bleed into the asphalt.
-    const EDGE = [-8.0, -5.4, -0.8, 0.8, 5.4, 8.0];
-    const GRAVEL = [0.35, 0.32, 0.26];
-    const ASPHALT = [0.21, 0.205, 0.20];
-    const PAINT = [0.62, 0.60, 0.50];
-    const band = [GRAVEL, ASPHALT, PAINT, ASPHALT, GRAVEL];
-    const out = [];
-    const step = 8.0;                 // metres between cross sections
-    const hgt = (x, z) => {
-      const h = map.heights;
-      const fx = Math.min(Math.max(x / tile, 0), map.w - 1.001);
-      const fz = Math.min(Math.max(z / tile, 0), map.h - 1.001);
+    const roads = map.roads;
+    this.roadCount = 0;
+    if (!roads) return;
+    const T = map.tile;
+    const HW = 5.0;                     // asphalt half width: a 10 m road
+    const LO = T * 0.5 - HW, HI = T * 0.5 + HW;
+    const D = HW * Math.SQRT2;          // reach of a 45 degree band, along an axis
+    const LIFT = 0.06;                  // asphalt sits just proud of the grass
+    const ASPHALT = [0.235, 0.230, 0.220];
+    const PAINT = [0.60, 0.585, 0.505];
+    const h = map.heights, W = map.w, H = map.h;
+
+    // Height of the flat triangle the terrain patch draws under (x, z): the
+    // patch splits every tile along its north-east to south-west diagonal, and
+    // a road vertex has to land on that plane, or the asphalt sinks into the
+    // slope somewhere inside the tile.
+    const facet = (x, z) => {
+      const fx = Math.min(Math.max(x / T, 0), W - 1.001);
+      const fz = Math.min(Math.max(z / T, 0), H - 1.001);
       const i = fx | 0, j = fz | 0;
       const tx = fx - i, tz = fz - j;
-      const a = h[j * map.w + i], b = h[j * map.w + i + 1];
-      const c = h[(j + 1) * map.w + i], d = h[(j + 1) * map.w + i + 1];
-      return (a * (1 - tx) + b * tx) * (1 - tz) + (c * (1 - tx) + d * tx) * tz;
+      const a = h[j * W + i], b = h[j * W + i + 1];
+      const c = h[(j + 1) * W + i], d = h[(j + 1) * W + i + 1];
+      if (tx + tz <= 1) return a + (b - a) * tx + (c - a) * tz;
+      return d + (c - d) * (1 - tx) + (b - d) * (1 - tz);
     };
-    const vert = (x, y, z, col, k, c) => {
-      // a little per-section grit so the surface is not a flat grey slab
-      const g = 0.94 + 0.12 * Math.abs(Math.sin(k * 12.9898 + c * 78.233) % 1);
-      out.push(x, y, z, col[0] * g, col[1] * g, col[2] * g);
-    };
-    for (const lane of lanes) {
-      if (lane.length < 2) continue;
-      // resample the polyline at a fixed spacing so corners are rounded off
-      const pts = [];
-      for (let k = 0; k < lane.length - 1; k++) {
-        const [ax, az] = lane[k];
-        const [bx, bz] = lane[k + 1];
-        const seg = Math.hypot(bx - ax, bz - az);
-        const n = Math.max(1, Math.round(seg / step));
-        for (let i = 0; i < n; i++) {
-          const t = i / n;
-          pts.push([ax + (bx - ax) * t, az + (bz - az) * t]);
+
+    const out = [];
+    const vert = (x, z, col, lift) => out.push(x, facet(x, z) + lift, z,
+      col[0], col[1], col[2]);
+
+    // A convex polygon in world metres, cut along the tile's own terrain
+    // diagonal before it is triangulated.  Half of it is then flat on one
+    // terrain triangle and half on the other; without the cut a road triangle
+    // spans the crease between the two panels and dips below the ground,
+    // which is what showed up as flickering slivers along the verges.
+    const clipHalf = (pts, side, ox, oz) => {
+      const outPts = [];
+      const f = (p) => side * (T - (p[0] - ox) - (p[1] - oz));
+      for (let k = 0; k < pts.length; k++) {
+        const a = pts[k], b = pts[(k + 1) % pts.length];
+        const fa = f(a), fb = f(b);
+        if (fa >= 0) outPts.push(a);
+        if ((fa > 0 && fb < 0) || (fa < 0 && fb > 0)) {
+          const t = fa / (fa - fb);
+          outPts.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
         }
       }
-      pts.push(lane[lane.length - 1]);
-      // miter normals so the ribbon has no notch on the inside of a corner
-      const nrm = [];
-      for (let k = 0; k < pts.length; k++) {
-        const p0 = pts[Math.max(0, k - 1)];
-        const p1 = pts[Math.min(pts.length - 1, k + 1)];
-        let dx = p1[0] - p0[0], dz = p1[1] - p0[1];
-        const len = Math.hypot(dx, dz) || 1;
-        nrm.push([-dz / len, dx / len]);
-      }
-      const rows = [];
-      for (let k = 0; k < pts.length; k++) {
-        const [x, z] = pts[k];
-        const [nx, nz] = nrm[k];
-        const row = [];
-        for (let c = 0; c < EDGE.length; c++) {
-          const px = x + nx * EDGE[c];
-          const pz = z + nz * EDGE[c];
-          row.push([px, hgt(px, pz) + 0.30, pz]);
+      return outPts;
+    };
+    const poly = (pts, ox, oz, col, lift) => {
+      for (const side of [1, -1]) {
+        const q = clipHalf(pts, side, ox, oz);
+        for (let k = 1; k + 1 < q.length; k++) {
+          vert(q[0][0], q[0][1], col, lift);
+          vert(q[k][0], q[k][1], col, lift);
+          vert(q[k + 1][0], q[k + 1][1], col, lift);
         }
-        rows.push(row);
       }
-      for (let k = 0; k < rows.length - 1; k++) {
-        // one 8 m dash every 24 m: the centre line is dashed
-        const dash = k % 3 === 0;
-        for (let b = 0; b < band.length; b++) {
-          const col = (b === 2 && !dash) ? ASPHALT : band[b];
-          const a0 = rows[k][b], a1 = rows[k][b + 1];
-          const b0 = rows[k + 1][b], b1 = rows[k + 1][b + 1];
-          vert(a0[0], a0[1], a0[2], col, k, b);
-          vert(b0[0], b0[1], b0[2], col, k, b);
-          vert(a1[0], a1[1], a1[2], col, k, b);
-          vert(a1[0], a1[1], a1[2], col, k, b);
-          vert(b0[0], b0[1], b0[2], col, k, b);
-          vert(b1[0], b1[1], b1[2], col, k, b);
+    };
+    const hash = (a, b) => {
+      const s = Math.sin(a * 12.9898 + b * 78.233) * 43758.5453;
+      return s - Math.floor(s);
+    };
+
+    for (let j = 0; j < H; j++) {
+      for (let i = 0; i < W; i++) {
+        const bits = roads[j * W + i];
+        if (!bits) continue;
+        const x0 = i * T, z0 = j * T;
+        const m = T * 0.5;
+        // a little per tile grit, so a long straight is not one flat slab
+        const g = 0.92 + hash(i, j) * 0.16;
+        const col = [ASPHALT[0] * g, ASPHALT[1] * g, ASPHALT[2] * g];
+
+        // ---- the cardinal halves ------------------------------------
+        if (bits & ROAD_N) poly([[x0 + LO, z0], [x0 + HI, z0], [x0 + HI, z0 + m], [x0 + LO, z0 + m]],  x0, z0, col, LIFT);
+        if (bits & ROAD_S) poly([[x0 + LO, z0 + m], [x0 + HI, z0 + m], [x0 + HI, z0 + T], [x0 + LO, z0 + T]],  x0, z0, col, LIFT);
+        if (bits & ROAD_W) poly([[x0, z0 + LO], [x0 + m, z0 + LO], [x0 + m, z0 + HI], [x0, z0 + HI]],  x0, z0, col, LIFT);
+        if (bits & ROAD_E) poly([[x0 + m, z0 + LO], [x0 + T, z0 + LO], [x0 + T, z0 + HI], [x0 + m, z0 + HI]],  x0, z0, col, LIFT);
+
+        // ---- the 45 degree bands ------------------------------------
+        // Each one is the band a corner cut by the tile: it runs from the
+        // middle of one edge to the middle of the next, so the tile before it
+        // and the tile after it join it at full width.
+        if (bits & ROAD_D_WS) {
+          poly([[x0, z0 + m - D], [x0, z0 + m + D],
+               [x0 + m - D, z0 + T], [x0 + m + D, z0 + T]],  x0, z0, col, LIFT);
+        }
+        if (bits & ROAD_D_NE) {
+          poly([[x0 + m - D, z0], [x0 + m + D, z0],
+               [x0 + T, z0 + m - D], [x0 + T, z0 + m + D]],  x0, z0, col, LIFT);
+        }
+
+        // ---- centre line --------------------------------------------
+        // only where the road runs straight through or across the tile: a
+        // junction carries no paint, the way it does not in OpenTTD
+        const dash = LIFT + 0.03;
+        if (bits === (ROAD_N | ROAD_S)) {
+          poly([[x0 + m - 0.3, z0 + 4.8], [x0 + m + 0.3, z0 + 4.8],
+               [x0 + m + 0.3, z0 + 11.2], [x0 + m - 0.3, z0 + 11.2]],  x0, z0, PAINT, dash);
+        } else if (bits === (ROAD_E | ROAD_W)) {
+          poly([[x0 + 4.8, z0 + m - 0.3], [x0 + 4.8, z0 + m + 0.3],
+               [x0 + 11.2, z0 + m + 0.3], [x0 + 11.2, z0 + m - 0.3]],  x0, z0, PAINT, dash);
+        } else if (bits === ROAD_D_WS) {
+          // down the middle of the band, from (0, m) to (m, T)
+          const a = 0.3 / Math.SQRT2;
+          poly([[x0 + 2 + a, z0 + 10 - a], [x0 + 2 - a, z0 + 10 + a],
+               [x0 + 6 - a, z0 + 14 + a], [x0 + 6 + a, z0 + 14 - a]],  x0, z0, PAINT, dash);
+        } else if (bits === ROAD_D_NE) {
+          // down the middle of the band, from (m, 0) to (T, m)
+          const a = 0.3 / Math.SQRT2;
+          poly([[x0 + 10 + a, z0 + 2 + a], [x0 + 10 - a, z0 + 2 - a],
+               [x0 + 14 - a, z0 + 6 - a], [x0 + 14 + a, z0 + 6 + a]],  x0, z0, PAINT, dash);
         }
       }
     }
+
     this.roadCount = out.length / 6;
     if (!this.roadCount) return;
     this.roadVBO = gl.createBuffer();
@@ -655,20 +735,31 @@ export class Renderer {
           }
         }
       } else if (t === 2) {
-        // houses: a block from a small palette with a darker roof slab on top
-        const sx = tile * (0.60 + r1 * 0.26);
-        const sz = tile * (0.60 + r2 * 0.26);
-        const sy = 7.0 + r2 * 15.0;
-        const wall = HOUSES[Math.floor(r1 * HOUSES.length) % HOUSES.length];
-        emit(MESH_BOX, x, y + sy * 0.5, z, 0, 0, sx, sy, sz, wall);
-        emit(MESH_BOX, x, y + sy + 0.6, z, 0, 0, sx * 1.07, 1.2, sz * 1.07,
-          [wall[0] * 0.5, wall[1] * 0.5, wall[2] * 0.52]);
-        if (r2 > 0.55) {
-          // an annex half the size, pushed into one corner
-          const ax = x + (r1 - 0.5) * tile * 0.5;
-          const az = z + (r2 - 0.5) * tile * 0.5;
-          emit(MESH_BOX, ax, y + sy * 0.3, az, 0, 0, sx * 0.5, sy * 0.6, sz * 0.5,
-            [wall[0] * 0.92, wall[1] * 0.88, wall[2] * 0.84]);
+        // A house: as tall as the wall column the server stored for this tile,
+        // so the block you see is exactly the block a round stops on.  The
+        // facade mesh paints the storeys and windows, the slab on top is the
+        // roof.  Every tile of a block shares one column height, so a row of
+        // them reads as one building with a level roof.
+        const sy = map.walls[j * w + i] || 8.0;
+        const sx = tile * (0.88 + r1 * 0.10);
+        const sz = tile * (0.88 + r2 * 0.10);
+        const wall = HOUSES[Math.floor(hash(i * 0.7, j * 1.3) * HOUSES.length) % HOUSES.length];
+        emit(MESH_FACADE, x, y + sy * 0.5, z, 0, 0, sx, sy, sz, wall);
+        // roof: a flat slab with a parapet, plus the odd plant box on top
+        const dark = r1 > 0.5 ? 0.46 : 0.52;
+        emit(MESH_BOX, x, y + sy + 0.22, z, 0, 0, sx * 1.03, 0.45, sz * 1.03,
+          [wall[0] * dark, wall[1] * dark, wall[2] * dark]);
+        if (r2 > 0.72) {
+          emit(MESH_BOX, x + (r1 - 0.5) * sx * 0.5, y + sy + 0.6 + 1.1,
+            z + (r2 - 0.5) * sz * 0.5, 0, 0, sx * 0.3, 2.2, sz * 0.3,
+            [0.34, 0.35, 0.36]);
+        }
+        if (r2 < 0.22) {
+          // a low annex against one side, well under the wall column
+          const ax = x + (r1 > 0.5 ? 1 : -1) * sx * 0.44;
+          const az = z + (r2 - 0.5) * sz * 0.4;
+          emit(MESH_FACADE, ax, y + sy * 0.3, az, 0, 0, sx * 0.42, sy * 0.6, sz * 0.42,
+            [wall[0] * 0.94, wall[1] * 0.90, wall[2] * 0.86]);
         }
       } else if (t === 4) {
         // two or three angular chunks per tile, tipped over at random angles,
@@ -956,6 +1047,7 @@ export class Renderer {
     const gl = this.gl;
     if (!cmds.length) return;
     gl.uniform1f(this.uMesh.uUnlit, unlit ? 1 : 0);
+    gl.uniform1f(this.uMesh.uFacade, meshIndex === MESH_FACADE ? 1 : 0);
     const first = this.meshFirst[meshIndex];
     const count = this.meshCount[meshIndex];
     if (this.multiFn && cmds.length > 1) {

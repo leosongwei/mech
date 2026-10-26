@@ -11,28 +11,7 @@ export function buildMeshes() {
   };
 
   // ---- cube ---------------------------------------------------------
-  {
-    const v = [];
-    const faces = [
-      [[0, 0, 1], [1, 0, 0], [0, 1, 0]],
-      [[0, 0, -1], [-1, 0, 0], [0, 1, 0]],
-      [[1, 0, 0], [0, 0, -1], [0, 1, 0]],
-      [[-1, 0, 0], [0, 0, 1], [0, 1, 0]],
-      [[0, 1, 0], [1, 0, 0], [0, 0, -1]],
-      [[0, -1, 0], [1, 0, 0], [0, 0, 1]],
-    ];
-    for (const [n, u, w] of faces) {
-      const corners = [[-1, -1], [1, -1], [1, 1], [-1, -1], [1, 1], [-1, 1]];
-      for (const [cu, cw] of corners) {
-        push(v, [
-          n[0] * 0.5 + u[0] * cu * 0.5 + w[0] * cw * 0.5,
-          n[1] * 0.5 + u[1] * cu * 0.5 + w[1] * cw * 0.5,
-          n[2] * 0.5 + u[2] * cu * 0.5 + w[2] * cw * 0.5,
-        ], n);
-      }
-    }
-    meshes.push(v);
-  }
+  pushCube(meshes);
 
   // ---- sphere (radius 0.5) -----------------------------------------
   {
@@ -96,7 +75,35 @@ export function buildMeshes() {
   pushRock(meshes);
   pushPyramid(meshes);
   pushSmokeSphere(meshes);
+  pushCube(meshes);              // the facade box: same hull, windows in the shader
   return meshes;
+}
+
+// The unit cube, centred on the origin.  It is the workhorse - hulls, crates,
+// smoke canisters - and doubles as the facade mesh: a house is a cube with a
+// wall pattern painted on by the fragment shader.
+function pushCube(meshes) {
+  const v = [];
+  const push = (p, n) => v.push(p[0], p[1], p[2], n[0], n[1], n[2]);
+  const faces = [
+    [[0, 0, 1], [1, 0, 0], [0, 1, 0]],
+    [[0, 0, -1], [-1, 0, 0], [0, 1, 0]],
+    [[1, 0, 0], [0, 0, -1], [0, 1, 0]],
+    [[-1, 0, 0], [0, 0, 1], [0, 1, 0]],
+    [[0, 1, 0], [1, 0, 0], [0, 0, -1]],
+    [[0, -1, 0], [1, 0, 0], [0, 0, 1]],
+  ];
+  for (const [n, u, w] of faces) {
+    const corners = [[-1, -1], [1, -1], [1, 1], [-1, -1], [1, 1], [-1, 1]];
+    for (const [cu, cw] of corners) {
+      push([
+        n[0] * 0.5 + u[0] * cu * 0.5 + w[0] * cw * 0.5,
+        n[1] * 0.5 + u[1] * cu * 0.5 + w[1] * cw * 0.5,
+        n[2] * 0.5 + u[2] * cu * 0.5 + w[2] * cw * 0.5,
+      ], n);
+    }
+  }
+  meshes.push(v);
 }
 
 // A boulder: an icosahedron with its vertices pushed in and out at random and
@@ -152,6 +159,7 @@ export const MESH_CYL = 3;
 export const MESH_ROCK = 4;
 export const MESH_PYRAMID = 5;
 export const MESH_SMOKE = 6;
+export const MESH_FACADE = 7;        // cube with window rows on its walls
 
 // A four-sided pyramid: base radius 0.5 at y = -0.5, apex at y = +0.5, flat
 // shaded per face.  Six triangles, which is all a tracer needs - the streak is

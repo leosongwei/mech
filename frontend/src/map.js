@@ -6,6 +6,19 @@ import { dirFrom } from './math.js';
 const TILE_GRASS = 0, TILE_ROAD = 1, TILE_BUILDING = 2, TILE_TREE = 3, TILE_ROCK = 4, TILE_BASE = 5, TILE_SOLID = 6,
   TILE_FOREST = 7;
 
+// road pieces, mirrors terrain.py (an OpenTTD road tile is a set of halves;
+// the two diagonal bits are the corner-to-corner piece we added on top)
+export const ROAD_N = 1;
+export const ROAD_E = 2;
+export const ROAD_S = 4;
+export const ROAD_W = 8;
+export const ROAD_D_WS = 16;    // west edge middle -> south edge middle
+export const ROAD_D_NE = 32;    // north edge middle -> east edge middle
+export const ROAD_STRAIGHT = ROAD_N | ROAD_E | ROAD_S | ROAD_W;
+export const ROAD_DIAG = ROAD_D_WS | ROAD_D_NE;
+
+const TREE_H = 10.0;            // must match terrain.py
+
 function b64ToBytes(b64) {
   const bin = atob(b64);
   const out = new Uint8Array(bin.length);
@@ -21,12 +34,14 @@ async function inflate(bytes) {
 }
 
 export class MapData {
-  constructor(w, h, tile, heights, tiles) {
+  constructor(w, h, tile, heights, tiles, roads, walls) {
     this.w = w;
     this.h = h;
     this.tile = tile;
     this.heights = heights;      // Float32Array(w*h), row major [j*w+i]
     this.tiles = tiles;          // Uint8Array(w*h)
+    this.roads = roads;          // Uint8Array(w*h), ROAD_* piece bits
+    this.walls = walls;          // Uint8Array(w*h), wall/roof height in metres
   }
 
   static async load(info, lanes) {
@@ -35,7 +50,9 @@ export class MapData {
     const heights = new Float32Array(i16.length);
     for (let i = 0; i < i16.length; i++) heights[i] = i16[i];
     const tiles = await inflate(b64ToBytes(info.tiles));
-    const map = new MapData(info.w, info.h, info.tile, heights, tiles);
+    const roads = info.roads ? await inflate(b64ToBytes(info.roads)) : new Uint8Array(tiles.length);
+    const walls = info.walls ? await inflate(b64ToBytes(info.walls)) : new Uint8Array(tiles.length);
+    const map = new MapData(info.w, info.h, info.tile, heights, tiles, roads, walls);
     map.lanes = lanes || [];     // road centrelines, in world metres
     return map;
   }
@@ -69,23 +86,40 @@ export class MapData {
     return x >= 0 && z >= 0 && x <= (this.w - 1) * this.tile && z <= (this.h - 1) * this.tile;
   }
 
+  // the obstacle column standing on the ground: a building up to the roof the
+  // server drew its walls with, a tree stand as one flat block - mirrors
+  // Terrain.wall_at so the predicted impact is the real one
+  wallAt(x, z) {
+    const i = Math.floor(x / this.tile), j = Math.floor(z / this.tile);
+    if (i < 0 || j < 0 || i >= this.w || j >= this.h) return 1e6;
+    const k = j * this.w + i;
+    const t = this.tiles[k];
+    if (t === TILE_BUILDING) return this.walls[k] || 8.0;
+    if (t === TILE_TREE || t === TILE_FOREST) return TREE_H;
+    return 0;
+  }
+
+  obstacleAt(x, z) {
+    return this.heightAt(x, z) + this.wallAt(x, z);
+  }
+
   // march a segment and report the first ground contact
   groundHit(x0, y0, z0, x1, y1, z1, step) {
     step = step || 12;
     const dx = x1 - x0, dy = y1 - y0, dz = z1 - z0;
     const dist = Math.hypot(dx, dy, dz);
-    if (dist < 1e-4) return { hit: y0 <= this.heightAt(x0, z0), t: 0, x: x0, y: y0, z: z0 };
+    if (dist < 1e-4) return { hit: y0 <= this.obstacleAt(x0, z0), t: 0, x: x0, y: y0, z: z0 };
     const n = Math.max(1, Math.ceil(dist / step));
     let prev = 0;
     for (let k = 1; k <= n; k++) {
       const t = k / n;
       const x = x0 + dx * t, y = y0 + dy * t, z = z0 + dz * t;
-      let ground = this.heightAt(x, z);
+      let ground = this.obstacleAt(x, z);
       if (y <= ground) {
         let a = prev, b = t;
         for (let it = 0; it < 4; it++) {
           const m = (a + b) * 0.5;
-          if (y0 + dy * m > this.heightAt(x0 + dx * m, z0 + dz * m)) a = m; else b = m;
+          if (y0 + dy * m > this.obstacleAt(x0 + dx * m, z0 + dz * m)) a = m; else b = m;
         }
         const tm = (a + b) * 0.5;
         return { hit: true, t: tm, x: x0 + dx * tm, y: y0 + dy * tm, z: z0 + dz * tm };
@@ -154,10 +188,32 @@ export function predictImpact(map, wd, ox, oy, oz, dir, units, out, faction) {
         hitU = u;
       }
     }
-    // past the map edge the server finds no ground (terrain.ground_hit gives
-    // up outside the field), so the prediction must not stop there either
-    const ground = map.inside(nx, nz) ? map.heightAt(nx, nz) : -Infinity;
-    const groundT = ny <= ground ? Math.max(0, (y - ground) / Math.max(y - ny, 1e-6)) : 2;
+    // The ground is sampled *along* the step, not only at its end: the 30 mm
+    // round covers 36 m in one 30 Hz tick - more than two tiles - so testing
+    // just (nx, ny, nz) would step straight through a building the server stops
+    // it on, and the reticle would claim a hit far behind the facade.  Past the
+    // map edge the server finds no ground (`terrain.ground_hit` gives up
+    // outside the field), so the prediction must not stop there either.
+    let groundT = 2, gx = 0, gy = 0, gz = 0;
+    const nSamp = Math.max(1, Math.ceil(Math.sqrt(l2) / 8));
+    let prevU = 0;
+    for (let k = 1; k <= nSamp; k++) {
+      const u = k / nSamp;
+      const px = x + sx * u, py = y + sy * u, pz = z + sz * u;
+      const g = map.inside(px, pz) ? map.obstacleAt(px, pz) : -Infinity;
+      if (py > g) { prevU = u; continue; }
+      // bisect onto the obstacle the server tests against, so both sides land
+      // within a few centimetres of the same point on the facade
+      let a = prevU, b = u;
+      for (let it = 0; it < 3; it++) {
+        const m = (a + b) * 0.5;
+        const mx2 = x + sx * m, my2 = y + sy * m, mz2 = z + sz * m;
+        const gm = map.inside(mx2, mz2) ? map.obstacleAt(mx2, mz2) : -Infinity;
+        if (my2 > gm) a = m; else b = m;
+      }
+      groundT = b; gx = x + sx * b; gy = y + sy * b; gz = z + sz * b;
+      break;
+    }
     if (bestT <= 1 && bestT <= groundT) {
       out.hit = true; out.unit = hitU;
       out.x = x + sx * bestT; out.y = y + sy * bestT; out.z = z + sz * bestT;
@@ -165,12 +221,11 @@ export function predictImpact(map, wd, ox, oy, oz, dir, units, out, faction) {
       out.time = t + dt * bestT;
       return out;
     }
-    if (ny <= ground) {
-      const tt = Math.min(1, groundT);
+    if (groundT <= 1) {
       out.hit = true; out.unit = null;
-      out.x = x + sx * tt; out.y = y + sy * tt; out.z = z + sz * tt;
+      out.x = gx; out.y = gy; out.z = gz;
       out.dist = Math.hypot(out.x - ox, out.z - oz);
-      out.time = t + dt * tt;
+      out.time = t + dt * groundT;
       return out;
     }
     x = nx; y = ny; z = nz;

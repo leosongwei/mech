@@ -118,6 +118,21 @@ frontend/
   the blue base. Every per-faction lookup (spawn point, path index, "front
   line") must use the faction's own copy; mixing them mirrors positions across
   the map. `path_i` is always an index into the faction's own list.
+* **Terrain** (`terrain.py`) — 1000x1000 tiles of 16 m, heights on 4 m steps.
+  Three extra bitmaps travel with the map: `roads` (direction bits `ROAD_N/E/
+  S/W` for a straight, half-tile strip plus `ROAD_D_WS`/`ROAD_D_NE` for the two
+  45° half-tile pieces the diagonal lanes alternate between) and `walls`
+  (building height per tile, 2-6 storeys of `FLOOR_H` = 8-24 m). A road leg is
+  laid on **tile centres** (half-tile coordinates), the corridor around it is
+  flattened to a terrace (`ROAD_WEIGHT` makes the asphalt beat the verges), and
+  a road tile's ground keeps the grass colour - the asphalt is a separate client
+  pass, the OpenTTD way. `ground_hit` treats buildings and tree stands as
+  upright columns (`obstacle_at` = ground + `wall_at`) and walks the ray
+  **tile by tile** (`_spans`, a 2D DDA), so a 30 mm round that covers 36 m in
+  one tick cannot skip a facade; inside a tile it samples every 8 m and then
+  bisects 6 times, which lands the burst on the outer face.  The client's
+  `predictImpact` samples its 1/30 step every 8 m the same way - testing only
+  the end point let fast rounds predict a hit behind the building.
 * **Netcode** — one init payload with the map and all definitions, then binary
   snapshots at 15 Hz (`SNAP_EVERY`) and JSON meta at 10 Hz (`META_EVERY`).
   Entity state is authoritative on the server; the client only interpolates.
@@ -163,19 +178,27 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
   shades each tile/ramp as one facet. The far grid `discard`s the patch area
   (`uNear`), the fragment shader draws the tile seam in screen space and fades
   it out once a tile is only a few pixels wide. Heights come from an `R32F`
-  texture, tiles from an `R8UI` one. Roads are a ribbon mesh built from
-  `map.lanes` (`_buildRoads`, gravel/asphalt/dashed centre line) so a lane can
-  cut diagonally across the grid. Units/props/projectiles are instanced
-  primitives submitted through `WEBGL_multi_draw` with a per-command fallback.
-  Prop instances are batched per mesh (`this.meshes.length` batches) and
-  culled in 640 m chunks (`CHUNK_TILES` = 40) by `_buildProps`, which plants
-  several trees per tree tile and a block plus roof per building tile.
+  texture, tiles from an `R8UI` one. Roads are a **separate pass built from the
+  `map.roads` bitmask** (`_buildRoads`): every piece is a polygon inside one
+  tile, so it has to be cut along that tile's terrain diagonal (`clipHalf`) to
+  stay on one facet - an uncut quad that spans both triangles of a sloped tile
+  sinks into the ground and reads as z-fighting. A straight road is two 10 m
+  half-tile strips (`LIFT` = 0.06 above the ground), the diagonal lanes are the
+  two 45° pieces the server put in `roads`, joined into one continuous band.
+  Units/props/projectiles are instanced primitives submitted through
+  `WEBGL_multi_draw` with a per-command fallback. Prop instances are batched
+  per mesh (`this.meshes.length` batches) and culled in 640 m chunks
+  (`CHUNK_TILES` = 40) by `_buildProps`, which plants several trees per tree
+  tile and, per building tile, a `MESH_FACADE` box as tall as `map.walls`
+  (storeys and windows are painted in the shader off `vLocal`/`vScale`,
+  `uFacade`), a roof slab with a parapet, an occasional plant box or annex.
 * `scene.js` builds unit models from primitives in a local frame: **+X
   forward, +Y up, +Z right** (see `math.js compose`). A Y-axis primitive is
   laid along the barrel with `pitch = FORWARD` (`-PI/2`); use
   `FORWARD + p` when a pitch is already in play.
 * `map.js` must stay ballistically identical to the server: same gravity,
-  same 1/30 step, same launch bias (`wd.bias`), otherwise the predicted impact
+  same 1/30 step, same launch bias (`wd.bias`), the same "buildings and trees
+  are columns" rule (`wallAt`/`obstacleAt`), otherwise the predicted impact
   point drifts off the real one.
 * **Sound is not immediate.** Gunfire and explosions go through
   `game._sound(x, y, z, play)` -> `game.sounds`, a list of acoustic events in
@@ -290,6 +313,81 @@ Screenshots and console evaluation go through the browser bridge
 (`POST http://127.0.0.1:10086/command` with an `evaluate` or `screenshot`
 action); write request bodies to a file under `/tmp` and pass `-d @file`
 when the code contains quotes.
+
+### Looking at the world: a free camera
+
+The frame camera is built by `game._camera(own, dt)` from the mech's position,
+the yaw / pitch and the zoom. Replacing it from the console and passing a fake
+`own` puts the eye anywhere, which is how terrain, roads and props are
+inspected (the mech itself never has to move):
+
+```js
+const g = window.__game;
+g.__origCam = g.__origCam || g._camera.bind(g);
+g.__cam = (eye, yaw, pitch) => { g._camera = (own, dt) => {
+  // `input.viewYaw` is a GETTER (yaw + freeYaw), its assignment is silently
+  // dropped - the real knobs are `yaw` and `freeYaw`
+  g.input.yaw = yaw; g.input.freeYaw = 0;
+  g.input.pitch = pitch;                     // -1.45 = straight down
+  return g.__origCam({ x: eye[0], y: eye[1] - 5.05, z: eye[2] }, dt);
+}; };
+g.__cam([x, y, z], Math.PI / 4, -0.45);      // yaw: dirFrom convention
+```
+
+* `_camera` adds `defs.mech.eye` (5.05 m) to `own.y`, hence the `- 5.05`.
+* `input.pitch` is a plain field (settable), `input.viewYaw` is not: writing
+  `g.input.viewYaw = ...` does nothing and the eye keeps looking along
+  `input.yaw`, which is the *last thing sent to the server* - a still mech can
+  sit there for minutes with a stale yaw. `debug_tp` sets it, `g.input.yaw` is
+  what the mech turns to.
+* The override survives until the page is reloaded — a `navigate` clears it and
+  drops you back in the lobby, so re-click `DEPLOY` (or re-click the element
+  whose `textContent` is `DEPLOY`).
+* `g.renderer.roadCount = 0` (save the old value) hides the road pass;
+  replacing `g.renderer.draw` with a wrapper that calls `g.renderer.beginDynamic()`
+  first hides every dynamic body — units *and* the first-person arms — which is
+  what a clean scenery shot needs:
+
+```js
+const r = g.renderer;
+r.__d = r.__d || r.draw.bind(r);
+r.draw = (cam) => { r.beginDynamic(); r.__d(cam); };
+```
+
+* `g.map.heightAt(x, z)`, `g.map.walls`, `g.map.roads`, `g.renderer.propStats`
+  and `g.renderer.roadCount` are all readable, so a picture can be checked
+  against the data it came from.
+
+### Moving the mech without the keyboard
+
+`debug_tp` moves the mech along the **server's** copy of the input yaw
+(`pl.in_yaw`), not the one the message carries, so a teleport has to be sent a
+few ticks after `g.input.yaw` was set and the result read back from the
+*server* position:
+
+```js
+const M = g.net.meta, me = () => g.net.entities.get(M.mech);
+for (let k = 0; k < 6; k++) {
+  const p = me();                                  // p.px / p.pz = server pos
+  const dx = TX - p.px, dz = TZ - p.pz, d = Math.hypot(dx, dz);
+  if (d < 20) break;
+  g.input.yaw = Math.atan2(dz, dx);
+  await sleep(300);                                // ticks so in_yaw is current
+  g.net.send({ t: 'debug_tp', dist: Math.min(d, 1200) });
+  await sleep(1100);                               // next snapshot back
+}
+```
+
+* Read `px` / `pz` (authoritative) — `x` / `z` are interpolated and freeze
+  after a big jump, which reads like a teleport that did nothing.
+* One `debug_tp` per ~second: the client only sees the move in the next
+  snapshot pair.
+* `debug_hurt` with `module: 0, amount: 99999` kills the mech (god mode must be
+  off first) → the camera falls back to the base orbit and the first-person
+  arms disappear; `{ t: 'respawn' }` brings it back.
+* An async `evaluate` with `await sleep(...)` is the way to sequence these
+  steps; keep each call under the shell timeout (raise it for the bash call, not
+  with `-m` alone) and take the screenshot in a separate request.
 
 ## Conventions
 

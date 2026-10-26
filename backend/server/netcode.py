@@ -58,7 +58,8 @@ def static_payload(world: World) -> dict:
     heights = np.round(t.h).astype(np.int16)
     return dict(
         map=dict(w=int(t.w), h=int(t.d), tile=float(terrain_mod.TILE),
-                 heights=_b64(heights), tiles=_b64(t.tiles)),
+                 heights=_b64(heights), tiles=_b64(t.tiles),
+                 roads=_b64(t.roads), walls=_b64(t.walls)),
         weapons=defs.WEAPONS,
         units={int(k): v for k, v in defs.UNIT_DEFS.items()},
         factions=dict(colors={int(k): v for k, v in defs.FACTION_COLORS.items()},

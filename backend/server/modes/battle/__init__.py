@@ -30,6 +30,7 @@ class Battle(Mode):
         for town in world.towns:
             town["owner"] = -1
             town["progress"] = 0.0
+        waves.bind(world)
         self._spawn_bases(world)
         self._spawn_civilians(world)
         self._assign_home_towns(world)

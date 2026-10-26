@@ -78,13 +78,16 @@ LANE_TILES = [
     [(188.0, 188.5), (500.0, 500.5), (812.0, 812.5)],     # mid lane
 ]
 
+# Every town sits on a lane: a depot only supplies while its lane is unbroken
+# back to its own base, so a town off the lanes would be a dead capture point.
+# The list mirrors itself across the x = z diagonal (the mid lane), which is
+# what keeps the two sides' holdings symmetric.
 TOWN_SPOTS = [
     (270, 188), (390, 188), (520, 188), (650, 188), (780, 188),
     (188, 270), (188, 390), (188, 520), (188, 650), (188, 780),
     (812, 270), (812, 390), (812, 520), (812, 650), (812, 780),
     (270, 812), (390, 812), (520, 812), (650, 812), (780, 812),
     (350, 350), (440, 440), (560, 560), (650, 650), (740, 740),
-    (390, 520), (520, 390), (610, 400), (400, 610),
 ]
 
 

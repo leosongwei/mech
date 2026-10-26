@@ -692,9 +692,17 @@ export class Game {
     if (!cand.length) return;
     cand.sort((a, b) => a.d - b.d);
 
+    // the eye a box is drawn from, used for the line of sight test below
+    const eye = [own.x, own.y + ((this.defs.mech && this.defs.mech.eye) || 5.05), own.z];
     for (const c of cand.slice(0, LEAD_TARGETS)) {
       const e = c.e;
       const half = (c.ud.height || 3) * 0.5;               // hull centre above the ground
+      // no line of sight, no box: a hull behind a building or a ridge cannot
+      // be hit, and a marker floating on it would be a wallhack.  The march
+      // ends on the hull centre, so only a contact well short of it blocks.
+      const sight = this.map.groundHit(eye[0], eye[1], eye[2], e.x, e.y + half, e.z, 12);
+      if (sight.hit && Math.hypot(sight.x - e.x, sight.y - e.y - half, sight.z - e.z)
+        > (c.ud.radius || 2)) continue;
       const t = {
         id: e.id,
         x: e.x, y: e.y + half, z: e.z,

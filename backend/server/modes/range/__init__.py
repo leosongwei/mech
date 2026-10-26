@@ -22,7 +22,8 @@ class Range(Mode):
     start_money = 99999
     restart_respawn = 1.0
     rearm_anywhere = True
-    smoke_cooldown = 2.0        # the smoke test wants a pull per threat
+    # no smoke_cooldown override: the battle cooldown is short enough for the
+    # seeker A/B test already
 
     def terrain(self, seed: int) -> terrain_mod.Terrain:
         return terrain_mod.generate_range(seed)

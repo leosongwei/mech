@@ -206,7 +206,7 @@ SMOKE_BURST = 2.2             # 1/s; how fast the burst eases out
 SMOKE_TIME_JITTER = 0.10      # +-fraction of the flight time, per canister
 SMOKE_SIZE_JITTER = 0.10      # +-fraction of the puff size, per canister
 SMOKE_CHARGES = 10            # pulls per life (a full rack, same as a reload)
-SMOKE_COOLDOWN = 18.0         # seconds between pulls
+SMOKE_COOLDOWN = 0.5          # seconds between pulls
 SMOKE_REFILL_COST = 250       # $ for a fresh rack at the base
 SMOKE_REFILL_CHARGES = 10     # pulls the refilled rack holds
 

@@ -193,15 +193,16 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
   shades each tile/ramp as one facet. The far grid `discard`s the patch area
   (`uNear`), the fragment shader draws the tile seam in screen space and fades
   it out once a tile is only a few pixels wide. Heights come from an `R32F`
-  texture, tiles from an `R8UI` one. The far grid's rings grow by a factor of
-  2^`uG` and every vertex is **snapped to the world grid of its own ring
-  spacing** (`floor(uCam/ spacing) * spacing` in `TERRAIN_VS`): a grid that
-  slides continuously with the eye re-samples the heightfield every frame and
-  makes the distant hills crawl. `TERRAIN_LOD` (indexed by the optics step)
-  raises `g` as the sight magnifies - a narrower cone can afford a shorter grid
-  but needs a finer one, so the cover shrinks from 17.6 km (1x) to 5.7 km
-  (20x) while the spacing at 2 km drops from 69 m to 21 m. Roads are a **separate pass built from the
-  `map.roads` bitmask** (`_buildRoads`): every piece is a polygon inside one
+  texture, tiles from an `R8UI` one. The far grid keeps the plain tile spacing
+  for `uA0` rings (one quad per 16 m cell, nothing merged) and only doubles its
+  ring spacing every `uG` rings past that (`TERRAIN_LOD`): the flat radius
+  follows the optics - 768 m at 1x, **3 km at 20x** - and the cover shrinks with
+  it, 17.6 km to 5 km, which the fog hides. Every vertex is **snapped to the
+  world grid of its own ring spacing** (`floor(uCam/ spacing) * spacing` in
+  `TERRAIN_VS`): a grid that slides continuously with the eye re-samples the
+  heightfield every frame and makes the distant hills crawl. Roads are a
+  **separate pass built from the `map.roads` bitmask** (`_buildRoads`): every
+  piece is a polygon inside one
   tile, so it has to be cut along that tile's terrain diagonal (`clipHalf`) to
   stay on one facet - an uncut quad that spans both triangles of a sloped tile
   sinks into the ground and reads as z-fighting. A straight road is two 10 m

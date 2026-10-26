@@ -49,6 +49,7 @@ uniform sampler2D uHeight;
 uniform vec2 uMapSize;
 uniform float uTile;
 uniform float uG;
+uniform float uA0;
 uniform vec3 uCam;
 out vec3 vWP;
 out float vViewZ;
@@ -74,16 +75,20 @@ void main(){
   vec2 a = abs(c);
   vec2 sg = sign(c);
   float G = uG;
-  float k = uTile * G / 0.6931472;
-  // ring spacing along each axis: the offsets grow by a factor of 2 every G
-  // rings, so the next vertex out is "spacing" metres away
-  vec2 spacing = uTile * exp2(a / G);
+  float kk = uTile * G / 0.6931472;
+  // Up to uA0 rings out the grid keeps the plain tile spacing - one quad per
+  // 16 m cell, nothing merged - and only past that does the spacing start to
+  // double every G rings.  The far hills are drawn at tile resolution out to
+  // 3 km at 20x optics, which is where the sight actually looks.
+  vec2 d = max(a - uA0, 0.0);
+  vec2 spacing = uTile * exp2(d / G);
   // Step the grid with the eye in whole cells of its *own* spacing instead of
   // sliding it continuously: every vertex then sits on a fixed world point
   // until the eye crosses a cell, and the far hills stay put instead of
-  // crawling over the heightfield a little every frame.
+  // crawling over the heightfield a little every frame.  Inside the flat core
+  // that grid is the tile grid, so those vertices land on tile corners.
   vec2 base = floor(uCam.xz / spacing) * spacing;
-  vec2 off = sg * k * (pow(vec2(2.0), a / G) - 1.0);
+  vec2 off = sg * (uTile * min(a, vec2(uA0)) + kk * (exp2(d / G) - 1.0));
   vec2 world = base + off;
   float h = texH(world / uTile);
   vec3 wp = vec3(world.x, h, world.y);
@@ -353,18 +358,18 @@ const STRIDE_FLOATS = 20;            // mat4 + vec4 colour
 const CHUNK_TILES = 40;              // 640 m prop chunks
 const DYN_CAP = [40000, 24000, 24000, 24000, 8000, 32000, 64, 64];
 
-// Optics: the radial terrain grid gets more rings per octave and a finer
-// index grid the more the sight magnifies, so the ground stays smooth when
-// 20x squeezes it into a three degree cone.  `k` is the half grid size, `g`
-// the number of rings per doubling of the ring spacing - the spacing at `r`
-// metres is roughly `tile * (1 + r / (23.1 * g))`, so a magnified sight needs
-// a bigger `g` and, since it sees much further into a much smaller cone, can
-// pay with a shorter grid.
+// Optics: the radial terrain grid keeps the plain tile spacing for `a0` rings
+// (no merged quads inside that radius) and doubles its ring spacing every `g`
+// rings after that, so a magnified sight sees the ground at tile resolution far
+// out.  `k` is the half grid size.  `a0` follows the magnification - a 20x
+// sight splits a tile into pixels at 3 km, so nothing is merged out to there -
+// and the cover shrinks with it, since the cone does: 17.6 km at 1x, 5 km at
+// 20x, all of it deep in the fog at the far end.
 const TERRAIN_LOD = [
-  { g: 26, k: 128 },             // 1x   17.6 km of grid
-  { g: 68, k: 176 },             // 4x    7.9 km
-  { g: 150, k: 224 },            // 10x   6.3 km
-  { g: 280, k: 256 },            // 20x   5.7 km
+  { g: 26, k: 174, a0: 48 },     // 1x   tile detail to 768 m, grid to 17.6 km
+  { g: 44, k: 193, a0: 62 },     // 4x   tile detail to 1 km,  grid to 8 km
+  { g: 80, k: 247, a0: 109 },    // 10x  tile detail to 1.7 km, grid to 6 km
+  { g: 64, k: 267, a0: 188 },    // 20x  tile detail to 3 km,  grid to 5 km
 ];
 
 // the tile patch that carries the near ground: TILE_PATCH tiles either way,
@@ -400,7 +405,7 @@ export class Renderer {
     this.pRoad = program(gl, ROAD_VS, ROAD_FS);
     this.pMesh = program(gl, MESH_VS, MESH_FS);
     this.uSky = this._uniforms(this.pSky, ['uInvVP', 'uCamPos', 'uSun']);
-    this.uTerrain = this._uniforms(this.pTerrain, ['uViewProj', 'uHeight', 'uTiles', 'uMapSize', 'uTile', 'uG', 'uCam', 'uSun', 'uFogColor', 'uFogDensity', 'uFar', 'uNear']);
+    this.uTerrain = this._uniforms(this.pTerrain, ['uViewProj', 'uHeight', 'uTiles', 'uMapSize', 'uTile', 'uG', 'uA0', 'uCam', 'uSun', 'uFogColor', 'uFogDensity', 'uFar', 'uNear']);
     this.uTile = this._uniforms(this.pTile, ['uViewProj', 'uHeight', 'uTiles', 'uMapSize', 'uTile', 'uOrigin', 'uCam', 'uSun', 'uFogColor', 'uFogDensity', 'uFar', 'uNear']);
     this.uRoad = this._uniforms(this.pRoad, ['uViewProj', 'uCam', 'uSun', 'uFogColor', 'uFogDensity', 'uFar']);
     this.uMesh = this._uniforms(this.pMesh, ['uViewProj', 'uSun', 'uCamPos', 'uFogColor', 'uFogDensity', 'uFar', 'uUnlit', 'uFacade']);
@@ -525,8 +530,9 @@ export class Renderer {
   // rebuild the terrain grid for a new optics level (cheap, once per step)
   setZoomLevel(level) {
     const lod = TERRAIN_LOD[Math.max(0, Math.min(TERRAIN_LOD.length - 1, level))];
-    if (this.terrainG === lod.g) return;
+    if (this.terrainG === lod.g && this.terrainA0 === lod.a0) return;
     this.terrainG = lod.g;
+    this.terrainA0 = lod.a0;
     this._buildTerrainGrid(lod.k);
   }
 
@@ -973,6 +979,7 @@ export class Renderer {
     gl.useProgram(this.pTerrain);
     common(this.uTerrain);
     gl.uniform1f(this.uTerrain.uG, this.terrainG);
+    gl.uniform1f(this.uTerrain.uA0, this.terrainA0);
     let loc = gl.getAttribLocation(this.pTerrain, 'aCell');
     gl.bindBuffer(gl.ARRAY_BUFFER, this.terrainVBO);
     gl.enableVertexAttribArray(loc);

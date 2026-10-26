@@ -293,6 +293,26 @@ Manual run without tmux:
 cd backend && MECH_DEBUG=1 ../.venv/bin/python run.py --port 8010
 ```
 
+### Inside a sandboxed agent shell
+
+Two things bite here, both about `/tmp`:
+
+* `/tmp` is a per-session scratch directory that does not exist yet, so tmux
+  cannot create its socket (`error creating /tmp/tmux-1000/default`). Create it
+  once and `dev.sh` works as documented:
+
+  ```bash
+  mkdir -p /tmp/tmux-$(id -u) && chmod 700 /tmp/tmux-$(id -u)
+  ./dev.sh start
+  ```
+
+* **Never start the server with `nohup ... &`**, `start-stop-daemon` or any
+  other background job: the tool call hangs on the open pipe and the process
+  dies with the sandbox that spawned it. Start it in the tmux session
+  (`./dev.sh start`, or `tmux new-session -d -s mech ...`), then read the world
+  through `./dev.sh status`, `curl http://127.0.0.1:8010/` and
+  `tail /tmp/mech-server.log` - the session outlives the individual shell call.
+
 ## Checking the game in a browser
 
 The client is playable but also drivable from the console, which is how changes
@@ -334,7 +354,9 @@ g.__cam = (eye, yaw, pitch) => { g._camera = (own, dt) => {
 g.__cam([x, y, z], Math.PI / 4, -0.45);      // yaw: dirFrom convention
 ```
 
-* `_camera` adds `defs.mech.eye` (5.05 m) to `own.y`, hence the `- 5.05`.
+* `_camera` adds `defs.mech.eye` (5.05 m) minus `CAM_DROP` (0.9) to `own.y` and
+  steps `CAM_FWD` (1 m) along the view yaw, hence the `- 5.05` above (the eye
+  then lands 0.9 m lower and 1 m further ahead - close enough for scenery).
 * `input.pitch` is a plain field (settable), `input.viewYaw` is not: writing
   `g.input.viewYaw = ...` does nothing and the eye keeps looking along
   `input.yaw`, which is the *last thing sent to the server* - a still mech can

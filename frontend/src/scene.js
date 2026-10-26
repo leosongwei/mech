@@ -228,7 +228,9 @@ function armModel(R, e, arm, wdefs, flashes, shoulderY, lateral) {
 // First person: two compact gun pods hanging off the eye, so the pilot sees
 // their own hands in the lower corners and nothing sits in their face.  The
 // world model of the same machine is hidden, so this is the only own geometry
-// on screen - sized by eye, not by the hull it replaces.
+// on screen - sized by eye, not by the hull it replaces.  The mounts sit well
+// out to the side and well below the eye line (`L`/`D`), which is what pushes
+// the whole assembly into the two lower corners of the view.
 export function drawFirstPersonArms(R, own, defs, flashes, eye) {
   const hp = own.hp || [1, 1, 1, 1];
   const yaw = own.yaw;
@@ -241,8 +243,8 @@ export function drawFirstPersonArms(R, own, defs, flashes, eye) {
     const p = alive ? own.pitch : -0.5;
     const wd = (defs && defs[own.weapon ? own.weapon[arm] : 0]) || {};
     const kind = wd.kind || 'none';
-    const L = side * 1.3;                        // out to the side of the eye
-    const D = 0.95;                              // and below it
+    const L = side * 1.9;                        // out to the side of the eye
+    const D = 1.45;                              // and below it
     // `out` metres out along the barrel, elevated by p
     const put = (shape, meshPitch, out, sx, sy, sz, colour) =>
       at(R, shape, e, yaw, meshPitch, L, -D + out * Math.sin(p), out * Math.cos(p),

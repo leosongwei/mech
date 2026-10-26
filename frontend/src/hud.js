@@ -10,6 +10,10 @@ const FAR_COLOR = '#ff4a4a';        // distance past the fire control's reach
 const LEAD_COLOR = '#f2f6f4';       // the box round a hull with a pre-aim solution
 const LEAD_RING = 7;                // px, radius of a pre-aim circle
 const RADAR_PX = 78;                // px, outer radius of the threat circle
+const RADAR_MARGIN = 22;            // px between the dial and the screen edges
+// Everything that has to stay clear of the dial - the gear button and the
+// message stack - is laid out in a column this far from the right edge.
+const RADAR_COL = RADAR_PX * 2 + RADAR_MARGIN * 2 + 8;
 
 export class HUD {
   constructor(canvas) {
@@ -479,25 +483,26 @@ export class HUD {
     ctx.restore();
   }
 
-  // ground speed, sitting right above the hull bars: the mech now takes three
-  // seconds to wind up to 120 km/h, so the pilot needs to see the number
-  // Warning circle, top right: a bird's eye of everything closing on the hull,
-  // drawn in the hull's own frame - straight up is where the mech is looking.
+  // Warning circle, in the top right corner: a bird's eye of everything
+  // closing on the hull, drawn in the hull's own frame - straight up is where
+  // the mech is looking.
   // The green dot in the middle is the pilot, the red diamonds are the rounds
-  // the self-defence radar flagged, the red spokes are laser warnings (someone
-  // has his sight on us), each pointing the way the threat comes from.
+  // the self-defence radar flagged, the red arrows are laser designators
+  // (somebody's sight is on us), each pointing at the hull from where the
+  // designator sits, with a dashed beam running in along its line of sight.
   _radar(s, w, h) {
     const ctx = this.ctx;
     const R = RADAR_PX;
-    const cx = w - R - 34;
-    const cy = 250;                     // clear of the message stack above
+    const cx = w - R - RADAR_MARGIN;
+    const cy = R + RADAR_MARGIN + 10;   // up in the corner, the gear sits beside it
     const own = s.own;
     const threats = s.threats || [];
     const lasers = s.lasers || [];
     ctx.save();
-    // a dark disc under the dial so the red marks read against any sky or ground
-    ctx.globalAlpha = 0.9;
-    ctx.fillStyle = 'rgba(6,12,16,0.55)';
+    // a black disc under the dial: the marks have to read against any sky or
+    // ground, so the receiver owns that patch of the screen
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = '#000';
     ctx.beginPath();
     ctx.arc(cx, cy, R + 3, 0, 6.284);
     ctx.fill();
@@ -520,17 +525,37 @@ export class HUD {
     ctx.font = '9px "Courier New", monospace';
     ctx.fillStyle = 'rgba(160,200,185,0.7)';
     ctx.fillText('1 km', cx - 11, cy - R - 8);
-    // laser spokes: bearing 0 is straight ahead (screen up), positive to the right
+    // laser designators: bearing 0 is straight ahead (screen up), positive to
+    // the right.  The sight line is a thin dashed spoke inwards - a beam, not
+    // a track - and the source itself gets a solid arrow pointing at the hull,
+    // so it reads at a glance which of the marks is the laser.
     for (const l of lasers) {
       const a = Math.atan2(l.z - own.z, l.x - own.x) - own.yaw;
       const ring = Math.min(R, (l.dist / 1000) * R);
       const sx = Math.sin(a), sy = -Math.cos(a);
-      ctx.globalAlpha = 0.85;
+      ctx.globalAlpha = 0.75;
       ctx.strokeStyle = FAR_COLOR;
-      ctx.lineWidth = 1.6;
+      ctx.lineWidth = 1.2;
+      ctx.setLineDash([3, 3]);
       ctx.beginPath();
-      ctx.moveTo(cx + sx * ring, cy + sy * ring);
-      ctx.lineTo(cx + sx * (ring - 9), cy + sy * (ring - 9));
+      ctx.moveTo(cx + sx * (ring - 16), cy + sy * (ring - 16));
+      ctx.lineTo(cx + sx * (R * 0.18), cy + sy * (R * 0.18));
+      ctx.stroke();
+      ctx.setLineDash([]);
+      // the arrow: tip inward at the source's range, base just outside it
+      const px = sy, py = -sx;                    // perpendicular, in dial space
+      const tipX = cx + sx * (ring - 13), tipY = cy + sy * (ring - 13);
+      const baseX = cx + sx * (ring + 2), baseY = cy + sy * (ring + 2);
+      ctx.globalAlpha = 0.95;
+      ctx.beginPath();
+      ctx.moveTo(tipX, tipY);
+      ctx.lineTo(baseX + px * 5.5, baseY + py * 5.5);
+      ctx.lineTo(baseX - px * 5.5, baseY - py * 5.5);
+      ctx.closePath();
+      ctx.fillStyle = FAR_COLOR;
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+      ctx.lineWidth = 1;
       ctx.stroke();
     }
     // missile diamonds
@@ -565,6 +590,8 @@ export class HUD {
     ctx.restore();
   }
 
+  // ground speed, sitting right above the hull bars: the mech now takes three
+  // seconds to wind up to 120 km/h, so the pilot needs to see the number
   _speed(s, h) {
     if (!s.own) return;
     const ctx = this.ctx;
@@ -618,14 +645,14 @@ export class HUD {
     ctx.save();
     ctx.textAlign = 'right';
     ctx.font = '12px "Courier New", monospace';
-    // clear of the gear button in the corner
+    // clear of the gear button, and of the warning circle beyond it
     let y = 62;
     for (let i = s.messages.length - 1; i >= 0 && i > s.messages.length - 8; i--) {
       const m = s.messages[i];
       const a = Math.max(0, Math.min(1, m.life));
       ctx.globalAlpha = a * 0.9;
       ctx.fillStyle = m.color || '#cfe6d6';
-      ctx.fillText(m.text, w - 16, y);
+      ctx.fillText(m.text, w - RADAR_COL, y);
       y += 17;
     }
     ctx.restore();
@@ -928,14 +955,15 @@ export class HUD {
     ctx.restore();
   }
 
-  // The gear in the top-right corner: the one HUD button, and the way into the
-  // settings panel.  It needs a free pointer (ESC), so it sits dim until the
-  // mouse is released and brightens under the cursor.
+  // The gear, in the top right - pushed in from the corner so the warning
+  // circle can have it: the one HUD button, and the way into the settings
+  // panel.  It needs a free pointer (ESC), so it sits dim until the mouse is
+  // released and brightens under the cursor.
   _gear(s, w, h) {
     const ctx = this.ctx;
     const mouse = s.mouse || [-1, -1];
     const S = 32;
-    const x = w - S - 10;
+    const x = w - S - RADAR_COL;
     const y = 10;
     const hv = mouse[0] >= x && mouse[0] <= x + S && mouse[1] >= y && mouse[1] <= y + S;
     this.gearRect = { x, y, w: S, h: S };
@@ -979,6 +1007,7 @@ export class HUD {
     const mouse = s.mouse || [-1, -1];
     const dbg = !!s.debug;
     const vol = s.volume === undefined ? 1 : s.volume;
+    const alarm = s.alarmVolume === undefined ? 1 : s.alarmVolume;
     const god = !!(s.meta && s.meta.god);
     const pw = Math.min(560, w * 0.84);
     const fs = Math.max(11, Math.min(15, pw * 0.03));
@@ -987,7 +1016,7 @@ export class HUD {
     const closeH = fs * 2.2;
     // the panel is as tall as its content, so the debug block costs nothing
     // when the server shipped without it
-    let contentH = fs * 2.6 + fs * 1.5 + rowH + fs * 1.4 + closeH;
+    let contentH = fs * 2.6 + fs * 1.5 + rowH * 2 + fs * 1.4 * 2 + closeH;
     if (dbg) contentH += fs * 1.5 + rowH + fs * 1.4;
     const ph = Math.min(h * 0.92, contentH + pad * 2);
     const px = (w - pw) / 2;
@@ -998,6 +1027,7 @@ export class HUD {
 
     this.hot = [];
     this.volRect = null;
+    this.alarmRect = null;
     ctx.save();
     ctx.textBaseline = 'middle';
     ctx.fillStyle = 'rgba(4,8,10,0.55)';
@@ -1030,26 +1060,43 @@ export class HUD {
       ctx.stroke();
     }
 
-    // ---- sound: the master slider, a step either side and the number on it
+    // ---- sound: master and the threat receiver, one slider each.  Every row
+    // is a step-down, an absolute bar and a step-up; the bar is `this.<id>Rect`
+    // so the game can read a click back as a position on it.
     ctx.font = `bold ${fs * 0.85}px "Courier New", monospace`;
     ctx.fillStyle = 'rgba(180,210,195,0.75)';
     ctx.fillText('SOUND', cx, y + fs * 0.45);
     y += fs * 1.5;
+    const slider = (id, label, value, fill) => {
+      const step = fs * 3;
+      btn(`${id}-`, cx + fs * 1.9, y, step, rowH, ['-'], { disabled: value <= 0 });
+      const barX = cx + fs * 1.9 + step + fs * 0.5;
+      const barW = cw - fs * 1.9 - step * 2 - fs;
+      btn(id, barX, y, barW, rowH, [], {});
+      ctx.fillStyle = fill;
+      ctx.fillRect(barX + 2, y + 2, Math.max(0, (barW - 4) * value), rowH - 4);
+      ctx.textAlign = 'center';
+      ctx.font = `bold ${fs * 0.95}px "Courier New", monospace`;
+      ctx.fillStyle = '#e8fff2';
+      ctx.fillText(`${label} ${Math.round(value * 100)}%`, barX + barW / 2, y + rowH / 2);
+      btn(`${id}+`, barX + barW + fs * 0.5, y, step, rowH, ['+'], { disabled: value >= 1 });
+      this[`${id}Rect`] = { x: barX, w: barW };
+      y += rowH + fs * 1.4;
+    };
     drawIcon(ctx, 'volume_up', cx + fs * 0.9, y + rowH / 2, fs * 1.5, 'rgba(190,226,204,0.8)');
-    const step = fs * 3;
-    btn('vol-', cx + fs * 1.9, y, step, rowH, ['-'], { disabled: vol <= 0 });
-    const barX = cx + fs * 1.9 + step + fs * 0.5;
-    const barW = cw - fs * 1.9 - step * 2 - fs;
-    btn('vol', barX, y, barW, rowH, [], {});
-    ctx.fillStyle = 'rgba(124,224,160,0.45)';
-    ctx.fillRect(barX + 2, y + 2, Math.max(0, (barW - 4) * vol), rowH - 4);
-    ctx.textAlign = 'center';
-    ctx.font = `bold ${fs * 0.95}px "Courier New", monospace`;
-    ctx.fillStyle = '#e8fff2';
-    ctx.fillText(`MASTER ${Math.round(vol * 100)}%`, barX + barW / 2, y + rowH / 2);
-    btn('vol+', barX + barW + fs * 0.5, y, step, rowH, ['+'], { disabled: vol >= 1 });
-    this.volRect = { x: barX, w: barW };
-    y += rowH + fs * 1.4;
+    slider('vol', 'MASTER', vol, 'rgba(124,224,160,0.45)');
+    // the alarm row has no glyph of its own (the font subset is exactly the
+    // icons in icons.json), so it gets a warning triangle in the same slot
+    const ix = cx + fs * 0.9, iy = y + rowH / 2, ir = fs * 0.85;
+    ctx.strokeStyle = 'rgba(255,176,74,0.85)';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(ix, iy - ir);
+    ctx.lineTo(ix + ir, iy + ir * 0.8);
+    ctx.lineTo(ix - ir, iy + ir * 0.8);
+    ctx.closePath();
+    ctx.stroke();
+    slider('alarm', 'ALARM', alarm, 'rgba(255,176,74,0.45)');
 
     // ---- debug: only when the server says the messages are accepted
     if (dbg) {

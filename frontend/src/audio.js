@@ -19,17 +19,34 @@ const MISSILE_VOL = 0.06;           // the trill sits a little above it
 const MASTER_GAIN = 3.3;
 const DEFAULT_VOLUME = 0.5;
 const VOLUME_KEY = 'mech.volume';
+// The threat receiver has a slider of its own: the RWR is the one voice a
+// pilot turns down without turning the battle down with it.  Its own bus
+// carries the warble voices only, scaled so the default (50%) is exactly the
+// level the mixes above were tuned at.
+const ALARM_VOLUME_KEY = 'mech.alarmvolume';
+const DEFAULT_ALARM = 0.5;
+const ALARM_GAIN = 1 / DEFAULT_ALARM;   // 50% on the slider = the old level
+// Reverb send for sound events that arrive from far away: a bang 2 km out is
+// mostly the valley answering back, while the same gun next to the cockpit is
+// dry.  Fully wet past ~2.5 km, dry inside ~250 m.
+const VERB_NEAR = 250;
+const VERB_FAR = 2500;
+const VERB_SEND = 0.7;
 
 // speed of sound in air at 20 C, m/s
 export const SOUND_SPEED = 343;
 
-// Distance attenuation: inverse square, anchored where the pilot can still
-// judge it - a bang 1 km out is heard at half level - and clamped to full
-// inside ~700 m.  Each doubling past 1 km costs 6 dB (2 km = 12.5%, 3 km =
-// 5.6%), so gunfire across the map is still there, just distant.
+// Distance attenuation: exponential, halving every 500 m - half level at
+// 500 m, a quarter at 1 km, 1.6% at 3 km - so gunfire across the map is still
+// there, just distant.
 export function attenuation(dist) {
-  const r = Math.max(1, dist);
-  return Math.min(1, 500000 / (r * r));
+  return Math.pow(0.5, Math.max(1, dist) / 500);
+}
+
+// How much of a sound event is the terrain answering back, 0..1.  Distance is
+// the only knob: the wavefront of a far shot arrives smeared and raggedy.
+export function reverberation(dist) {
+  return Math.max(0, Math.min(1, (dist - VERB_NEAR) / (VERB_FAR - VERB_NEAR)));
 }
 
 function storedVolume() {
@@ -40,17 +57,28 @@ function storedVolume() {
   return DEFAULT_VOLUME;
 }
 
+function storedAlarm() {
+  try {
+    const v = parseFloat(localStorage.getItem(ALARM_VOLUME_KEY));
+    if (isFinite(v) && v >= 0 && v <= 1) return v;
+  } catch (e) { }
+  return DEFAULT_ALARM;
+}
+
 export class GameAudio {
   constructor() {
     this.ctx = null;
     this.noise = null;
     this.master = null;
+    this.alarms = null;
+    this.verb = null;
     this.lockOsc = null;
     this.lockGain = null;
     this.warbles = {};
     this.beepTimer = 0;
     this.mode = 'none';
     this.volume = storedVolume();   // 0..1, the settings menu's master slider
+    this.alarmVolume = storedAlarm();   // 0..1, the threat receiver's own one
   }
 
   // 0..1, applied to every voice at once; remembered across reloads
@@ -58,6 +86,13 @@ export class GameAudio {
     this.volume = Math.max(0, Math.min(1, v));
     try { localStorage.setItem(VOLUME_KEY, String(this.volume)); } catch (e) { }
     if (this.master) this.master.gain.value = MASTER_GAIN * this.volume;
+  }
+
+  // 0..1, the threat receiver alone - it sits on its own bus inside master
+  setAlarmVolume(v) {
+    this.alarmVolume = Math.max(0, Math.min(1, v));
+    try { localStorage.setItem(ALARM_VOLUME_KEY, String(this.alarmVolume)); } catch (e) { }
+    if (this.alarms) this.alarms.gain.value = ALARM_GAIN * this.alarmVolume;
   }
 
   ensure() {
@@ -68,6 +103,13 @@ export class GameAudio {
     this.master = this.ctx.createGain();
     this.master.gain.value = MASTER_GAIN * this.volume;
     this.master.connect(this.ctx.destination);
+    this.alarms = this.ctx.createGain();
+    this.alarms.gain.value = ALARM_GAIN * this.alarmVolume;
+    this.alarms.connect(this.master);
+    // one shared room for every event that arrives from a distance
+    this.verb = this.ctx.createConvolver();
+    this.verb.buffer = this._impulse(2.4, 2.8);
+    this.verb.connect(this.master);
     const len = this.ctx.sampleRate * 1.2;
     const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
     const d = buf.getChannelData(0);
@@ -94,7 +136,31 @@ export class GameAudio {
     if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume();
   }
 
-  _noiseBurst(dur, freq, q, gain, type, sweepTo) {
+  // Impulse response for the shared convolver: decaying stereo noise with no
+  // discrete early reflections, which is enough to read as "open ground with
+  // hills around it" without the metallic ring of a real room.
+  _impulse(seconds, decay) {
+    const rate = this.ctx.sampleRate;
+    const len = Math.max(1, Math.floor(rate * seconds));
+    const buf = this.ctx.createBuffer(2, len, rate);
+    for (let c = 0; c < 2; c++) {
+      const d = buf.getChannelData(c);
+      for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, decay);
+    }
+    return buf;
+  }
+
+  // Send a voice into the shared room by `wet` (0..1).  Knobbed off it is a
+  // single extra gain node per voice, which is nothing next to the convolver.
+  _verbSend(node, wet) {
+    if (!(wet > 0) || !this.verb) return;
+    const g = this.ctx.createGain();
+    g.gain.value = VERB_SEND * wet;
+    node.connect(g);
+    g.connect(this.verb);
+  }
+
+  _noiseBurst(dur, freq, q, gain, type, sweepTo, dist = 0) {
     if (!this.ctx) return;
     const t = this.ctx.currentTime;
     const src = this.ctx.createBufferSource();
@@ -109,11 +175,12 @@ export class GameAudio {
     g.gain.setValueAtTime(gain, t);
     g.gain.exponentialRampToValueAtTime(0.0008, t + dur);
     src.connect(f); f.connect(g); g.connect(this.master);
+    this._verbSend(g, reverberation(dist));
     src.start(t, Math.random() * 0.4);
     src.stop(t + dur + 0.05);
   }
 
-  _thump(freq, dur, gain) {
+  _thump(freq, dur, gain, dist = 0) {
     if (!this.ctx) return;
     const t = this.ctx.currentTime;
     const o = this.ctx.createOscillator();
@@ -124,28 +191,31 @@ export class GameAudio {
     g.gain.setValueAtTime(gain, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + dur);
     o.connect(g); g.connect(this.master);
+    this._verbSend(g, reverberation(dist) * 0.6);
     o.start(t); o.stop(t + dur + 0.02);
   }
 
-  shot(wid, kind, vol = 1) {
+  // `dist` is how far the event was from the pilot when the wavefront reached
+  // them: it sets the reverb send, so a far shot is heard with its own echo
+  shot(wid, kind, vol = 1, dist = 0) {
     this.ensure();
     if (!this.ctx) return;
     if (kind === 'bullet') {
-      this._noiseBurst(0.11, 1400 + Math.random() * 500, 1.2, 0.28 * vol, 'bandpass', 400);
-      this._thump(120, 0.09, 0.25 * vol);
+      this._noiseBurst(0.11, 1400 + Math.random() * 500, 1.2, 0.28 * vol, 'bandpass', 400, dist);
+      this._thump(120, 0.09, 0.25 * vol, dist);
     } else if (kind === 'rocket' || kind === 'saclos' || kind === 'top') {
-      this._noiseBurst(0.75, 700, 0.7, 0.32 * vol, 'lowpass', 220);
-      this._thump(80, 0.35, 0.2 * vol);
+      this._noiseBurst(0.75, 700, 0.7, 0.32 * vol, 'lowpass', 220, dist);
+      this._thump(80, 0.35, 0.2 * vol, dist);
     } else {
-      this._noiseBurst(0.08, 1800, 1.5, 0.2 * vol, 'bandpass', 600);
+      this._noiseBurst(0.08, 1800, 1.5, 0.2 * vol, 'bandpass', 600, dist);
     }
   }
 
-  boom(vol = 1, big = false) {
+  boom(vol = 1, big = false, dist = 0) {
     this.ensure();
     if (!this.ctx) return;
-    this._noiseBurst(big ? 1.1 : 0.5, big ? 420 : 600, 0.8, Math.min(1, 0.5 * vol), 'lowpass', 90);
-    this._thump(big ? 55 : 85, big ? 0.9 : 0.4, Math.min(1, 0.5 * vol));
+    this._noiseBurst(big ? 1.1 : 0.5, big ? 420 : 600, 0.8, Math.min(1, 0.5 * vol), 'lowpass', 90, dist);
+    this._thump(big ? 55 : 85, big ? 0.9 : 0.4, Math.min(1, 0.5 * vol), dist);
   }
 
   hit() {
@@ -193,7 +263,7 @@ export class GameAudio {
       lp.Q.value = 0.6;
       const g = this.ctx.createGain();
       g.gain.value = 0;
-      o.connect(lp); lp.connect(g); g.connect(this.master);
+      o.connect(lp); lp.connect(g); g.connect(this.alarms);
       o.frequency.value = RWR_HI;
       o.start();
       v = this.warbles[name] = { o, g, toneDur, next: 0, hi: false, on: false,
@@ -253,7 +323,8 @@ export class GameAudio {
   }
 
   // laser warning: somebody's sight is on the cockpit.  Same tone pair, four
-  // times slower - unmistakable next to the missile warble.
+  // times slower - unmistakable next to the missile warble.  Both alarms ride
+  // the ALARM bus, so they have a slider of their own in the settings menu.
   laserWarning(active) {
     this.ensure();
     if (!this.ctx) return;

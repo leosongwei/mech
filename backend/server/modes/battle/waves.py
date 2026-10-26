@@ -3,9 +3,10 @@
 Both sides count along their own copy of a lane, so "advanced" always means
 the largest index in that faction's list, never a mirrored position.
 
-A town is a depot only while its lane is *unbroken* back to its own command
-base: red - red - red - blue - red means the two towns at the base end still
-supply and the captured one (and everything past it) does not.
+A lane supplies from its **front town only** - the furthest one still
+connected to its own command base.  red - red - red - blue - red means the
+last red town before the cut raises the troops and everything past the cut
+(the captured town included) is silent.
 """
 
 from __future__ import annotations
@@ -21,8 +22,8 @@ if TYPE_CHECKING:
     from ...world import World
 
 MECH_INTERVAL = 120.0         # command base: one mech down every lane
-INF_INTERVAL = 120.0          # per supplying town: one infantry squad
-APC_INTERVAL = 120.0          # per supplying town: one APC
+INF_INTERVAL = 60.0           # per supplying town: one infantry squad
+APC_INTERVAL = 60.0           # per supplying town: one APC
 INF_SQUAD = [defs.ETYPE_INF_ROCKET] * 6 + [defs.ETYPE_INF_RIFLE] * 4
 CAPTURE_TIME = 9.0
 CAPTURE_RADIUS = 170.0
@@ -89,20 +90,24 @@ def _capture(world: World, dt: float) -> None:
             world.emit("capture", x=town["x"], z=town["z"], faction=int(holder))
 
 
-def _supply_towns(world: World, faction: int) -> list[dict]:
-    """Towns that may still raise troops: the unbroken run of own towns from
-    that faction's command base down its lane."""
-    out = []
-    for lane in range(len(world.lanes)):
-        chain = [t for t in world.towns if t.get("lane") == lane]
-        chain.sort(key=lambda t: t["lane_i"])          # red's base first
-        if faction == defs.FACTION_BLUE:
-            chain.reverse()                            # blue walks the other way
-        for town in chain:
-            if town["owner"] != faction:
-                break                                  # cut off from the base
-            out.append(town)
-    return out
+def _front_town(world: World, faction: int, lane: int) -> dict | None:
+    """The furthest town on the lane still connected to the faction's base.
+
+    Only that one supplies: the depots behind it have already handed their
+    troops forward, so a lane raises one column at a time instead of a column
+    from every town it owns.  A captured town cuts the chain - the front falls
+    back to the last town before it.
+    """
+    chain = [t for t in world.towns if t.get("lane") == lane]
+    chain.sort(key=lambda t: t["lane_i"])              # red's base first
+    if faction == defs.FACTION_BLUE:
+        chain.reverse()                                # blue walks the other way
+    front = None
+    for town in chain:
+        if town["owner"] != faction:
+            break                                      # cut off from the base
+        front = town
+    return front
 
 
 def _clear_near(world: World, x: float, z: float,
@@ -143,14 +148,16 @@ def _base_waves(world: World, dt: float) -> None:
 
 
 def _town_waves(world: World, dt: float) -> None:
-    """Every town still connected to its base raises its own garrison."""
+    """The front town of every lane raises the next column."""
     for faction in (defs.FACTION_RED, defs.FACTION_BLUE):
-        for town in _supply_towns(world, faction):
+        for lane in range(len(world.lanes)):
+            town = _front_town(world, faction, lane)
+            if town is None:
+                continue
             town["inf_t"] -= dt
             town["apc_t"] -= dt
             if town["inf_t"] > 0.0 and town["apc_t"] > 0.0:
                 continue
-            lane = int(town["lane"])
             x, z = _clear_near(world, town["x"], town["z"], 40.0, 85.0)
             if town["inf_t"] <= 0.0:
                 town["inf_t"] = INF_INTERVAL

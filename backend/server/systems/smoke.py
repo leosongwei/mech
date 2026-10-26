@@ -1,8 +1,11 @@
 """Hot smoke: a fan of canisters thrown out of the hull, then a wall of smoke.
 
 A pull (``Q``) throws ``defs.SMOKE_COUNT`` canisters out of the hull in a fan
-that closes the front hemisphere.  Each one flies ``SMOKE_RANGE`` metres and
-pops into one big puff that stays up for ``SMOKE_LIFE`` seconds.
+that closes the front hemisphere.  Each one flies roughly ``SMOKE_RANGE`` metres
+and pops into one big puff that stays up for ``SMOKE_LIFE`` seconds.  No two of
+them are identical: the tube velocity jitters the flight time by
+``SMOKE_TIME_JITTER`` and every charge is filled ``SMOKE_SIZE_JITTER`` off the
+nominal puff, so the wall is ragged instead of a perfect lattice.
 
 The smoke is a set of ordinary entities - ``pos`` + ``smoke`` + ``smoke_r`` +
 ``smoke_t`` - and *only* that: no ``unit``, no ``faction``, no ``etype``.  Every
@@ -65,26 +68,33 @@ def throw(world: World, eid: int) -> None:
         p = math.radians(el)
         cp = math.cos(p)
         d = (cp * math.cos(a), math.sin(p), cp * math.sin(a))
+        # No two canisters of a pull are identical: the tube velocity jitters
+        # (+-SMOKE_TIME_JITTER of the flight time, so the pop distance follows)
+        # and every charge is filled slightly differently (+-SMOKE_SIZE_JITTER).
+        speed = defs.SMOKE_SPEED * world.rng.uniform(1.0 - defs.SMOKE_TIME_JITTER,
+                                                    1.0 + defs.SMOKE_TIME_JITTER)
+        scale = world.rng.uniform(1.0 - defs.SMOKE_SIZE_JITTER,
+                                 1.0 + defs.SMOKE_SIZE_JITTER)
         cid = e.create()
         for c in components.SMOKE_COMPS:
             e.add_comp(cid, c)
         e.add_comp(cid, "canister")
         e["pos"][cid] = (px, py + launcher_h, pz)
-        e["vel"][cid] = (d[0] * defs.SMOKE_SPEED, d[1] * defs.SMOKE_SPEED,
-                         d[2] * defs.SMOKE_SPEED)
-        e["smoke_t"][cid] = defs.SMOKE_RANGE / defs.SMOKE_SPEED   # time to pop
-        e["smoke_r"][cid] = _radii(0.0)
+        e["vel"][cid] = (d[0] * speed, d[1] * speed, d[2] * speed)
+        e["smoke_t"][cid] = defs.SMOKE_RANGE / speed       # time to pop
+        e["smoke_r"][cid] = _radii(0.0, scale)
+        e["smoke_s"][cid] = scale
 
 
-def _radii(age: float) -> tuple[float, float, float]:
-    """Puff semiaxes `age` seconds after the pop.
+def _radii(age: float, scale: float = 1.0) -> tuple[float, float, float]:
+    """Puff semiaxes `age` seconds after the pop, `scale` times a full puff.
 
     A canister is a small charge: it bursts the smoke out fast and the puff
     then keeps creeping for the rest of its life, so the growth is an
     ease-out towards ``SMOKE_FLAT`` rather than a constant spread.
     """
     k = 1.0 - math.exp(-defs.SMOKE_BURST * age)
-    f = defs.SMOKE_START + (1.0 - defs.SMOKE_START) * k
+    f = (defs.SMOKE_START + (1.0 - defs.SMOKE_START) * k) * scale
     return (defs.SMOKE_FLAT[0] * f, defs.SMOKE_FLAT[1] * f, defs.SMOKE_FLAT[0] * f)
 
 
@@ -115,11 +125,12 @@ def _pop(world: World, cid: int) -> None:
     e.remove_comp(cid, "canister")
     e.add_comp(cid, "smoke")
     e["vel"][cid] = (0.0, 0.0, 0.0)
+    scale = float(e["smoke_s"][cid])
     # a low canister would bury half its puff in the terrain, so the centre
     # sits half a radius up: what is left underground does not matter
-    e["pos"][cid, 1] = max(float(e["pos"][cid, 1]), defs.SMOKE_FLAT[1] * 0.5)
+    e["pos"][cid, 1] = max(float(e["pos"][cid, 1]), defs.SMOKE_FLAT[1] * 0.5 * scale)
     e["smoke_t"][cid] = defs.SMOKE_LIFE
-    e["smoke_r"][cid] = _radii(0.0)
+    e["smoke_r"][cid] = _radii(0.0, scale)
 
 
 def _fade(world: World, dt: float) -> None:
@@ -130,13 +141,14 @@ def _fade(world: World, dt: float) -> None:
         return
     t = e["smoke_t"]
     rad = e["smoke_r"]
+    scl = e["smoke_s"]
     for sid in ids:
         sid = int(sid)
         t[sid] = float(t[sid]) - dt
         if t[sid] <= 0.0:
             e.destroy(sid)
             continue
-        rad[sid] = _radii(defs.SMOKE_LIFE - float(t[sid]))
+        rad[sid] = _radii(defs.SMOKE_LIFE - float(t[sid]), float(scl[sid]))
 
 
 def blocks(world: World, a: tuple[float, float, float],

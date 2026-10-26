@@ -89,6 +89,7 @@ def register(ecs: ECS) -> None:
     ecs.register("smoke", np.uint8)                  # deployed puff
     ecs.register("smoke_r", np.float32, (3,), 0.0)  # ellipsoid semiaxes, metres
     ecs.register("smoke_t", np.float32, 0.0)        # seconds to pop / of life left
+    ecs.register("smoke_s", np.float32, (), 1.0)    # this canister's size factor
 
     # ---- projectile -----------------------------------------------------
     ecs.register("proj_kind", np.uint8)              # 0 bullet 1 rocket 2 saclos 3 top
@@ -114,4 +115,4 @@ PROJ_COMPS = ["pos", "vel", "faction", "proj_kind", "proj_wid", "proj_life", "pr
 
 # a canister in flight and a deployed puff share their shape so one snapshot
 # section and one client pass can draw both
-SMOKE_COMPS = ["pos", "vel", "smoke_r", "smoke_t"]
+SMOKE_COMPS = ["pos", "vel", "smoke_r", "smoke_t", "smoke_s"]

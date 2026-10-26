@@ -126,13 +126,28 @@ frontend/
   laid on **tile centres** (half-tile coordinates), the corridor around it is
   flattened to a terrace (`ROAD_WEIGHT` makes the asphalt beat the verges), and
   a road tile's ground keeps the grass colour - the asphalt is a separate client
-  pass, the OpenTTD way. `ground_hit` treats buildings and tree stands as
-  upright columns (`obstacle_at` = ground + `wall_at`) and walks the ray
-  **tile by tile** (`_spans`, a 2D DDA), so a 30 mm round that covers 36 m in
-  one tick cannot skip a facade; inside a tile it samples every 8 m and then
-  bisects 6 times, which lands the burst on the outer face.  The client's
-  `predictImpact` samples its 1/30 step every 8 m the same way - testing only
-  the end point let fast rounds predict a hit behind the building.
+  pass, the OpenTTD way. `ground_hit` treats buildings as upright columns
+  (`obstacle_at` = ground + `wall_at`) and walks the ray **tile by tile**
+  (`_spans`, a 2D DDA), so a 30 mm round that covers 36 m in one tick cannot
+  skip a facade; inside a tile it samples every 8 m and then bisects 6 times,
+  which lands the burst on the outer face.  The client's `predictImpact`
+  samples its 1/30 step every 8 m the same way - testing only the end point let
+  fast rounds predict a hit behind the building.
+* **Trees are trunks for physics, canopies for sight.** A tree/forest tile
+  holds 1-5 trees whose trunks are the only solid part of it: `_trunks(i, j)`
+  (server) / `treeTrunks` in `map.js` lay them out from one hash both sides
+  replicate exactly, and each is a **cylinder** - `r` = 0.35-0.6 m, `h` =
+  0.4 x the tree's 10-18 m height, the same cylinder the renderer draws.
+  A trunk is a metre wide, far thinner than the 8 m the ray walk samples at, so
+  it is **solved, not sampled**: `_trunk_hit` (segment vs circle in plan view,
+  then the height at the entry point) inside `_march`, mirrored by
+  `MapData.trunkHit`. Hulls test the same cylinders (`trunk_blocked`, from
+  `movement`) and drive under the canopy. `wall_at`/`blocked` return the trunk
+  only; `sight_wall`/`sight_at` still stop the line of sight at the whole tile
+  at `TREE_H` = 10 m, which is what `los()` - lock, seeker, AI - uses. Never
+  make a tree tile block a round or a hull again (`TREE_H` as an obstacle), and
+  never give the canopy a bullet collision: the plan is trunk-solid,
+  leaves-see-through.
 * **Netcode** — one init payload with the map and all definitions, then binary
   snapshots at 15 Hz (`SNAP_EVERY`) and JSON meta at 10 Hz (`META_EVERY`).
   Entity state is authoritative on the server; the client only interpolates.
@@ -178,7 +193,14 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
   shades each tile/ramp as one facet. The far grid `discard`s the patch area
   (`uNear`), the fragment shader draws the tile seam in screen space and fades
   it out once a tile is only a few pixels wide. Heights come from an `R32F`
-  texture, tiles from an `R8UI` one. Roads are a **separate pass built from the
+  texture, tiles from an `R8UI` one. The far grid's rings grow by a factor of
+  2^`uG` and every vertex is **snapped to the world grid of its own ring
+  spacing** (`floor(uCam/ spacing) * spacing` in `TERRAIN_VS`): a grid that
+  slides continuously with the eye re-samples the heightfield every frame and
+  makes the distant hills crawl. `TERRAIN_LOD` (indexed by the optics step)
+  raises `g` as the sight magnifies - a narrower cone can afford a shorter grid
+  but needs a finer one, so the cover shrinks from 17.6 km (1x) to 5.7 km
+  (20x) while the spacing at 2 km drops from 69 m to 21 m. Roads are a **separate pass built from the
   `map.roads` bitmask** (`_buildRoads`): every piece is a polygon inside one
   tile, so it has to be cut along that tile's terrain diagonal (`clipHalf`) to
   stay on one facet - an uncut quad that spans both triangles of a sloped tile
@@ -188,8 +210,9 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
   Units/props/projectiles are instanced primitives submitted through
   `WEBGL_multi_draw` with a per-command fallback. Prop instances are batched
   per mesh (`this.meshes.length` batches) and culled in 640 m chunks
-  (`CHUNK_TILES` = 40) by `_buildProps`, which plants several trees per tree
-  tile and, per building tile, a `MESH_FACADE` box as tall as `map.walls`
+  (`CHUNK_TILES` = 40) by `_buildProps`, which plants the trees of
+  `map.js`'s `treeTrunks` (the same trunks the server collides against) and,
+  per building tile, a `MESH_FACADE` box as tall as `map.walls`
   (storeys and windows are painted in the shader off `vLocal`/`vScale`,
   `uFacade`), a roof slab with a parapet, an occasional plant box or annex.
 * `scene.js` builds unit models from primitives in a local frame: **+X
@@ -197,9 +220,9 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
   laid along the barrel with `pitch = FORWARD` (`-PI/2`); use
   `FORWARD + p` when a pitch is already in play.
 * `map.js` must stay ballistically identical to the server: same gravity,
-  same 1/30 step, same launch bias (`wd.bias`), the same "buildings and trees
-  are columns" rule (`wallAt`/`obstacleAt`), otherwise the predicted impact
-  point drifts off the real one.
+  same 1/30 step, same launch bias (`wd.bias`), the same "building walls are
+  columns, tree trunks are cylinders" rule (`wallAt`/`obstacleAt`/`trunkHit`),
+  otherwise the predicted impact point drifts off the real one.
 * **Sound is not immediate.** Gunfire and explosions go through
   `game._sound(x, y, z, play)` -> `game.sounds`, a list of acoustic events in
   the air (emit position + time, 20 s TTL). `_pumpSounds()` runs every frame and

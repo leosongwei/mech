@@ -12,7 +12,7 @@
 
 import { compose, mat4, multiply, perspective, lookAt } from './math.js';
 import { buildMeshes, MESH_BOX, MESH_SPHERE, MESH_CONE, MESH_CYL, MESH_ROCK, MESH_PYRAMID, MESH_SMOKE, MESH_FACADE } from './meshes.js';
-import { ROAD_N, ROAD_E, ROAD_S, ROAD_W, ROAD_D_WS, ROAD_D_NE } from './map.js';
+import { ROAD_N, ROAD_E, ROAD_S, ROAD_W, ROAD_D_WS, ROAD_D_NE, treeTrunks } from './map.js';
 
 const SKY_VS = `#version 300 es
 in vec2 aPos;
@@ -75,8 +75,16 @@ void main(){
   vec2 sg = sign(c);
   float G = uG;
   float k = uTile * G / 0.6931472;
+  // ring spacing along each axis: the offsets grow by a factor of 2 every G
+  // rings, so the next vertex out is "spacing" metres away
+  vec2 spacing = uTile * exp2(a / G);
+  // Step the grid with the eye in whole cells of its *own* spacing instead of
+  // sliding it continuously: every vertex then sits on a fixed world point
+  // until the eye crosses a cell, and the far hills stay put instead of
+  // crawling over the heightfield a little every frame.
+  vec2 base = floor(uCam.xz / spacing) * spacing;
   vec2 off = sg * k * (pow(vec2(2.0), a / G) - 1.0);
-  vec2 world = uCam.xz + off;
+  vec2 world = base + off;
   float h = texH(world / uTile);
   vec3 wp = vec3(world.x, h, world.y);
   vec4 clip = uViewProj * vec4(wp, 1.0);
@@ -347,12 +355,16 @@ const DYN_CAP = [40000, 24000, 24000, 24000, 8000, 32000, 64, 64];
 
 // Optics: the radial terrain grid gets more rings per octave and a finer
 // index grid the more the sight magnifies, so the ground stays smooth when
-// 20x squeezes it into a three degree cone.  `k` is the half grid size.
+// 20x squeezes it into a three degree cone.  `k` is the half grid size, `g`
+// the number of rings per doubling of the ring spacing - the spacing at `r`
+// metres is roughly `tile * (1 + r / (23.1 * g))`, so a magnified sight needs
+// a bigger `g` and, since it sees much further into a much smaller cone, can
+// pay with a shorter grid.
 const TERRAIN_LOD = [
-  { g: 26, k: 128 },
-  { g: 52, k: 160 },
-  { g: 82, k: 192 },
-  { g: 116, k: 224 },
+  { g: 26, k: 128 },             // 1x   17.6 km of grid
+  { g: 68, k: 176 },             // 4x    7.9 km
+  { g: 150, k: 224 },            // 10x   6.3 km
+  { g: 280, k: 256 },            // 20x   5.7 km
 ];
 
 // the tile patch that carries the near ground: TILE_PATCH tiles either way,
@@ -707,14 +719,11 @@ export class Renderer {
       const y = map.heightAt(x, z);
       const r1 = hash(i, j), r2 = hash(j * 1.7, i * 2.3);
       if (t === 3 || t === 7) {
-        const n = t === 7 ? 3 + Math.floor(r1 * 3) : 1 + Math.floor(r1 * 2);
-        for (let q = 0; q < n; q++) {
-          const q1 = hash(i + q * 5.3, j + q * 1.9);
-          const q2 = hash(j + q * 3.7, i + q * 7.1);
-          const q3 = hash(i * 1.3 + q, j * 2.7 - q);
-          // trunks spread over the tile but never touch its border
-          const px = x + (q1 - 0.5) * tile * 0.66;
-          const pz = z + (q2 - 0.5) * tile * 0.66;
+        // the trunk spots come from map.js, which is also what the server
+        // collides against: a round bursts on the trunk you can see
+        for (const tr of treeTrunks(i, j, t, tile)) {
+          const { q1, q2, q3 } = tr;
+          const px = tr.x, pz = tr.z;
           const py = map.heightAt(px, pz);
           const broad = q3 > 0.45;
           const tall = 10.0 + q3 * 8.0;                     // 10..18 m

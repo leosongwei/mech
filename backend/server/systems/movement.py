@@ -16,7 +16,9 @@ if TYPE_CHECKING:
 def _blocked(terrain: Terrain, x: float, z: float, rad: float) -> bool:
     return (terrain.blocked(x, z) or terrain.blocked(x + rad, z) or
             terrain.blocked(x - rad, z) or terrain.blocked(x, z + rad) or
-            terrain.blocked(x, z - rad))
+            terrain.blocked(x, z - rad) or
+            # trunks are thinner than those samples: distance tested
+            terrain.trunk_blocked(x, z, rad))
 
 
 def _turn_legs(world: World, dt: float) -> None:

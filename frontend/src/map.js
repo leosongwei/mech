@@ -17,7 +17,39 @@ export const ROAD_D_NE = 32;    // north edge middle -> east edge middle
 export const ROAD_STRAIGHT = ROAD_N | ROAD_E | ROAD_S | ROAD_W;
 export const ROAD_DIAG = ROAD_D_WS | ROAD_D_NE;
 
-const TREE_H = 10.0;            // must match terrain.py
+const TRUNK_R = 0.5;            // trunk radius, must match terrain.py
+
+// The hash the renderer plants its trees with - the server collides against
+// exactly the trunks it produces (`terrain.py`, `_tree_hash`).
+export function treeHash(a, b) {
+  const s = Math.sin(a * 12.9898 + b * 78.233) * 43758.5453;
+  return s - Math.floor(s);
+}
+
+// Where a tree tile's trunks stand: `{x, z, r, h}` each, 1-2 trees on a tree
+// tile and 3-5 on a forest tile, plus the three hash draws (`q1`-`q3`) the
+// renderer gives each tree its height, canopy and colour from.  The canopy
+// above the trunks is not in here: it hides what is behind it without stopping
+// anything that flies.
+export function treeTrunks(i, j, t, tile) {
+  const r1 = treeHash(i, j);
+  const n = t === 7 ? 3 + Math.floor(r1 * 3) : 1 + Math.floor(r1 * 2);
+  const cx = (i + 0.5) * tile, cz = (j + 0.5) * tile;
+  const out = [];
+  for (let q = 0; q < n; q++) {
+    const q1 = treeHash(i + q * 5.3, j + q * 1.9);
+    const q2 = treeHash(j + q * 3.7, i + q * 7.1);
+    const q3 = treeHash(i * 1.3 + q, j * 2.7 - q);
+    out.push({
+      x: cx + (q1 - 0.5) * tile * 0.66,      // spread over the tile, never
+      z: cz + (q2 - 0.5) * tile * 0.66,      // touching its border
+      r: TRUNK_R * (0.7 + q3 * 0.5),
+      h: (10.0 + q3 * 8.0) * 0.40,           // the trunk column, canopy excluded
+      q1, q2, q3,
+    });
+  }
+  return out;
+}
 
 function b64ToBytes(b64) {
   const bin = atob(b64);
@@ -42,6 +74,7 @@ export class MapData {
     this.tiles = tiles;          // Uint8Array(w*h)
     this.roads = roads;          // Uint8Array(w*h), ROAD_* piece bits
     this.walls = walls;          // Uint8Array(w*h), wall/roof height in metres
+    this.trunkCache = new Map(); // tile index -> trunk layout, filled on demand
   }
 
   static async load(info, lanes) {
@@ -76,8 +109,7 @@ export class MapData {
 
   blocked(x, z) {
     const t = this.tileAt(x, z);
-    return t === TILE_BUILDING || t === TILE_TREE || t === TILE_FOREST ||
-      t === TILE_ROCK || t === TILE_SOLID;
+    return t === TILE_BUILDING || t === TILE_ROCK || t === TILE_SOLID;
   }
 
   // mirrors Terrain.inside on the server: past the map edge there is no
@@ -87,7 +119,7 @@ export class MapData {
   }
 
   // the obstacle column standing on the ground: a building up to the roof the
-  // server drew its walls with, a tree stand as one flat block - mirrors
+  // server drew its walls with, a tree as nothing but its trunk - mirrors
   // Terrain.wall_at so the predicted impact is the real one
   wallAt(x, z) {
     const i = Math.floor(x / this.tile), j = Math.floor(z / this.tile);
@@ -95,8 +127,59 @@ export class MapData {
     const k = j * this.w + i;
     const t = this.tiles[k];
     if (t === TILE_BUILDING) return this.walls[k] || 8.0;
-    if (t === TILE_TREE || t === TILE_FOREST) return TREE_H;
+    if (t === TILE_TREE || t === TILE_FOREST) {
+      for (const tr of this.trunksAt(i, j)) {
+        const dx = x - tr.x, dz = z - tr.z;
+        if (dx * dx + dz * dz <= tr.r * tr.r) return tr.h;
+      }
+    }
     return 0;
+  }
+
+  // the trunk layout of a tile, laid out once per tile the eye ever asks about
+  trunksAt(i, j) {
+    const k = j * this.w + i;
+    let tr = this.trunkCache.get(k);
+    if (tr === undefined) {
+      const t = this.tiles[k];
+      tr = t === TILE_TREE || t === TILE_FOREST ? treeTrunks(i, j, t, this.tile) : [];
+      this.trunkCache.set(k, tr);
+    }
+    return tr;
+  }
+
+  // Where a segment first enters a tree trunk, or null.  A trunk is about a
+  // metre wide - far thinner than the 8 m the ground walk samples at - so it is
+  // solved as a cylinder instead of sampled, exactly as the server does
+  // (Terrain._trunk_hit); otherwise a predicted round flies through the tree
+  // the real one bursts in.
+  trunkHit(x0, y0, z0, x1, y1, z1) {
+    const T = this.tile;
+    const i0 = Math.floor(Math.min(x0, x1) / T), i1 = Math.floor(Math.max(x0, x1) / T);
+    const j0 = Math.floor(Math.min(z0, z1) / T), j1 = Math.floor(Math.max(z0, z1) / T);
+    const dx = x1 - x0, dy = y1 - y0, dz = z1 - z0;
+    const a = dx * dx + dz * dz;
+    if (a < 1e-9) return null;
+    let best = null;
+    for (let j = Math.max(j0, 0); j <= Math.min(j1, this.h - 1); j++) {
+      for (let i = Math.max(i0, 0); i <= Math.min(i1, this.w - 1); i++) {
+        for (const tr of this.trunksAt(i, j)) {
+          const ex = x0 - tr.x, ez = z0 - tr.z;
+          const b = 2 * (ex * dx + ez * dz);
+          const c = ex * ex + ez * ez - tr.r * tr.r;
+          const disc = b * b - 4 * a * c;
+          if (disc < 0) continue;
+          const sq = Math.sqrt(disc);
+          // entry first, then the far root when the segment starts inside
+          for (const t of [(-b - sq) / (2 * a), (-b + sq) / (2 * a)]) {
+            if (t < 0 || t > 1) continue;
+            if (y0 + dy * t <= this.heightAt(tr.x, tr.z) + tr.h && (best === null || t < best)) best = t;
+            break;
+          }
+        }
+      }
+    }
+    return best;
   }
 
   obstacleAt(x, z) {
@@ -109,10 +192,14 @@ export class MapData {
     const dx = x1 - x0, dy = y1 - y0, dz = z1 - z0;
     const dist = Math.hypot(dx, dy, dz);
     if (dist < 1e-4) return { hit: y0 <= this.obstacleAt(x0, z0), t: 0, x: x0, y: y0, z: z0 };
+    const trunkT = this.trunkHit(x0, y0, z0, x1, y1, z1);
     const n = Math.max(1, Math.ceil(dist / step));
     let prev = 0;
     for (let k = 1; k <= n; k++) {
       const t = k / n;
+      if (trunkT !== null && trunkT <= t) {
+        return { hit: true, t: trunkT, x: x0 + dx * trunkT, y: y0 + dy * trunkT, z: z0 + dz * trunkT };
+      }
       const x = x0 + dx * t, y = y0 + dy * t, z = z0 + dz * t;
       let ground = this.obstacleAt(x, z);
       if (y <= ground) {
@@ -214,6 +301,13 @@ export function predictImpact(map, wd, ox, oy, oz, dir, units, out, faction) {
       groundT = b; gx = x + sx * b; gy = y + sy * b; gz = z + sz * b;
       break;
     }
+    // a tree trunk is a metre wide - the 8 m samples above walk right past it,
+    // so it is solved as a cylinder (mirrors Terrain._trunk_hit)
+    const trunkT = map.trunkHit(x, y, z, nx, ny, nz);
+    if (trunkT !== null && trunkT < groundT) {
+      groundT = trunkT;
+      gx = x + sx * trunkT; gy = y + sy * trunkT; gz = z + sz * trunkT;
+    }
     if (bestT <= 1 && bestT <= groundT) {
       out.hit = true; out.unit = hitU;
       out.x = x + sx * bestT; out.y = y + sy * bestT; out.z = z + sz * bestT;
@@ -264,12 +358,21 @@ export function sightPoint(map, ox, oy, oz, dir, maxDist, units, ignoreId, facti
     point = { x: ox + dir[0] * t, y: oy + dir[1] * t, z: oz + dir[2] * t };
   }
   const limit = best;
+  const at = (t) => ({ x: ox + dir[0] * t, y: oy + dir[1] * t, z: oz + dir[2] * t });
   for (let t0 = 0; t0 < limit; t0 += MARCH) {
     const t1 = Math.min(limit, t0 + MARCH);
     const x = ox + dir[0] * t1, y = oy + dir[1] * t1, z = oz + dir[2] * t1;
     // off the map there is nothing to zero on: the round follows the aim line
     if (!map.inside(x, z)) return null;
-    if (y > map.heightAt(x, z) && !map.blocked(x, z)) continue;
+    // a trunk is a metre wide and MARCH is 24 m, so it is solved over the whole
+    // step: zeroing past a trunk the round bursts in would drop every shot at
+    // a tree short of the crosshair
+    const th = map.trunkHit(ox + dir[0] * t0, oy + dir[1] * t0, oz + dir[2] * t0, x, y, z);
+    const trunkT = th === null ? null : t0 + th * (t1 - t0);
+    if (y > map.heightAt(x, z) && !map.blocked(x, z)) {
+      if (trunkT !== null) return at(trunkT);
+      continue;
+    }
     let a = t0, b = t1;
     for (let i = 0; i < 6; i++) {
       const m = 0.5 * (a + b);
@@ -277,7 +380,7 @@ export function sightPoint(map, ox, oy, oz, dir, maxDist, units, ignoreId, facti
       if (my > map.heightAt(mx, mz) && !map.blocked(mx, mz)) a = m; else b = m;
     }
     const t = 0.5 * (a + b);
-    return { x: ox + dir[0] * t, y: oy + dir[1] * t, z: oz + dir[2] * t };
+    return at(trunkT !== null && trunkT < t ? trunkT : t);
   }
   return point;
 }

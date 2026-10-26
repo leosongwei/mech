@@ -1,7 +1,8 @@
 """Fire control: find what the muzzle is pointing at, and how high to hold.
 
 The sight point is the first thing the ray from the muzzle runs into - the
-ground, a building tile or a unit's hit sphere - out to ``defs.ZERO_RANGE``.
+ground, a building tile, a tree trunk or a unit's hit sphere - out to
+``defs.ZERO_RANGE``.
 The solver then returns the launch elevation that puts the round on that
 point, mirroring the integrator in ``systems/projectiles.py`` (1/30 s
 semi-implicit Euler, same gravity and, for rockets, the same thrust curve).
@@ -83,6 +84,14 @@ def sight_point(world: World, origin: tuple[float, float, float],
             # so the shot just follows the aim line (the round expires in the
             # air or drops away on its own)
             return None
+        # a tree trunk is a metre wide, far thinner than MARCH, so it is solved
+        # over the whole step rather than probed at its end: zeroing past a
+        # trunk the round is going to burst in would make every shot at a tree
+        # fall short of the crosshair
+        seg = terrain.trunk_hit(
+            (origin[0] + direction[0] * t0, origin[1] + direction[1] * t0,
+             origin[2] + direction[2] * t0), (x, y, z))
+        trunk_t = t0 + seg[1] * (t1 - t0) if seg[0] else None
         if y <= terrain.height_at(x, z) or terrain.blocked(x, z):
             a, b = t0, t1
             for _ in range(6):
@@ -95,8 +104,14 @@ def sight_point(world: World, origin: tuple[float, float, float],
                 else:
                     b = m
             t = 0.5 * (a + b)
+            if trunk_t is not None and trunk_t < t:
+                return (origin[0] + direction[0] * trunk_t,
+                        origin[1] + direction[1] * trunk_t,
+                        origin[2] + direction[2] * trunk_t)
             return (origin[0] + direction[0] * t, origin[1] + direction[1] * t,
                     origin[2] + direction[2] * t)
+        if trunk_t is not None:
+            return seg[2]
         t0 = t1
     return unit_pt
 

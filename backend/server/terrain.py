@@ -16,6 +16,8 @@ pure python loop.
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 
 TILE = 16.0
@@ -34,6 +36,8 @@ TILE_SOLID = 6          # blocks movement, rendered as part of the base
 TILE_FOREST = 7         # thick stand: the client plants several trees per tile
 
 BLOCKING = (TILE_BUILDING, TILE_TREE, TILE_ROCK, TILE_SOLID, TILE_FOREST)
+# ... except the two tree tiles, which block with their trunks only - see
+# Terrain.blocked / wall_at
 
 # A road tile is a set of pieces, the way OpenTTD composes one from ROADBITS:
 # each of the four cardinal bits is the half of the tile that reaches that
@@ -55,7 +59,9 @@ ROAD_STRAIGHT = ROAD_N | ROAD_E | ROAD_S | ROAD_W
 ROAD_WEIGHT = 100       # how hard a road tile outweighs its verges when the
                         # corridor is flattened: the asphalt stays level
 BUILDING_H = 8.0        # wall height of a building tile the map did not size
-TREE_H = 10.0           # a tree stand is one flat obstacle: rounds burst in it
+TREE_H = 10.0           # how tall a tree stand stops sight (its canopy)
+TRUNK_R = 0.5           # trunk radius of a tree: the only thing a round or a
+                        # hull actually meets in a tree tile (see _trunks)
 FLOOR_H = 4.0           # one storey of a town building
 
 # command bases (tile coordinates)
@@ -207,6 +213,40 @@ def _dilate(mask: np.ndarray, r: int) -> np.ndarray:
     return out
 
 
+def _tree_hash(a: float, b: float) -> float:
+    """The 0..1 hash the client plants its trees with (`renderer.js`, `plant`).
+
+    Both sides must pick the same trunk spots, or a round stops in the air
+    beside a trunk the player can see.
+    """
+    s = math.sin(a * 12.9898 + b * 78.233) * 43758.5453
+    return s - math.floor(s)
+
+
+def _trunks(i: int, j: int, t: int) -> tuple[tuple[float, float, float, float], ...]:
+    """Where the trunks of a tree tile stand: ``(x, z, radius, height)`` each.
+
+    One or two trees on a tree tile, three to five on a forest tile, spread over
+    the tile but never touching its border - exactly the stand the client
+    draws.  The canopy above them is not part of this: it hides what is behind
+    it (`sight_at`) without stopping anything that flies.
+    """
+    r1 = _tree_hash(i, j)
+    n = 3 + int(r1 * 3) if t == TILE_FOREST else 1 + int(r1 * 2)
+    cx = (i + 0.5) * TILE
+    cz = (j + 0.5) * TILE
+    out = []
+    for q in range(n):
+        q1 = _tree_hash(i + q * 5.3, j + q * 1.9)
+        q2 = _tree_hash(j + q * 3.7, i + q * 7.1)
+        q3 = _tree_hash(i * 1.3 + q, j * 2.7 - q)
+        out.append((cx + (q1 - 0.5) * TILE * 0.66,
+                    cz + (q2 - 0.5) * TILE * 0.66,
+                    TRUNK_R * (0.7 + q3 * 0.5),
+                    (10.0 + q3 * 8.0) * 0.40))
+    return tuple(out)
+
+
 class Terrain:
     def __init__(self, heights: np.ndarray, tiles: np.ndarray, lanes: list,
                  towns: list[dict], bases: dict[int, tuple[float, float]],
@@ -226,6 +266,9 @@ class Terrain:
                       else roads.astype(np.uint8))
         self.walls = (np.zeros((self.d, self.w), np.uint8) if walls is None
                       else walls.astype(np.uint8))
+        # trunk layout of the tree tiles that get asked about, tile index ->
+        # ((x, z, r, h), ...) - built on demand, a few hundred entries
+        self.trunk_cache: dict[int, tuple] = {}
 
     # -- sampling ---------------------------------------------------------
     def height_at(self, x: float, z: float) -> float:
@@ -239,13 +282,39 @@ class Terrain:
         return float((h[j, i] * (1 - tx) + h[j, i + 1] * tx) * (1 - tz) +
                      (h[j + 1, i] * (1 - tx) + h[j + 1, i + 1] * tx) * tz)
 
+    def _trunks(self, i: int, j: int) -> tuple:
+        k = j * self.w + i
+        tr = self.trunk_cache.get(k)
+        if tr is None:
+            tr = _trunks(i, j, int(self.tiles[j, i]))
+            self.trunk_cache[k] = tr
+        return tr
+
     def wall_at(self, x: float, z: float) -> float:
         """Height of the obstacle standing on the ground at (x, z).
 
-        A building is a solid column up to its roof, a tree stand is one flat
-        obstacle; everything else is bare ground.  Off the field nothing flies
-        on, which the caller reads as an immediate hit.
+        A building is a solid column up to its roof, a tree is nothing but its
+        trunk - the canopy overhead stops no round; everything else is bare
+        ground.  Off the field nothing flies on, which the caller reads as an
+        immediate hit.
         """
+        i = int(np.floor(x / TILE))
+        j = int(np.floor(z / TILE))
+        if i < 0 or j < 0 or i >= self.w or j >= self.d:
+            return 1e6
+        t = self.tiles[j, i]
+        if t == TILE_BUILDING:
+            return float(self.walls[j, i]) or BUILDING_H
+        if t == TILE_TREE or t == TILE_FOREST:
+            for tx, tz, r, h in self._trunks(i, j):
+                if (x - tx) ** 2 + (z - tz) ** 2 <= r * r:
+                    return h
+        return 0.0
+
+    def sight_wall(self, x: float, z: float) -> float:
+        """The height a line of sight is cut at: a building up to its roof, a
+        tree stand at its canopy - the leaves hide what stands behind them even
+        though they stop neither a round nor a hull."""
         i = int(np.floor(x / TILE))
         j = int(np.floor(z / TILE))
         if i < 0 or j < 0 or i >= self.w or j >= self.d:
@@ -261,6 +330,10 @@ class Terrain:
         """The height a round coming in from above is stopped at."""
         return self.height_at(x, z) + self.wall_at(x, z)
 
+    def sight_at(self, x: float, z: float) -> float:
+        """The height a line of sight is cut at."""
+        return self.height_at(x, z) + self.sight_wall(x, z)
+
     def tile_type(self, x: float, z: float) -> int:
         i = int(x / TILE)
         j = int(z / TILE)
@@ -269,7 +342,38 @@ class Terrain:
         return int(self.tiles[j, i])
 
     def blocked(self, x: float, z: float) -> bool:
-        return self.tile_type(x, z) in BLOCKING
+        """Whether a hull cannot stand at (x, z).  A tree blocks with its trunk
+        only, so a hull drives under the canopy of a tree or a whole forest."""
+        t = self.tile_type(x, z)
+        if t == TILE_TREE or t == TILE_FOREST:
+            i = int(x / TILE)
+            j = int(z / TILE)
+            for tx, tz, r, _h in self._trunks(i, j):
+                if (x - tx) ** 2 + (z - tz) ** 2 <= r * r:
+                    return True
+            return False
+        return t in BLOCKING
+
+    def trunk_blocked(self, x: float, z: float, rad: float) -> bool:
+        """Whether a hull of radius ``rad`` at (x, z) runs into a trunk.
+
+        A trunk is far thinner than the handful of points movement samples, so
+        the tiles the hull overlaps are distance tested instead - otherwise a
+        mech drives straight through the trees it should be weaving between.
+        """
+        i0 = max(int((x - rad) / TILE), 0)
+        i1 = min(int((x + rad) / TILE), self.w - 1)
+        j0 = max(int((z - rad) / TILE), 0)
+        j1 = min(int((z + rad) / TILE), self.d - 1)
+        for j in range(j0, j1 + 1):
+            for i in range(i0, i1 + 1):
+                t = self.tiles[j, i]
+                if t != TILE_TREE and t != TILE_FOREST:
+                    continue
+                for tx, tz, r, _h in self._trunks(i, j):
+                    if (x - tx) ** 2 + (z - tz) ** 2 <= (rad + r) ** 2:
+                        return True
+        return False
 
     def inside(self, x: float, z: float) -> bool:
         """False once a point leaves the map: off the field there is no ground
@@ -306,45 +410,106 @@ class Terrain:
                 j += sz
                 tz = ((j + (1 if dz > 0 else 0)) * TILE - z) / dz
 
-    def ground_hit(self, p0: np.ndarray, p1: np.ndarray,
-                   step: float = 8.0,
-                   ) -> tuple[bool, float, np.ndarray | tuple[float, float, float]]:
-        """Return (hit, t, point) for the first ground contact on the segment.
+    def _trunk_hit(self, p0, dx: float, dy: float, dz: float,
+                   i: int, j: int, ta: float, tb: float):
+        """Where inside tile ``(i, j)`` the segment enters a trunk, or None.
 
-        Buildings and tree stands count as ground: the wall of a building is a
-        vertical step at the tile border, so a round fired into a facade bursts
-        on the face - where the smoke can be seen - instead of inside the hull.
+        A trunk is about a metre wide, far thinner than the 8 m the ground walk
+        samples at, so it is solved as a cylinder instead of sampled - which is
+        what makes a round fired at a tree actually stop in it.
         """
+        t = self.tiles[j, i]
+        if t != TILE_TREE and t != TILE_FOREST:
+            return None
+        a = dx * dx + dz * dz
+        if a <= 1e-9:
+            return None
+        best = None
+        for tx, tz, r, h in self._trunks(i, j):
+            ex = p0[0] - tx
+            ez = p0[2] - tz
+            b = 2.0 * (ex * dx + ez * dz)
+            c = ex * ex + ez * ez - r * r
+            disc = b * b - 4.0 * a * c
+            if disc < 0.0:
+                continue
+            sq = disc ** 0.5
+            for root in ((-b - sq) / (2.0 * a), (-b + sq) / (2.0 * a)):
+                if ta <= root <= tb and 0.0 <= root <= 1.0:
+                    if p0[1] + dy * root <= self.height_at(tx, tz) + h:
+                        if best is None or root < best:
+                            best = root
+                    break
+        return best
+
+    def _march(self, p0: np.ndarray, p1: np.ndarray, step: float, at,
+               trunks: bool = False,
+               ) -> tuple[bool, float, np.ndarray | tuple[float, float, float]]:
+        """Walk the segment and report the first point at or below ``at``."""
         dx = float(p1[0] - p0[0])
         dy = float(p1[1] - p0[1])
         dz = float(p1[2] - p0[2])
         dist = (dx * dx + dy * dy + dz * dz) ** 0.5
         if dist < 1e-4:
             return False, 0.0, p0
-        if p0[1] <= self.obstacle_at(p0[0], p0[2]) + 1.0:
+        if p0[1] <= at(p0[0], p0[2]) + 1.0:
             return True, 0.0, p0
         prev = 0.0
-        for ta, tb, _i, _j in self._spans(p0, dx, dz):
+        for ta, tb, i, j in self._spans(p0, dx, dz):
+            tt = (self._trunk_hit(p0, dx, dy, dz, i, j, ta, tb)
+                  if trunks and 0 <= i < self.w and 0 <= j < self.d else None)
             n = max(1, int((tb - ta) * dist / step + 0.5))
             for k in range(1, n + 1):
                 t = ta + (tb - ta) * k / n
-                if p0[1] + dy * t > self.obstacle_at(p0[0] + dx * t, p0[2] + dz * t):
+                if p0[1] + dy * t > at(p0[0] + dx * t, p0[2] + dz * t):
                     prev = t
                     continue
+                if tt is not None and tt < t:
+                    return True, tt, (p0[0] + dx * tt, p0[1] + dy * tt,
+                                      p0[2] + dz * tt)
                 a, b = prev, t
                 for _ in range(6):
                     m = (a + b) * 0.5
-                    if (p0[1] + dy * m >
-                            self.obstacle_at(p0[0] + dx * m, p0[2] + dz * m)):
+                    if p0[1] + dy * m > at(p0[0] + dx * m, p0[2] + dz * m):
                         a = m
                     else:
                         b = m
                 t = (a + b) * 0.5
                 return True, t, (p0[0] + dx * t, p0[1] + dy * t, p0[2] + dz * t)
+            if tt is not None:
+                return True, tt, (p0[0] + dx * tt, p0[1] + dy * tt, p0[2] + dz * tt)
         return False, 1.0, p1
 
+    def trunk_hit(self, p0: np.ndarray, p1: np.ndarray,
+                  ) -> tuple[bool, float, np.ndarray | tuple[float, float, float]]:
+        """``(hit, t, point)`` for the first tree trunk the segment runs into."""
+        dx = float(p1[0] - p0[0])
+        dy = float(p1[1] - p0[1])
+        dz = float(p1[2] - p0[2])
+        for ta, tb, i, j in self._spans(p0, dx, dz):
+            if not (0 <= i < self.w and 0 <= j < self.d):
+                continue
+            t = self._trunk_hit(p0, dx, dy, dz, i, j, ta, tb)
+            if t is not None:
+                return True, t, (p0[0] + dx * t, p0[1] + dy * t, p0[2] + dz * t)
+        return False, 1.0, p1
+
+    def ground_hit(self, p0: np.ndarray, p1: np.ndarray,
+                   step: float = 8.0,
+                   ) -> tuple[bool, float, np.ndarray | tuple[float, float, float]]:
+        """Return (hit, t, point) for the first ground contact on the segment.
+
+        Buildings and tree trunks count as ground: the wall of a building is a
+        vertical step at the tile border, so a round fired into a facade bursts
+        on the face - where the smoke can be seen - instead of inside the hull.
+        Leaves are not in the way; they only hide (`sight_at`).
+        """
+        return self._march(p0, p1, step, self.obstacle_at, trunks=True)
+
     def los(self, a: np.ndarray, b: np.ndarray, step: float = 8.0) -> bool:
-        hit, _, _ = self.ground_hit(a, b, step)
+        """Whether ``a`` sees ``b``: the ground, the buildings and the tree
+        canopies between them decide, not the trunks."""
+        hit, _, _ = self._march(a, b, step, self.sight_at)
         return not hit
 
 

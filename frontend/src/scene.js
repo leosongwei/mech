@@ -38,14 +38,14 @@ function at(R, shape, e, yaw, pitch, ox, oy, oz, sx, sy, sz, col, alpha) {
 
 const FORWARD = -Math.PI / 2;   // rotates a Y-axis primitive onto +X
 
-export function drawUnits(R, entities, projectiles, ownMechId, defs, flashes) {
+export function drawUnits(R, entities, projectiles, defs, flashes) {
   R.beginDynamic();
   for (const e of entities.values()) {
     switch (e.type) {
       case 1: infantry(R, e, false); break;
       case 2: infantry(R, e, true); break;
       case 3: apc(R, e, flashes); break;
-      case 4: mech(R, e, defs, flashes, e.id === ownMechId); break;
+      case 4: mech(R, e, defs, flashes); break;
       case 5: base(R, e); break;
       case 6: civilian(R, e); break;
       case 7: wreck(R, e); break;
@@ -140,7 +140,7 @@ function apc(R, e, flashes) {
   }
 }
 
-function mech(R, e, defs, flashes, firstPerson) {
+function mech(R, e, defs, flashes) {
   const fac = facColor(e);
   const legYaw = e.leg;
   const yaw = e.yaw;
@@ -153,29 +153,22 @@ function mech(R, e, defs, flashes, firstPerson) {
     at(R, 'sphere', e, legYaw, 0, side * 1.05, 2.6, 0, 1.25, 1.1, 1.25, METAL_L);
     at(R, 'cyl', e, legYaw, 0, side * 1.05, 3.0, 0, 0.85, 0.9, 0.85, METAL_D);
   }
-  // the pelvis plate is what the cockpit sits on: from inside the pilot looks
-  // straight past it and down onto their own legs
-  if (!firstPerson) at(R, 'box', e, legYaw, 0, 0, 3.35, 0, 2.9, 0.9, 2.4, METAL_D);
+  // the pelvis plate is what the cockpit sits on
+  at(R, 'box', e, legYaw, 0, 0, 3.35, 0, 2.9, 0.9, 2.4, METAL_D);
 
   // --- torso (follows the mouse) --------------------------------------
-  // from the cockpit the eye sits inside the hull, so the pilot only sees the
-  // legs and the two weapon arms of their own machine
-  if (!firstPerson) {
-    at(R, 'box', e, yaw, 0, 0, 4.35, 0, 2.6, 1.9, 3.0, METAL);
-    at(R, 'box', e, yaw, 0, 0, 4.45, -1.5, 2.2, 1.1, 0.5, fac);
-    at(R, 'box', e, yaw, 0, 0, 5.15, 0.35, 1.5, 0.5, 1.9, GLASS);
-    at(R, 'sphere', e, yaw, 0, 0, 5.15, 0.75, 1.35, 0.9, 1.1, [0.16, 0.22, 0.26]);
-    at(R, 'box', e, yaw, 0, 0, 4.15, 1.95, 1.0, 0.7, 0.6, fac);
-    for (const side of [-1, 1]) {
-      at(R, 'box', e, yaw, 0, side * 1.35, 5.15, -0.3, 1.05, 0.55, 1.7, METAL_L);
-      at(R, 'cone', e, yaw, FORWARD, side * 1.35, 5.15, 0.6, 0.45, 1.4, 0.45, [0.14, 0.14, 0.15]);
-    }
+  at(R, 'box', e, yaw, 0, 0, 4.35, 0, 2.6, 1.9, 3.0, METAL);
+  at(R, 'box', e, yaw, 0, 0, 4.45, -1.5, 2.2, 1.1, 0.5, fac);
+  at(R, 'box', e, yaw, 0, 0, 5.15, 0.35, 1.5, 0.5, 1.9, GLASS);
+  at(R, 'sphere', e, yaw, 0, 0, 5.15, 0.75, 1.35, 0.9, 1.1, [0.16, 0.22, 0.26]);
+  at(R, 'box', e, yaw, 0, 0, 4.15, 1.95, 1.0, 0.7, 0.6, fac);
+  for (const side of [-1, 1]) {
+    at(R, 'box', e, yaw, 0, side * 1.35, 5.15, -0.3, 1.05, 0.55, 1.7, METAL_L);
+    at(R, 'cone', e, yaw, FORWARD, side * 1.35, 5.15, 0.6, 0.45, 1.4, 0.45, [0.14, 0.14, 0.15]);
   }
 
   // --- arms: left = module 2, right = module 3 ------------------------
-  if (!firstPerson) {
-    for (let arm = 0; arm < 2; arm++) armModel(R, e, arm, wdefs, flashes, 4.4, 1.95);
-  }
+  for (let arm = 0; arm < 2; arm++) armModel(R, e, arm, wdefs, flashes, 4.4, 1.95);
 }
 
 // One arm of a mech.  Every piece is placed `dist` metres out along the
@@ -222,50 +215,6 @@ function armModel(R, e, arm, wdefs, flashes, shoulderY, lateral) {
     const tip = kind === 'bullet' ? 6.8 : 3.4;
     put('sphere', p, tip, 0.9, 0.9, 0.9, [1.0, 0.72, 0.22]);
     put('cone', FORWARD + p, tip + 1.1, 0.7, 1.8, 0.7, [1.0, 0.88, 0.45]);
-  }
-}
-
-// First person: two compact gun pods hanging off the eye, so the pilot sees
-// their own hands in the lower corners and nothing sits in their face.  The
-// world model of the same machine is hidden, so this is the only own geometry
-// on screen - sized by eye, not by the hull it replaces.  The mounts sit well
-// out to the side and well below the eye line (`L`/`D`), which is what pushes
-// the whole assembly into the two lower corners of the view.
-export function drawFirstPersonArms(R, own, defs, flashes, eye) {
-  const hp = own.hp || [1, 1, 1, 1];
-  const yaw = own.yaw;
-  const fac = facColor(own);
-  const e = { x: eye[0], y: eye[1], z: eye[2] };
-  for (let arm = 0; arm < 2; arm++) {
-    const side = arm === 0 ? -1 : 1;
-    const alive = hp[arm === 0 ? 2 : 3] > 0;
-    const col = alive ? METAL : DEAD;
-    const p = alive ? own.pitch : -0.5;
-    const wd = (defs && defs[own.weapon ? own.weapon[arm] : 0]) || {};
-    const kind = wd.kind || 'none';
-    const L = side * 1.9;                        // out to the side of the eye
-    const D = 1.45;                              // and below it
-    // `out` metres out along the barrel, elevated by p
-    const put = (shape, meshPitch, out, sx, sy, sz, colour) =>
-      at(R, shape, e, yaw, meshPitch, L, -D + out * Math.sin(p), out * Math.cos(p),
-        sx, sy, sz, colour);
-
-    put('box', p, 3.0, 0.44, 0.38, 1.1, col);                    // mount
-    if (kind === 'rocket' || kind === 'saclos' || kind === 'top') {
-      put('box', p, 3.3, 0.5, 0.46, 1.2, alive ? fac : DEAD);    // launcher pod
-      put('cyl', FORWARD + p, 3.5, 0.2, 1.3, 0.2, [0.1, 0.1, 0.11]);
-    } else if (kind === 'bullet') {
-      put('cyl', FORWARD + p, 4.85, 0.11, 2.4, 0.11, [0.12, 0.13, 0.14]);
-      put('cyl', FORWARD + p, 6.15, 0.18, 0.36, 0.18, [0.1, 0.1, 0.11]);
-    } else {
-      put('cyl', FORWARD + p, 4.5, 0.09, 1.9, 0.09, [0.12, 0.12, 0.13]);
-    }
-    const fl = flashes && flashes.get(own.id);
-    if (alive && fl && fl.arm === arm) {
-      const tip = kind === 'bullet' ? 6.35 : 4.45;
-      put('sphere', p, tip, 0.55, 0.55, 0.55, [1.0, 0.72, 0.22]);
-      put('cone', FORWARD + p, tip + 0.8, 0.36, 1.1, 0.36, [1.0, 0.88, 0.45]);
-    }
   }
 }
 

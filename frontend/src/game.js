@@ -5,7 +5,7 @@ import { MapData, intercept, predictImpact, unitSpheres, zeroPitch } from './map
 import { Input } from './input.js';
 import { GameAudio, SOUND_SPEED, attenuation } from './audio.js';
 import { Renderer, makeCamera } from './renderer.js';
-import { drawUnits, drawFirstPersonArms } from './scene.js';
+import { drawUnits } from './scene.js';
 import { HUD } from './hud.js';
 import { Particles } from './particles.js';
 import { clamp, dirFrom, invert4, mat4 } from './math.js';
@@ -28,8 +28,9 @@ const SHAKE_BOOM_BIG = 0.225;       // near blast, big round (a quarter of the o
 const SHAKE_BOOM_SMALL = 0.0875;    // near blast, shell hit
 const SHAKE_LAUNCH = 0.5;           // own missile leaving the tube
 const SHAKE_GUN = 0.12;             // own cannon round, "slight" (a burst adds up)
-const CAM_DROP = 0.9;               // m, the eye sits below the mech's own one
-const CAM_FWD = 1.0;                // m, and this far ahead of it
+const CAM_UP = 1.5;                 // m, the eye sits this far above the canopy
+const CAM_BACK = 2.6;               // m behind the hull centre, so the machine
+                                    // shows in the lower frame like a shoulder
 
 export class Game {
   constructor() {
@@ -372,8 +373,7 @@ export class Game {
     this._threats(own);
     this._alarms(own);
     this._updateLockTone(own);
-    drawUnits(this.renderer, this.net.entities, this.net.projectiles, own ? own.id : -1, this.defs.weapons, this.flashes);
-    if (own) drawFirstPersonArms(this.renderer, own, this.defs.weapons, this.flashes, cam.eye);
+    drawUnits(this.renderer, this.net.entities, this.net.projectiles, this.defs.weapons, this.flashes);
     this.particles.render(this.renderer);
     this._drawSmoke();
     this.renderer.draw(cam);
@@ -919,11 +919,11 @@ export class Game {
       invert4(cam.invViewProj, cam.viewProj);
       return cam;
     }
-    // first person: the eye sits in the cockpit and looks exactly where the
-    // arms point, so the reticle is the centre of the screen at every zoom.
-    // It sits low and forward in the cockpit rather than on the mech's own eye
-    // point: from there the two arm pods hang in the lower corners of the view
-    // instead of crossing the middle of it.
+    // shoulder camera: the eye rides just above the canopy and a little behind
+    // the hull centre, and looks exactly where the arms point, so the reticle
+    // is the centre of the screen at every zoom.  The machine itself is drawn
+    // in full (no separate view model), which is what makes the barrels, the
+    // hull and the muzzle flashes all sit where the rounds really come out.
     let yaw = this.input.viewYaw;
     let pitch = clamp(this.input.pitch + this.input.freePitch * 0.8, -1.35, 1.35);
     if (this.shake > 0.01) {
@@ -934,8 +934,8 @@ export class Game {
       pitch += (Math.random() - 0.5) * s;
     }
     const dir = dirFrom(yaw, pitch);
-    const eyeH = ((this.defs.mech && this.defs.mech.eye) || 5.05) - CAM_DROP;
-    const eye = [own.x + Math.cos(yaw) * CAM_FWD, own.y + eyeH, own.z + Math.sin(yaw) * CAM_FWD];
+    const eyeH = ((this.defs.mech && this.defs.mech.eye) || 5.05) + CAM_UP;
+    const eye = [own.x - Math.cos(yaw) * CAM_BACK, own.y + eyeH, own.z - Math.sin(yaw) * CAM_BACK];
     const aspect = this.glCanvas.clientWidth / Math.max(1, this.glCanvas.clientHeight);
     const fov = clamp(BASE_FOV / this.zoom, 0.02, BASE_FOV);
     makeCamera(cam, eye, [eye[0] + dir[0], eye[1] + dir[1], eye[2] + dir[2]], fov, aspect, 0.4, this.renderer.far);

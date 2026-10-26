@@ -378,9 +378,12 @@ g.__cam = (eye, yaw, pitch) => { g._camera = (own, dt) => {
 g.__cam([x, y, z], Math.PI / 4, -0.45);      // yaw: dirFrom convention
 ```
 
-* `_camera` adds `defs.mech.eye` (5.05 m) minus `CAM_DROP` (0.9) to `own.y` and
-  steps `CAM_FWD` (1 m) along the view yaw, hence the `- 5.05` above (the eye
-  then lands 0.9 m lower and 1 m further ahead - close enough for scenery).
+* `_camera` is a shoulder camera: it adds `defs.mech.eye` (5.05 m) plus
+  `CAM_UP` (1.5 m) to `own.y` and steps `CAM_BACK` (2.6 m) *backwards* along the
+  view yaw, hence the `- 5.05` above (the eye then lands 1.5 m higher and 2.6 m
+  behind - close enough for scenery). The pilot's own machine is drawn like any
+  other unit, in full: there is **no separate first-person view model**, so the
+  barrels on screen are the barrels the rounds leave from.
 * `input.pitch` is a plain field (settable), `input.viewYaw` is not: writing
   `g.input.viewYaw = ...` does nothing and the eye keeps looking along
   `input.yaw`, which is the *last thing sent to the server* - a still mech can
@@ -391,7 +394,7 @@ g.__cam([x, y, z], Math.PI / 4, -0.45);      // yaw: dirFrom convention
   whose `textContent` is `DEPLOY`).
 * `g.renderer.roadCount = 0` (save the old value) hides the road pass;
   replacing `g.renderer.draw` with a wrapper that calls `g.renderer.beginDynamic()`
-  first hides every dynamic body — units *and* the first-person arms — which is
+  first hides every dynamic body — including the pilot's own mech — which is
   what a clean scenery shot needs:
 
 ```js
@@ -429,8 +432,8 @@ for (let k = 0; k < 6; k++) {
 * One `debug_tp` per ~second: the client only sees the move in the next
   snapshot pair.
 * `debug_hurt` with `module: 0, amount: 99999` kills the mech (god mode must be
-  off first) → the camera falls back to the base orbit and the first-person
-  arms disappear; `{ t: 'respawn' }` brings it back.
+  off first) → the camera falls back to the base orbit and the own hull is no
+  longer drawn; `{ t: 'respawn' }` brings it back.
 * An async `evaluate` with `await sleep(...)` is the way to sequence these
   steps; keep each call under the shell timeout (raise it for the bash call, not
   with `-m` alone) and take the screenshot in a separate request.

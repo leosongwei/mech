@@ -20,10 +20,10 @@ from ... import defs
 if TYPE_CHECKING:
     from ...world import World
 
-MECH_INTERVAL = 60.0          # command base: one mech down every lane
-INF_INTERVAL = 20.0           # per supplying town: one infantry squad
-APC_INTERVAL = 60.0           # per supplying town: one APC
-INF_SQUAD = [defs.ETYPE_INF_ROCKET] * 3 + [defs.ETYPE_INF_RIFLE] * 2
+MECH_INTERVAL = 120.0         # command base: one mech down every lane
+INF_INTERVAL = 120.0          # per supplying town: one infantry squad
+APC_INTERVAL = 120.0          # per supplying town: one APC
+INF_SQUAD = [defs.ETYPE_INF_ROCKET] * 6 + [defs.ETYPE_INF_RIFLE] * 4
 CAPTURE_TIME = 9.0
 CAPTURE_RADIUS = 170.0
 

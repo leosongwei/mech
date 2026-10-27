@@ -80,7 +80,8 @@ def static_payload(world: World) -> dict:
         debug=os.environ.get("MECH_DEBUG") == "1",
         mode=world.mode,
         lock=dict(frac=defs.LOCK_FRAC, fov=defs.BASE_FOV),
-        zero=dict(range=defs.ZERO_RANGE, max_elev=defs.ZERO_MAX_ELEV),
+        zero=dict(range=defs.ZERO_RANGE, max_elev=defs.ZERO_MAX_ELEV,
+                  steps=list(defs.ZERO_STEPS), default=defs.ZERO_DEFAULT),
     )
 
 

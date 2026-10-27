@@ -36,6 +36,7 @@ class Player:
         self.last_seq: int = 0
         self.score: int = 0
         self.zoom: float = 1.0         # optics magnification, mirrored for the IR seeker
+        self.zero_range: float = defs.ZERO_DEFAULT   # sight setting, metres
         self.aspect: float = 16.0 / 9.0
         self.smoke_q: bool = False     # one press of Q, consumed by systems/smoke.py
         self.smoke_cd: float = 0.0     # seconds until the next pull is allowed

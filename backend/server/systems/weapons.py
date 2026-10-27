@@ -125,13 +125,20 @@ def fire(world: World, eid: int, arm: int, wid: int, wd: dict, target: int = -1)
         # guided rounds: launch upward, guidance takes over immediately
         pitch = max(pitch, 0.18)
 
-    # direct fire is zeroed: hold off for the drop so the round lands where
-    # the muzzle points.  `bias` was the launcher's mechanical sighting and is
-    # absorbed by the solution; guided rounds keep both as they are.
+    # direct fire is zeroed: hold off for the drop so the round meets the sight
+    # line at the pilot's setting.  A pilot's gun uses that fixed range, which
+    # keeps the barrel still while the sight crosses a crest; the AI solves
+    # against the target it is aiming at, because it never has to read a
+    # reticle.  `bias` was the launcher's mechanical sighting and is absorbed
+    # by the solution; guided rounds keep it.
     zero = None
     if kind in (0, 1):
-        zero = ballistics.zero_pitch(world, origin, yaw, pitch, wd, ignore=eid,
-                                     faction=int(e["faction"][eid]))
+        pl = world.players.get(int(e["owner"][eid]))
+        if pl is not None:
+            zero = ballistics.zero_at(origin, yaw, pitch, wd, pl.zero_range)
+        else:
+            zero = ballistics.zero_pitch(world, origin, yaw, pitch, wd, ignore=eid,
+                                         faction=int(e["faction"][eid]))
 
     for k in range(n):
         sp = float(wd["spread"]) * (1.0 if k == 0 else 0.6)

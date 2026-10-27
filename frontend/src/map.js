@@ -335,12 +335,16 @@ export const TILES = {
   TILE_GRASS, TILE_ROAD, TILE_BUILDING, TILE_TREE, TILE_ROCK, TILE_BASE, TILE_SOLID, TILE_FOREST,
 };
 
-// Fire control, mirroring backend/server/ballistics.py: what the muzzle ray
-// runs into, and the elevation that drops the round on it.  Both sides have to
-// agree or the reticle lies about where the shot lands.
+// Fire control, mirroring backend/server/ballistics.py: the sight is set to a
+// fixed range and the barrel holds off for the drop to that range.  Both sides
+// have to agree or the reticle lies about where the shot lands.
 const MARCH = 24;        // sight-ray resolution, metres
 const MIN_DIST = 25;
 
+// What the centre cross is pointing at: the first thing the sight ray runs
+// into - ground, a building face, a tree trunk or a hull - out to `maxDist`.
+// This is the number under the cross, and it is the mirror of the server's
+// `ballistics.sight_point`, so the reading is the range the gun really has.
 export function sightPoint(map, ox, oy, oz, dir, maxDist, units, ignoreId, faction) {
   let best = maxDist;
   let point = null;
@@ -362,11 +366,10 @@ export function sightPoint(map, ox, oy, oz, dir, maxDist, units, ignoreId, facti
   for (let t0 = 0; t0 < limit; t0 += MARCH) {
     const t1 = Math.min(limit, t0 + MARCH);
     const x = ox + dir[0] * t1, y = oy + dir[1] * t1, z = oz + dir[2] * t1;
-    // off the map there is nothing to zero on: the round follows the aim line
-    if (!map.inside(x, z)) return null;
+    // off the map there is nothing to range against
+    if (!map.inside(x, z)) return point;
     // a trunk is a metre wide and MARCH is 24 m, so it is solved over the whole
-    // step: zeroing past a trunk the round bursts in would drop every shot at
-    // a tree short of the crosshair
+    // step instead of sampled
     const th = map.trunkHit(ox + dir[0] * t0, oy + dir[1] * t0, oz + dir[2] * t0, x, y, z);
     const trunkT = th === null ? null : t0 + th * (t1 - t0);
     if (y > map.heightAt(x, z) && !map.blocked(x, z)) {
@@ -419,12 +422,6 @@ function altitudeAt(wd, ox, oy, oz, yaw, pitch, dist) {
   return hit ? hit.y : null;
 }
 
-// seconds of flight to reach `dist` metres of horizontal travel
-export function flightTime(wd, ox, oy, oz, yaw, pitch, dist) {
-  const hit = flightTo(wd, ox, oy, oz, yaw, pitch, dist);
-  return hit ? hit.t : null;
-}
-
 export function solveElevation(wd, ox, oy, oz, yaw, pitch, target, maxElev) {
   const d = Math.hypot(target.x - ox, target.z - oz);
   if (d < MIN_DIST) return null;
@@ -454,40 +451,72 @@ export function solveElevation(wd, ox, oy, oz, yaw, pitch, target, maxElev) {
   return Math.abs(t1) <= maxElev ? t1 : null;
 }
 
-// The pre-aim solution of a moving target: the point in the world a round of
-// `wd` has to be aimed at to land on a hull driving at (vx, vz).  Because the
-// fire control zeroes the shot against whatever the muzzle ray hits, this is a
-// point and not an elevation - put the sights on it and the elevation follows.
-// The hull is assumed to stay on the ground, so its future height comes from
-// the terrain under the future position, not from a ballistic path.
-// Three passes are enough: the lead is small next to the range.
-export function intercept(wd, ox, oy, oz, tx, ty, tz, vx, vz, map, maxElev) {
-  const lift = ty - map.heightAt(tx, tz);        // hull centre above the ground
-  let ax = tx, ay = ty, az = tz, tof = 0;
-  for (let i = 0; i < 3; i++) {
-    const d = Math.hypot(ax - ox, az - oz);
-    if (d < MIN_DIST) return null;
-    const yaw = Math.atan2(az - oz, ax - ox);
-    const theta = solveElevation(wd, ox, oy, oz, yaw, 0, { x: ax, y: ay, z: az }, maxElev);
-    if (theta === null) return null;
-    const t = flightTime(wd, ox, oy, oz, yaw, theta, d);
-    if (t === null) return null;
-    tof = t;
-    ax = tx + vx * t;
-    az = tz + vz * t;
-    ay = map.heightAt(ax, az) + lift;
+// The pre-aim ring: the point the centre cross has to be laid on for the round
+// to arrive on a hull that will be at (tx, ty, tz) in a moment.
+//
+// Two offsets separate the cross from the bore and both are handled here:
+//
+//  * **Range** - a fixed zero only meets the sight line at the range it is set
+//    to, so nearer the round is high and further it is low.  The ring sits
+//    where the sight line has to point, which is solved as a fixed point: `p`
+//    is a sight elevation, the round it would launch is integrated out to the
+//    target's range, and `p` is walked until that round meets the hull centre.
+//  * **Parallax** - the eye sits on the canopy, 1.4 m inboard of the arm and
+//    1.5 m above it, so a sight line and a bore that share a heading do not
+//    share a point at range.  The bearing is solved from the muzzle, so the
+//    round flies to the hull, and the ring is then drawn along that bearing
+//    *from the eye* - which is what the pilot actually lays the cross on.
+export function leadPoint(wd, zeroRange, maxElev, mx, my, mz, ex, ey, ez,
+                          tx, ty, tz, vx, vz) {
+  // the bearing the bore has to take: from the muzzle to where the hull will
+  // be.  Static targets keep the pilot's heading, movers need the lead folded
+  // in, so the bearing is solved twice.
+  let bx = tx, bz = tz;
+  let yaw = Math.atan2(bz - mz, bx - mx);
+  let shot = null;
+  let p = 0;
+  for (let pass = 0; pass < 2; pass++) {
+    const dm = Math.hypot(bx - mx, bz - mz);
+    yaw = Math.atan2(bz - mz, bx - mx);
+    p = Math.atan2(ty - my, dm);               // start on the hull
+    shot = null;
+    for (let i = 0; i < 4; i++) {
+      const theta = zeroAt(wd, yaw, p, mx, my, mz, zeroRange, maxElev);
+      const s = flightTo(wd, 0, 0, 0, 0, theta === null ? p : theta, dm);
+      if (s === null) return null;
+      shot = s;
+      const err = ty - (my + s.y);
+      if (Math.abs(err) < 0.15) break;
+      p += Math.atan2(err, dm);
+    }
+    if (shot === null) return null;
+    // where the hull has moved to by the time that round lands
+    bx = tx + vx * shot.t;
+    bz = tz + vz * shot.t;
   }
-  return { x: ax, y: ay, z: az, tof };
+  // the ring sits on the sight line the pilot lays the cross along: the bore's
+  // bearing, drawn from the eye, so aiming at it puts the round on the hull
+  const de = Math.hypot(bx - ex, bz - ez);
+  return {
+    x: ex + Math.cos(yaw) * de,
+    y: ey + Math.tan(p) * de,
+    z: ez + Math.sin(yaw) * de,
+    tof: shot.t,
+  };
 }
 
-// the elevation a zeroed shot of `wd` leaves at, or null for the plain aim.
-// `far` marks a sight point the round cannot reach: the reticle then shows the
-// plain-aim impact and the HUD turns that reading red
-export function zeroPitch(map, wd, yaw, pitch, ox, oy, oz, units, ignoreId, maxDist, maxElev, faction) {
-  const p = sightPoint(map, ox, oy, oz, dirFrom(yaw, pitch), maxDist, units, ignoreId, faction);
-  if (!p) return { theta: null, far: false };        // sky: nothing to zero on
-  const theta = solveElevation(wd, ox, oy, oz, yaw, pitch, p, maxElev);
-  return { theta, far: theta === null };
+// The launch elevation that puts the round on the sight line `distance`
+// metres out - the pilot's sight setting.  Unlike a solve against the first
+// thing the ray hits, this depends on the setting and the hull's attitude
+// only, so a hull crossing a ridge no longer makes the reticle jump.
+export function zeroAt(wd, yaw, pitch, ox, oy, oz, distance, maxElev) {
+  const d = dirFrom(yaw, pitch);
+  const target = {
+    x: ox + d[0] * distance,
+    y: oy + d[1] * distance,
+    z: oz + d[2] * distance,
+  };
+  return solveElevation(wd, ox, oy, oz, yaw, pitch, target, maxElev);
 }
 
 // Hit spheres of a unit, mirroring mathutil.unit_spheres: the sight ray and

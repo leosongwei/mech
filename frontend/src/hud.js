@@ -78,6 +78,7 @@ export class HUD {
 
     if (s.own) {
       this._leads(s);
+      this._centreCross(s, w, h);
       this._crosshairs(s, w, h);
       this._lock(s);
     }
@@ -162,6 +163,32 @@ export class HUD {
     ctx.restore();
   }
 
+  // The gun line proper: a white saltire fixed in the middle of the sight, the
+  // same size as the pre-aim ring so the two read as one system.  The number
+  // above it is the range the cross is pointing at - the sight ray's first
+  // contact, out to the 4 km the settings share; past that there is nothing to
+  // range against and it shows a red dash.
+  _centreCross(s, w, h) {
+    if (s.settingsOpen || s.shopOpen) return;
+    const ctx = this.ctx;
+    const x = w / 2, y = h / 2;
+    const r = 9;
+    const range = s.sightRange;
+    const far = range === null || range === undefined;
+    ctx.save();
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1.7;
+    ctx.beginPath();
+    ctx.moveTo(x - r, y - r); ctx.lineTo(x + r, y + r);
+    ctx.moveTo(x + r, y - r); ctx.lineTo(x - r, y + r);
+    ctx.stroke();
+    ctx.textAlign = 'center';
+    ctx.font = '11px "Courier New", monospace';
+    ctx.fillStyle = far ? FAR_COLOR : '#ffffff';
+    ctx.fillText(far ? '-' : `${Math.round(range)}m`, x, y - r - 6);
+    ctx.restore();
+  }
+
   _crosshairs(s, w, h) {
     const ctx = this.ctx;
     for (let arm = 0; arm < 2; arm++) {
@@ -212,7 +239,7 @@ export class HUD {
       const other = s.crosshairs[1 - arm];
       const stacked = other && Math.abs(other.screen[0] - x) < 80
         && Math.abs(other.screen[1] - y) < 24;
-      const ly = y + 4 + (stacked && arm === 1 ? 14 : 0);
+      const ly = y + 4 + (stacked && arm === 1 ? 18 : 0);
       // past 4 km the sight ray finds nothing to range against: rangefinding
       // drops out and the reading is a bare red dash
       if (c.far) ctx.fillStyle = FAR_COLOR;
@@ -455,7 +482,7 @@ export class HUD {
     const slot = 44;
     const total = slot * levels.length;
     const x0 = w / 2 - total / 2;
-    const y = h - 112;
+    const y = h - 140;
     ctx.save();
     ctx.textAlign = 'center';
     ctx.font = '10px "Courier New", monospace';
@@ -475,11 +502,49 @@ export class HUD {
       ctx.fillStyle = on ? '#9ceaff' : `rgba(170,200,190,${0.34 + 0.16 * (i === idx - 1 || i === idx + 1 ? 1 : 0)})`;
       ctx.fillText(`${levels[i]}x`, cx, y);
     }
-    // live magnification while the sight is travelling between steps
+    // live magnification while the sight is travelling between steps, out to
+    // the side so it never lands on the zero row
     if (Math.abs(s.zoom - levels[idx]) > 0.02) {
       ctx.fillStyle = 'rgba(156,234,255,0.7)';
       ctx.font = '10px "Courier New", monospace';
-      ctx.fillText(`${s.zoom.toFixed(1)}x`, w / 2, y + 20);
+      ctx.textAlign = 'left';
+      ctx.fillText(`${s.zoom.toFixed(1)}x`, w / 2 + total / 2 + 10, y - 5);
+      ctx.textAlign = 'center';
+    }
+    this._zeroBar(s, w, y + 34, slot);
+    ctx.restore();
+  }
+
+  // The sight setting, one row under the optics: the range the gun is zeroed
+  // to, stepped with CTRL+wheel.  A round drops 4 m over 1.5 km and 70 m over
+  // 4 km, so this is the number that decides where it lands; it also sets how
+  // much lead a moving target gets.
+  _zeroBar(s, w, y, slot) {
+    const steps = s.zeroSteps || [];
+    if (!steps.length) return;
+    const ctx = this.ctx;
+    const idx = Math.max(0, Math.min(steps.length - 1, s.zeroIdx | 0));
+    const total = slot * steps.length;
+    const x0 = w / 2 - total / 2;
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.font = '10px "Courier New", monospace';
+    ctx.fillStyle = 'rgba(150,190,175,0.55)';
+    ctx.fillText('ZERO km', w / 2, y - 13);
+    ctx.font = '11px "Courier New", monospace';
+    for (let i = 0; i < steps.length; i++) {
+      const cx = x0 + slot * i + slot / 2;
+      const on = i === idx;
+      if (on) {
+        ctx.fillStyle = 'rgba(255,176,74,0.14)';
+        ctx.fillRect(x0 + slot * i, y - 10, slot, 13);
+        ctx.strokeStyle = 'rgba(255,176,74,0.8)';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x0 + slot * i + 0.5, y - 9.5, slot - 1, 12);
+      }
+      ctx.fillStyle = on ? '#ffce8a'
+        : `rgba(170,200,190,${0.30 + 0.14 * (i === idx - 1 || i === idx + 1 ? 1 : 0)})`;
+      ctx.fillText(`${steps[i] / 1000}`, cx, y);
     }
     ctx.restore();
   }
@@ -743,6 +808,7 @@ export class HUD {
       'W A S D      MOVE (relative to view)',
       'MOUSE        TORSO YAW / ARM ELEVATION',
       'WHEEL        SCOPE 1x / 4x / 10x / 20x',
+      'CTRL + WHEEL   SIGHT ZERO 0.5 / 1 / 1.5 ... 4 km',
       'ALT + MOUSE  FREE LOOK',
       'LMB / RMB    LEFT / RIGHT ARM',
       'Q            HOT SMOKE (breaks incoming missiles)',

@@ -6,6 +6,10 @@ import { clamp, wrapPi } from './math.js';
 // optics steps selected with the wheel; sensitivity is divided by the
 // magnification so a 20x sight does not whip the torso around
 export const ZOOM_LEVELS = [1, 4, 10, 20];
+// sight settings in metres: CTRL+wheel steps the zero, the plain wheel the
+// optics.  Replaced by the server's list (`defs.ZERO_STEPS`) once a world
+// arrives, so both ends step over the same ranges.
+const ZERO_STEPS = [500, 1000, 1500, 2000, 2500, 3000, 3500, 4000];
 
 export class Input {
   constructor(canvas) {
@@ -21,6 +25,8 @@ export class Input {
     this.locked = false;
     this.sens = 0.0021;
     this.zoomIdx = 0;
+    this.zeroSteps = ZERO_STEPS.slice();
+    this.zeroIdx = 1;                 // 1000 m
     this.wheelAcc = 0;
     this.onBuy = null;
     this.onToggleHelp = null;
@@ -140,7 +146,17 @@ export class Input {
     if (Math.abs(this.wheelAcc) < 40) return;
     const dir = this.wheelAcc > 0 ? -1 : 1;
     this.wheelAcc = 0;
+    // CTRL steers the sight setting, everything else the optics
+    if (e.ctrlKey) {
+      this.zeroIdx = Math.max(0, Math.min(this.zeroSteps.length - 1, this.zeroIdx + dir));
+      return;
+    }
     this.zoomIdx = Math.max(0, Math.min(ZOOM_LEVELS.length - 1, this.zoomIdx + dir));
+  }
+
+  // the range the sight is zeroed to, metres
+  get zeroRange() {
+    return this.zeroSteps[this.zeroIdx];
   }
 
   get zoom() {

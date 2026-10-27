@@ -169,11 +169,15 @@ BUYABLE = [WID_AC30, WID_MG127, WID_ROCKET, WID_SACLOS, WID_TOPATTACK]
 SELL_REFUND = 0.5             # fraction of the hardware value a trade-in pays
 
 # fire control: guns and unguided rockets hold off for the drop so the round
-# lands on whatever the muzzle points at.  Every ballistic weapon zeroes out
-# to the same 4 km, and the elevation is capped so a wild solution cannot
-# point the barrel at the sky
-ZERO_RANGE = 4000.0      # metres, the muzzle ray's length
+# meets the sight line at the zeroed range.  The range is a fixed setting the
+# pilot steps with CTRL+wheel - solving it against whatever the crosshair
+# happens to sit on made the reticle jump every time a hull crossed a ridge,
+# which is exactly the moment a shot has to be taken.  The elevation is capped
+# so a wild setting cannot point the barrel at the sky.
+ZERO_RANGE = 4000.0      # metres, the muzzle ray's length (the sight's reach)
 ZERO_MAX_ELEV = 1.05     # rad, ~60 deg
+ZERO_STEPS = (500.0, 1000.0, 1500.0, 2000.0, 2500.0, 3000.0, 3500.0, 4000.0)
+ZERO_DEFAULT = 1000.0    # metres the sight is set to at spawn
 
 # -------------------------------------------------------------- unit types
 # `tags` is an entity's *identity*, the `etype` is its *data*.  The tags are

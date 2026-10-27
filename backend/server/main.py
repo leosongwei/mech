@@ -195,6 +195,9 @@ async def ws_endpoint(ws: WebSocket) -> None:
                 # optics + viewport aspect drive the IR lock circle
                 pl.zoom = max(1.0, min(20.0, float(msg.get("z", pl.zoom))))
                 pl.aspect = max(0.4, min(4.0, float(msg.get("a", pl.aspect))))
+                # sight setting: a fixed range (CTRL+wheel), not a solved zero
+                zr = float(msg.get("zr", pl.zero_range))
+                pl.zero_range = max(defs.ZERO_STEPS[0], min(defs.ZERO_STEPS[-1], zr))
                 # Q: one-shot hot smoke, latched until systems/smoke.py eats it
                 if msg.get("q"):
                     pl.smoke_q = True

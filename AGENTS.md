@@ -36,7 +36,7 @@ backend/
     world.py               # World: terrain, players, spawning, damage, tick
     terrain.py             # 1000x1000 tiles of 16 m -> 16 km square map
     mathutil.py            # angles, lead solving, terrain helpers
-    ballistics.py          # fire control: muzzle sight point, zeroing elevation
+    ballistics.py          # fire control: sight setting elevation (player) / sight-point solve (AI)
     netcode.py             # init payload, binary snapshots, JSON meta
     main.py                # FastAPI: websockets, static files, 30 Hz game loop
     systems/               # mechanics shared by every mode, each exposes run(world, dt)
@@ -62,7 +62,7 @@ frontend/
     map.js                 # client copy of terrain + identical ballistics
     scene.js               # unit models built from instanced primitives
     renderer.js            # tiled near terrain + far LOD grid, roads, instanced draws
-    hud.js                 # crosshair, lock box, module health, minimap, panels
+    hud.js                 # centre cross, arm impact markers, lock box, modules, minimap
     meshes.js              # primitive meshes (box, sphere, cone, cylinder, rock)
     particles.js           # smoke, trails, impacts
     math.js                # mat4, lookAt, compose, dirFrom, angles

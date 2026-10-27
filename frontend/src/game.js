@@ -1,7 +1,7 @@
 // Glue: connection, camera, aiming prediction, render loop and HUD state.
 
 import { Net } from './net.js';
-import { MapData, intercept, predictImpact, unitSpheres, zeroPitch } from './map.js';
+import { MapData, leadPoint, predictImpact, sightPoint, unitSpheres, zeroAt } from './map.js';
 import { Input } from './input.js';
 import { GameAudio, SOUND_SPEED, attenuation } from './audio.js';
 import { Renderer, makeCamera } from './renderer.js';
@@ -13,7 +13,6 @@ import { emptyDraft, isEmpty, quote, toMessage } from './shop.js';
 
 const BASE_FOV = 1.05;              // 1x vertical field of view, radians
 const AIM_LINE = 60000;             // metres, "infinity" for an unzeroed reticle
-const LEAD_FRAC = 0.03;             // a hull smaller than this on screen gets no box
 const LEAD_TARGETS = 4;             // nearest few only, the rest is clutter
 const RADAR_RANGE = 1000;           // metres, the self-defence radar
 const RADAR_MISS = 100;             // a round headed for this sphere is a threat
@@ -67,6 +66,7 @@ export class Game {
     this.winner = -1;
     this.zoom = 1;              // smoothed, drives the field of view
     this.zoomIdx = 0;           // optics step selected with the wheel
+    this.zeroRange = 1000;      // sight setting in metres (CTRL+wheel)
     this.range = false;         // weapon range mode (server started with --range)
     this.lockFrac = 0.05;       // IR lock circle, as a fraction of the view width
     this.wreckPuffs = new Map();    // per-hulk smoke timer
@@ -92,6 +92,13 @@ export class Game {
       this.playerFaction = init.faction;
       this.range = init.mode === 'range';
       if (init.lock && init.lock.frac) this.lockFrac = init.lock.frac;
+      // sight settings come from the server so the steps are one list
+      if (init.zero && init.zero.steps) {
+        this.input.zeroSteps = init.zero.steps.slice();
+        const d = this.input.zeroSteps.indexOf(init.zero.default);
+        this.input.zeroIdx = d < 0 ? 0 : d;
+        this.zeroRange = this.input.zeroRange;
+      }
       this._status(this.range ? 'LOADING RANGE...' : 'LOADING 16 KM MAP...');
       this.map = await MapData.load(init.map, init.lanes);
       this.renderer.setMap(this.map);
@@ -341,6 +348,7 @@ export class Game {
       this.renderer.setZoomLevel(this.zoomIdx);
     }
     this.zoom += (this.input.zoom - this.zoom) * (1 - Math.exp(-dt * 22));
+    this.zeroRange = this.input.zeroRange;
     for (const m of this.messages) m.life -= dt;
     this.messages = this.messages.filter((m) => m.life > 0);
     this.hitFlash = Math.max(0, this.hitFlash - dt * 1.6);
@@ -401,6 +409,9 @@ export class Game {
       // the magnification and the viewport shape to match it
       z: this.zoom,
       a: this.glCanvas.clientWidth / Math.max(1, this.glCanvas.clientHeight),
+      // sight setting the gun is zeroed to, so the server fires the barrel
+      // elevation the reticle promises
+      zr: this.input.zeroRange,
       // hot smoke: one pull per press, cleared as soon as it is on the wire
       q: this.shopOpen ? false : this.input.qPressed,
     });
@@ -590,8 +601,20 @@ export class Game {
     ];
   }
 
+  // The origin every aiming readout is measured from: the camera itself, up on
+  // the canopy.  The cross is drawn at the centre of the screen, so anything
+  // worked out from a lower or more forward point would disagree with it - at
+  // 1.7 km the 1.2 m the camera sits above the mech's nominal eye is already
+  // a dozen pixels of parallax.
+  _sightEye(own) {
+    const yaw = this.input.viewYaw;
+    const h = ((this.defs.mech && this.defs.mech.eye) || 5.05) + CAM_UP;
+    return [own.x + Math.cos(yaw) * CAM_FWD, own.y + h, own.z + Math.sin(yaw) * CAM_FWD];
+  }
+
   _aim(own) {
     this.crosshairs = [null, null];
+    this.sightRange = null;
     if (!own) return;
     const yaw = this.input.yaw;
     const pitch = this.input.pitch;
@@ -606,6 +629,17 @@ export class Game {
         units.push({ id: e.id, faction: e.faction, x: s.x, y: s.y, z: s.z, r: s.r });
       }
     }
+    // the centre cross is the sight line: how far down it the first thing
+    // (ground, wall, trunk, hull) sits - the mirror of the server's sight
+    // point, out to the one range every setting shares
+    const z0 = this.init.zero || { range: 4000, max_elev: 1.05 };
+    const eye = this._sightEye(own);
+    const sp = sightPoint(this.map, eye[0], eye[1], eye[2], dir, z0.range,
+      units, own.id, own.faction);
+    if (sp) {
+      const d = Math.hypot(sp.x - eye[0], sp.y - eye[1], sp.z - eye[2]);
+      if (d < z0.range) this.sightRange = d;
+    }
     for (let arm = 0; arm < 2; arm++) {
       const wid = own.weapon[arm];
       const wd = this.defs.weapons[wid];
@@ -617,26 +651,22 @@ export class Game {
       let dist = 0;
       let far = false;
       if (wd && (wd.kind === 'bullet' || wd.kind === 'rocket')) {
-        // fire control: the server zeroes the shot against whatever the muzzle
-        // points at, so predict with the elevation it is going to use.  bias is
-        // already inside the solution, hence the copy with bias 0
+        // fire control: the barrel is held off for the drop to the range the
+        // sight is set to, exactly as the server fires it.  The elevation
+        // depends on that setting and the hull's attitude only, so the marker
+        // sits still across a crest line instead of dancing on the ridge.  bias
+        // is absorbed by the solution, hence the copy with bias 0
         const z = this.init.zero || { range: 4000, max_elev: 1.05 };
-        const fc = zeroPitch(this.map, wd, yaw, pitch, m[0], m[1], m[2], units, own.id,
-          z.range, z.max_elev, own.faction);
-        const theta = fc.theta;
+        const theta = zeroAt(wd, yaw, pitch, m[0], m[1], m[2], this.zeroRange, z.max_elev);
         const shot = theta === null ? wd : { ...wd, bias: 0 };
         point = predictImpact(this.map, shot, m[0], m[1], m[2],
           theta === null ? dir : dirFrom(yaw, theta), units, {}, own.faction);
         hit = point.hit;
         dist = point.dist;
-        // no range when the count is not an impact: the sight point is past
-        // the fire control's reach, or the round expires in the air (aimed
-        // past the map edge / further than the fuse can carry it)
-        far = fc.far || !point.hit;
+        // a setting the round cannot reach (or a shot that runs off the map)
+        // leaves the marker on the aim line and the reading red
+        far = !point.hit;
         if (theta === null) {
-          // nothing to zero on: the shot simply runs down the aim line, so the
-          // reticle belongs on that line at infinity -- hold the crosshair on
-          // the target and fire, no drop marker to aim off
           point = { x: m[0] + dir[0] * AIM_LINE, y: m[1] + dir[1] * AIM_LINE,
             z: m[2] + dir[2] * AIM_LINE };
         }
@@ -656,13 +686,13 @@ export class Game {
 
   // ------------------------------------------------------------- pre-aim
   // The boxes a pilot lines the sights up with to hit a hull on the move: the
-  // point each arm's round has to be aimed at, given the flight time of that
-  // round.  A gun and a rocket pod need very different amounts of lead, so
-  // every arm gets its own box.  Recomputed per snapshot - the geometry moves
-  // much slower than the frame rate, and an unguided rocket costs a few
-  // hundred integrator steps per solve.  The solutions are kept in world space
-  // (`leadWorld`) and projected every frame by `_leadScreen`, so the box stays
-  // glued to the hull while the pilot slews the sight.
+  // point each arm's round has to be aimed at.  The sight is zeroed to a fixed
+  // range, so the round needs `range / vel` seconds to reach anything it is
+  // laid on and the lead is the hull's own motion over that time - put the
+  // centre cross on the box at that range and the shot lands.  A gun and a
+  // rocket pod need very different leads, so every arm gets its own box.
+  // Recomputed per snapshot and kept in world space (`leadWorld`), so the box
+  // stays glued to the hull while the pilot slews the sight.
   _leadMarkers(own) {
     if (this.net.seq === this.leadSeq) return;
     this.leadSeq = this.net.seq;
@@ -683,25 +713,27 @@ export class Game {
     }
     if (!arms.length) return;
 
-    // enemy hulls that are on screen and big enough to be worth aiming at,
-    // nearest first: the four closest get a box, the rest is clutter
+    // Enemy hulls on screen, nearest first: the four closest get a box, the
+    // rest is clutter.  Every one of them gets a ring, moving or not: with a
+    // fixed zero the ring no longer means "lead the target" but "put the
+    // centre cross here", and a standing hull 2 km out needs just as much of a
+    // lift as a driving one needs lead.
     const cand = [];
     for (const e of this.net.entities.values()) {
       if (e.type !== 3 && e.type !== 4) continue;           // APC / MECH only
       if (e.faction === own.faction) continue;
       const ud = this.defs.units[e.type] || {};
-      const rad = Math.max(ud.radius || 2, (ud.height || 3) * 0.5);
       const d = Math.hypot(e.x - own.x, e.z - own.z);
       if (d < 25 || d > zero.range) continue;              // out of the fire control
-      if (rad / (d * tanHalf) < LEAD_FRAC) continue;       // a dot, not a target
       if (!this.hud._project(e.x, e.y + (ud.height || 3) * 0.5, e.z)) continue;
       cand.push({ e, ud, d });
     }
     if (!cand.length) return;
     cand.sort((a, b) => a.d - b.d);
 
-    // the eye a box is drawn from, used for the line of sight test below
-    const eye = [own.x, own.y + ((this.defs.mech && this.defs.mech.eye) || 5.05), own.z];
+    // the eye the ring's bearing is drawn from: the camera, because that is
+    // where the pilot's cross actually sits
+    const eye = this._sightEye(own);
     for (const c of cand.slice(0, LEAD_TARGETS)) {
       const e = c.e;
       const half = (c.ud.height || 3) * 0.5;               // hull centre above the ground
@@ -720,9 +752,9 @@ export class Game {
       for (const a of arms) {
         // the lead has to be solved against the *measured* speed: a mech that
         // fights its legs moves slower than the velocity it was given
-        const p = intercept(a.wd, a.m[0], a.m[1], a.m[2], t.x, t.y, t.z,
-          e.mvx === undefined ? e.vx : e.mvx, e.mvz === undefined ? e.vz : e.mvz,
-          this.map, zero.max_elev);
+        const p = leadPoint(a.wd, this.zeroRange, zero.max_elev,
+          a.m[0], a.m[1], a.m[2], eye[0], eye[1], eye[2], t.x, t.y, t.z,
+          e.mvx === undefined ? e.vx : e.mvx, e.mvz === undefined ? e.vz : e.mvz);
         if (p) t.marks.push({ arm: a.arm, x: p.x, y: p.y, z: p.z, tof: p.tof });
       }
       // the box stands on its own: a hull can be in view while the point to
@@ -1013,6 +1045,10 @@ export class Game {
       range: this.range,
       zoom: this.zoom,
       zoomIdx: this.zoomIdx,
+      zeroRange: this.zeroRange,
+      zeroIdx: this.input.zeroIdx,
+      zeroSteps: this.input.zeroSteps,
+      sightRange: this.sightRange,
       hitFlash: this.hitFlash,
       help: false,
       helpOpen: this.helpOpen,

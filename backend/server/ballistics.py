@@ -202,8 +202,29 @@ def solve_elevation(origin: tuple[float, float, float],
 def zero_pitch(world: World, origin: tuple[float, float, float], yaw: float,
                pitch: float, wd: dict, ignore: int = -1,
                faction: int = -1) -> float | None:
-    """Elevation for a zeroed shot of `wd`, or None to fire the plain aim."""
+    """Elevation for a shot zeroed onto whatever the crosshair sits on.
+
+    Only the AI still fires this way: solving against the sight point makes the
+    reticle dance whenever a hull crosses a ridge, so a pilot's gun holds a
+    fixed sight setting instead (`zero_at`).
+    """
     sp = sight_point(world, origin, mu.dir_from(yaw, pitch), defs.ZERO_RANGE, ignore, faction)
     if sp is None:
         return None
     return solve_elevation(origin, sp, wd, yaw, pitch)
+
+
+def zero_at(origin: tuple[float, float, float], yaw: float, pitch: float,
+            wd: dict, distance: float) -> float | None:
+    """Elevation that puts the round on the sight line `distance` metres out.
+
+    The aim point is a fixed way down the crosshair rather than the first thing
+    the ray hits, so the solution depends on the pilot's setting and the hull's
+    attitude only - never on whether a ridge, a tree or a hull happens to be in
+    the way.  That is what stops the reticle jumping at a crest line.
+    """
+    d = mu.dir_from(yaw, pitch)
+    target = (origin[0] + d[0] * distance,
+              origin[1] + d[1] * distance,
+              origin[2] + d[2] * distance)
+    return solve_elevation(origin, target, wd, yaw, pitch)

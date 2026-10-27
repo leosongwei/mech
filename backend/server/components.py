@@ -41,6 +41,7 @@ def register(ecs: ECS) -> None:
     ecs.register("combat", np.uint8)                 # fights, may be fought, holds towns
     ecs.register("lockable", np.uint8)               # an IR seeker can track it
     ecs.register("moves", np.uint8)                  # has locomotion
+    ecs.register("person", np.uint8)                 # a man on foot: a prox fuse goes off on him
     ecs.register("invulnerable", np.uint8)           # rounds stop, damage does nothing
 
     # ---- health ---------------------------------------------------------
@@ -98,6 +99,10 @@ def register(ecs: ECS) -> None:
     ecs.register("proj_src", np.int32, (), -1)
     ecs.register("proj_age", np.float32)
     ecs.register("proj_seed", np.float32)            # per round, drives the thrust jitter
+    # where the round started this tick: the prox fuse solves the leg it just
+    # flew (`proj_prev` -> `pos`), because at 36 m per tick a distance check at
+    # the tick boundaries would step clean over a man
+    ecs.register("proj_prev", np.float32, (3,), 0.0)
 
 
 UNIT_COMPS = ["pos", "vel", "drive", "yaw", "pitch", "leg_yaw", "turret_yaw", "etype", "faction",
@@ -111,7 +116,7 @@ DEBRIS_COMPS = ["pos", "vel", "yaw", "pitch", "leg_yaw", "turret_yaw", "etype", 
                 "owner", "hp", "hpmax", "flags", "wreck_t", "wreck_kind"]
 
 PROJ_COMPS = ["pos", "vel", "faction", "proj_kind", "proj_wid", "proj_life", "proj_src",
-              "proj_age", "proj_seed", "target"]
+              "proj_age", "proj_seed", "proj_prev", "target"]
 
 # a canister in flight and a deployed puff share their shape so one snapshot
 # section and one client pass can draw both

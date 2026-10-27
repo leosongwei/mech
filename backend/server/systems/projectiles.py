@@ -59,6 +59,7 @@ def run(world: World, dt: float) -> None:
     src = e["proj_src"]
     age = e["proj_age"]
     seed = e["proj_seed"]
+    prev = e["proj_prev"]
     target = e["target"]
     etype = e["etype"]
     yaw = e["yaw"]
@@ -96,6 +97,7 @@ def run(world: World, dt: float) -> None:
             continue
 
         p0 = pos[pid].copy()
+        prev[pid] = p0                              # the leg the prox fuse solves
         v = vel[pid].copy()
         sp, _ = _norm(v)
         speed = float(np.linalg.norm(v))

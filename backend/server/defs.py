@@ -59,6 +59,9 @@ WID_RPG = 7
 #          behind the plate, both measured against a target's `dp`
 # ed / er: Explosive Damage at the centre of the blast and the radius (m) it
 #          falls off to nothing over, measured against a target's `de`
+# prox:    proximity fuse radius (m) - the round bursts when its flight path
+#          passes that close to enemy *personnel* (systems/proximity.py).
+#          Absent/0 = impact fuse only.  A hull never sets it off.
 WEAPONS = [
     dict(wid=WID_NONE, key="none", name="EMPTY", kind="none", ap=0, ad=0, ed=0, er=0,
          rpm=1, mag=0, reserve=0, reload=1, vel=1, spread=0, bias=0.0, g=0, thrust=0, maxvel=0,
@@ -72,10 +75,15 @@ WEAPONS = [
     # the trigger runs the whole load downrange and the gun only goes quiet
     # when the arm is dry.  Full load is still 300 rounds, so the price of a
     # fresh weapon and its ammunition did not move
-    dict(wid=WID_AC30, key="ac30", name="30mm AUTOCANNON", kind="bullet", ap=15, ad=10, ed=15, er=5.0,
+    # the round carries an airburst fuse: 4 m off an enemy rifleman it goes off
+    # instead of planting itself in the dirt behind him, so a burst of cannon
+    # fire sweeps infantry up without needing a direct hit on a 0.65 m sphere.
+    # Only people set it off - an APC at the same distance is ignored and waits
+    # for the impact fuse.
+    dict(wid=WID_AC30, key="ac30", name="30mm AUTOCANNON", kind="bullet", ap=15, ad=10, ed=15, er=10.0,
          rpm=190, mag=300, reserve=0, reload=0.0, vel=1080, spread=0.0011, bias=0.0, g=9.81,
          thrust=0, maxvel=0, life=9.3, range=3200, cost=300, ammo_cost=0.5, lock=0, lock_time=0,
-         salvo=0, semi=0, color=(1.0, 0.82, 0.25), cal=30,
+         salvo=0, semi=0, color=(1.0, 0.82, 0.25), cal=30, prox=4.0,
          desc="High velocity, 3.2 km effective"),
     # one belt of 1500, no reload: the gun runs dry and that is it.  1800 rpm is
     # exactly one round per tick, the fastest the 30 Hz clock can fire - twice
@@ -89,7 +97,7 @@ WEAPONS = [
     # motor burns for a second and it leaves at 610 m/s.  A small shaped charge
     # plus a lot of frag: it is the pod's *burst*, not the single round, that
     # kills - three rockets on the hull, two on an arm
-    dict(wid=WID_ROCKET, key="rocket", name="UNGUIDED ROCKET POD", kind="rocket", ap=40, ad=20, ed=35, er=8.0,
+    dict(wid=WID_ROCKET, key="rocket", name="UNGUIDED ROCKET POD", kind="rocket", ap=40, ad=20, ed=35, er=10.0,
          rpm=600, mag=40, reserve=0, reload=0.0, vel=55, spread=0.003, bias=0.0429, g=9.81, thrust=560,
          maxvel=610, life=16.4, range=3200, cost=350, ammo_cost=4.0, lock=0, lock_time=0, salvo=1,
          semi=0, color=(1.0, 0.45, 0.15), cal=80,
@@ -198,6 +206,10 @@ ZERO_DEFAULT = 1000.0    # metres the sight is set to at spawn
 # (index 0), the mech has the hull pool at MOD_CHASSIS and one arm at each of
 # MOD_LEFT / MOD_RIGHT.  MOD_TORSO is hit geometry only - the torso no longer
 # has a health pool of its own, it shares the chassis one.
+#
+# `person` is what a proximity fuse may go off on (systems/proximity.py): a man
+# is a man whether he carries a rifle, an RPG or a shopping bag.  Armour is not
+# tagged, so an APC 4 m off the path leaves the fuse cold.
 UNIT_DEFS = {
     # 10 hp is a deliberate knife edge: one 12.7 mm round (AD 10) kills
     # outright, while a rifle (AD 4) needs exactly three - two leave him
@@ -207,11 +219,11 @@ UNIT_DEFS = {
                           speed=5.5, radius=0.55, height=1.8,
                           weapons=(WID_RIFLE556, WID_NONE), ai_range=420, sight=600, reward=45,
                           splat=1.0, targets=(ETYPE_INF_RIFLE, ETYPE_INF_ROCKET),
-                          tags=("unit", "combat", "moves")),
+                          tags=("unit", "combat", "moves", "person")),
     ETYPE_INF_ROCKET: dict(name="AT RIFLEMAN", hp=(10, 0, 0, 0), dp=1, de=1,
                            speed=5.0, radius=0.55, height=1.8,
                            weapons=(WID_RPG, WID_NONE), ai_range=480, sight=650, reward=70,
-                           splat=1.0, tags=("unit", "combat", "moves")),
+                           splat=1.0, tags=("unit", "combat", "moves", "person")),
     # one hull pool: the turret is hit geometry, not a second health bar
     ETYPE_APC: dict(name="APC", hp=(100, 0, 0, 0), dp=10, de=20,
                     speed=15.0, radius=2.2, height=2.8,
@@ -233,7 +245,7 @@ UNIT_DEFS = {
     ETYPE_CIV: dict(name="CIVILIAN", hp=(10, 0, 0, 0), dp=1, de=1,
                     speed=4.0, radius=0.5, height=1.7,
                     weapons=(WID_NONE, WID_NONE), ai_range=0, sight=60, reward=0, splat=1.0,
-                    tags=("unit", "moves")),
+                    tags=("unit", "moves", "person")),
     # inert: drawn by the client, but not a unit any more
     ETYPE_DEBRIS: dict(name="WRECK", hp=(0, 0, 0, 0), dp=0, de=0,
                        speed=0.0, radius=2.0, height=2.6,

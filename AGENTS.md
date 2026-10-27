@@ -41,6 +41,7 @@ backend/
     main.py                # FastAPI: websockets, static files, 30 Hz game loop
     systems/               # mechanics shared by every mode, each exposes run(world, dt)
                          #   smoke.py: hot smoke canisters, opaque puffs, blocks(a, b)
+                         #   proximity.py: 30mm airburst fuse, bursts on people only
     modes/                 # per-mode rule sets: map, setup, pipeline, spawn rules
       base.py              #   Mode interface every mode implements
       battle/              #   waves.py: town capture + reinforcement waves
@@ -88,9 +89,9 @@ frontend/
   read for that.
 * **World** (`world.py`) owns terrain, players, the ECS and the system
   pipeline. Shared order: `player_input`, the mode's pre-systems (battle: `ai`),
-  `locking, smoke, weapons, movement, projectiles, economy, debris`, then the
-  mode's post-systems (battle: `waves`). `World.update(dt)` is the only entry point; the loop in
-  `main.py` calls it at a fixed 30 Hz (`TICK_DT = 1/30`).
+  `locking, smoke, weapons, movement, projectiles, proximity, economy, debris`,
+  then the mode's post-systems (battle: `waves`). `World.update(dt)` is the only
+  entry point; the loop in `main.py` calls it at a fixed 30 Hz (`TICK_DT = 1/30`).
 * **Modes** (`modes/`) own everything that differs between game modes: the
   map, what a fresh round spawns, the mode's own systems and the rules the
   shared code asks about (`fixed_faction`, `start_money`, `rearm_anywhere`,
@@ -100,6 +101,18 @@ frontend/
 * **Players** are plain Python objects (`world.Player`) attached to a mech
   entity through `owner`; `pl.mech` is -1 while dead. Income and respawns live
   in `systems/economy.py`; wreck/corpse cleanup in `systems/debris.py`.
+* **Proximity fuse** (`systems/proximity.py`) — the 30mm round bursts on
+  *personnel*: `defs.WEAPONS[...]["prox"]` is a fuse radius in metres (absent =
+  impact fuse only), and `person` is the tag a man carries (riflemen, AT
+  riflemen, civilians). Hulls are not tagged, so the fuse ignores them. A round
+  covers 36 m per tick, so the fuse solves the leg it *flew* this tick —
+  `proj_prev` (written by `projectiles.run`) to `pos` — takes the closest
+  approach to an enemy man and, if that is inside the radius, moves the round
+  there and calls `projectiles._impact` at that point. Never sample the tick
+  boundaries instead: that steps clean over a man standing 4 m off the path.
+  Airburst is blast only (it is not a direct hit), and the burst is logged
+  (`mech.prox: prox fuse: ...`) so the range test can read the burst position
+  straight out of the log.
 * **Damage** is two halves, never one number. `defs.pen_damage(ap, ad, dp)`:
   beating the target's `dp` outright delivers the full `ad`, beating only half
   of it shaves `ad/5`, anything duller does nothing. `defs.blast_damage(ed, de,

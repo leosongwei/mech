@@ -127,6 +127,13 @@ HUD 与战斗模式完全一致，只有两处不同：顶部战况条的 `WAVE 
 * 移动靶：PATROL MID / PATROL EAST 两条线，速度 8 m/s，用来练提前量。
 * 靶子不开火，可以反复盯同一辆 APC 打模块（车体 vs 炮塔命中球）测伤害：
   一发 30mm 13 点（8 发爆）、一发 80mm 火箭 35 点（3 发爆）、一发 SACLOS 直接秒。
+* **近炸引信**：机炮的 4 m 空爆只认**人员**，而靶场上只有 APC，所以先用调试指令
+  在身前放人：`g.net.send({ t: 'debug_spawn', etype: 1, dist: 300, angle: 0 })`
+  （`etype` 1 步枪兵 / 2 反坦克兵 / 6 平民；`MECH_DEBUG=1` 时可用）。对着他略微
+  **抬高**一点打（让弹道从他头顶几米掠过、本来会落在他身后），服务器日志
+  `/tmp/mech-range.log` 会出现 `mech.prox: prox fuse: ... burst at (x, y, z),
+  n m off person N - ... into a ... m leg from (...)`，可以直接核对爆点坐标；
+  同一姿势打 APC 则**一行都不会有**，这就是"只对人员起爆"的验证方法。
 
 ## 6. 与战斗模式的差异一览
 

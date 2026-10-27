@@ -76,11 +76,11 @@ class World:
     # ------------------------------------------------------------------
     def _build_pipeline(self) -> None:
         from .systems import (debris, economy, locking, movement, player_input, projectiles,
-                              smoke, weapons)
+                              proximity, smoke, weapons)
         self.systems: list[Callable[[World, float], None]] = [player_input.run]
         self.systems += self.mode_mod.pre_systems()
         self.systems += [locking.run, smoke.run, weapons.run, movement.run, projectiles.run,
-                         economy.run, debris.run]
+                         proximity.run, economy.run, debris.run]
         self.systems += self.mode_mod.post_systems()
 
     # ------------------------------------------------------------------

@@ -257,14 +257,14 @@ MECH_HITSPHERES = [
     # (module, x right offset, y height, z forward offset, radius)
     (MOD_CHASSIS, 0.0, 1.45, 0.0, 1.45),
     (MOD_TORSO, 0.0, 4.15, 0.0, 1.30),
-    (MOD_LEFT, -1.95, 4.30, 0.10, 0.85),
-    (MOD_RIGHT, 1.95, 4.30, 0.10, 0.85),
+    (MOD_LEFT, -1.43, 3.55, 0.10, 0.85),
+    (MOD_RIGHT, 1.43, 3.55, 0.10, 0.85),
 ]
 MECH_EYE = 5.05
 # the hull rolls up to speed instead of snapping to it: 0-100 km/h in ~3 s,
 # 0-180 in ~5.4 s
 MECH_ACCEL = 9.3           # m/s^2, top speed 180 km/h
-MECH_ARM_MUZZLE = {MOD_LEFT: (-1.95, 4.30, 0.9), MOD_RIGHT: (1.95, 4.30, 0.9)}
+MECH_ARM_MUZZLE = {MOD_LEFT: (-1.43, 3.55, 0.9), MOD_RIGHT: (1.43, 3.55, 0.9)}
 
 # ------------------------------------------------------------------ smoke
 # hot smoke countermeasure: a short fan of canisters thrown out of the hull,

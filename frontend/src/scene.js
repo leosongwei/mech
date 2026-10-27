@@ -79,13 +79,14 @@ function wreck(R, e) {
     at(R, 'box', e, yaw, 0.06, 0, 1.05, 0, 3.35, 0.9, 3.35, HULK);
     at(R, 'box', e, yaw, 0.06, 0, 0.45, 0, 3.1, 0.4, 3.1, SOOT);
     at(R, 'box', e, yaw, 0.06, 0, 1.7, -0.55, 2.4, 0.5, 2.4, fac);
-  } else {                                // mech, collapsed on its legs
+  } else {                                // mech, collapsed on its plenums
     for (const side of [-1, 1]) {
-      at(R, 'box', e, e.leg, 0, side * 1.05, 0.45, 0.3, 1.5, 0.7, 2.6, SOOT);
+      at(R, 'box', e, e.leg, 0, side * 1.32, 0.30, 0, 4.70, 0.46, 1.15, SOOT);
+      at(R, 'box', e, e.leg, 0.35, side * 1.20, 0.78, 0.1, 1.0, 0.9, 0.75, HULK);
     }
-    at(R, 'box', e, yaw, 0.18, 0, 1.1, 0, 2.6, 1.3, 2.9, HULK);
-    at(R, 'box', e, yaw, 0.18, 0, 1.95, 0.4, 2.0, 0.5, 2.2, fac);
-    at(R, 'sphere', e, yaw, 0, 0, 2.1, 0.75, 1.2, 0.7, 1.0, SOOT);
+    at(R, 'box', e, yaw, 0.12, 0, 1.20, -0.65, 4.05, 1.15, 1.60, HULK);
+    at(R, 'box', e, yaw, 0.12, 0, 1.90, -0.85, 2.85, 0.50, 1.35, fac);
+    at(R, 'cone', e, yaw, FORWARD, 0, 1.35, 1.60, 1.10, 1.55, 1.25, HULK);
   }
 }
 
@@ -146,36 +147,72 @@ function mech(R, e, defs, flashes) {
   const yaw = e.yaw;
   const wdefs = defs || {};
 
-  // --- chassis / legs (follow the travel direction) -------------------
+  // --- low duct legs / broad hover plenums (travel direction) ---------
+  const legSegment = (a, b, width, depth, col, shape = 'box') => {
+    const dy = b[1] - a[1], dz = b[2] - a[2];
+    const len = Math.hypot(dy, dz);
+    const pitch = Math.atan2(-dz, dy);
+    at(R, shape, e, legYaw, pitch, (a[0] + b[0]) / 2, (a[1] + b[1]) / 2,
+      (a[2] + b[2]) / 2, depth, len, width, col);
+  };
   for (const side of [-1, 1]) {
-    at(R, 'cyl', e, legYaw, 0, side * 1.05, 1.55, 0, 1.15, 2.7, 1.15, METAL);
-    at(R, 'box', e, legYaw, 0, side * 1.05, 0.3, 0.3, 1.5, 0.6, 2.6, METAL_D);
-    at(R, 'sphere', e, legYaw, 0, side * 1.05, 2.6, 0, 1.25, 1.1, 1.25, METAL_L);
-    at(R, 'cyl', e, legYaw, 0, side * 1.05, 3.0, 0, 0.85, 0.9, 0.85, METAL_D);
+    const hip = [side * 1.14, 2.20, -0.42];
+    const knee = [side * 1.27, 1.40, 0.60];
+    const ankle = [side * 1.32, 0.69, -0.08];
+    const outer = (p) => [p[0] + side * 0.42, p[1], p[2] - 0.08];
+    at(R, 'box', e, legYaw, 0, side * 0.91, 2.20, -0.42, 0.55, 0.44, 0.72, METAL_D);
+    legSegment(hip, knee, 0.82, 1.00, METAL);
+    legSegment(knee, ankle, 0.78, 0.92, METAL);
+    legSegment(outer(hip), outer(knee), 0.28, 0.28, METAL_L, 'cyl');
+    legSegment(outer(knee), outer(ankle), 0.25, 0.25, METAL_L, 'cyl');
+    for (const p of [hip, knee, ankle]) {
+      at(R, 'sphere', e, legYaw, 0, p[0], p[1], p[2], 0.62, 0.58, 0.62, METAL_D);
+    }
+    // A flat pressure chamber and a dark flexible skirt, not an upturned ski.
+    at(R, 'box', e, legYaw, 0, side * 1.32, 0.34, 0, 4.60, 0.50, 1.20, METAL_D);
+    at(R, 'cone', e, legYaw, FORWARD, side * 1.32, 0.34, 2.40, 0.50, 0.55, 1.20, METAL_D);
+    at(R, 'cone', e, legYaw, -FORWARD, side * 1.32, 0.34, -2.40, 0.50, 0.55, 1.20, METAL_D);
+    at(R, 'box', e, legYaw, 0, side * 1.32, 0.10, 0, 4.90, 0.18, 1.10, SOOT);
+    at(R, 'box', e, legYaw, 0, side * 1.32, 0.61, 0, 3.65, 0.08, 0.82, METAL_L);
   }
-  // the pelvis plate is what the cockpit sits on
-  at(R, 'box', e, legYaw, 0, 0, 3.35, 0, 2.9, 0.9, 2.4, METAL_D);
+  at(R, 'box', e, legYaw, 0, 0, 2.10, -0.28, 1.45, 0.42, 1.60, METAL_D);
 
-  // --- torso (follows the mouse) --------------------------------------
-  at(R, 'box', e, yaw, 0, 0, 4.35, 0, 2.6, 1.9, 3.0, METAL);
-  at(R, 'box', e, yaw, 0, 0, 4.45, -1.5, 2.2, 1.1, 0.5, fac);
-  at(R, 'box', e, yaw, 0, 0, 5.15, 0.35, 1.5, 0.5, 1.9, GLASS);
-  at(R, 'sphere', e, yaw, 0, 0, 5.15, 0.75, 1.35, 0.9, 1.1, [0.16, 0.22, 0.26]);
-  at(R, 'box', e, yaw, 0, 0, 4.15, 1.95, 1.0, 0.7, 0.6, fac);
+  // --- narrow longitudinal hull / tandem vertical turbines ------------
+  at(R, 'box', e, yaw, 0, 0, 2.86, -0.85, 4.10, 1.82, 1.72, METAL);
+  at(R, 'box', e, yaw, 0, 0, 3.68, -1.05, 3.65, 0.78, 1.50, METAL_L);
+  at(R, 'box', e, yaw, 0, 0, 1.94, -0.65, 3.35, 0.18, 1.42, METAL_D);
+  // The pointed, faceted nose is fully armored: there is no glass bubble.
+  at(R, 'cone', e, yaw, FORWARD, 0, 3.25, 1.80, 1.55, 2.05, 1.42, METAL);
+  at(R, 'box', e, yaw, 0, 0, 3.70, 0.70, 1.75, 0.65, 1.30, METAL_L);
   for (const side of [-1, 1]) {
-    at(R, 'box', e, yaw, 0, side * 1.35, 5.15, -0.3, 1.05, 0.55, 1.7, METAL_L);
-    at(R, 'cone', e, yaw, FORWARD, side * 1.35, 5.15, 0.6, 0.45, 1.4, 0.45, [0.14, 0.14, 0.15]);
+    at(R, 'box', e, yaw, 0, side * 0.87, 3.00, -0.80, 2.80, 0.28, 0.05, fac);
   }
+  for (const z of [-0.72, -1.91]) {
+    at(R, 'cyl', e, yaw, 0, 0, 4.10, z, 1.04, 0.18, 1.04, METAL_D);
+    at(R, 'cyl', e, yaw, 0, 0, 4.21, z, 0.78, 0.05, 0.78, SOOT);
+    at(R, 'cone', e, yaw, 0, 0, 4.30, z, 0.18, 0.18, 0.18, METAL_L);
+  }
+  at(R, 'cyl', e, yaw, FORWARD, 0, 2.90, -2.98, 0.75, 0.60, 0.75, METAL_D);
+  at(R, 'cyl', e, yaw, FORWARD, 0, 2.90, -3.30, 0.54, 0.06, 0.54, SOOT);
 
-  // --- arms: left = module 2, right = module 3 ------------------------
-  for (let arm = 0; arm < 2; arm++) armModel(R, e, arm, wdefs, flashes, 4.4, 1.95);
+  // Tank-style roof hatch and an armored commander sight directly behind it.
+  at(R, 'cyl', e, yaw, 0, 0, 4.10, 1.00, 0.86, 0.16, 0.86, METAL_D);
+  at(R, 'cyl', e, yaw, 0, 0, 4.19, 1.00, 0.70, 0.05, 0.70, METAL_L);
+  at(R, 'cyl', e, yaw, 0, 0, 4.08, 0.16, 0.50, 0.20, 0.50, METAL_D);
+  at(R, 'box', e, yaw, 0, 0, 4.47, 0.16, 0.59, 0.62, 0.62, METAL_L);
+  at(R, 'box', e, yaw, 0, 0, 4.76, 0.43, 0.18, 0.10, 0.58, METAL_D);
+  at(R, 'cyl', e, yaw, FORWARD, -0.09, 4.50, 0.49, 0.26, 0.12, 0.26, GLASS);
+  at(R, 'cyl', e, yaw, FORWARD, 0.17, 4.52, 0.49, 0.12, 0.10, 0.12, GLASS);
+
+  // High, close-in weapon stations; module indices remain 2 / 3.
+  for (const side of [-1, 1]) {
+    at(R, 'box', e, yaw, 0, side * 0.99, 3.55, 0.30, 0.34, 0.22, 0.86, METAL_D);
+  }
+  for (let arm = 0; arm < 2; arm++) armModel(R, e, arm, wdefs, flashes, 3.55, 1.43);
 }
 
-// One arm of a mech.  Every piece is placed `dist` metres out along the
-// barrel, so the whole assembly - pod, tube and muzzle brake - swings with
-// the elevation instead of leaving the brake behind in the air.
-// `shoulderY` is the pivot height above the base point, `lateral` the offset
-// to the side.
+// One high-mounted weapon station. Every piece is placed `dist` metres out
+// along the barrel, so pod, tubes and muzzle brake elevate as one assembly.
 function armModel(R, e, arm, wdefs, flashes, shoulderY, lateral) {
   const side = arm === 0 ? -1 : 1;
   const mod = arm === 0 ? 2 : 3;
@@ -189,32 +226,36 @@ function armModel(R, e, arm, wdefs, flashes, shoulderY, lateral) {
   const wd = wdefs[wid] || {};
   const kind = wd.kind || 'none';
   const lat = side * lateral;
-  // dist along the barrel line, elevation p
-  const put = (shape, meshPitch, dist, sx, sy, sz, colour, dlat) =>
-    at(R, shape, e, yaw, meshPitch, lat + (dlat || 0), shoulderY + dist * Math.sin(p),
-      dist * Math.cos(p), sx, sy, sz, colour);
+  const put = (shape, meshPitch, dist, sx, sy, sz, colour, dlat = 0, dy = 0) =>
+    at(R, shape, e, yaw, meshPitch, lat + dlat,
+      shoulderY + dist * Math.sin(p) + dy * Math.cos(p),
+      dist * Math.cos(p) - dy * Math.sin(p), sx, sy, sz, colour);
 
-  put('box', p, 0.7, 1.25, 1.4, 2.9, col);
-  put('sphere', 0, 0.05, 1.35, 1.35, 1.35, alive ? METAL_L : DEAD);
+  put('box', p, 0.25, 1.65, 0.70, 0.62, col);
+  put('sphere', 0, 0, 0.66, 0.66, 0.66, alive ? METAL_L : DEAD);
   if (kind === 'bullet') {
-    const len = 5.2;
-    put('cyl', FORWARD + p, 1.35 + len * 0.5, 0.34, len, 0.34, [0.12, 0.13, 0.14]);
-    put('cyl', FORWARD + p, 1.35 + len + 0.2, 0.55, 0.8, 0.55, [0.1, 0.1, 0.11]);
-  } else if (kind === 'rocket' || kind === 'saclos' || kind === 'top') {
-    put('box', p, 2.1, 1.15, 1.0, 2.6, alive ? fac : DEAD);
+    const len = 3.2;
+    put('cyl', FORWARD + p, 0.90 + len * 0.5, 0.17, len, 0.17, [0.12, 0.13, 0.14]);
+    put('cyl', FORWARD + p, 0.90 + len + 0.18, 0.28, 0.42, 0.28, [0.1, 0.1, 0.11]);
+  } else if (kind === 'rocket') {
+    put('box', p, 1.05, 2.10, 0.84, 0.74, alive ? fac : DEAD);
+    for (const [dx, dy] of [[0, 0], [-0.17, 0.14], [0.17, 0.14], [-0.17, -0.14],
+      [0.17, -0.14], [0, 0.26], [0, -0.26]]) {
+      put('cyl', FORWARD + p, 2.13, 0.14, 0.18, 0.14, [0.08, 0.08, 0.09], dx, dy);
+    }
+  } else if (kind === 'saclos' || kind === 'top') {
+    put('box', p, 1.05, 2.10, 0.76, 0.74, alive ? fac : DEAD);
     for (const q of [-1, 1]) {
-      // the tubes sit side by side inside the pod
-      put('cyl', FORWARD + p, 2.9, 0.3, 1.6, 0.3, [0.1, 0.1, 0.11], q * 0.3);
+      put('cyl', FORWARD + p, 2.12, 0.22, 0.20, 0.22, [0.08, 0.08, 0.09], q * 0.20);
     }
   } else {
-    put('cyl', FORWARD + p, 2.15, 0.24, 1.6, 0.24, [0.12, 0.12, 0.13]);
+    put('cyl', FORWARD + p, 1.35, 0.18, 0.90, 0.18, [0.12, 0.12, 0.13]);
   }
-  // muzzle flash
   const fl = flashes && flashes.get(e.id);
   if (alive && fl && fl.arm === arm) {
-    const tip = kind === 'bullet' ? 6.8 : 3.4;
-    put('sphere', p, tip, 0.9, 0.9, 0.9, [1.0, 0.72, 0.22]);
-    put('cone', FORWARD + p, tip + 1.1, 0.7, 1.8, 0.7, [1.0, 0.88, 0.45]);
+    const tip = kind === 'bullet' ? 4.35 : 2.50;
+    put('sphere', p, tip, 0.75, 0.75, 0.75, [1.0, 0.72, 0.22]);
+    put('cone', FORWARD + p, tip + 0.85, 0.58, 1.4, 0.58, [1.0, 0.88, 0.45]);
   }
 }
 

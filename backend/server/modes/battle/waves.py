@@ -158,7 +158,7 @@ def _town_waves(world: World, dt: float) -> None:
             town["apc_t"] -= dt
             if town["inf_t"] > 0.0 and town["apc_t"] > 0.0:
                 continue
-            x, z = _clear_near(world, town["x"], town["z"], 40.0, 85.0)
+            x, z = _clear_near(world, town["x"], town["z"], 40.0, 70.0)
             if town["inf_t"] <= 0.0:
                 town["inf_t"] = INF_INTERVAL
                 for etype in INF_SQUAD:

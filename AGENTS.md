@@ -160,6 +160,33 @@ frontend/
   make a tree tile block a round or a hull again (`TREE_H` as an obstacle), and
   never give the canopy a bullet collision: the plan is trunk-solid,
   leaves-see-through.
+* **Towns are grown, not drawn.** Each one starts on its lane (`_on_lane` snaps
+  the spot onto the nearest lane point, slides it ±3 tiles along the road and
+  returns the lane direction) and then `_town_streets` grows the network
+  OpenTTD-style: a front runs 2-6 tiles of street, then carries on, turns, dies
+  and drops a branch, or joins the street it ran into - which is what closes a
+  block. Fronts start in the middle and on both sides of the lane, and reopen on
+  any street with room to grow. Two passes then make the network drivable
+  instead of a maze: `_town_rungs` punches a cross street every `TOWN_RUNG` (4)
+  tiles of a long street - only where a street really is on the other side, so
+  a block is opened up and never a cul-de-sac added - and `_town_close` runs
+  every remaining loose end on to the nearest other street (a shortest-path
+  search over free ground, houses are walls) or lets it fade out into the
+  fields. Straight stretches between junctions average 2 tiles and dead ends are
+  ~0.1% of the street tiles; keep it that way, a long street you cannot get off
+  or a street that stops at a wall is what makes a town feel like a trap.
+  `_town_houses` then puts the buildings up in rows of 2-5 along one frontage,
+  `TOWN_HOUSES` (120-200) per town, one storey count per building and taller
+  towards the middle - the rows plus the gaps are what make a town read as a
+  town rather than a wall of blocks.
+  **The town only ever ORs road pieces into the bit map - it never removes
+  one - and `no_build` keeps buildings 1 tile off a straight lane and 2 off a
+  diagonal one**, so the arterial stays straight and drivable however the town
+  grows around it. `TOWN_PLAZA` (= 5 tiles, 80 m) is the open square in the
+  middle: no buildings and no trees there, because the 40-70 m forward spawn
+  ring and the civilians live inside it. Streets are laid *before* the corridor
+  cut so they sit on terraces like the lanes do; they are part of `roads`, so
+  the client draws them from the same bits.
 * **Netcode** — one init payload with the map and all definitions, then binary
   snapshots at 15 Hz (`SNAP_EVERY`) and JSON meta at 10 Hz (`META_EVERY`).
   Entity state is authoritative on the server; the client only interpolates.

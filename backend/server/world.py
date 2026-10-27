@@ -378,7 +378,7 @@ class World:
         if best is not None and best_d > 900.0:
             for _ in range(20):
                 ang = self.rng.random() * math.tau
-                r = self.rng.uniform(40.0, 85.0)
+                r = self.rng.uniform(40.0, 70.0)
                 x = best["x"] + math.cos(ang) * r
                 z = best["z"] + math.sin(ang) * r
                 if self._clear_spot(x, z):

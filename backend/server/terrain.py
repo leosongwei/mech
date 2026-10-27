@@ -90,6 +90,21 @@ TOWN_SPOTS = [
     (350, 350), (440, 440), (560, 560), (650, 650), (740, 740),
 ]
 
+# Towns are *grown*, the way OpenTTD grows a city: a front runs a few tiles of
+# street, turns or dies and drops a branch.  Then the network is opened up -
+# side streets punched across the long blocks and every loose end joined to
+# another street - and a few dozen buildings are put up along it.  Each town
+# draws its own block width, run lengths, growth budget and house count, so no
+# two read alike - and the arterial it sits on is never touched: the lane is
+# straight and it stays so.
+TOWN_RUNS = (85, 140)        # street runs (2-6 tiles each) per town
+TOWN_RADIUS = (10, 14)       # tiles a town grows out from its middle
+TOWN_BLOCK = (2, 4)          # tiles between two parallel streets
+TOWN_HOUSES = (120, 200)     # buildings per town: rows along the streets, gaps between them
+TOWN_PLAZA = 5               # tiles around the middle kept clear of buildings
+TOWN_REACH = 9               # how far a dead end looks for a street to join
+TOWN_RUNG = 4                # tiles between the side streets off a long street
+
 
 
 def _upsample(g: np.ndarray, w: int, h: int) -> np.ndarray:
@@ -248,6 +263,444 @@ def _trunks(i: int, j: int, t: int) -> tuple[tuple[float, float, float, float], 
                     TRUNK_R * (0.7 + q3 * 0.5),
                     (10.0 + q3 * 8.0) * 0.40))
     return tuple(out)
+
+
+# ---------------------------------------------------------------------------
+# towns: grown from the middle out, the way OpenTTD grows a city
+# ---------------------------------------------------------------------------
+_DIRS = ((1, 0), (0, 1), (-1, 0), (0, -1))          # +x, +z, -x, -z
+_BITS = (ROAD_E, ROAD_S, ROAD_W, ROAD_N)
+
+
+def _on_lane(x: float, y: float, rng) -> tuple[int, int, float, float]:
+    """Snap a town spot onto its lane, then slide it a little along the road.
+
+    A town is a town because the road goes through it: its middle sits on the
+    arterial, so the lane runs straight past the market square and the streets
+    grow out of it.  A spot off the lane would be a detour nobody drives
+    through, and the depot would never be worth capturing.  Also returns the
+    lane direction, so the streets know which side of it they are on.
+    """
+    best = (1e18, float(x), float(y), 0.0, 0.0)
+    for lane in LANE_TILES:
+        for a, b in zip(lane[:-1], lane[1:]):
+            vx, vy = b[0] - a[0], b[1] - a[1]
+            ll = vx * vx + vy * vy
+            u = max(0.0, min(1.0, ((x - a[0]) * vx + (y - a[1]) * vy) / ll))
+            px, py = a[0] + vx * u, a[1] + vy * u
+            dd = (px - x) ** 2 + (py - y) ** 2
+            if dd < best[0]:
+                n = ll ** 0.5
+                best = (dd, px, py, vx / n, vy / n)
+    _, px, py, ux, uy = best
+    k = rng.uniform(-3.0, 3.0)
+    return int(round(px + ux * k)), int(round(py + uy * k)), ux, uy
+
+
+def _pave(roads: np.ndarray, i: int, j: int, bits: int) -> None:
+    """Lay road pieces into one tile and join every neighbour they reach.
+
+    The client draws one quad per piece and per tile, so a street that ends on
+    another road has to give *that* tile the piece facing back - otherwise the
+    last few metres before the junction are missing.  Joining an existing road
+    is also how a town closes a block: the walk that runs into a street it
+    built earlier simply connects to it.
+    """
+    roads[j, i] |= bits
+    for k, (dx, dy) in enumerate(_DIRS):
+        if bits & _BITS[k] and roads[j + dy, i + dx]:
+            roads[j + dy, i + dx] |= _BITS[(k + 2) % 4]
+
+
+def _street_ok(roads: np.ndarray, tiles: np.ndarray, i: int, j: int,
+               dx: int, dy: int, spacing: int) -> bool:
+    """Whether the town may run a street through (i, j) heading (dx, dy).
+
+    Free grass only, and never closer than ``spacing`` tiles to a street that
+    runs the same way: that minimum block width is what turns a town into
+    blocks of houses instead of a woven mat of asphalt.
+    """
+    if tiles[j, i] != TILE_GRASS:
+        return False
+    horiz = dy == 0
+    par = (ROAD_E | ROAD_W) if horiz else (ROAD_N | ROAD_S)
+    px, py = (0, 1) if horiz else (1, 0)
+    for k in range(1, spacing + 1):
+        for s in (1, -1):
+            if roads[j + py * k * s, i + px * k * s] & par:
+                return False
+    return True
+
+
+def _town_streets(roads: np.ndarray, tiles: np.ndarray, rng,
+                  cx: int, cy: int, lane: tuple[float, float],
+                  radius: int, spacing: int, runs: int) -> None:
+    """Grow the street network of one town out from its middle.
+
+    A street is grown the way OpenTTD grows one: a front runs a few tiles
+    straight, then either carries on, turns a corner or dies and drops a
+    branch off behind it - and a front that runs into a street it built
+    earlier simply joins it, which is what closes a block.  The fronts start
+    in the middle and are re-opened on any street that still has room to
+    grow, so a town that ran out of fronts on one side carries on on another.
+
+    Every town draws its own block width, its own run lengths and its own
+    branching odds, so no two networks read alike; the arterial is never
+    touched - nothing here removes a road piece, and ``_street_ok`` keeps the
+    town's own streets off a parallel course right next to it.
+    """
+    own: list[tuple[int, int]] = []                # the town's own street tiles
+    fronts: list[tuple[int, int, int]] = [(cx, cy, k) for k in range(4)]
+    # ... and the town hangs off both sides of its lane: a street leaving the
+    # arterial at a few points along it is what makes the lane the town's main
+    # street instead of a road that happens to pass by
+    ux, uy = lane
+    for k in (-5, -1, 4, 8, -9, 12):
+        si = cx + int(round(ux * k))
+        sj = cy + int(round(uy * k))
+        for side in (1, -1):
+            heads = [h for h in rng.permutation(4)
+                     if side * (ux * _DIRS[h][1] - uy * _DIRS[h][0]) > 0.2]
+            if not heads:
+                continue
+            h = int(heads[0])
+            fi, fj = si + _DIRS[h][0], sj + _DIRS[h][1]
+            if not (0 <= fi < tiles.shape[1] and 0 <= fj < tiles.shape[0]):
+                continue
+            if roads[fj, fi] or tiles[fj, fi] != TILE_GRASS:
+                continue
+            _pave(roads, fi, fj, _BITS[h] | _BITS[(h + 2) % 4])
+            own.append((fi, fj))
+            fronts.append((fi, fj, h))
+
+    def reopen() -> bool:
+        """Open a front on a street tile that still has somewhere to go."""
+        for _ in range(24):
+            i, j = own[int(rng.integers(0, len(own)))]
+            for k in rng.permutation(4):
+                k = int(k)
+                if roads[j, i] & _BITS[k]:
+                    continue
+                ti, tj = i + _DIRS[k][0], j + _DIRS[k][1]
+                if abs(ti - cx) <= radius and abs(tj - cy) <= radius:
+                    fronts.append((i, j, k))
+                    return True
+        return False
+
+    for _ in range(runs):
+        if not fronts and not reopen():
+            break
+        idx = int(rng.integers(0, len(fronts)))
+        i, j, head = fronts[idx]
+        run = int(rng.integers(2, 7))
+        path: list[tuple[int, int, int]] = []      # the tiles this run laid
+        while run > 0:
+            dx, dy = _DIRS[head]
+            ti, tj = i + dx, j + dy
+            if abs(ti - cx) > radius or abs(tj - cy) > radius:
+                break
+            if roads[tj, ti]:
+                _pave(roads, i, j, _BITS[head])     # joins, and the front ends
+                run = -1
+                break
+            if not _street_ok(roads, tiles, ti, tj, dx, dy, spacing):
+                break
+            if not roads[j, i]:
+                own.append((i, j))
+            _pave(roads, i, j, _BITS[head])
+            _pave(roads, ti, tj, _BITS[(head + 2) % 4])
+            i, j = ti, tj
+            path.append((i, j, head))
+            own.append((i, j))
+            run -= 1
+        if not path:
+            # boxed in: turn the front instead of giving up, so a street that
+            # runs into a wall carries on beside it rather than dead-ending
+            opts = [(head + 1) % 4, (head + 3) % 4]
+            rng.shuffle(opts)
+            for nh in opts:
+                ti, tj = i + _DIRS[nh][0], j + _DIRS[nh][1]
+                if (abs(ti - cx) > radius or abs(tj - cy) > radius
+                        or roads[j, i] & _BITS[nh]):
+                    continue
+                if roads[tj, ti] or _street_ok(roads, tiles, ti, tj,
+                                               _DIRS[nh][0], _DIRS[nh][1],
+                                               spacing):
+                    fronts[idx] = (i, j, nh)
+                    break
+            else:
+                fronts.pop(idx)                    # nowhere to go from here
+            continue
+        r = rng.random()
+        if r < 0.5:                                # the front carries on
+            fronts[idx] = (i, j, head)
+        elif r < 0.82:                             # ... and turns a corner
+            fronts[idx] = (i, j, (head + (1 if rng.random() < 0.5 else 3)) % 4)
+        else:                                      # the street ends here
+            fronts.pop(idx)
+        if run < 0:
+            continue
+        # a side street off the back of the run
+        if rng.random() < 0.55:
+            bi, bj, bh = path[int(rng.integers(0, len(path)))]
+            nh = (bh + (1 if rng.random() < 0.5 else 3)) % 4
+            if not roads[bj, bi] & _BITS[nh]:
+                fronts.append((bi, bj, nh))
+
+
+def _pave_to(roads: np.ndarray, a: tuple[int, int], b: tuple[int, int]) -> None:
+    """Lay the two pieces that join tile ``a`` to the neighbouring tile ``b``."""
+    k = _DIRS.index((b[0] - a[0], b[1] - a[1]))
+    _pave(roads, a[0], a[1], _BITS[k])
+    _pave(roads, b[0], b[1], _BITS[(k + 2) % 4])
+
+
+def _town_link(roads: np.ndarray, tiles: np.ndarray, i0: int, j0: int,
+               cx: int, cy: int, radius: int, reach: int) -> bool:
+    """Pave the shortest free line from the dead end at (i0, j0) to a street.
+
+    A widening search over free ground - houses are walls, open plots are
+    passable - and the line is laid along the first street it touches, so the
+    way through is the shortest one there is and never runs through a
+    building.
+    """
+    bits = int(roads[j0, i0]) & ROAD_STRAIGHT
+    k = _BITS.index(bits)                          # the one way out it has
+    back = (i0 + _DIRS[k][0], j0 + _DIRS[k][1])    # ... which is its own street
+    here = (i0, j0)
+    prev: dict[tuple[int, int], tuple[int, int] | None] = {here: None}
+    queue: list[tuple[int, int]] = []
+    for dx, dy in _DIRS:
+        ti, tj = i0 + dx, j0 + dy
+        if (ti, tj) == back:
+            continue                               # that road is no way out
+        if roads[tj, ti]:
+            _pave_to(roads, here, (ti, tj))         # a street right next door
+            return True
+        if tiles[tj, ti] == TILE_GRASS:
+            prev[(ti, tj)] = here
+            queue.append((ti, tj))
+    head = 0
+    while head < len(queue):
+        i, j = queue[head]
+        head += 1
+        for dx, dy in _DIRS:
+            ti, tj = i + dx, j + dy
+            if abs(ti - i0) > reach or abs(tj - j0) > reach:
+                continue
+            if abs(ti - cx) > radius + 1 or abs(tj - cy) > radius + 1:
+                continue
+            if roads[tj, ti]:
+                # a street: pave the line back from it to the dead end
+                line = [(ti, tj)]
+                node: tuple[int, int] | None = (i, j)
+                while node is not None:
+                    line.append(node)
+                    node = prev[node]
+                for a, b in zip(line[1:], line):
+                    _pave_to(roads, a, b)
+                return True
+            if tiles[tj, ti] != TILE_GRASS or (ti, tj) in prev:
+                continue
+            prev[(ti, tj)] = (i, j)
+            queue.append((ti, tj))
+    return False
+
+
+def _town_close(roads: np.ndarray, tiles: np.ndarray, rng,
+                cx: int, cy: int, radius: int, reach: int) -> None:
+    """Run the dead ends of a town on until they reach another street.
+
+    Growth leaves loose ends: a street that stops in the middle of a block, a
+    stub behind a house.  A road that leads nowhere is a trap - a mech turns
+    into it, finds a wall of buildings and has to reverse out - so every loose
+    end gets a way through, found by widening the search a tile at a time over
+    free ground until it touches another street.  What stays is what a town is
+    supposed to have: cul-de-sacs with buildings all around them, and streets
+    that walk out of town into the open field instead of turning back.
+    """
+    for _ in range(8):                             # closing one frees the next
+        ends = []
+        for j in range(max(0, cy - radius - 2), min(tiles.shape[0], cy + radius + 3)):
+            for i in range(max(0, cx - radius - 2), min(tiles.shape[1], cx + radius + 3)):
+                bits = int(roads[j, i]) & ROAD_STRAIGHT
+                if bits and not bits & (bits - 1):   # exactly one way out
+                    ends.append((i, j))
+        if not ends:
+            return
+        rng.shuffle(ends)
+        linked = 0
+        for i, j in ends:
+            bits = int(roads[j, i]) & ROAD_STRAIGHT
+            if not bits or bits & (bits - 1):
+                continue                           # closed by the one before
+            if _town_link(roads, tiles, i, j, cx, cy, radius, reach):
+                linked += 1
+                continue
+            # nothing to join: a loose end facing open ground runs on out of
+            # town instead, the way a town's roads thin out into the fields
+            k = (_BITS.index(bits) + 2) % 4        # ... the way it has left
+            dx, dy = _DIRS[k]
+            ti, tj = i + dx, j + dy
+            run = 0
+            while (run < 4 and abs(ti - cx) <= radius + 4
+                   and abs(tj - cy) <= radius + 4
+                   and tiles[tj, ti] == TILE_GRASS and not roads[tj, ti]):
+                _pave(roads, i, j, _BITS[k])
+                _pave(roads, ti, tj, _BITS[(k + 2) % 4])
+                i, j = ti, tj
+                ti, tj = i + dx, j + dy
+                run += 1
+            linked += run > 0
+        if not linked:
+            return
+
+
+def _spur(roads: np.ndarray, tiles: np.ndarray, i: int, j: int, k: int,
+          cx: int, cy: int, radius: int, reach: int) -> bool:
+    """Pave a side street off (i, j) toward the next street over, or nothing.
+
+    The line is scanned before a single piece is laid: if the way through runs
+    into a house or into nothing at all the block stays as it is, so this never
+    digs a new dead end.
+    """
+    dx, dy = _DIRS[k]
+    line = [(i, j)]
+    ti, tj = i + dx, j + dy
+    while not roads[tj, ti] and len(line) <= reach:
+        if tiles[tj, ti] != TILE_GRASS or abs(ti - cx) > radius + 2 or abs(tj - cy) > radius + 2:
+            return False
+        line.append((ti, tj))
+        ti, tj = ti + dx, tj + dy
+    if not roads[tj, ti]:
+        return False
+    line.append((ti, tj))
+    for a, b in zip(line, line[1:]):
+        _pave_to(roads, a, b)
+    return True
+
+
+def _town_rungs(roads: np.ndarray, tiles: np.ndarray, rng,
+                cx: int, cy: int, radius: int, rung: int, reach: int) -> None:
+    """Cut the long streets of a town into blocks.
+
+    A street that runs on for a dozen tiles without a way off it is a canyon:
+    the player drives it because there is nothing else to do, and never finds
+    the street behind the block.  So every ``rung`` tiles a street that carries
+    straight through gets a side street punched across to the next one - only
+    where a street is really there to reach, so a block gets opened up rather
+    than a cul-de-sac added.
+    """
+    off = int(rng.integers(0, max(1, rung)))
+    i0, i1 = max(0, cx - radius - 2), min(tiles.shape[1], cx + radius + 3)
+    j0, j1 = max(0, cy - radius - 2), min(tiles.shape[0], cy + radius + 3)
+    for j in range(j0, j1):
+        for i in range(i0, i1):
+            bits = int(roads[j, i]) & ROAD_STRAIGHT
+            if not bits or (bits & (bits - 1)) == 0:
+                continue                           # nothing, or a dead end
+            if (bits & (ROAD_E | ROAD_W)) == (ROAD_E | ROAD_W) and not bits & (ROAD_N | ROAD_S):
+                if (i + off) % rung:
+                    continue
+                if not _spur(roads, tiles, i, j, 3, cx, cy, radius, reach):
+                    _spur(roads, tiles, i, j, 1, cx, cy, radius, reach)
+            elif (bits & (ROAD_N | ROAD_S)) == (ROAD_N | ROAD_S) and not bits & (ROAD_E | ROAD_W):
+                if (j + off) % rung:
+                    continue
+                if not _spur(roads, tiles, i, j, 0, cx, cy, radius, reach):
+                    _spur(roads, tiles, i, j, 2, cx, cy, radius, reach)
+
+
+def _town_houses(roads: np.ndarray, tiles: np.ndarray, walls: np.ndarray,
+                 clear: np.ndarray, no_build: np.ndarray, rng,
+                 cx: int, cy: int, radius: int, count: int) -> int:
+    """Put up to ``count`` buildings along the streets of one town.
+
+    Houses are put up in rows, the way a street gets built up: a plot is drawn,
+    and then two to five more go up shoulder to shoulder beside it along the
+    same frontage before the town moves on to another street.  The rows are
+    what makes a town read as a town - a terrace here, a gap with a back
+    garden there - and the count is what keeps it from becoming a maze of
+    walls, which is also why the plots *not* taken stay open on both sides of
+    the street.
+
+    The plots facing the arterial are left to ``no_build``: with a tile or two
+    of verge kept clear, the lane the front drives on stays a road with a
+    shoulder instead of a corridor between two walls.
+    """
+    reach = radius + 2
+    i0, i1 = max(0, cx - reach), min(tiles.shape[1], cx + reach + 1)
+    j0, j1 = max(0, cy - reach), min(tiles.shape[0], cy + reach + 1)
+    st = roads[j0:j1, i0:i1] != 0
+    sub = tiles[j0:j1, i0:i1]
+    h, w = sub.shape
+    free = (sub == TILE_GRASS) & ~no_build[j0:j1, i0:i1] & ~st
+    jj, ii = np.mgrid[j0:j1, i0:i1]
+    # the square in the middle stays open - a disc, not a block, so the town
+    # wraps its corners around it: it is where a mech comes down when the town
+    # is a forward spawn point, and where the civilians walk
+    plaza = np.hypot(ii - cx, jj - cy) <= TOWN_PLAZA
+    front = _dilate(st, 1) & ~st & free & ~plaza
+
+    def put(y: int, x: int) -> bool:
+        """Raise one building of one to four tiles on a plot that faces a
+        street, and return whether there was room for it."""
+        r = rng.random()
+        bw = bh = 1
+        if r > 0.86:
+            bw = bh = 2
+        elif r > 0.58:
+            bw, bh = (2, 1) if rng.random() < 0.5 else (1, 2)
+        y0, x0 = min(y, h - bh), min(x, w - bw)
+        if (not free[y0:y0 + bh, x0:x0 + bw].all()
+                or (sub[y0:y0 + bh, x0:x0 + bw] != TILE_GRASS).any()
+                or plaza[y0:y0 + bh, x0:x0 + bw].any()):
+            return False
+        # the closer to the middle, the taller the block
+        d = math.hypot(x + i0 - cx, y + j0 - cy)
+        lo, hi = (4, 8) if d < 9.0 else (3, 6) if d < 15.0 else (2, 4)
+        storeys = int(rng.integers(lo, hi + 1))
+        sub[y0:y0 + bh, x0:x0 + bw] = TILE_BUILDING
+        walls[j0 + y0:j0 + y0 + bh, i0 + x0:i0 + x0 + bw] = storeys * FLOOR_H
+        clear[j0 + y0:j0 + y0 + bh, i0 + x0:i0 + x0 + bw] = True
+        free[y0:y0 + bh, x0:x0 + bw] = False
+        return True
+
+    plots = np.argwhere(front)
+    rng.shuffle(plots)
+    built = 0
+    for y, x in plots:
+        if built >= count:
+            break
+        if not front[y, x] or not free[y, x]:
+            continue                               # row already ran over it
+        # which way does the frontage run? the plot faces the street across
+        # one side, so the row continues along the other axis
+        along = (1, 0)
+        for dx, dy in _DIRS:
+            ny, nx = y + dy, x + dx
+            if 0 <= ny < h and 0 <= nx < w and st[ny, nx]:
+                along = (0, 1) if dy else (1, 0)
+                break
+        step = 1 if rng.random() < 0.5 else -1
+        run = int(rng.integers(2, 6))              # buildings in this row
+        py, px = y, x
+        while run > 0:
+            if built >= count:
+                break
+            if put(py, px):
+                built += 1
+                run -= 1
+            elif not free[py, px]:
+                break
+            else:
+                run -= 1
+            py += along[1] * step
+            px += along[0] * step
+            if not (0 <= py < h and 0 <= px < w):
+                break
+    clear[j0:j1, i0:i1] |= plaza
+    return built
 
 
 class Terrain:
@@ -550,6 +1003,39 @@ def generate(seed: int = 11) -> Terrain:
     for lane in LANE_TILES:
         for a, b in zip(lane[:-1], lane[1:]):
             _road_leg(roads, a, b)
+    lane_road = roads != 0
+
+    # ---- towns -----------------------------------------------------------
+    # A town is grown from its middle out, and it is grown *before* the ground
+    # is cut, because its streets have to be part of the corridor: the town
+    # sits on terraces like the lanes do.  The arterial is not the town's to
+    # touch - nothing below ever removes a road piece and nothing builds on
+    # the lane or its verge, so the front's road stays straight and open
+    # however the town happens to grow around it.
+    straight_road = (roads & ROAD_STRAIGHT) != 0
+    diag_road = (roads & ROAD_DIAG) != 0
+    # buildings keep one tile off a straight road but two off a diagonal one:
+    # the diagonal piece reaches into the tile corners, so a house beside it
+    # would stand in the roadway and wedge a hull against its wall
+    no_build = _dilate(straight_road, 1) | _dilate(diag_road, 2)
+    walls = np.zeros((d, w), np.uint8)
+    towns = []
+    clear = lane_road.copy()
+    for (tx, ty) in TOWN_SPOTS:
+        cx, cy, ux, uy = _on_lane(float(tx), float(ty), rng)
+        towns.append(dict(x=cx * TILE, z=cy * TILE, tile_x=cx, tile_y=cy,
+                          owner=-1, progress=0.0, name=f"T{len(towns):02d}"))
+        radius = int(rng.integers(TOWN_RADIUS[0], TOWN_RADIUS[1] + 1))
+        _town_streets(roads, tiles, rng, cx, cy, (ux, uy), radius,
+                      int(rng.integers(TOWN_BLOCK[0], TOWN_BLOCK[1] + 1)),
+                      int(rng.integers(TOWN_RUNS[0], TOWN_RUNS[1] + 1)))
+        # cross streets first, then every loose end gets a way out - both
+        # before anything is built, so the new streets are open on both sides
+        _town_rungs(roads, tiles, rng, cx, cy, radius, TOWN_RUNG, TOWN_REACH)
+        _town_close(roads, tiles, rng, cx, cy, radius, TOWN_REACH)
+        _town_houses(roads, tiles, walls, clear, no_build, rng, cx, cy,
+                     radius, int(rng.integers(TOWN_HOUSES[0], TOWN_HOUSES[1] + 1)))
+
     road = roads != 0
     tiles[road] = TILE_ROAD
 
@@ -589,40 +1075,6 @@ def generate(seed: int = 11) -> Terrain:
         tiles[max(0, j0 - 7):j0 + 8, max(0, i0 - 7):i0 + 8] = TILE_BASE
         tiles[max(0, j0 - 2):j0 + 3, max(0, i0 - 2):i0 + 3] = TILE_SOLID
 
-    # ---- towns -----------------------------------------------------------
-    # buildings keep one tile off a straight road but two off a diagonal one:
-    # the diagonal piece reaches into the tile corners, so a house beside it
-    # would stand in the roadway and wedge a hull against its wall
-    straight_road = (roads & ROAD_STRAIGHT) != 0
-    diag_road = (roads & ROAD_DIAG) != 0
-    no_build = _dilate(straight_road, 1) | _dilate(diag_road, 2)
-    walls = np.zeros((d, w), np.uint8)
-    towns = []
-    clear = road.copy()
-    for (tx, ty) in TOWN_SPOTS:
-        cx = int(tx + rng.integers(-4, 5))
-        cy = int(ty + rng.integers(-4, 5))
-        towns.append(dict(x=cx * TILE, z=cy * TILE, tile_x=cx, tile_y=cy,
-                          owner=-1, progress=0.0, name=f"T{len(towns):02d}"))
-        for _ in range(int(rng.integers(6, 12))):
-            bw = int(rng.integers(1, 4))
-            bh = int(rng.integers(1, 4))
-            bx = int(cx + rng.integers(-8, 9))
-            by = int(cy + rng.integers(-8, 9))
-            i0, i1 = max(1, bx), min(w - 2, bx + bw)
-            j0, j1 = max(1, by), min(d - 2, by + bh)
-            if i1 <= i0 or j1 <= j0:
-                continue
-            if no_build[j0:j1, i0:i1].any():
-                continue
-            patch = tiles[j0:j1, i0:i1]
-            patch[(patch != TILE_ROAD) & (patch != TILE_BASE)] = TILE_BUILDING
-            clear[j0:j1, i0:i1] = True
-            # one block is one building: its storey count is the wall column
-            # every tile of it is raised to, which is also what stops a round
-            storeys = int(rng.integers(2, 7))          # 2..6 floors
-            walls[j0:j1, i0:i1][patch == TILE_BUILDING] = int(storeys * FLOOR_H)
-
     # ---- forests ---------------------------------------------------------
     # a thick stand in the middle of every blob (several trees per tile) with a
     # ragged edge of single-tree tiles, plus lone trees scattered over the
@@ -657,8 +1109,10 @@ def generate(seed: int = 11) -> Terrain:
             if 2 <= rx < w - 2 and 2 <= rz < d - 2 and tiles[rz, rx] == TILE_GRASS:
                 tiles[rz, rx] = TILE_ROCK
 
-    # keep lanes / towns / base pads clear of obstacles
-    keep = _dilate(clear, 3)
+    # keep the asphalt and the town squares clear of obstacles: a trunk in the
+    # verge stops a hull, and the square in the middle of a town is where a
+    # mech comes down when the town is a forward spawn point
+    keep = _dilate(clear, 1) | _dilate(lane_road, 3)
     dangerous = (tiles == TILE_TREE) | (tiles == TILE_FOREST) | (tiles == TILE_ROCK)
     tiles[keep & dangerous] = TILE_GRASS
     tiles[road] = TILE_ROAD

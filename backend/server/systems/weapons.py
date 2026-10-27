@@ -113,7 +113,9 @@ def fire(world: World, eid: int, arm: int, wid: int, wd: dict, target: int = -1)
     etype = int(e["etype"][eid])
     origin, yaw, pitch = aim_of(world, eid)
     if etype == defs.ETYPE_MECH:
-        origin = mu.muzzle_point(pos[eid], yaw, defs.MOD_LEFT if arm == 0 else defs.MOD_RIGHT, pitch)
+        reach = defs.MECH_ARM_REACH.get(wd["kind"], 1.8)
+        origin = mu.muzzle_point(pos[eid], yaw, defs.MOD_LEFT if arm == 0 else defs.MOD_RIGHT,
+                                 pitch, reach)
 
     kind = KIND_ID.get(wd["kind"], 0)
     n = max(1, int(wd["salvo"]))

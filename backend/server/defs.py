@@ -264,7 +264,22 @@ MECH_EYE = 5.05
 # the hull rolls up to speed instead of snapping to it: 0-100 km/h in ~3 s,
 # 0-180 in ~5.4 s
 MECH_ACCEL = 9.3           # m/s^2, top speed 180 km/h
+# The shoulder joint of each arm: lateral offset, height, and the forward
+# offset of the arm's front face (the round leaves from the weapon's own mouth,
+# `MECH_ARM_REACH` metres further out along the barrel).
 MECH_ARM_MUZZLE = {MOD_LEFT: (-1.43, 3.55, 0.9), MOD_RIGHT: (1.43, 3.55, 0.9)}
+# How far the bore ends past the shoulder, per weapon kind - the same numbers
+# the client builds the models from (`scene.js armModel`), so a round really
+# leaves the mouth of the barrel it was drawn on.  A 4.1 m cannon and a 1.8 m
+# nest differ by more than two metres; using one figure for both put the
+# rockets inside their own tubes and the cannon shells well short of the brake.
+MECH_ARM_REACH = {
+    "bullet": 4.30,       # 30 mm: just inside the muzzle brake
+    "rocket": 1.75,       # forty-cell nest: the mouth of the tubes
+    "saclos": 1.95,       # guided box: the launch tube
+    "top": 1.95,
+    "none": 1.80,
+}
 
 # ------------------------------------------------------------------ smoke
 # hot smoke countermeasure: a short fan of canisters thrown out of the hull,

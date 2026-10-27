@@ -76,7 +76,101 @@ export function buildMeshes() {
   pushPyramid(meshes);
   pushSmokeSphere(meshes);
   pushCube(meshes);              // the facade box: same hull, windows in the shader
+  pushTaper(meshes, 0.42, 1.0);  // wedge: trapezoid from the side, cuboid head-on
+  pushNose(meshes, 0.34);        // nose: two trapezoids and two side triangles
+  pushHexTube(meshes);
   return meshes;
+}
+
+// A block that narrows towards its -Y end: kx/kz are the bottom face as a
+// fraction of the unit top face.  With kz = 1 it is a trapezoid prism - a
+// pivot pedestal that tapers under the side view only and stays a plain
+// cuboid head-on.
+function pushTaper(meshes, kx, kz) {
+  const v = [];
+  const push = (p, n) => v.push(p[0], p[1], p[2], n[0], n[1], n[2]);
+  const top = [[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]].map(([x, z]) => [x, 0.5, z]);
+  const bot = [[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]]
+    .map(([x, z]) => [x * kx, -0.5, z * kz]);
+  face(v, top);
+  face(v, bot);
+  for (let i = 0; i < 4; i++) {
+    const j = (i + 1) % 4;
+    face(v, [top[i], top[j], bot[j], bot[i]]);
+  }
+  meshes.push(v);
+}
+
+// The armoured nose: a unit block that comes to a short transverse line at
+// mid-height, so its rear face is the hull's whole front cross-section.  Roof
+// and belly both slope in - two trapezoids - and the cheeks close the sides as
+// two triangles; the four seams read as an X head-on.  Local +X is the point.
+function pushNose(meshes, k) {
+  const v = [];
+  const rear = [[-0.5, -0.5, -0.5], [-0.5, -0.5, 0.5], [-0.5, 0.5, 0.5], [-0.5, 0.5, -0.5]];
+  const [r0, r1, r2, r3] = rear;
+  const t0 = [0.5, 0, -0.5 * k];
+  const t1 = [0.5, 0, 0.5 * k];
+  face(v, rear);
+  face(v, [r3, r2, t1, t0]);      // roof, sloping down to the point
+  face(v, [r0, r1, t1, t0]);      // belly, sloping up to it
+  face(v, [r1, r2, t1]);          // right cheek
+  face(v, [r0, r3, t0]);          // left cheek
+  meshes.push(v);
+}
+
+// One flat face, wound so its normal points away from the centre of the unit
+// block, and flat shaded from that winding.
+function face(v, pts) {
+  const [a, b, c] = pts;
+  const d = pts.length > 3 ? pts[3] : c;
+  const u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+  const w = [d[0] - a[0], d[1] - a[1], d[2] - a[2]];
+  let n = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]];
+  const mid = pts.reduce((s, p) => [s[0] + p[0], s[1] + p[1], s[2] + p[2]], [0, 0, 0]);
+  if (n[0] * mid[0] + n[1] * mid[1] + n[2] * mid[2] < 0) n = [-n[0], -n[1], -n[2]];
+  const l = Math.hypot(n[0], n[1], n[2]) || 1;
+  n = [n[0] / l, n[1] / l, n[2] / l];
+  const put = (p) => v.push(p[0], p[1], p[2], n[0], n[1], n[2]);
+  put(a); put(b); put(c);
+  if (pts.length > 3) { put(a); put(c); put(d); }
+}
+
+// A six-sided tube along Y, open at +Y and plugged dark at the far end: forty
+// rocket cells cost six walls each instead of a ten-sided cylinder, and the
+// hexagons read as a launcher face instead of a grid of dots.
+function pushHexTube(meshes) {
+  const v = [];
+  const push = (p, n) => v.push(p[0], p[1], p[2], n[0], n[1], n[2]);
+  const ring = [0, 1, 2, 3, 4, 5].map((i) => {
+    const a = (i / 6) * Math.PI * 2 + Math.PI / 6;
+    return [Math.cos(a) * 0.5, Math.sin(a) * 0.5];
+  });
+  for (let i = 0; i < 6; i++) {
+    const [x0, z0] = ring[i];
+    const [x1, z1] = ring[(i + 1) % 6];
+    let n = [(x0 + x1) / 2, 0, (z0 + z1) / 2];
+    const l = Math.hypot(n[0], n[2]) || 1;
+    n = [n[0] / l, 0, n[2] / l];
+    // wound anticlockwise looking at the wall from outside the tube
+    const a = [x0, 0.5, z0], c = [x1, -0.5, z1];
+    let b = [x1, 0.5, z1], d = [x0, -0.5, z0];
+    if ((b[0] - a[0]) * (d[2] - a[2]) - (b[2] - a[2]) * (d[0] - a[0]) < 0) {
+      [b, d] = [d, b];
+    }
+    push(a, n); push(b, n); push(c, n);
+    push(a, n); push(c, n); push(d, n);
+  }
+  // the dark bottom of the cell, facing back up the tube
+  const n = [0, 1, 0];
+  for (let i = 1; i < 5; i++) {
+    const a = [ring[0][0], -0.5, ring[0][1]];
+    let b = [ring[i][0], -0.5, ring[i][1]];
+    let c = [ring[i + 1][0], -0.5, ring[i + 1][1]];
+    if ((b[0] - a[0]) * (c[2] - a[2]) - (b[2] - a[2]) * (c[0] - a[0]) < 0) [b, c] = [c, b];
+    push(a, n); push(b, n); push(c, n);
+  }
+  meshes.push(v);
 }
 
 // The unit cube, centred on the origin.  It is the workhorse - hulls, crates,
@@ -160,6 +254,9 @@ export const MESH_ROCK = 4;
 export const MESH_PYRAMID = 5;
 export const MESH_SMOKE = 6;
 export const MESH_FACADE = 7;        // cube with window rows on its walls
+export const MESH_WEDGE = 8;         // block tapering along X: trapezoid from the side
+export const MESH_NOSE = 9;          // spearhead: two trapezoids, two side triangles
+export const MESH_HEX = 10;          // six-sided tube, plugged dark at the far end
 
 // A four-sided pyramid: base radius 0.5 at y = -0.5, apex at y = +0.5, flat
 // shaded per face.  Six triangles, which is all a tracer needs - the streak is

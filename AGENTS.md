@@ -44,11 +44,11 @@ backend/
     modes/                 # per-mode rule sets: map, setup, pipeline, spawn rules
       base.py              #   Mode interface every mode implements
       battle/              #   waves.py: town capture + reinforcement waves
-      range/               #   targets.py: passive APC targets, bunkers.py: ridge blockhouses,
-                           #   threats.py: one incoming top-attack missile every 10 s
+      range/               #   targets.py: passive APC targets, bunkers.py: ridge blockhouses
+                           #   (nothing on the range shoots back)
   assets/                  # compiled client (webpack output, gitignored)
 tools/
-  smoke_lock_test.js       # browser-console driver: range missile A/B smoke test
+  smoke_lock_test.js       # browser-console driver: seeker A/B smoke test
 frontend/
   webpack.config.js        # entry src/main.js -> ../backend/assets/bundle.js
   icons.json               # single source of truth for every HUD icon glyph
@@ -328,13 +328,14 @@ weapon in each arm before `DEPLOY`.
 
 `./dev.sh range` starts a second world (`run.py --range`, i.e. `MECH_RANGE=1`)
 on <http://127.0.0.1:8011>: a 4 km test map, one 200 m hill NW, plains
-elsewhere, 12 blue APC targets (2 patrolling) that respawn 3 s after dying and
-never shoot back, plus one IR top-attack missile from the hill at the player
-every 10 s so the hot smoke can be tested against a real seeker. The player is
+elsewhere, 12 blue APC targets (2 patrolling) that respawn 3 s after dying.
+**Nothing on the range shoots back** - there is no AI and no incoming fire, so
+it is the place to test ballistics or look at a model up close. The player is
 locked to RED with $99999, can rearm anywhere and the smoke cooldown is 2 s.
-Lock breaks are logged by `mech.smoke`, launches by `mech.range`; the browser
-script `tools/smoke_lock_test.js` drives a whole A/B run from the console. Log:
-`/tmp/mech-range.log`, overrides `MECH_RANGE_PORT` (8011), `MECH_RANGE_LOG`.
+Seeker lock breaks are logged by `mech.smoke` (you have to be shot at for
+that - the battle mode AI does it); the browser script `tools/smoke_lock_test.js`
+drives a whole A/B smoke run from the console when such a missile is in the air.
+Log: `/tmp/mech-range.log`, overrides `MECH_RANGE_PORT` (8011), `MECH_RANGE_LOG`.
 Product notes: `doc/product/range.md`.
 
 Environment overrides: `MECH_SESSION` (default `mech`), `MECH_PORT` (8010),

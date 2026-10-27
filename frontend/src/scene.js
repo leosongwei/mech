@@ -86,7 +86,7 @@ function wreck(R, e) {
     }
     at(R, 'box', e, yaw, 0.12, 0, 1.20, -0.65, 4.05, 1.15, 1.60, HULK);
     at(R, 'box', e, yaw, 0.12, 0, 1.90, -0.85, 2.85, 0.50, 1.35, fac);
-    at(R, 'cone', e, yaw, FORWARD, 0, 1.35, 1.60, 1.10, 1.55, 1.25, HULK);
+    at(R, 'nose', e, yaw, 0, 0.10, 1.55, 1.75, 2.10, 1.00, 1.25, HULK);
   }
 }
 
@@ -147,6 +147,16 @@ function mech(R, e, defs, flashes) {
   const yaw = e.yaw;
   const wdefs = defs || {};
 
+  // --- legs ride on a turntable, not on the hull ----------------------
+  // The upper body swings with the view while the feet keep the direction of
+  // travel (the server turns them at 2.6 rad/s), so the two halves are bolted
+  // to a pivot: a trapezoidal pedestal - a plain cuboid head-on - comes down
+  // off the hull, a bearing ring and a yoke carry both legs.  Nothing else
+  // bridges the joint, so the hull can swing right over its own feet.
+  at(R, 'wedge', e, yaw, 0, 0, 1.88, -0.30, 2.30, 0.34, 1.44, METAL_D);
+  at(R, 'cyl', e, legYaw, 0, 0, 1.63, -0.30, 1.12, 0.16, 1.12, METAL_L);
+  at(R, 'box', e, legYaw, 0, 0, 1.40, -0.30, 1.05, 0.30, 2.60, METAL_D);
+
   // --- low duct legs / broad hover plenums (travel direction) ---------
   const legSegment = (a, b, width, depth, col, shape = 'box') => {
     const dy = b[1] - a[1], dz = b[2] - a[2];
@@ -156,17 +166,16 @@ function mech(R, e, defs, flashes) {
       (a[2] + b[2]) / 2, depth, len, width, col);
   };
   for (const side of [-1, 1]) {
-    const hip = [side * 1.14, 2.20, -0.42];
-    const knee = [side * 1.27, 1.40, 0.60];
-    const ankle = [side * 1.32, 0.69, -0.08];
+    const hip = [side * 1.06, 1.38, -0.30];
+    const knee = [side * 1.20, 0.98, 0.60];
+    const ankle = [side * 1.28, 0.66, -0.02];
     const outer = (p) => [p[0] + side * 0.42, p[1], p[2] - 0.08];
-    at(R, 'box', e, legYaw, 0, side * 0.91, 2.20, -0.42, 0.55, 0.44, 0.72, METAL_D);
     legSegment(hip, knee, 0.82, 1.00, METAL);
-    legSegment(knee, ankle, 0.78, 0.92, METAL);
+    legSegment(knee, ankle, 0.78, 0.90, METAL);
     legSegment(outer(hip), outer(knee), 0.28, 0.28, METAL_L, 'cyl');
     legSegment(outer(knee), outer(ankle), 0.25, 0.25, METAL_L, 'cyl');
     for (const p of [hip, knee, ankle]) {
-      at(R, 'sphere', e, legYaw, 0, p[0], p[1], p[2], 0.62, 0.58, 0.62, METAL_D);
+      at(R, 'sphere', e, legYaw, 0, p[0], p[1], p[2], 0.60, 0.56, 0.60, METAL_D);
     }
     // A flat pressure chamber and a dark flexible skirt, not an upturned ski.
     at(R, 'box', e, legYaw, 0, side * 1.32, 0.34, 0, 4.60, 0.50, 1.20, METAL_D);
@@ -175,19 +184,21 @@ function mech(R, e, defs, flashes) {
     at(R, 'box', e, legYaw, 0, side * 1.32, 0.10, 0, 4.90, 0.18, 1.10, SOOT);
     at(R, 'box', e, legYaw, 0, side * 1.32, 0.61, 0, 3.65, 0.08, 0.82, METAL_L);
   }
-  at(R, 'box', e, legYaw, 0, 0, 2.10, -0.28, 1.45, 0.42, 1.60, METAL_D);
 
   // --- narrow longitudinal hull / tandem vertical turbines ------------
-  at(R, 'box', e, yaw, 0, 0, 2.86, -0.85, 4.10, 1.82, 1.72, METAL);
-  at(R, 'box', e, yaw, 0, 0, 3.68, -1.05, 3.65, 0.78, 1.50, METAL_L);
-  at(R, 'box', e, yaw, 0, 0, 1.94, -0.65, 3.35, 0.18, 1.42, METAL_D);
-  // The pointed, faceted nose is fully armored: there is no glass bubble.
-  at(R, 'cone', e, yaw, FORWARD, 0, 3.25, 1.80, 1.55, 2.05, 1.42, METAL);
-  at(R, 'box', e, yaw, 0, 0, 3.70, 0.70, 1.75, 0.65, 1.30, METAL_L);
+  // One cuboid from the belly to the roof line: no separate raised deck, so
+  // the hull's front cross-section is exactly what the cockpit grows out of.
+  // The cockpit is that same block carried on to a short transverse line at
+  // mid-height - roof and belly slope in (two trapezoids), the cheeks close
+  // the sides (two triangles) - so it reads as a triangle from the side, a
+  // trapezoid from above and an X head-on, never as a cone or as a smaller
+  // block bolted onto the nose.
+  at(R, 'box', e, yaw, 0, 0, 3.01, -1.10, 3.60, 2.12, 1.72, METAL);
+  at(R, 'nose', e, yaw, 0, 0, 3.01, 1.425, 1.47, 2.12, 1.72, METAL);
   for (const side of [-1, 1]) {
-    at(R, 'box', e, yaw, 0, side * 0.87, 3.00, -0.80, 2.80, 0.28, 0.05, fac);
+    at(R, 'box', e, yaw, 0, side * 0.87, 3.00, -0.90, 2.30, 0.28, 0.05, fac);
   }
-  for (const z of [-0.72, -1.91]) {
+  for (const z of [-1.40, -2.40]) {
     at(R, 'cyl', e, yaw, 0, 0, 4.10, z, 1.04, 0.18, 1.04, METAL_D);
     at(R, 'cyl', e, yaw, 0, 0, 4.21, z, 0.78, 0.05, 0.78, SOOT);
     at(R, 'cone', e, yaw, 0, 0, 4.30, z, 0.18, 0.18, 0.18, METAL_L);
@@ -195,14 +206,22 @@ function mech(R, e, defs, flashes) {
   at(R, 'cyl', e, yaw, FORWARD, 0, 2.90, -2.98, 0.75, 0.60, 0.75, METAL_D);
   at(R, 'cyl', e, yaw, FORWARD, 0, 2.90, -3.30, 0.54, 0.06, 0.54, SOOT);
 
-  // Tank-style roof hatch and an armored commander sight directly behind it.
-  at(R, 'cyl', e, yaw, 0, 0, 4.10, 1.00, 0.86, 0.16, 0.86, METAL_D);
-  at(R, 'cyl', e, yaw, 0, 0, 4.19, 1.00, 0.70, 0.05, 0.70, METAL_L);
-  at(R, 'cyl', e, yaw, 0, 0, 4.08, 0.16, 0.50, 0.20, 0.50, METAL_D);
-  at(R, 'box', e, yaw, 0, 0, 4.47, 0.16, 0.59, 0.62, 0.62, METAL_L);
-  at(R, 'box', e, yaw, 0, 0, 4.76, 0.43, 0.18, 0.10, 0.58, METAL_D);
-  at(R, 'cyl', e, yaw, FORWARD, -0.09, 4.50, 0.49, 0.26, 0.12, 0.26, GLASS);
-  at(R, 'cyl', e, yaw, FORWARD, 0.17, 4.52, 0.49, 0.12, 0.10, 0.12, GLASS);
+  // Tank-style roof hatch on the flat roof, commander's panoramic sight behind
+  // it.  The pillar lifts the head half a hatch diameter clear of the roof
+  // line; the lid hinges forward over the nose, so an open hatch can never
+  // foul the sight.
+  at(R, 'cyl', e, yaw, 0, 0, 4.15, 0.25, 0.86, 0.16, 0.86, METAL_D);
+  at(R, 'cyl', e, yaw, 0, 0, 4.24, 0.25, 0.70, 0.05, 0.70, METAL_L);
+  at(R, 'cyl', e, yaw, 0, 0, 4.16, -0.62, 0.52, 0.20, 0.52, METAL_D);
+  at(R, 'box', e, yaw, 0, 0, 4.50, -0.62, 0.34, 0.56, 0.34, METAL_D);
+  at(R, 'box', e, yaw, 0, 0, 4.90, -0.62, 0.56, 0.62, 0.62, METAL_L);
+  at(R, 'box', e, yaw, 0, 0, 5.22, -0.62, 0.18, 0.10, 0.54, METAL_D);
+  // Two sight windows, set into the head's front face either side of its
+  // centreline - flush, so the block still reads as one armoured box.
+  for (const side of [-1, 1]) {
+    at(R, 'cyl', e, yaw, FORWARD, side * 0.14, 4.96, -0.335,
+      0.24, 0.10, 0.24, GLASS);
+  }
 
   // High, close-in weapon stations; module indices remain 2 / 3.
   for (const side of [-1, 1]) {
@@ -231,29 +250,37 @@ function armModel(R, e, arm, wdefs, flashes, shoulderY, lateral) {
       shoulderY + dist * Math.sin(p) + dy * Math.cos(p),
       dist * Math.cos(p) - dy * Math.sin(p), sx, sy, sz, colour);
 
-  put('box', p, 0.25, 1.65, 0.70, 0.62, col);
+  // A plain station body for everything that is not a rocket nest: the nest
+  // is a long box of its own and would only be swallowed by it.
+  if (kind !== 'rocket') put('box', p, 0.25, 1.65, 0.70, 0.62, col);
   put('sphere', 0, 0, 0.66, 0.66, 0.66, alive ? METAL_L : DEAD);
   if (kind === 'bullet') {
     const len = 3.2;
     put('cyl', FORWARD + p, 0.90 + len * 0.5, 0.17, len, 0.17, [0.12, 0.13, 0.14]);
     put('cyl', FORWARD + p, 0.90 + len + 0.18, 0.28, 0.42, 0.28, [0.1, 0.1, 0.11]);
   } else if (kind === 'rocket') {
-    put('box', p, 1.05, 2.10, 0.84, 0.74, alive ? fac : DEAD);
-    for (const [dx, dy] of [[0, 0], [-0.17, 0.14], [0.17, 0.14], [-0.17, -0.14],
-      [0.17, -0.14], [0, 0.26], [0, -0.26]]) {
-      put('cyl', FORWARD + p, 2.13, 0.14, 0.18, 0.14, [0.08, 0.08, 0.09], dx, dy);
+    // Forty rounds, forty cells: five across and eight high.  Each cell is a
+    // six-walled tube running the launcher's whole length and poking out of
+    // both end faces, so the mouth is a hexagon instead of a dot while the
+    // sides of the nest stay a clean blue box.
+    put('box', p, 0.60, 1.90, 1.26, 0.82, alive ? fac : DEAD);
+    for (let row = 0; row < 8; row++) {
+      for (let col = 0; col < 5; col++) {
+        put('hex', FORWARD + p, 0.60, 0.135, 2.15, 0.135, [0.08, 0.08, 0.09],
+          (col - 2) * 0.155, (row - 3.5) * 0.155);
+      }
     }
   } else if (kind === 'saclos' || kind === 'top') {
-    put('box', p, 1.05, 2.10, 0.76, 0.74, alive ? fac : DEAD);
+    put('box', p, 0.95, 1.40, 0.80, 0.76, alive ? fac : DEAD);
     for (const q of [-1, 1]) {
-      put('cyl', FORWARD + p, 2.12, 0.22, 0.20, 0.22, [0.08, 0.08, 0.09], q * 0.20);
+      put('hex', FORWARD + p, 1.76, 0.24, 0.30, 0.24, [0.08, 0.08, 0.09], q * 0.22);
     }
   } else {
     put('cyl', FORWARD + p, 1.35, 0.18, 0.90, 0.18, [0.12, 0.12, 0.13]);
   }
   const fl = flashes && flashes.get(e.id);
   if (alive && fl && fl.arm === arm) {
-    const tip = kind === 'bullet' ? 4.35 : 2.50;
+    const tip = kind === 'bullet' ? 4.35 : kind === 'rocket' ? 1.80 : 2.15;
     put('sphere', p, tip, 0.75, 0.75, 0.75, [1.0, 0.72, 0.22]);
     put('cone', FORWARD + p, tip + 0.85, 0.58, 1.4, 0.58, [1.0, 0.88, 0.45]);
   }

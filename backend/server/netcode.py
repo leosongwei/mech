@@ -70,6 +70,7 @@ def static_payload(world: World) -> dict:
         mech=dict(hp=list(defs.UNIT_DEFS[defs.ETYPE_MECH]["hp"]),
                   hitspheres=defs.MECH_HITSPHERES, eye=defs.MECH_EYE,
                   muzzles={int(k): v for k, v in defs.MECH_ARM_MUZZLE.items()},
+                  reach=dict(defs.MECH_ARM_REACH),
                   modules=defs.MODULE_NAMES),
         buyable=defs.BUYABLE,
         rearm=dict(smoke_cost=defs.SMOKE_REFILL_COST,

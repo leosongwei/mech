@@ -572,13 +572,21 @@ export class Game {
   _muzzle(own, arm) {
     const mod = arm === 0 ? '2' : '3';
     const off = (this.defs.mech.muzzles && this.defs.mech.muzzles[mod]) || [0, 4.3, 0.9];
+    // the bore ends at the mouth of whatever is bolted to the arm - a 4.1 m
+    // cannon reaches a lot further than a 1.8 m nest - and it swings with the
+    // arm, exactly like the server's `muzzle_point`
+    const wd = (this.defs.weapons && this.defs.weapons[own.weapon ? own.weapon[arm] : 0]) || {};
+    const reachTbl = this.defs.mech.reach || {};
+    const reach = reachTbl[wd.kind] === undefined ? off[2] : reachTbl[wd.kind];
+    const pitch = clamp(this.input.pitch, -0.45, 0.75);
     const yaw = this.input.yaw;
     const c = Math.cos(yaw), s = Math.sin(yaw);
     const rx = -s, rz = c;
+    const fwd = reach * Math.cos(pitch);
     return [
-      own.x + rx * off[0] + c * off[2],
-      own.y + off[1],
-      own.z + rz * off[0] + s * off[2],
+      own.x + rx * off[0] + c * fwd,
+      own.y + off[1] + reach * Math.sin(pitch),
+      own.z + rz * off[0] + s * fwd,
     ];
   }
 

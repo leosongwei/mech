@@ -11,7 +11,7 @@
 //   range works without z-fighting.
 
 import { compose, mat4, multiply, perspective, lookAt } from './math.js';
-import { buildMeshes, MESH_BOX, MESH_SPHERE, MESH_CONE, MESH_CYL, MESH_ROCK, MESH_PYRAMID, MESH_SMOKE, MESH_FACADE } from './meshes.js';
+import { buildMeshes, MESH_BOX, MESH_SPHERE, MESH_CONE, MESH_CYL, MESH_ROCK, MESH_PYRAMID, MESH_SMOKE, MESH_FACADE, MESH_WEDGE, MESH_NOSE, MESH_HEX } from './meshes.js';
 import { ROAD_N, ROAD_E, ROAD_S, ROAD_W, ROAD_D_WS, ROAD_D_NE, treeTrunks } from './map.js';
 
 const SKY_VS = `#version 300 es
@@ -356,7 +356,7 @@ function program(gl, vs, fs) {
 
 const STRIDE_FLOATS = 20;            // mat4 + vec4 colour
 const CHUNK_TILES = 40;              // 640 m prop chunks
-const DYN_CAP = [40000, 24000, 24000, 24000, 8000, 32000, 64, 64];
+const DYN_CAP = [40000, 24000, 24000, 24000, 8000, 32000, 64, 64, 2000, 600, 6000];
 
 // Optics: the radial terrain grid keeps the plain tile spacing for `a0` rings
 // (no merged quads inside that radius) and doubles its ring spacing every `g`
@@ -876,7 +876,7 @@ export class Renderer {
 
   push(mesh, px, py, pz, yaw, pitch, sx, sy, sz, r, g, b, a) {
     const batch = this.dyn[mesh];
-    if (!batch || batch.count >= batch.cap) return;
+    if (!batch || !batch.cap || batch.count >= batch.cap) return;
     const base = batch.count * STRIDE_FLOATS;
     const d = batch.data;
     compose(d.subarray(base, base + 16), px, py, pz, yaw, pitch, sx, sy, sz);
@@ -887,7 +887,7 @@ export class Renderer {
 
   pushA(mesh, px, py, pz, yaw, pitch, sx, sy, sz, r, g, b, a) {
     const batch = this.dynA[mesh];
-    if (!batch || batch.count >= batch.cap) return;
+    if (!batch || !batch.cap || batch.count >= batch.cap) return;
     const base = batch.count * STRIDE_FLOATS;
     const d = batch.data;
     compose(d.subarray(base, base + 16), px, py, pz, yaw, pitch, sx, sy, sz);
@@ -905,6 +905,9 @@ export class Renderer {
   cyl(px, py, pz, yaw, pitch, sx, sy, sz, r, g, b, a) { this.push(MESH_CYL, px, py, pz, yaw, pitch, sx, sy, sz, r, g, b, a); }
 
   pyramid(px, py, pz, yaw, pitch, sx, sy, sz, r, g, b, a) { this.push(MESH_PYRAMID, px, py, pz, yaw, pitch, sx, sy, sz, r, g, b, a); }
+  wedge(px, py, pz, yaw, pitch, sx, sy, sz, r, g, b, a) { this.push(MESH_WEDGE, px, py, pz, yaw, pitch, sx, sy, sz, r, g, b, a); }
+  nose(px, py, pz, yaw, pitch, sx, sy, sz, r, g, b, a) { this.push(MESH_NOSE, px, py, pz, yaw, pitch, sx, sy, sz, r, g, b, a); }
+  hex(px, py, pz, yaw, pitch, sx, sy, sz, r, g, b, a) { this.push(MESH_HEX, px, py, pz, yaw, pitch, sx, sy, sz, r, g, b, a); }
 
   // ---------------------------------------------------------------- frame
   draw(cam) {

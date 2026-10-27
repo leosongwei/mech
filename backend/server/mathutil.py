@@ -42,17 +42,24 @@ def turn_toward(cur: float, target: float, max_step: float) -> float:
 
 
 def muzzle_point(pos: np.ndarray, yaw: float, module: int,
-                 arm_pitch: float = 0.0) -> tuple[float, float, float]:
-    """World position of the barrel tip of the given mech arm."""
+                 arm_pitch: float = 0.0,
+                 reach: float | None = None) -> tuple[float, float, float]:
+    """World position of the barrel tip of the given mech arm.
+
+    The tip sits `reach` metres out along the barrel (default: the arm's front
+    face), and the barrel swings with `arm_pitch`, exactly like the client
+    builds the models - so the round leaves the mouth it was drawn on.
+    """
     off = defs.MECH_ARM_MUZZLE.get(module, (0.0, 4.3, 0.9))
     rx, ry, rz = off
+    fwd = rz if reach is None else reach
     c, s = math.cos(yaw), math.sin(yaw)
     # local +z forward, +x right  -> world
     fx, fz = c, s
     rxw, rzw = -s, c
-    return (pos[0] + rxw * rx + fx * rz,
-            pos[1] + ry,
-            pos[2] + rzw * rx + fz * rz)
+    return (pos[0] + rxw * rx + fx * fwd * math.cos(arm_pitch),
+            pos[1] + ry + fwd * math.sin(arm_pitch),
+            pos[2] + rzw * rx + fz * fwd * math.cos(arm_pitch))
 
 
 def unit_spheres(etype: int, pos: np.ndarray,

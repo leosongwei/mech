@@ -28,21 +28,20 @@ def run(world: World, dt: float) -> None:
     if ids.size == 0:
         return
 
-    # only two views survive at the top: the per-entity loop below takes its
-    # components from `ecs.slot()` and indexes them by row
+    # the two views the per-entity loop below needs by id: everything else it
+    # takes from `ecs.slot()` and indexes by row
     pos = e["pos"]
     vel = e["vel"]
-    faction = e["faction"]
 
     terrain = world.terrain
     # who may be shot at is a query, not a type switch: `combat` hulls only
-    # (wrecks, corpses, civilians and smoke are not in here by construction)
-    foes = {f: [] for f in (defs.FACTION_RED, defs.FACTION_BLUE)}
-    for eid in world.combat_units():
-        f = int(faction[eid])
-        if f in foes:
-            foes[1 - f].append(eid)
-    foe_arr = {f: np.asarray(v, np.int32) for f, v in foes.items()}
+    # (wrecks, corpses, civilians and smoke are not in here by construction).
+    # One id-indexed array rather than a list per faction: `_acquire` reads it
+    # for the cells around the shooter, not to filter a roster.  Built from the
+    # archetypes so it costs no per-id gather.
+    combat_fac = np.full(e.alive.size, -1, np.int8)
+    for g in e.groups("combat", "faction"):
+        combat_fac[g.ids] = g.bufs["faction"][:g.n]
 
     # per entity: one `slot` lookup, then every component is `bufs["x"][row]`.
     # The order is the query order (ascending ids) because this loop draws the
@@ -69,7 +68,7 @@ def run(world: World, dt: float) -> None:
         tid = int(target[row])
         if timer[row] <= 0.0:
             timer[row] = ACQUIRE * world.rng.uniform(0.75, 1.35)
-            tid = _acquire(world, eid, foe_arr[fac], eye, d)
+            tid = _acquire(world, fac, combat_fac, eye, d)
             target[row] = tid
         if tid >= 0:
             if not e.alive[tid] or int(e["faction"][tid]) == fac:
@@ -114,31 +113,39 @@ def _sees(world: World, eye: tuple[float, float, float],
     return not smoke.blocks(world, eye, point)
 
 
-def _acquire(world: World, eid: int, foe_ids: np.ndarray,
+def _acquire(world: World, fac: int, combat_fac: np.ndarray,
              eye: tuple[float, float, float], d: dict) -> int:
     """Nearest hostile unit with line of sight.
 
     A hull may declare a restricted target list in its definition (`targets`):
     a rifleman only picks a fight with other infantry and leaves armour alone,
     because 15 hp in the open is not a threat to a tank and the crew knows it.
+
+    The candidates come from the grid, not from a roster: a 5000-unit battle
+    puts a few dozen ids in the box around the shooter instead of a few
+    thousand in the array to sort.  The box covers the whole sight radius, so
+    the answer is the same one the full scan gave.  No position is gathered
+    here - the grid carries its own copy, in the same order as its ids.
     """
-    if foe_ids.size == 0:
+    grid = world.grid
+    ci, cj = grid.cell_of(eye[0], eye[2])
+    ids, p = grid.box(ci, cj, int(d["sight"] * grid.inv) + 1)
+    if ids.size == 0:
         return -1
-    e = world.ecs
+    cf = combat_fac[ids]
+    keep = (cf >= 0) & (cf != fac)
     want = d.get("targets")
     if want:
-        foe_ids = foe_ids[np.isin(e["etype"][foe_ids], np.asarray(want, np.uint8))]
-        if foe_ids.size == 0:
+        keep &= np.isin(world.ecs["etype"][ids], np.asarray(want, np.uint8))
+    ds = np.hypot(p[:, 0] - eye[0], p[:, 2] - eye[2])
+    keep &= ds <= d["sight"]
+    if not keep.all():
+        ids, p, ds = ids[keep], p[keep], ds[keep]
+        if ids.size == 0:
             return -1
-    pos = e["pos"]
-    ds = np.hypot(pos[foe_ids, 0] - pos[eid, 0], pos[foe_ids, 2] - pos[eid, 2])
-    order = np.argsort(ds)[:6]
-    terrain = world.terrain
-    for k in order:
-        if ds[k] > d["sight"]:
-            break
-        tid = int(foe_ids[k])
-        tp = pos[tid]
+    for k in np.argsort(ds)[:6]:
+        tid = int(ids[k])
+        tp = p[k]
         if _sees(world, eye, (float(tp[0]), float(tp[1]) + 1.5, float(tp[2]))):
             return tid
     return -1

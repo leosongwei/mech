@@ -10,6 +10,8 @@ import numpy as np
 
 from . import components, defs, mathutil as mu, modes
 from .ecs import ECS
+from .grid import Grid
+from .terrain import TILE
 
 if TYPE_CHECKING:
     from .modes import Mode
@@ -51,6 +53,7 @@ class World:
         self.terrain: Terrain = self.mode_mod.terrain(seed)
         self.ecs: ECS = ECS()
         components.register(self.ecs)
+        self.grid: Grid = Grid(self.terrain.w * TILE, self.terrain.d * TILE)
         self.rng: random.Random = random.Random(2024)
         self.players: dict[int, Player] = {}
         self.next_pid: int = 1
@@ -424,6 +427,10 @@ class World:
         # per-tick scratch: a system that spawns the replacement of a dead slot
         # must not see last tick's deaths
         self.ecs.destroyed.clear()
+        # refile every hull under the cell it stands in before anyone queries:
+        # the build is one argsort, the systems below ask "who is near me"
+        # hundreds of times a tick
+        self.grid.build(self.ecs)
         for system in self.systems:
             system(self, dt)
         if self.winner >= 0:

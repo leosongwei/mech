@@ -36,6 +36,7 @@ backend/
     world.py               # World: terrain, players, spawning, damage, tick
     terrain.py             # 1000x1000 tiles of 16 m -> 16 km square map
     mathutil.py            # angles, lead solving, terrain helpers
+    grid.py                # 128 m cell index over the units, refiled every tick (AI broadphase)
     ballistics.py          # fire control: sight setting elevation (player) / sight-point solve (AI)
     netcode.py             # init payload, binary snapshots, JSON meta
     main.py                # FastAPI: websockets, static files, 30 Hz game loop
@@ -120,6 +121,15 @@ frontend/
   `locking, smoke, weapons, movement, projectiles, proximity, economy, debris`,
   then the mode's post-systems (battle: `waves`). `World.update(dt)` is the only
   entry point; the loop in `main.py` calls it at a fixed 30 Hz (`TICK_DT = 1/30`).
+* **Grid** (`grid.py`) is a 128 m cell index over every `moves` entity, refiled
+  at the top of each tick (`world.grid`) so "who is near me" is a box of cells
+  instead of a scan of the field. It keeps its own copy of the positions — the
+  build gathers them once per archetype, so a query touches no component view
+  at all. `ai._acquire` is the only user: it asks for the box covering the
+  shooter's `sight` (exactly the range the old full scan filtered on, so the
+  same target comes back) and then distance-sorts the few candidates in it.
+  Rebuild before querying anything that has moved since; in the tick's pipeline
+  only `player_input` runs ahead of `ai`, and it moves nothing.
 * **Modes** (`modes/`) own everything that differs between game modes: the
   map, what a fresh round spawns, the mode's own systems and the rules the
   shared code asks about (`fixed_faction`, `start_money`, `rearm_anywhere`,

@@ -186,23 +186,29 @@ def run(world: World, dt: float) -> None:
         if sph[0].shape[0]:
             seg = p1 - p0
             l2 = float(seg @ seg)
-            if l2 > 1e-6:
-                rel = sph[0] - p0
+            pr = 0.35 if k == 0 else 0.6
+            cand = _leg_spheres(sph, p0, p1, pr)
+            if l2 > 1e-6 and cand.size:
+                cc = sph[0][cand]
+                cr = sph[1][cand]
+                cu = sph[2][cand]
+                cm = sph[3][cand]
+                cf = sph[4][cand]
+                rel = cc - p0
                 tt = np.clip((rel @ seg) / l2, 0.0, 1.0)
                 closest = p0 + seg[None, :] * tt[:, None]
-                dd = np.linalg.norm(sph[0] - closest, axis=1)
-                pr = 0.35 if k == 0 else 0.6
-                m = dd < (sph[1] + pr)
-                m &= sph[4] != int(faction[pid])
+                dd = np.linalg.norm(cc - closest, axis=1)
+                m = dd < (cr + pr)
+                m &= cf != int(faction[pid])
                 if int(age[pid]) < 0.12:
-                    m &= sph[2] != int(src[pid])
+                    m &= cu != int(src[pid])
                 if m.any():
-                    cand = np.nonzero(m)[0]
-                    j = int(cand[np.argmin(tt[cand])])
+                    idx = np.nonzero(m)[0]
+                    j = int(idx[np.argmin(tt[idx])])
                     if float(tt[j]) < best_t:
                         best_t = float(tt[j])
-                        best_unit = int(sph[2][j])
-                        best_mod = int(sph[3][j])
+                        best_unit = int(cu[j])
+                        best_mod = int(cm[j])
         if best_t <= 1.0:
             hitp = (float(p0[0] + (p1[0] - p0[0]) * best_t),
                     float(p0[1] + (p1[1] - p0[1]) * best_t),
@@ -237,11 +243,70 @@ def sphere_table(world: World) -> tuple:
             su.append(uid)
             sm.append(mod)
             sf.append(int(faction[uid]))
-    return (np.asarray(sc, np.float32).reshape(-1, 3),
-            np.asarray(sr, np.float32),
+    c = np.asarray(sc, np.float32).reshape(-1, 3)
+    r = np.asarray(sr, np.float32)
+    t = world.terrain
+    return (c, r,
             np.asarray(su, np.int32),
             np.asarray(sm, np.int32),
-            np.asarray(sf, np.int32))
+            np.asarray(sf, np.int32),
+            _block_index(world, c, r),
+            (t._cull_inv, t._cull_w, t._cull_d))
+
+
+def _block_index(world: World, c: np.ndarray, r: np.ndarray) -> tuple:
+    """CSR from a 128 m block to the hit spheres that can reach into it.
+
+    A round flies 10-35 m a tick but used to sweep every unit on the field: 95
+    projectiles against 400 spheres is three million distance tests a second.
+    Each sphere is filed under every block its box (grown by a metre, the
+    widest round) overlaps, so looking up the blocks a leg crosses is exact -
+    no candidate that the full sweep would have hit can be missed."""
+    t = world.terrain
+    inv = t._cull_inv
+    cw, cd = t._cull_w, t._cull_d
+    if c.shape[0] == 0:
+        return (np.zeros(cw * cd + 1, np.int32), np.zeros(0, np.int32))
+    pad = r + 1.0
+    x0 = np.clip(((c[:, 0] - pad) * inv).astype(np.int32), 0, cw - 1)
+    x1 = np.clip(((c[:, 0] + pad) * inv).astype(np.int32), 0, cw - 1)
+    z0 = np.clip(((c[:, 2] - pad) * inv).astype(np.int32), 0, cd - 1)
+    z1 = np.clip(((c[:, 2] + pad) * inv).astype(np.int32), 0, cd - 1)
+    nx = x1 - x0 + 1
+    nz = z1 - z0 + 1
+    cnt = nx * nz
+    sph = np.repeat(np.arange(c.shape[0], dtype=np.int32), cnt)
+    start = np.repeat(np.cumsum(cnt) - cnt, cnt)
+    k = np.arange(sph.size, dtype=np.int32) - start
+    bx = x0[sph] + k % nx[sph]
+    bz = z0[sph] + k // nx[sph]
+    bid = bz * cw + bx
+    order = np.argsort(bid, kind="stable")
+    items = sph[order]
+    counts = np.bincount(bid, minlength=cw * cd).astype(np.int32)
+    return (np.concatenate([[0], np.cumsum(counts)]).astype(np.int32), items)
+
+
+def _leg_spheres(sph: tuple, p0: np.ndarray, p1: np.ndarray, pr: float) -> np.ndarray:
+    """Sphere indices the segment could reach - the blocks its box touches."""
+    start, items = sph[5]
+    if items.size == 0:
+        return items
+    inv, cw, cd = sph[6]
+    lo_x = min(p0[0], p1[0]) - pr
+    hi_x = max(p0[0], p1[0]) + pr
+    lo_z = min(p0[2], p1[2]) - pr
+    hi_z = max(p0[2], p1[2]) + pr
+    x0 = min(max(int(lo_x * inv), 0), cw - 1)
+    x1 = min(max(int(hi_x * inv), 0), cw - 1)
+    z0 = min(max(int(lo_z * inv), 0), cd - 1)
+    z1 = min(max(int(hi_z * inv), 0), cd - 1)
+    if x0 == x1 and z0 == z1:
+        b = z0 * cw + x0
+        return items[start[b]:start[b + 1]]
+    parts = [items[start[bz * cw + bx]:start[bz * cw + bx + 1]]
+             for bz in range(z0, z1 + 1) for bx in range(x0, x1 + 1)]
+    return np.unique(np.concatenate(parts))
 
 
 def _impact(world: World, p: tuple[float, float, float], wd: dict, proj_id: int,
@@ -264,7 +329,8 @@ def _impact(world: World, p: tuple[float, float, float], wd: dict, proj_id: int,
     # built this tick: rebuilding every unit's spheres per impact made a single
     # burst cost a full pass over the battlefield, which is what a rocket into a
     # crowd turned into a 30 ms tick.
-    sph_c, sph_r, sph_u, sph_m, sph_f = sph if sph is not None else sphere_table(world)
+    table = sph if sph is not None else sphere_table(world)
+    sph_c, sph_r, sph_u, sph_m, sph_f = table[:5]
     d = np.sqrt(((sph_c - np.asarray(p, np.float32)) ** 2).sum(axis=1)) - sph_r
     hit = d <= r
     if direct_unit >= 0:

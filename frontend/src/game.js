@@ -289,10 +289,15 @@ export class Game {
         // the flash and the kick are light and physics: immediate, the bang
         // comes later
         this.particles.impact(ev.x, ev.y, ev.z, ev.r || 1, !!ev.big || (wd.er || 0) >= 5, wd.kind);
+        // a destroyed hull is not a big round hit: it gets a fireball of its
+        // own on top, and it is felt from further out
+        if (ev.blast) this.particles.explosion(ev.x, ev.y, ev.z, ev.r || 15);
         const d = own ? Math.hypot(ev.x - own.x, ev.z - own.z) : 3000;
-        this.shake = Math.min(1.2, this.shake + clamp(1 - d / 300, 0, 1)
-          * (ev.big ? SHAKE_BOOM_BIG : SHAKE_BOOM_SMALL));
-        this._sound(ev.x, ev.y, ev.z, (vol, dist) => this.audio.boom(vol, ev.big, dist));
+        this.shake = Math.min(1.2, this.shake + clamp(1 - d / (ev.blast ? 500 : 300), 0, 1)
+          * (ev.big ? SHAKE_BOOM_BIG : SHAKE_BOOM_SMALL) * (ev.blast ? 1.5 : 1));
+        this._sound(ev.x, ev.y, ev.z, (vol, dist) => (ev.blast
+          ? this.audio.explosion(vol, dist)
+          : this.audio.boom(vol, ev.big, dist)));
       } else if (ev.k === 'shot') {
         if (ev.eid !== undefined) this.flashes.set(ev.eid, { t: 0.07, arm: ev.arm });
         const kind = (this.defs.weapons[ev.wid] || {}).kind || 'bullet';

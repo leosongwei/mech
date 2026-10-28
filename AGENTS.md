@@ -172,6 +172,16 @@ frontend/
   near the burst takes `world.splash()` (blast only - a charge going off a few
   metres away cannot punch a plate). `world.damage()` stays the raw hp
   subtractor and is what debug knobs use.
+* **A wreck goes up.** `world.kill()` of an APC or a mech fires
+  `defs.DEATH_BLAST` (ER 30 m, ED 10) through `World._death_blast` *after* the
+  unit is destroyed and its hulk placed, so the dead machine is not in it. It is
+  the one blast in the game that takes no sides - crews of the dead hull's own
+  faction are cooked too - but ED 10 over 30 m is a wide, thin shock: a scorch
+  on armour (2 points at contact), a wound on men (9, never a kill), not a
+  second warhead. It is solved
+  (nearest hit sphere per unit) before any damage lands, so a chain reaction
+  cannot hit the wreck the next hull has already become. The kill's credit goes
+  to whoever killed the first hull.
 * **One hull pool.** A mech's chassis and torso share `hp[MOD_CHASSIS]`; a hit
   on either body sphere, and a hit on an arm that is already gone, is charged
   there. `MOD_TORSO`'s health slot is unused (0) - it only names the upper hit
@@ -417,6 +427,12 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
   180 km/h hull hear a bang where it actually caught up with it - never cache
   the distance at emit time. Flashes, impacts, screen shake and the electronic
   cues (lock tone, RWR alarms, kill/denied chimes) stay immediate.
+* **Every cue has its own voice.** `audio.boom()` is a round going off;
+  `audio.explosion()` is a hull going up (`ev.blast`) - four layers (crack, fire,
+  sub-bass thump, rumble) written because a dead mech is a different event, not a
+  louder round. The mix can sum past 0 dB on purpose, so the master bus runs
+  through a limiter (`audio.limiter`) instead of clamping at the destination:
+  scale a cue's gains up rather than adding another layer elsewhere.
 * The **gear** in the top-right corner is the only HUD click target: it needs a
   free pointer (`ESC`) and opens the settings panel (`hud._settings`), the
   master volume plus the debug buttons. `input.onHudClick` fires for canvas

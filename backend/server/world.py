@@ -289,8 +289,11 @@ class World:
         faction = int(e["faction"][eid])
         pos = e["pos"][eid].copy()
         d = defs.UNIT_DEFS.get(etype, {})
+        blast = etype in defs.DEATH_BLAST_ETYPES
         self.emit("boom", x=float(pos[0]), y=float(pos[1]), z=float(pos[2]),
-                  r=float(d.get("splat", 2.0)), big=1 if etype in (defs.ETYPE_MECH, defs.ETYPE_BASE) else 0,
+                  r=float(d.get("splat", 2.0)),
+                  big=1 if blast or etype == defs.ETYPE_BASE else 0,
+                  blast=1 if blast else 0,      # the client draws a fireball for this one
                   faction=faction)
 
         if pid >= 0 and pid in self.players:
@@ -320,6 +323,39 @@ class World:
         self._leave_debris(etype, faction, pos, float(e["yaw"][eid]))
         e.destroy(eid)
         self.last_hit.pop(eid, None)
+        if blast:
+            self._death_blast(pos, pid)
+
+    def _death_blast(self, pos: np.ndarray, pid: int = -1) -> None:
+        """A wreck goes up: `defs.DEATH_BLAST` at `pos`, no side spared.
+
+        Solved like a weapon burst - one reading per unit, off its nearest hit
+        sphere - but every reading is taken *before* any damage lands, so a
+        chain reaction (a blast that finishes the hull beside it, which bursts
+        in turn) cannot then damage the wreck that hull has become. The dead
+        machine itself is already gone and carries no `unit` tag any more, so
+        it is not in here either.
+        """
+        e = self.ecs
+        wd = defs.DEATH_BLAST
+        er = float(wd["er"])
+        p = np.asarray(pos, np.float32)
+        pos_v, yaw_v, etype_v = e["pos"], e["yaw"], e["etype"]
+        best: dict[int, tuple[float, int]] = {}
+        reach = (er + 6.0) ** 2                 # a mech's hit spheres reach ~3 m out
+        for uid in self.units():
+            uid = int(uid)
+            centre = pos_v[uid]
+            if float(((centre - p) ** 2).sum()) > reach:
+                continue                        # cheap reject before solving spheres
+            for mod, c, rad in mu.unit_spheres(int(etype_v[uid]), centre, float(yaw_v[uid])):
+                dist = max(0.0, math.sqrt((c[0] - p[0]) ** 2 + (c[1] - p[1]) ** 2
+                                          + (c[2] - p[2]) ** 2) - rad)
+                if dist <= er and (uid not in best or dist < best[uid][0]):
+                    best[uid] = (dist, mod)
+        for uid, (dist, mod) in best.items():
+            if e.alive[uid] and e.has(uid, "unit"):
+                self.splash(uid, mod, wd, dist, pid)
 
     def _leave_debris(self, etype: int, faction: int, pos: np.ndarray, yaw: float) -> None:
         """Corpse for infantry, smoking hulk for vehicles - purely visual."""

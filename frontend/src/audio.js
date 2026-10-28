@@ -100,9 +100,20 @@ export class GameAudio {
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return;
     this.ctx = new AC();
+    // A limiter between the mix and the speaker: a dead hull plays four layers
+    // at once, and the sum is louder than the 0 dB the destination clamps at -
+    // clipping that sounds like fizz rather than like weight.  The compressor
+    // catches the peaks so the layers can be pushed without it.
+    this.limiter = this.ctx.createDynamicsCompressor();
+    this.limiter.threshold.value = -8;
+    this.limiter.knee.value = 12;
+    this.limiter.ratio.value = 12;
+    this.limiter.attack.value = 0.004;
+    this.limiter.release.value = 0.25;
+    this.limiter.connect(this.ctx.destination);
     this.master = this.ctx.createGain();
     this.master.gain.value = MASTER_GAIN * this.volume;
-    this.master.connect(this.ctx.destination);
+    this.master.connect(this.limiter);
     this.alarms = this.ctx.createGain();
     this.alarms.gain.value = ALARM_GAIN * this.alarmVolume;
     this.alarms.connect(this.master);
@@ -160,7 +171,9 @@ export class GameAudio {
     g.connect(this.verb);
   }
 
-  _noiseBurst(dur, freq, q, gain, type, sweepTo, dist = 0) {
+  // `wet` overrides the distance-driven reverb send: a burst that is meant to be
+  // heard as a rumble gets its room even from close up.
+  _noiseBurst(dur, freq, q, gain, type, sweepTo, dist = 0, wet = null) {
     if (!this.ctx) return;
     const t = this.ctx.currentTime;
     const src = this.ctx.createBufferSource();
@@ -175,7 +188,7 @@ export class GameAudio {
     g.gain.setValueAtTime(gain, t);
     g.gain.exponentialRampToValueAtTime(0.0008, t + dur);
     src.connect(f); f.connect(g); g.connect(this.master);
-    this._verbSend(g, reverberation(dist));
+    this._verbSend(g, wet === null ? reverberation(dist) : wet);
     src.start(t, Math.random() * 0.4);
     src.stop(t + dur + 0.05);
   }
@@ -216,6 +229,26 @@ export class GameAudio {
     if (!this.ctx) return;
     this._noiseBurst(big ? 1.1 : 0.5, big ? 420 : 600, 0.8, Math.min(1, 0.5 * vol), 'lowpass', 90, dist);
     this._thump(big ? 55 : 85, big ? 0.9 : 0.4, Math.min(1, 0.5 * vol), dist);
+  }
+
+  // A hull going up (defs.DEATH_BLAST).  Not a louder `boom()` - a dead mech is
+  // a different event, so it gets its own voice: the plates cracking, a wall of
+  // fire that falls away over two and a half seconds, a sub-bass thump under the
+  // floor, and a rumble that is still rolling when the fireball has gone out.
+  // Four layers timed to overlap, which is what makes it read as heavy.
+  explosion(vol = 1, dist = 0) {
+    this.ensure();
+    if (!this.ctx) return;
+    const v = Math.min(1, vol);
+    const wet = reverberation(dist);
+    // the hull letting go: bright and short, gone under the blast that follows
+    this._noiseBurst(0.22, 2400, 0.7, Math.min(1, 0.6 * v), 'bandpass', 420, dist, 0.2 + 0.5 * wet);
+    // the fire: a broad wall of noise, low-passed hard and swept down
+    this._noiseBurst(2.5, 1000, 0.5, Math.min(1, 0.9 * v), 'lowpass', 60, dist, 0.35 + 0.65 * wet);
+    // the kick under the floor: a sine diving well below the bottom octave
+    this._thump(44, 1.9, Math.min(1, 0.95 * v), dist);
+    // the tail: the valley answering back long after the fire is out
+    this._noiseBurst(4.5, 240, 0.35, Math.min(1, 0.5 * v), 'lowpass', 40, dist, 0.55 + 0.45 * wet);
   }
 
   hit() {

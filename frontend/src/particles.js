@@ -103,6 +103,62 @@ export class Particles {
     }
   }
 
+  // A hull going up (defs.DEATH_BLAST): a fireball that is still there a
+  // second later, and a column of smoke that is still there five.  A round
+  // impact puffs and is gone before the eye finds it, which is not what a
+  // vehicle exploding looks like.
+  explosion(x, y, z, radius) {
+    // the fireball grows with the blast but with its area, not its radius: a
+    // 30 m shock is a wider fire, not a wall of orange across the screen
+    const er = Math.max(6, Math.min(40, radius || 15));
+    const R = 15 * Math.sqrt(er / 15);
+    // the flash: at the hull, swelling rather than snapping open
+    this._add({
+      x, y: y + 1.4, z, vx: 0, vy: 2.0, vz: 0,
+      life: 0.5, max: 1, size: R * 0.45, grow: R * 0.9, drag: 0.6,
+      col: [1.0, 0.9, 0.55], alpha: 0.9, grav: -0.5, mesh: 'sphere',
+    });
+    // fire: a ring of it rolling out of the hull, still burning a second later
+    for (let i = 0; i < 16; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const sp = R * (0.12 + Math.random() * 0.28);
+      this._add({
+        x: x + Math.cos(a) * R * 0.15, y: y + 1.0 + Math.random() * 2.5,
+        z: z + Math.sin(a) * R * 0.15,
+        vx: Math.cos(a) * sp, vy: 2.5 + Math.random() * 3.5, vz: Math.sin(a) * sp,
+        life: 0.7 + Math.random() * 0.9, max: 1,
+        size: R * (0.13 + Math.random() * 0.14), grow: R * 0.24,
+        drag: 2.6, col: Math.random() < 0.3 ? SPARK : FIRE,
+        alpha: 0.8, grav: -1.2, mesh: 'sphere',
+      });
+    }
+    // the column: dark, slow, and still standing when the fire is out
+    for (let i = 0; i < 12; i++) {
+      const a = Math.random() * Math.PI * 2;
+      this._add({
+        x: x + Math.cos(a) * R * 0.1, y: y + 1.6 + Math.random() * 2.0,
+        z: z + Math.sin(a) * R * 0.1,
+        vx: Math.cos(a) * 1.4, vy: 3.0 + Math.random() * 3.5, vz: Math.sin(a) * 1.4,
+        life: 2.6 + Math.random() * 2.2, max: 1,
+        size: R * (0.2 + Math.random() * 0.14), grow: R * 0.1,
+        drag: 1.0, col: SMOKE, alpha: 0.4, grav: -0.7, mesh: 'sphere',
+      });
+    }
+    // plate and track thrown clear, falling back through the fireball
+    for (let i = 0; i < 18; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const sp = 8 + Math.random() * 16;
+      this._add({
+        x, y: y + 1.2, z,
+        vx: Math.cos(a) * sp, vy: 6 + Math.random() * 14, vz: Math.sin(a) * sp,
+        life: 0.45 + Math.random() * 0.5, max: 1,
+        size: 0.2 + Math.random() * 0.3, grow: -0.05,
+        drag: 0.5, col: Math.random() < 0.5 ? SPARK : FIRE,
+        alpha: 0.95, grav: 16, mesh: 'sphere',
+      });
+    }
+  }
+
   // smoke trail behind a missile (spaced out, one puff every few metres)
   trail(x, y, z, spacing) {
     spacing = spacing || 6;

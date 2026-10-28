@@ -165,6 +165,20 @@ def hit_damage(wd: dict, unit: dict, dist: float = 0.0) -> float:
             + blast_damage(float(wd["ed"]), float(unit["de"]), float(wd["er"]), dist))
 
 
+# A wreck goes up with its own fuel and ammunition: ER 30 m at ED 10, blast
+# only (a burst, not a round through a plate) - `world.kill` fires it through
+# `World._death_blast`.  It is the one blast in the game that takes no sides:
+# what stands within thirty metres of a mech that just came apart is in the
+# wrong place whatever colour it is painted, so crews of the dead machine's own
+# faction are cooked too.  ED 10 over 30 m is a wide, thin shock - a scorch on
+# armour (2 points at contact) and a wound on men (9 at contact, 1 hp left), so
+# it finishes what was already broken instead of being a second warhead.
+# `er` doubles as the radius of the fireball the client draws, which is why the
+# two hulls carry it as their `splat`.
+DEATH_BLAST = {"ed": 10.0, "er": 30.0, "ad": 0.0}
+DEATH_BLAST_ETYPES = (ETYPE_APC, ETYPE_MECH)
+
+
 # weapons a player may buy, in hotbar order
 BUYABLE = [WID_AC30, WID_MG127, WID_ROCKET, WID_SACLOS, WID_TOPATTACK]
 
@@ -232,12 +246,12 @@ UNIT_DEFS = {
     ETYPE_APC: dict(name="APC", hp=(100, 0, 0, 0), dp=10, de=20,
                     speed=100.0 / 3.6, radius=2.2, height=2.8,
                     weapons=(WID_MG127, WID_SACLOS), ai_range=1800, sight=2600, reward=180,
-                    splat=3.0, tags=("unit", "combat", "lockable", "moves", "vehicle")),
+                    splat=DEATH_BLAST["er"], tags=("unit", "combat", "lockable", "moves", "vehicle")),
     # hull pool 100 (chassis + torso), one arm 50 each; armour of a light tank
     ETYPE_MECH: dict(name="MECH", hp=(100, 0, 50, 50), dp=10, de=20,
                      speed=50.0, radius=1.9, height=6.5,
                      weapons=(WID_AC30, WID_ROCKET), ai_range=2600, sight=3400, reward=350,
-                     splat=4.0, tags=("unit", "combat", "lockable", "moves")),
+                     splat=DEATH_BLAST["er"], tags=("unit", "combat", "lockable", "moves")),
     # the objective: a target, but it never moves and cannot be locked.  3000 hp
     # behind 80 of plate: neither 80 mm rockets (AP 40) nor 30 mm rounds (AP 15)
     # get through, so both only do their blast - which prices the base at

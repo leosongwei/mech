@@ -123,8 +123,41 @@ def _cache_after_growth() -> None:
     e.validate()
 
 
+def _death_blast() -> None:
+    """Regression: a destroyed hull bursts for ER 30 m / ED 10 (`World._death_blast`).
+
+    The blast takes no sides, so the hull parked beside the dead machine - its
+    own faction - has to take damage off it; a man four metres away and another
+    twenty metres out both have to be hit by the shock (wounded, not killed:
+    ED 10 tops out at 9 and a man has 10); a hull sixty metres out has to be
+    untouched, and the burst must leave its own hulk behind rather than eat it.
+    """
+    from server import defs
+    world = World(seed=3, mode="range")
+    e = world.ecs
+    dead = world.spawn_unit(defs.ETYPE_MECH, 1, 600.0, 600.0)
+    beside = world.spawn_unit(defs.ETYPE_APC, 1, 605.0, 600.0)
+    far = world.spawn_unit(defs.ETYPE_APC, 1, 660.0, 600.0)
+    man = world.spawn_unit(defs.ETYPE_INF_RIFLE, 0, 600.0, 604.0)
+    man_far = world.spawn_unit(defs.ETYPE_INF_RIFLE, 0, 620.0, 600.0)
+    world.damage(dead, 0, 9999.0)
+    # the dead ids come back as the wrecks (LIFO reuse), so "dead" means "no
+    # longer a unit", not "no longer alive"
+    assert not e.has(dead, "unit"), "the mech did not die"
+    assert e.has(beside, "unit") and float(e["hp"][beside, 0]) < 100.0, \
+        "the blast did not touch the hull beside it"
+    assert e.has(man, "unit") and float(e["hp"][man, 0]) < 10.0, \
+        "the blast did not reach the man four metres away"
+    assert e.has(man_far, "unit") and float(e["hp"][man_far, 0]) < 10.0, \
+        "the blast did not reach a man twenty metres out"
+    assert float(e["hp"][far, 0]) == 100.0, "the blast reached a hull 60 m away"
+    assert len(e.query("wreck_t")) == 1, "the burning hulk did not leave a wreck"
+    e.validate()
+
+
 def run(ticks: int = TICKS, verbose: bool = False) -> list[dict[str, float]]:
     _cache_after_growth()
+    _death_blast()
     world = World(seed=11, mode="battle")
     pl = world.add_player("REPLAY")           # spawns the mech too
     out = []

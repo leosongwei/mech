@@ -1,22 +1,22 @@
 """Range APC trace: drive one carrier round a test route and draw it.
 
 The range map is the flat test bench, and the routes below are synthetic ones:
-a 100 m square (four right angles, a closed lap) and the winding road the tool
-started with.  Either is laid out the way a real lane is - corners rounded to
-the hull's own turning radius, see ``terrain._round_corners`` - so the route
-follower in ``systems/ai.py`` drives it exactly as it drives the lanes of the
-battle map.
+a 100 m square (four right angles, a closed lap), a winding road, and a dense
+zigzag laid out every 25 m.  They are plain way point lists with sharp corners,
+exactly what a lane is, so the route follower in ``systems/ai.py`` drives them
+the way it drives the lanes of the battle map - including cutting the inside of
+a corner, off the road, which is what a car does with one.
 
     python tools/vehicle_trace.py                     # the 100 m square
+    python tools/vehicle_trace.py --route dense       # a way point every 25 m
     python tools/vehicle_trace.py --route winding     # the long winding road
     python tools/vehicle_trace.py --out /tmp/run1     # choose the basename
-    python tools/vehicle_trace.py --no-fillet         # keep the corners sharp
 
 It writes an SVG - the way points, the reference route, the driven trace
 coloured by speed and a velocity vector every few dozen metres - plus a CSV of
 the per-tick state, and prints a summary (lap time, mean speed, worst deviation
-off the route, speed through the corners).  No dependency beyond numpy: the SVG
-is written by hand.
+off the route, steering reversals, speed through the corners).  No dependency
+beyond numpy: the SVG is written by hand.
 """
 
 from __future__ import annotations
@@ -33,7 +33,6 @@ sys.path.insert(0, str(ROOT / "backend"))
 
 from server import defs  # noqa: E402
 from server.systems import ai  # noqa: E402
-from server.terrain import _round_corners  # noqa: E402
 from server.world import World  # noqa: E402
 
 DT = 1.0 / 30.0
@@ -58,13 +57,17 @@ WINDING = [
     (2400.0, 2860.0), (2400.0, 2600.0), (1500.0, 2600.0),
 ]
 
-ROUTES = {"square": SQUARE, "winding": WINDING}
+# A way point every 25 m along a zigzag: the dense-line case, where the spacing
+# is well inside the follower's acceptance radius and every vertex is an acute
+# corner.  Nothing here is drivable by steering at the points one at a time.
+DENSE = [(1000.0 + 25.0 * i, 2500.0 + (60.0 if i % 2 else 0.0)) for i in range(33)]
+
+ROUTES = {"square": SQUARE, "winding": WINDING, "dense": DENSE}
 
 
-def build(world: World, route: list[tuple[float, float]],
-          sharp: bool) -> list[tuple[float, float]]:
-    """The reference route, rounded, registered as a lane on the world."""
-    pts = list(route) if sharp else _round_corners(list(route), defs.APC_TURN_R)
+def build(world: World, route: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    """The way point line, registered as a lane on the world exactly as given."""
+    pts = list(route)
     world.lanes.append(list(pts))
     world.lanes_rev.append(list(reversed(pts)))
     return list(pts)
@@ -81,11 +84,11 @@ def lateral(pts: list[tuple[float, float]], x: float, z: float) -> float:
     return math.sqrt(best)
 
 
-def run(ticks: int, route: list[tuple[float, float]],
-        sharp: bool) -> tuple[list[dict], list[tuple[float, float]]]:
+def run(ticks: int, route: list[tuple[float, float]]
+        ) -> tuple[list[dict], list[tuple[float, float]]]:
     world = World(seed=7, mode="range")
     e = world.ecs
-    pts = build(world, route, sharp)
+    pts = build(world, route)
 
     x, z = pts[0]
     eid = world.spawn_unit(defs.ETYPE_APC, defs.FACTION_RED, x, z, lane=LANE_INDEX)
@@ -122,10 +125,10 @@ def run(ticks: int, route: list[tuple[float, float]],
             lat=lateral(pts, px, pz),
             travelled=travelled,
         ))
-        # the lane ends at the enemy base and the follower turns for it; stop at
-        # the last way point so the trace is the route and nothing else.  On a
-        # closed lap that point is also the start, hence the distance check
-        if travelled > 0.9 * total and math.dist((px, pz), pts[-1]) < 30.0:
+        # the follower marks the lane finished by running `path_i` one past the
+        # last way point; past that it is driving at the command base, which is
+        # not part of the route
+        if int(bufs["path_i"][row]) >= len(pts):
             break
     return log, pts
 
@@ -179,8 +182,7 @@ def svg(log: list[dict], pts: list[tuple[float, float]],
         '<g font-family="monospace" font-size="14">',
         '<text x="24" y="70" fill="#8fa3b6">o way point</text>',
         '<text x="150" y="70" fill="#3f4c5a">-.- control line</text>',
-        f'<text x="300" y="70" fill="#5d7387">- - route, rounded to'
-        f' {defs.APC_TURN_R:.0f} m</text>',
+        '<text x="300" y="70" fill="#5d7387">- - the way point line</text>',
         '<text x="580" y="70" fill="#c8d6e2">trace, coloured by speed</text>',
         f'<text x="24" y="94" fill="#7dffb0">velocity vector: length ='
         f' {VEC_SCALE:.1f} s of travel at the speed it is drawn at</text>',
@@ -277,10 +279,9 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--route", choices=sorted(ROUTES), default="square")
     ap.add_argument("--ticks", type=int, default=9000)
     ap.add_argument("--out", default="/tmp/apc_trace")
-    ap.add_argument("--no-fillet", action="store_true")
     args = ap.parse_args(argv[1:])
 
-    log, pts = run(args.ticks, ROUTES[args.route], args.no_fillet)
+    log, pts = run(args.ticks, ROUTES[args.route])
 
     csv = pathlib.Path(args.out + ".csv")
     csv.write_text("tick,t,x,y,z,yaw_deg,speed,cmd_speed,lat_err,travelled\n" + "".join(

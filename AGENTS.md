@@ -181,10 +181,12 @@ frontend/
 * **Lanes** — `world.lanes` counts from the red base, `world.lanes_rev` from
   the blue base. Every per-faction lookup (spawn point, path index, "front
   line") must use the faction's own copy; mixing them mirrors positions across
-  the map. `path_i` is always an index into the faction's own list. A lane's
-  corners are **rounded to `terrain.LANE_FILLET` (= `defs.APC_TURN_R`, 11 m)**
-  at generation: a polyline kink is a direction change in zero metres, which
-  nothing wheeled can drive, and a path follower has to cut the inside of it.
+  the map. `path_i` is always an index into the faction's own list, and for a
+  vehicle it is **one past the end once the lane is finished** (the sticky
+  mark that sends the hull at the command base instead).  The lane is a plain
+  polyline: **the map does not round its corners**, because a wheeled hull
+  cannot follow a right angle whatever the map does with it. That is the AI's
+  problem and `ai._passed` is the answer — see the wheeled-hull note below.
 * **Wheeled hulls** — an APC carries the `vehicle` tag, and that tag changes
   both halves of its movement. Locomotion (`movement._vehicle`) is a rear-axle
   bicycle model: `leg_yaw` *is* the hull state (mirrored into `yaw` for the
@@ -205,10 +207,28 @@ frontend/
   brisk low end and a lazy top end: 0-25 km/h in 3.5 s, 0-100 in 20 s. Reverse
   is `APC_REVERSE` of top speed and only ever used to back off a wall.
   The command interface is unchanged — the AI still writes a direction and a
-  speed into `vel` — but the AI *plans* like a driver (`ai._advance_route`): it
-  projects the hull onto the lane, aims at the point `APC_ROUTE_LOOK` seconds of
-  travel ahead, and brakes for the curvature
-  it sees within `APC_CORNER_HORIZON` (`v = sqrt(lat_accel / curvature)`).
+  speed into `vel` — but the AI *drives the way points* (`ai._advance_route`):
+  a way point inside the acceptance radius counts as reached and is dropped, so
+  the hull is already aiming at the next one while still short of the last — the
+  standard acceptance radius of a way point tracker, and what lets a car take a
+  dense line of sharp corners at speed by cutting across the inside of them (it
+  will happily leave the road doing it; the road is not the constraint). The
+  radius **grows with the speed** (`ai._arrive_radius`: `clamp(speed * 1.1 s,
+  10 m, 30 m)`) — a hull at 100 km/h needs tens of metres of arc to turn at all,
+  while a slow one can and should hold the line tightly. A point it
+  cut *wide* of is dropped too, once the hull is past the line through it
+  square to the incoming leg (`ai._passed`) — otherwise a car that missed the
+  circle turns back for it for ever. Speed comes from the corners ahead within
+  `APC_CORNER_HORIZON`. A corner's speed comes from the **cut budget**
+  (`APC_CUT`, 8 m): a fillet of radius R misses the vertex by
+  `R (1/cos(angle/2) - 1)`, so the budget caps R, the hull floors it, and the
+  bend is driven at `sqrt(lat_accel * R)` — a right angle lands at ~11 m/s
+  cutting 8 m, a 20 degree kink costs nothing. A vertex whose *both* legs are
+  shorter than the fast acceptance radius imposes no limit at all: at speed the
+  hull would swallow such a point whole, and braking for it would turn a dense
+  line into a crawl. The scan starts at the way point *before* the one being
+  aimed at, because the acceptance radius drops a corner while the hull is still
+  ~12 m short of it.
   The gunner keeps the turret; the hull points where it drives, so `yaw` is not
   the AI's to turn for a vehicle. `tools/vehicle_trace.py` drives one round the
   range and draws the trace if you want to see the result.

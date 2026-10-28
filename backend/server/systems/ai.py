@@ -276,112 +276,135 @@ def _advance(world: World, eid: int, b: dict, row: int, speed: float,
 # ---------------------------------------------------------------------------
 # wheeled route following
 # ---------------------------------------------------------------------------
+# wheeled route following
+# ---------------------------------------------------------------------------
 # A hull with an 11 m turning radius cannot be steered at a point: it has to
-# follow a line.  The lane *is* that line - it is the road, and the map keeps
-# the lanes clear of houses and trees - so a vehicle is given the lane as a
-# reference path, aims at a lookahead point on it and brakes for the corners it
-# can see coming.  locomotion (systems/movement.py) turns the aim into throttle
-# and steering; nothing here sets a velocity of its own.
+# follow a *line of way points*, and the line the lanes hand it is dense and full
+# of sharp corners.  The rule that makes such a line drivable is the acceptance
+# radius: a way point that comes within `_arrive_radius(speed)` of the hull
+# counts as reached and is dropped, so the hull is already heading for the one
+# after it while it is still tens of metres short of the first.  That is what a driver does at a
+# right angle - aim for the far side and swing across the inside - and it means
+# the hull cheerfully leaves the road on the way through, which is fine: the
+# road is not the constraint, the hull's turning radius is.
+#
+# Locomotion (systems/movement.py) turns the aim into throttle and steering;
+# nothing here sets a velocity of its own.
 
 def _seg(pts: list, k: int) -> float:
     (ax, az), (bx, bz) = pts[k], pts[k + 1]
     return math.hypot(bx - ax, bz - az)
 
 
-def _route_project(pts: list, i: int, px: float, pz: float) -> tuple[int, float]:
-    """Where the hull sits on the lane: (segment index, fraction along it).
+def _corner_speed(ang: float, l1: float, l2: float, top: float) -> float:
+    """The fastest a hull can take a corner that turns by ``ang`` radians.
 
-    Only the three segments around the index it is driving towards are tested -
-    a hull on its lane is within a segment of it - which keeps this cheap
-    enough to run for every APC every tick.
+    How much room the legs give is irrelevant - a kink is a kink however long
+    the straight either side of it - so the corner is defined by how far the
+    hull is allowed to cut inside it (APC_CUT, metres).  A fillet of radius R
+    misses the vertex by ``R * (1 / cos(ang / 2) - 1)``, so the cut budget caps
+    R and the hull's own turning radius floors it; the bend is then driven at
+    ``sqrt(APC_LAT_ACCEL * R)``.  A right angle comes out at ~11 m/s cutting
+    8 m off the inside - the turn anyone makes at a street corner - and a 20
+    degree kink costs nothing at all, as it should.
     """
-    best, bk, bt = 1e18, 0, 0.0
-    for k in range(max(0, i - 1), min(len(pts) - 2, i + 1) + 1):
-        (ax, az), (bx, bz) = pts[k], pts[k + 1]
-        sx, sz = bx - ax, bz - az
-        ll = sx * sx + sz * sz
-        t = 0.0 if ll <= 1e-9 else max(0.0, min(1.0, ((px - ax) * sx + (pz - az) * sz) / ll))
-        d = (px - ax - sx * t) ** 2 + (pz - az - sz * t) ** 2
-        if d < best:
-            best, bk, bt = d, k, t
-    return bk, bt
+    if ang < 1e-3:
+        return top
+    over = 1.0 / math.cos(0.5 * min(ang, math.pi * 0.999)) - 1.0
+    radius = defs.APC_CUT / over if over > 1e-6 else 1e9
+    radius = max(defs.APC_TURN_R, radius)
+    return min(top, math.sqrt(defs.APC_LAT_ACCEL * radius))
 
 
-def _route_aim(pts: list, k: int, t: float, look: float) -> tuple[float, float, int]:
-    """The point ``look`` metres further along the lane, and its segment.
+def _route_speed(pts: list, i: int, px: float, pz: float, top: float) -> float:
+    """How fast the hull may be rolling now and still make the corners ahead.
 
-    Arc length, not a straight line to the next way point: the lane's points
-    are 60 m apart, so aiming at one of them would make the aim jump a whole
-    corner at a time - exactly the corner a car has to start turning early for.
-    """
-    rem = look
-    while k < len(pts) - 1:
-        seg = _seg(pts, k)
-        left = seg * (1.0 - t)
-        if left >= rem and seg > 1e-6:
-            (ax, az), (bx, bz) = pts[k], pts[k + 1]
-            f = t + rem / seg
-            return ax + (bx - ax) * f, az + (bz - az) * f, k
-        rem -= left
-        k += 1
-        t = 0.0
-    return pts[-1][0], pts[-1][1], len(pts) - 1
-
-
-def _route_speed(pts: list, k: int, t: float, top: float) -> float:
-    """How fast the hull may be rolling now and still make the bends ahead.
-
-    A bend's curvature is the heading it turns over the length it turns in, and
-    a hull carries ``sqrt(accel / curvature)`` into it - a 15 m arc taken at
-    8 m/s.  Every vertex inside APC_CORNER_HORIZON sets a ceiling that rises
-    with the distance to it (``v^2 = v_bend^2 + 2 a d``), so the car brakes
-    coming in and rolls out of the bend instead of arriving at full speed with
-    a turning radius that cannot hold it.
+    Every corner inside APC_CORNER_HORIZON sets a ceiling that rises with the
+    distance to it (``v^2 = v_corner^2 + 2 a d``), so the car brakes coming in
+    and rolls out of the bend instead of arriving at full speed with a turning
+    radius that cannot hold it.
     """
     limit = top
-    d = _seg(pts, k) * (1.0 - t)          # metres to the end of this segment
-    while k + 2 < len(pts) and d < defs.APC_CORNER_HORIZON:
-        (ax, az), (bx, bz), (cx, cz) = pts[k], pts[k + 1], pts[k + 2]
+    # start at the way point *before* the one being aimed at: the acceptance
+    # radius drops a corner as soon as the hull is within ~12 m of it, and the
+    # braking for it has to have happened well before that
+    k = max(1, i - 1)
+    d = math.dist((px, pz), pts[k])           # metres to the corner itself
+    while k + 1 < len(pts) and d < defs.APC_CORNER_HORIZON:
+        (ax, az), (bx, bz), (cx, cz) = pts[k - 1], pts[k], pts[k + 1]
         ang = abs(mu.wrap_pi(math.atan2(cz - bz, cx - bx) -
                              math.atan2(bz - az, bx - ax)))
-        cur = ang / max(1.0, 0.5 * (_seg(pts, k) + _seg(pts, k + 1)))
-        if cur > 1e-5:
-            vb = min(top, math.sqrt(defs.APC_LAT_ACCEL / cur))
+        vb = _corner_speed(ang, _seg(pts, k - 1), _seg(pts, k), top)
+        if vb < top:
             limit = min(limit, math.sqrt(vb * vb + 2.0 * defs.APC_BRAKE * d))
         k += 1
-        d += _seg(pts, k)
+        d += _seg(pts, k - 1)
     return limit
 
 
+def _arrive_radius(speed: float) -> float:
+    """How close a way point has to come to count as reached, for this speed.
+
+    The radius has to grow with the speed: a hull at 100 km/h needs ~30 m of arc
+    to turn at all, so aiming at a point 10 m away only makes it overshoot and
+    come back, while a hull crawling through a tight corner can and should
+    follow the line.  ``radius = clamp(speed * time, floor, cap)`` is the
+    lookahead rule of a pure-pursuit tracker, and it keeps the same behaviour at
+    both ends of the speed range.
+    """
+    r = abs(speed) * defs.APC_ARRIVE_LOOK
+    return max(defs.APC_ARRIVE_MIN, min(defs.APC_ARRIVE_MAX, r))
+
+
+def _passed(pts: list, i: int, px: float, pz: float, radius: float) -> bool:
+    """True when way point ``i`` is behind the hull of a given acceptance radius.
+
+    Either it is inside that radius, or the hull has driven past the line through
+    it that is square to the leg arriving from the previous point.  The first is
+    what lets a car carry speed into a corner and cut across the inside of it;
+    the second is what keeps a car that cut *wide* of a corner - or was shoved
+    off the line - from turning back to collect it.
+    """
+    dx, dz = px - pts[i][0], pz - pts[i][1]
+    if dx * dx + dz * dz <= radius * radius:
+        return True
+    if i <= 0:
+        return False
+    lx, lz = pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]
+    return (lx * lx + lz * lz) > 1e-9 and (dx * lx + dz * lz) > 0.0
+
+
 def _advance_route(world: World, b: dict, row: int, speed: float) -> None:
-    """Aim a wheeled hull down its lane - the direction, not the throttle."""
+    """Aim a wheeled hull at its next way point - the direction, not the throttle."""
     pos = b["pos"]
     vel = b["vel"]
     fac = int(b["faction"][row])
     lane = int(b["lane"][row]) % len(world.lanes)
     pts = world.lanes_rev[lane] if fac == defs.FACTION_BLUE else world.lanes[lane]
     px, pz = float(pos[row, 0]), float(pos[row, 2])
-    i = max(0, min(int(b["path_i"][row]), len(pts) - 2))
-    k, t = _route_project(pts, i, px, pz)
-    # the aim sits APC_ROUTE_LOOK seconds of the *actual* rolling speed ahead:
-    # far enough to anticipate, near enough to turn into the bend it is in (a
-    # long lookahead cuts the inside of a corner by look^2 / 8R whatever the
-    # steering does)
-    look = max(defs.APC_ROUTE_LOOK_MIN,
-               min(defs.APC_ROUTE_LOOK_MAX,
-                   max(8.0, abs(float(b["drive"][row, 0]))) * defs.APC_ROUTE_LOOK))
-    ax, az, _ = _route_aim(pts, k, t, look)
-    # the end of the lane is the enemy side of the map: the last stretch runs
-    # at the command base, which is what a lane actually leads to
-    if (pts[-1][0] - px) ** 2 + (pts[-1][1] - pz) ** 2 <= look * look:
+    # `path_i` runs to len(pts), one past the end: that is the "lane finished"
+    # mark, and it has to be sticky - deciding per tick between the last way
+    # point and the base made a hull orbit the circle between them for ever
+    i = max(0, min(int(b["path_i"][row]), len(pts)))
+    radius = _arrive_radius(float(b["drive"][row, 0]))
+    while i < len(pts) - 1 and _passed(pts, i, px, pz, radius):
+        i += 1
+    if i == len(pts) - 1 and _passed(pts, i, px, pz, radius):
+        i = len(pts)
+    b["path_i"][row] = i
+    if i >= len(pts):
+        # the end of the lane is the enemy side of the map: the last stretch
+        # runs at the command base, which is what a lane actually leads to
         ax, az = world.terrain.bases[1 - fac]
-    b["path_i"][row] = k
+        v = speed
+    else:
+        ax, az = pts[i]
+        v = _route_speed(pts, i, px, pz, speed)
     dx, dz = ax - px, az - pz
     d = math.hypot(dx, dz)
     if d < 1e-3:
         vel[row, 0] = vel[row, 2] = 0.0
         return
-    v = _route_speed(pts, k, t, speed)
     vel[row, 0] = dx / d * v
     vel[row, 2] = dz / d * v
 

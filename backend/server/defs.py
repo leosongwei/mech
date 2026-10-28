@@ -307,10 +307,21 @@ APC_REVERSE = 0.4          # fraction of top speed the crew backs up at
 APC_STEER_LOCK = 0.30      # rad of heading error that puts the wheels on full lock
 APC_BACKOUT = 1.2          # s of reverse when the nose is against something
 APC_BLOCKED = 0.5          # s of pushing against a wall before the crew gives up
-APC_ROUTE_LOOK = 1.2       # s of travel the aim point on the lane sits ahead
-APC_ROUTE_LOOK_MIN = 14.0  # m, the lookahead floor
-APC_ROUTE_LOOK_MAX = 40.0  # m, the lookahead cap - a long one cuts the inside
-                           # of a bend by L^2 / 8R whatever the steering does
+# The acceptance radius of the way point tracker: a way point this close to the
+# hull counts as reached and the follower aims at the next one.  It is what lets
+# a car take a dense line of sharp corners at speed - it cuts the inside of every
+# one of them, off the road if it likes, instead of trying to turn on the spot at
+# a vertex.  It has to *grow with the speed*, or a fast hull never gets close
+# enough to the line and a slow one throws away the corners it could have taken:
+# `radius = clamp(speed * time, floor, cap)` is the pure-pursuit lookahead rule.
+APC_ARRIVE_LOOK = 1.1      # s of travel: 10 m at 9 m/s, 30 m at 27 m/s
+APC_ARRIVE_MIN = 10.0      # m, slow: follow the line closely
+APC_ARRIVE_MAX = 30.0      # m, quick: 30 m of arc is all the wheels can do anyway
+# How far inside a corner the hull is allowed to cut, in metres.  It is the one
+# knob that trades corner speed against holding the line: a fillet of radius R
+# misses the vertex by R * (1 / cos(angle / 2) - 1), so 8 m of budget puts a
+# right angle at ~11 m/s and a 20 degree kink at no limit at all.
+APC_CUT = 8.0              # m
 APC_CORNER_HORIZON = 140.0 # m of lane the corner brake looks down
 APC_LAT_ACCEL = 6.0        # m/s^2 of side load a bend is taken at - the speed
                            # a curve is driven at is sqrt(lat / its curvature)

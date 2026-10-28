@@ -216,11 +216,14 @@ function mech(R, e, defs, flashes) {
   at(R, 'box', e, yaw, 0, 0, 4.50, -0.62, 0.34, 0.56, 0.34, METAL_D);
   at(R, 'box', e, yaw, 0, 0, 4.90, -0.62, 0.56, 0.62, 0.62, METAL_L);
   at(R, 'box', e, yaw, 0, 0, 5.22, -0.62, 0.18, 0.10, 0.54, METAL_D);
-  // Two sight windows, set into the head's front face either side of its
-  // centreline - flush, so the block still reads as one armoured box.
-  for (const side of [-1, 1]) {
-    at(R, 'cyl', e, yaw, FORWARD, side * 0.14, 4.96, -0.335,
-      0.24, 0.10, 0.24, GLASS);
+  // One big sight window with a pair of small ones stacked beside it, set into
+  // the head's front face - flush, so the block still reads as one armoured
+  // box.  The big lens is the gunner's channel, the pair the wide/narrow
+  // backups; the asymmetry is what tells the head apart from a plain box.
+  at(R, 'cyl', e, yaw, FORWARD, 0.10, 4.90, -0.335, 0.36, 0.10, 0.36, GLASS);
+  for (const dy of [-0.16, 0.16]) {
+    at(R, 'cyl', e, yaw, FORWARD, -0.20, 4.90 + dy, -0.335,
+      0.16, 0.10, 0.16, GLASS);
   }
 
   // High, close-in weapon stations; module indices remain 2 / 3.

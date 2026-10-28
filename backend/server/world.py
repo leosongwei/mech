@@ -49,7 +49,7 @@ class World:
         self.mode_mod: Mode = modes.get(mode)
         self.mode: str = self.mode_mod.name
         self.terrain: Terrain = self.mode_mod.terrain(seed)
-        self.ecs: ECS = ECS(8192)
+        self.ecs: ECS = ECS()
         components.register(self.ecs)
         self.rng: random.Random = random.Random(2024)
         self.players: dict[int, Player] = {}
@@ -91,12 +91,12 @@ class World:
                    lane: int = -1) -> int:
         e = self.ecs
         d = defs.UNIT_DEFS[etype]
-        eid = e.create()
+        # the component set *is* the entity's type, and it is decided once, here:
+        # the shared bundle plus the tags this etype declares (`unit`, `combat`,
+        # `moves`...), which is what every system queries instead of switching
+        # on `etype`
         comps = components.CIV_COMPS if etype == defs.ETYPE_CIV else components.UNIT_COMPS
-        for c in comps:
-            e.add_comp(eid, c)
-        for tag in d["tags"]:
-            e.add_comp(eid, tag)                # identity: what this thing *is*
+        eid = e.create((*comps, *d["tags"]))
         yaw = self.rng.random() * math.tau
         e["pos"][eid] = (x, self.terrain.height_at(x, z), z)
         e["vel"][eid] = (0.0, 0.0, 0.0)
@@ -317,9 +317,7 @@ class World:
         else:
             return
         e = self.ecs
-        eid = e.create()
-        for c in components.DEBRIS_COMPS:
-            e.add_comp(eid, c)
+        eid = e.create(components.DEBRIS_COMPS)
         e["pos"][eid] = (float(pos[0]), self.terrain.height_at(float(pos[0]), float(pos[2])),
                          float(pos[2]))
         e["yaw"][eid] = yaw

@@ -30,7 +30,7 @@ backend/
   run.py                   # dev entry point: uvicorn server.main:app
   pyproject.toml           # fastapi, uvicorn[standard], numpy
   server/
-    ecs.py                 # numpy component registry: masks, queries, free list
+    ecs.py                 # archetype ECS: component set is the entity's type
     components.py          # every component the game declares
     defs.py                # entity types, weapons, unit stats, mech geometry
     world.py               # World: terrain, players, spawning, damage, tick
@@ -49,6 +49,8 @@ backend/
                            #   (nothing on the range shoots back)
   assets/                  # compiled client (webpack output, gitignored)
 tools/
+  replay.py                # scripted battle replay: the simulation's sanity harness
+  fixtures/                # its recorded tick summaries (checked in)
   smoke_lock_test.js       # browser-console driver: seeker A/B smoke test
 frontend/
   webpack.config.js        # entry src/main.js -> ../backend/assets/bundle.js
@@ -73,10 +75,36 @@ frontend/
 
 ### Server
 
-* **ECS** — every component is one numpy array indexed by entity slot.
-  Presence lives in a `uint64` mask per entity; queries return index arrays
-  (`ecs.query("unit")`). Never loop over 8192 slots per system; use the query
-  results. Entities are created/destroyed through `ECS.create/destroy`.
+* **ECS** — an *archetype* ECS: the group of entities that own exactly the same
+  component set is an `Archetype`, and it holds one dense buffer per component,
+  as long as the entities that actually have it. An entity id is not a storage
+  address any more — `_arch`/`_row` turn it into (archetype, row). Queries
+  return ascending ids (`ecs.query("unit")`); `ecs["pos"]` still answers
+  `view[eid]`, `view[eid, i]`, `view[ids]`, `view[ids, i]`, filling a default
+  where the entity does not own the component, and `ecs.row(eid, "pos")` is the
+  cheap single-entity door.
+* **The component set is the entity's type and never changes.** It is decided
+  in the one `ECS.create(comps)` call that spawns the entity, from
+  `components.UNIT_COMPS` / `*_COMPS` plus `UNIT_DEFS[...]["tags"]`. A state
+  transition is a *different* entity: `systems/smoke.py` destroys a canister and
+  creates the puff it bursts into. There is deliberately no
+  `add_component`/`remove_component` — allowing one would make the archetype key
+  space explode, invalidate row indices mid-tick, and turn the mask back into a
+  mutable soup.
+* **Write systems against buffers, not through `View`.** `ecs.groups(...)`
+  hands out an archetype with its buffers hoisted and rows `0..n-1`: reach for
+  it whenever the system integrates entities independently (movement, countdown
+  timers, leg turning) and the whole pass becomes a handful of numpy calls.
+  `ecs.slot(eid)` is the same thing for a per-entity loop that touches many
+  components — one lookup, then `bufs["pos"][row, 0]`; `"combat" in bufs` is the
+  component test. `ecs.locate(ids)` gives `(rows, archetypes)` when the loop has
+  to stay in query order.
+* **Iteration order is part of the simulation.** `weapons`, `ai` and the
+  spread/acquire draws take numbers from `world.rng` inside a loop over
+  entities, so visiting them in a different order produces a different battle.
+  Those loops must keep the ascending `query()` order (`locate`/`slot`);
+  `groups` (archetype-major) is only for order-free work. `tools/replay.py`
+  fails loudly when this is broken.
 * **Identity is a component, never a type switch.** What an entity *is* comes
   from the marker components its type declares in
   `defs.UNIT_DEFS[...]["tags"]`: `unit` (a hull rounds stop on and damage
@@ -320,6 +348,18 @@ cd frontend && npm install && npm run build      # -> backend/assets/
   (`uv venv && uv pip install -r backend/pyproject.toml`).
 * No test suite, no linter, no type checker. Verify by running the game and
   watching `/tmp/mech-server.log` plus the browser console.
+* **`tools/replay.py` is the one automated check there is.** It drives a
+  scripted 30 s battle (900 ticks: both weapons, smoke pulls, debug spawns,
+  forced kills, AI waves), records per-tick aggregates — entity counts, total
+  hp, the sum of every position and velocity, money / kills / deaths — and
+  compares them with `tools/fixtures/replay_battle.json`. It is tolerant by
+  design: float sums may drift 1 %, counts may be off by one. Run it after
+  anything that touches `ecs.py`, `systems/` or `terrain.py`; `--save` rewrites
+  the fixture when a change is meant to move the numbers.
+  ```bash
+  .venv/bin/python tools/replay.py          # compare
+  .venv/bin/python tools/replay.py --save   # re-baseline
+  ```
 
 ## Run
 

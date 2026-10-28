@@ -41,6 +41,21 @@ def turn_toward(cur: float, target: float, max_step: float) -> float:
     return wrap_pi(cur + math.copysign(max_step, d))
 
 
+# The array forms exist for the systems that turn a whole archetype at once.
+# Same answer as the scalar pair above, elementwise, including the snap onto
+# the target once it is within one step.
+def wrap_pi_arr(a: np.ndarray) -> np.ndarray:
+    return np.mod(np.asarray(a, np.float32) + np.float32(math.pi),
+                  np.float32(2.0 * math.pi)) - np.float32(math.pi)
+
+
+def turn_toward_arr(cur: np.ndarray, target: np.ndarray,
+                    max_step: np.ndarray) -> np.ndarray:
+    d = wrap_pi_arr(np.asarray(target) - np.asarray(cur))
+    stepped = wrap_pi_arr(np.asarray(cur) + np.copysign(max_step, d))
+    return np.where(np.abs(d) <= max_step, target, stepped)
+
+
 def muzzle_point(pos: np.ndarray, yaw: float, module: int,
                  arm_pitch: float = 0.0,
                  reach: float | None = None) -> tuple[float, float, float]:

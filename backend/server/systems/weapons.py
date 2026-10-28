@@ -18,6 +18,10 @@ if TYPE_CHECKING:
 
 KIND_ID = {"bullet": 0, "rocket": 1, "saclos": 2, "top": 3}
 
+# weapon table as arrays, so a whole archetype of magazines can be refilled in
+# one pass instead of a dict lookup per arm
+MAG_OF = np.array([int(w["mag"]) for w in defs.WEAPONS], np.int32)
+
 
 def aim_of(world: World, eid: int) -> tuple[tuple[float, float, float], float, float]:
     """(origin, yaw, pitch) used by every weapon of this unit."""
@@ -45,37 +49,82 @@ def run(world: World, dt: float) -> None:
     ids = world.units()
     if ids.size == 0:
         return
-    cool = e["cool"]
-    reload_t = e["reload_t"]
-    mag = e["mag"]
-    ammo = e["ammo"]
-    weapon = e["weapon"]
+
+    # ---- countdowns, a whole archetype at a time -----------------------
+    # Every arm counts down on its own: no row looks at another, so this is one
+    # pass per group instead of two Reads per (unit, arm).  A reload that lands
+    # on this tick refills the magazine here and keeps the arm from firing this
+    # tick, which is what the old per-entity `continue` meant.
+    just_reloaded: set[int] = set()
+    for g in e.groups("cool", "reload_t", "mag", "ammo", "weapon"):
+        n = g.n
+        cool = g.bufs["cool"][:n]
+        reload_t = g.bufs["reload_t"][:n]
+        mag = g.bufs["mag"][:n]
+        ammo = g.bufs["ammo"][:n]
+        weapon = g.bufs["weapon"][:n]
+
+        hot = cool > 0.0
+        if hot.any():
+            np.subtract(cool, dt, out=cool, where=hot)
+            np.maximum(cool, 0.0, out=cool, where=hot)
+
+        ticking = reload_t > 0.0
+        if not ticking.any():
+            continue
+        np.subtract(reload_t, dt, out=reload_t, where=ticking)
+        done = ticking & (reload_t <= 0.0)
+        if not done.any():
+            continue
+        take = np.minimum(MAG_OF[weapon], ammo)
+        np.copyto(mag, take, where=done)
+        np.copyto(ammo, ammo - take, where=done)
+        np.copyto(reload_t, 0.0, where=done)
+        for row, arm in zip(*np.nonzero(done)):
+            just_reloaded.add(int(g.ids[row]) * 2 + int(arm))
+
+    # ---- firing, in ascending id order --------------------------------
+    # `fire` draws the spread from `world.rng`, so the order of these pulls is
+    # part of the simulation: keep the query order, do not group it.
     trigger = e["trigger"]
     trigger_prev = e["trigger_prev"]
     hp = e["hp"]
     etype = e["etype"]
     owner = e["owner"]
+    rows, archs = e.locate(ids)
+    cool_bufs = e.buffers("cool")
+    reload_bufs = e.buffers("reload_t")
+    mag_bufs = e.buffers("mag")
+    ammo_bufs = e.buffers("ammo")
+    weapon_bufs = e.buffers("weapon")
 
-    for eid in ids:
-        et = int(etype[eid])
+    for k in range(ids.size):
+        eid = int(ids[k])
+        ai = int(archs[k])
+        row = int(rows[k])
+        cool = cool_bufs[ai]
+        reload_t = reload_bufs[ai]
+        mag = mag_bufs[ai]
+        ammo = ammo_bufs[ai]
+        weapon = weapon_bufs[ai]
+        trig = int(trigger[eid])
+        if trig == 0:
+            # nothing is being asked for: still drop the edge state (a released
+            # trigger is what re-arms a semi automatic arm) and move on
+            if trigger_prev[eid]:
+                trigger_prev[eid] = 0
+            continue
         for arm in (0, 1):
-            if cool[eid, arm] > 0.0:
-                cool[eid, arm] = max(0.0, float(cool[eid, arm]) - dt)
-            if reload_t[eid, arm] > 0.0:
-                reload_t[eid, arm] = float(reload_t[eid, arm]) - dt
-                if reload_t[eid, arm] <= 0.0:
-                    wid = int(weapon[eid, arm])
-                    wd = defs.WEAPONS[wid]
-                    take = min(int(wd["mag"]), int(ammo[eid, arm]))
-                    mag[eid, arm] = take
-                    ammo[eid, arm] = int(ammo[eid, arm]) - take
-                continue
-            wid = int(weapon[eid, arm])
+            if reload_t[row, arm] > 0.0:
+                continue                       # still reloading
+            if just_reloaded and eid * 2 + arm in just_reloaded:
+                continue                       # finished this very tick
+            wid = int(weapon[row, arm])
             if wid == defs.WID_NONE:
                 continue
-            if not (int(trigger[eid]) >> arm) & 1:
+            if not (trig >> arm) & 1:
                 continue
-            if et == defs.ETYPE_MECH:
+            if int(etype[eid]) == defs.ETYPE_MECH:
                 if hp[eid, defs.MOD_LEFT if arm == 0 else defs.MOD_RIGHT] <= 0.0:
                     continue
             wd = defs.WEAPONS[wid]
@@ -83,14 +132,14 @@ def run(world: World, dt: float) -> None:
             # released and pressed again, holding it does nothing
             if wd["semi"] and (int(trigger_prev[eid]) >> arm) & 1:
                 continue
-            if int(mag[eid, arm]) <= 0:
-                if int(ammo[eid, arm]) > 0:
-                    reload_t[eid, arm] = wd["reload"]
+            if int(mag[row, arm]) <= 0:
+                if int(ammo[row, arm]) > 0:
+                    reload_t[row, arm] = wd["reload"]
                 continue
             # a hair of float dust left over from the tick subtraction must
             # not cost a whole tick: 600 rpm on a 30 Hz clock is exactly 3
             # ticks, and 0.1 - 3 * dt rounds to a positive 1e-9
-            if float(cool[eid, arm]) > 1e-4:
+            if float(cool[row, arm]) > 1e-4:
                 continue
             target = -1
             if wd["lock"]:
@@ -101,9 +150,9 @@ def run(world: World, dt: float) -> None:
                     continue
                 target = pl.lock_target
             fire(world, eid, arm, wid, wd, target)
-            mag[eid, arm] = int(mag[eid, arm]) - 1
-            cool[eid, arm] = 60.0 / max(wd["rpm"], 1.0)
-        trigger_prev[eid] = int(trigger[eid])
+            mag[row, arm] = int(mag[row, arm]) - 1
+            cool[row, arm] = 60.0 / max(wd["rpm"], 1.0)
+        trigger_prev[eid] = trig
 
 
 def fire(world: World, eid: int, arm: int, wid: int, wd: dict, target: int = -1) -> None:
@@ -147,9 +196,7 @@ def fire(world: World, eid: int, arm: int, wid: int, wd: dict, target: int = -1)
         # rocket pod is tilted up so its slow round meets the cannon at 1 km
         dp = (pitch + float(wd["bias"]) if zero is None else zero) + world.rng.gauss(0.0, sp)
         d = mu.dir_from(dy, dp)
-        pid = e.create()
-        for c in components.PROJ_COMPS:
-            e.add_comp(pid, c)
+        pid = e.create(components.PROJ_COMPS)
         e["pos"][pid] = origin
         e["vel"][pid] = (d[0] * wd["vel"], d[1] * wd["vel"], d[2] * wd["vel"])
         e["faction"][pid] = e["faction"][eid]

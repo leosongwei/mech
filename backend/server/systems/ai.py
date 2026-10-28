@@ -28,24 +28,11 @@ def run(world: World, dt: float) -> None:
     if ids.size == 0:
         return
 
+    # only two views survive at the top: the per-entity loop below takes its
+    # components from `ecs.slot()` and indexes them by row
     pos = e["pos"]
     vel = e["vel"]
-    yaw = e["yaw"]
-    pitch = e["pitch"]
-    turret = e["turret_yaw"]
-    etype = e["etype"]
     faction = e["faction"]
-    owner = e["owner"]
-    hp = e["hp"]
-    timer = e["ai_timer"]
-    target = e["target"]
-    trigger = e["trigger"]
-    path_i = e["path_i"]
-    lane = e["lane"]
-    spot_x = e["spot_x"]
-    spot_y = e["spot_y"]
-    spot_z = e["spot_z"]
-    spot_t = e["spot_t"]
 
     terrain = world.terrain
     # who may be shot at is a query, not a type switch: `combat` hulls only
@@ -57,32 +44,36 @@ def run(world: World, dt: float) -> None:
             foes[1 - f].append(eid)
     foe_arr = {f: np.asarray(v, np.int32) for f, v in foes.items()}
 
-    # anything that drives itself is ours to steer; a hull without `combat`
-    # is a civilian, which only wanders
-    civ_units = [int(i) for i in ids if not e.has(i, "combat")]
-
+    # per entity: one `slot` lookup, then every component is `bufs["x"][row]`.
+    # The order is the query order (ascending ids) because this loop draws the
+    # random numbers, so `groups` would reshuffle the whole battle.
     for eid in ids:
-        t = int(etype[eid])
-        if int(owner[eid]) >= 0:
+        b, row = e.slot(eid)
+        if b.get("owner") is not None and int(b["owner"][row]) >= 0:
             continue                                   # player driven
-        if not e.has(eid, "combat"):
-            _civ(world, eid, civ_units, foe_arr, dt)
+        if "combat" not in b:
+            _civ(world, eid, b, row, dt)
             continue
 
-        fac = int(faction[eid])
+        t = int(b["etype"][row])
+        fac = int(b["faction"][row])
         d = defs.UNIT_DEFS[t]
         speed = d["speed"]
-        eye = (pos[eid, 0], pos[eid, 1] + d["height"] * 0.75, pos[eid, 2])
+        px, py, pz = float(b["pos"][row, 0]), float(b["pos"][row, 1]), float(b["pos"][row, 2])
+        eye = (px, py + d["height"] * 0.75, pz)
 
-        timer[eid] -= dt
-        tid = int(target[eid])
-        if timer[eid] <= 0.0:
-            timer[eid] = ACQUIRE * world.rng.uniform(0.75, 1.35)
+        timer = b["ai_timer"]
+        target = b["target"]
+        spot_t = b["spot_t"]
+        timer[row] -= dt
+        tid = int(target[row])
+        if timer[row] <= 0.0:
+            timer[row] = ACQUIRE * world.rng.uniform(0.75, 1.35)
             tid = _acquire(world, eid, foe_arr[fac], eye, d)
-            target[eid] = tid
+            target[row] = tid
         if tid >= 0:
-            if not e.alive[tid] or int(faction[tid]) == fac:
-                target[eid] = -1
+            if not e.alive[tid] or int(e["faction"][tid]) == fac:
+                target[row] = -1
                 tid = -1
 
         moving = True
@@ -96,22 +87,23 @@ def run(world: World, dt: float) -> None:
                 seen = True
                 # remember the spot: if the sight breaks (smoke, a crest) the
                 # crew keeps shooting there for a few seconds
-                spot_x[eid] = float(tpos[0])
-                spot_y[eid] = float(tpos[1])
-                spot_z[eid] = float(tpos[2])
-                spot_t[eid] = SPOT_MEMORY
-                _engage(world, eid, tid, eye, d, dist, tpos, tvel, dt)
-        if not seen and float(spot_t[eid]) > 0.0:
+                b["spot_x"][row] = float(tpos[0])
+                b["spot_y"][row] = float(tpos[1])
+                b["spot_z"][row] = float(tpos[2])
+                spot_t[row] = SPOT_MEMORY
+                _engage(world, eid, b, row, tid, eye, d, dist, tpos, tvel, dt)
+        if not seen and float(spot_t[row]) > 0.0:
             # lost it: hose the spot where it was last seen
-            spot_t[eid] = float(spot_t[eid]) - dt
-            dist = math.dist((eye[0], eye[2]), (float(spot_x[eid]), float(spot_z[eid])))
+            spot_t[row] = float(spot_t[row]) - dt
+            dist = math.dist((eye[0], eye[2]),
+                             (float(b["spot_x"][row]), float(b["spot_z"][row])))
             if dist < d["ai_range"]:
-                _suppress(world, eid, eye, d, dist, dt)
+                _suppress(world, eid, b, row, eye, d, dist, dt)
                 moving = False
 
         if moving:
-            trigger[eid] = 0
-            _advance(world, eid, speed, dt)
+            b["trigger"][row] = 0
+            _advance(world, eid, b, row, speed, dt)
 
 
 def _sees(world: World, eye: tuple[float, float, float],
@@ -152,42 +144,39 @@ def _acquire(world: World, eid: int, foe_ids: np.ndarray,
     return -1
 
 
-def _engage(world: World, eid: int, tid: int, eye: tuple[float, float, float],
-            d: dict, dist: float, tpos: np.ndarray, tvel: np.ndarray,
-            dt: float) -> None:
-    e = world.ecs
-    weapon = e["weapon"]
-
+def _engage(world: World, eid: int, b: dict, row: int, tid: int,
+            eye: tuple[float, float, float], d: dict, dist: float,
+            tpos: np.ndarray, tvel: np.ndarray, dt: float) -> None:
     # aim at the intercept point of the primary weapon.  no gravity lift here:
     # the fire control zeroes the gun for the drop at shot time, so lifting the
     # aim as well would double compensate
-    w0 = int(weapon[eid, 0]) or defs.WID_AC30
+    w0 = int(b["weapon"][row, 0]) or defs.WID_AC30
     wd0 = defs.WEAPONS[w0]
     speed = wd0["vel"]
     aim = mu.solve_lead(eye, (float(tpos[0]), float(tpos[1]) + 2.0, float(tpos[2])),
                         tvel, speed, 0.0)
-    _aim_and_fire(world, eid, eye, d, dist, aim, dt)
+    _aim_and_fire(world, eid, b, row, eye, d, dist, aim, dt)
 
 
-def _suppress(world: World, eid: int, eye: tuple[float, float, float], d: dict,
-              dist: float, dt: float) -> None:
+def _suppress(world: World, eid: int, b: dict, row: int,
+              eye: tuple[float, float, float], d: dict, dist: float,
+              dt: float) -> None:
     """Keep firing at the spot where the target was last seen."""
-    e = world.ecs
-    aim = (float(e["spot_x"][eid]), float(e["spot_y"][eid]) + 1.5, float(e["spot_z"][eid]))
-    _aim_and_fire(world, eid, eye, d, dist, aim, dt)
+    aim = (float(b["spot_x"][row]), float(b["spot_y"][row]) + 1.5,
+           float(b["spot_z"][row]))
+    _aim_and_fire(world, eid, b, row, eye, d, dist, aim, dt)
 
 
-def _aim_and_fire(world: World, eid: int, eye: tuple[float, float, float],
-                  d: dict, dist: float, aim: tuple[float, float, float],
-                  dt: float) -> None:
-    e = world.ecs
-    yaw = e["yaw"]
-    pitch = e["pitch"]
-    turret = e["turret_yaw"]
-    trigger = e["trigger"]
-    etype = int(e["etype"][eid])
-    hp = e["hp"]
-    weapon = e["weapon"]
+def _aim_and_fire(world: World, eid: int, b: dict, row: int,
+                  eye: tuple[float, float, float], d: dict, dist: float,
+                  aim: tuple[float, float, float], dt: float) -> None:
+    yaw = b["yaw"]
+    pitch = b["pitch"]
+    turret = b["turret_yaw"]
+    trigger = b["trigger"]
+    etype = int(b["etype"][row])
+    hp = b["hp"]
+    weapon = b["weapon"]
 
     tx = aim[0] - eye[0]
     ty = aim[1] - eye[1]
@@ -195,94 +184,91 @@ def _aim_and_fire(world: World, eid: int, eye: tuple[float, float, float],
     want_yaw, want_pitch = mu.angles_to(tx, ty, tz)
 
     turn = 3.2 if etype != defs.ETYPE_MECH else 1.7
-    yaw[eid] = mu.turn_toward(float(yaw[eid]), want_yaw, turn * dt)
-    pitch[eid] = max(-0.4, min(0.7, float(pitch[eid]) + (want_pitch - float(pitch[eid])) * min(1.0, 6.0 * dt)))
+    yaw[row] = mu.turn_toward(float(yaw[row]), want_yaw, turn * dt)
+    pitch[row] = max(-0.4, min(0.7, float(pitch[row]) + (want_pitch - float(pitch[row])) * min(1.0, 6.0 * dt)))
     if etype == defs.ETYPE_APC:
-        turret[eid] = mu.turn_toward(float(turret[eid]), want_yaw, 2.2 * dt)
+        turret[row] = mu.turn_toward(float(turret[row]), want_yaw, 2.2 * dt)
 
-    aim_yaw = float(turret[eid]) if etype == defs.ETYPE_APC else float(yaw[eid])
+    aim_yaw = float(turret[row]) if etype == defs.ETYPE_APC else float(yaw[row])
     err = abs(mu.wrap_pi(want_yaw - aim_yaw))
     t = 0
     if err < 0.14:
-        if hp[eid, 0] > 0:
+        if hp[row, 0] > 0:
             t |= 1
-        if etype == defs.ETYPE_MECH and hp[eid, defs.MOD_RIGHT] > 0 and dist < 2200:
-            w1 = int(weapon[eid, 1])
+        if etype == defs.ETYPE_MECH and hp[row, defs.MOD_RIGHT] > 0 and dist < 2200:
+            w1 = int(weapon[row, 1])
             if w1 and defs.WEAPONS[w1]["kind"] in ("rocket", "saclos") and dist < defs.WEAPONS[w1]["range"]:
                 t |= 2
         if etype == defs.ETYPE_APC and dist < 3500:
             t |= 2
     # a semi automatic arm only fires on the rising edge of the trigger, so
     # the AI has to let go of it every other tick
-    if (t & 2) and (world.tick & 1) and defs.WEAPONS[int(weapon[eid, 1])]["semi"]:
+    if (t & 2) and (world.tick & 1) and defs.WEAPONS[int(weapon[row, 1])]["semi"]:
         t &= ~2
-    trigger[eid] = t
+    trigger[row] = t
 
 
-def _advance(world: World, eid: int, speed: float, dt: float) -> None:
-    e = world.ecs
-    pos = e["pos"]
-    vel = e["vel"]
+def _advance(world: World, eid: int, b: dict, row: int, speed: float,
+             dt: float) -> None:
+    pos = b["pos"]
+    vel = b["vel"]
     terrain = world.terrain
-    fac = int(e["faction"][eid])
-    lane_i = int(e["lane"][eid])
+    fac = int(b["faction"][row])
+    lane_i = int(b["lane"][row])
     pts = world.lanes[lane_i % len(world.lanes)]
     if fac == defs.FACTION_BLUE:
         pts = world.lanes_rev[lane_i % len(world.lanes)]
-    i = int(e["path_i"][eid])
+    i = int(b["path_i"][row])
     if i >= len(pts):
         i = len(pts) - 1
     wx, wz = pts[i]
-    dx = wx - pos[eid, 0]
-    dz = wz - pos[eid, 2]
+    px, pz = float(pos[row, 0]), float(pos[row, 2])
+    dx = wx - px
+    dz = wz - pz
     if dx * dx + dz * dz < 55.0 * 55.0:
         if i < len(pts) - 1:
             i += 1
-            e["path_i"][eid] = i
+            b["path_i"][row] = i
             wx, wz = pts[i]
-            dx = wx - pos[eid, 0]
-            dz = wz - pos[eid, 2]
+            dx = wx - px
+            dz = wz - pz
         elif i >= len(pts) - 1:
             bx, bz = terrain.bases[1 - fac]
-            dx, dz = bx - pos[eid, 0], bz - pos[eid, 2]
+            dx, dz = bx - px, bz - pz
     d = math.hypot(dx, dz)
     if d < 1e-3:
-        vel[eid, 0] = vel[eid, 2] = 0.0
+        vel[row, 0] = vel[row, 2] = 0.0
         return
     dx, dz = dx / d, dz / d
     # simple obstacle avoidance: fan out when the step ahead is blocked
     step = 14.0
-    if terrain.blocked(pos[eid, 0] + dx * step, pos[eid, 2] + dz * step):
+    if terrain.blocked(px + dx * step, pz + dz * step):
         base = math.atan2(dz, dx)
         for off in (0.5, -0.5, 1.0, -1.0, 1.6, -1.6, 2.2, -2.2):
             a = base + off
             nx, nz = math.cos(a), math.sin(a)
-            if not terrain.blocked(pos[eid, 0] + nx * step, pos[eid, 2] + nz * step):
+            if not terrain.blocked(px + nx * step, pz + nz * step):
                 dx, dz = nx, nz
                 break
     speed *= 1.0
-    vel[eid, 0] = dx * speed
-    vel[eid, 2] = dz * speed
+    vel[row, 0] = dx * speed
+    vel[row, 2] = dz * speed
 
 
-def _civ(world: World, eid: int, civ_units: list[int],
-         foe_arr: dict[int, np.ndarray], dt: float) -> None:
-    e = world.ecs
-    pos = e["pos"]
-    vel = e["vel"]
-    timer = e["ai_timer"]
-    timer[eid] -= dt
-    if timer[eid] > 0.0:
+def _civ(world: World, eid: int, b: dict, row: int, dt: float) -> None:
+    pos = b["pos"]
+    vel = b["vel"]
+    timer = b["ai_timer"]
+    timer[row] -= dt
+    if timer[row] > 0.0:
         return
-    timer[eid] = world.rng.uniform(1.5, 4.5)
-    hx = float(e["home_x"][eid])
-    hz = float(e["home_z"][eid])
-    dx = hx - pos[eid, 0]
-    dz = hz - pos[eid, 2]
+    timer[row] = world.rng.uniform(1.5, 4.5)
+    dx = float(b["home_x"][row]) - float(pos[row, 0])
+    dz = float(b["home_z"][row]) - float(pos[row, 2])
     if dx * dx + dz * dz > 240.0 * 240.0:
         a = math.atan2(dz, dx)
     else:
         a = world.rng.random() * math.tau
-    vel[eid, 0] = math.cos(a) * 2.0
-    vel[eid, 2] = math.sin(a) * 2.0
-    e["yaw"][eid] = a
+    vel[row, 0] = math.cos(a) * 2.0
+    vel[row, 2] = math.sin(a) * 2.0
+    b["yaw"][row] = a

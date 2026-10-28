@@ -75,10 +75,7 @@ def throw(world: World, eid: int) -> None:
                                                     1.0 + defs.SMOKE_TIME_JITTER)
         scale = world.rng.uniform(1.0 - defs.SMOKE_SIZE_JITTER,
                                  1.0 + defs.SMOKE_SIZE_JITTER)
-        cid = e.create()
-        for c in components.SMOKE_COMPS:
-            e.add_comp(cid, c)
-        e.add_comp(cid, "canister")
+        cid = e.create(components.CANISTER_COMPS)
         e["pos"][cid] = (px, py + launcher_h, pz)
         e["vel"][cid] = (d[0] * speed, d[1] * speed, d[2] * speed)
         e["smoke_t"][cid] = defs.SMOKE_RANGE / speed       # time to pop
@@ -120,17 +117,26 @@ def _fly(world: World, dt: float) -> None:
 
 
 def _pop(world: World, cid: int) -> None:
-    """The canister stops where it is and starts making smoke."""
+    """The canister stops where it is and starts making smoke.
+
+    A deployed cloud is not a canister with different tags: it is a different
+    thing, so the charge is destroyed and the puff is spawned where it burst.
+    The component set is the entity's type and it is chosen once, at spawn -
+    ``components.PUFF_COMPS`` for a cloud, ``CANISTER_COMPS`` for the charge.
+    """
     e = world.ecs
-    e.remove_comp(cid, "canister")
-    e.add_comp(cid, "smoke")
-    e["vel"][cid] = (0.0, 0.0, 0.0)
     scale = float(e["smoke_s"][cid])
+    x = float(e["pos"][cid, 0])
+    z = float(e["pos"][cid, 2])
     # a low canister would bury half its puff in the terrain, so the centre
     # sits half a radius up: what is left underground does not matter
-    e["pos"][cid, 1] = max(float(e["pos"][cid, 1]), defs.SMOKE_FLAT[1] * 0.5 * scale)
-    e["smoke_t"][cid] = defs.SMOKE_LIFE
-    e["smoke_r"][cid] = _radii(0.0, scale)
+    y = max(float(e["pos"][cid, 1]), defs.SMOKE_FLAT[1] * 0.5 * scale)
+    e.destroy(cid)
+    pid = e.create(components.PUFF_COMPS)
+    e["pos"][pid] = (x, y, z)
+    e["smoke_t"][pid] = defs.SMOKE_LIFE
+    e["smoke_r"][pid] = _radii(0.0, scale)
+    e["smoke_s"][pid] = scale
 
 
 def _fade(world: World, dt: float) -> None:

@@ -1,10 +1,11 @@
 """Component registration.
 
-Every component is a numpy array with one row per entity slot.  Presence is
-tracked through the entity's component mask (see ``ecs.py``), so a component
-value of zero is a perfectly valid value.
+Every component is a dense buffer over the entities that own it; which
+components an entity owns is its *type* and is fixed when it spawns (see
+``ecs.py``).  A component value of zero is therefore a perfectly valid value.
 
-Groups below are convenience lists used by the spawning factories.
+Groups below are the component sets the spawning factories hand to
+``ECS.create``: one group per archetype.
 """
 
 from __future__ import annotations
@@ -89,7 +90,7 @@ def register(ecs: ECS) -> None:
     ecs.register("canister", np.uint8)              # in flight, not yet a cloud
     ecs.register("smoke", np.uint8)                  # deployed puff
     ecs.register("smoke_r", np.float32, (3,), 0.0)  # ellipsoid semiaxes, metres
-    ecs.register("smoke_t", np.float32, 0.0)        # seconds to pop / of life left
+    ecs.register("smoke_t", np.float32)             # seconds to pop / of life left
     ecs.register("smoke_s", np.float32, (), 1.0)    # this canister's size factor
 
     # ---- projectile -----------------------------------------------------
@@ -118,6 +119,9 @@ DEBRIS_COMPS = ["pos", "vel", "yaw", "pitch", "leg_yaw", "turret_yaw", "etype", 
 PROJ_COMPS = ["pos", "vel", "faction", "proj_kind", "proj_wid", "proj_life", "proj_src",
               "proj_age", "proj_seed", "proj_prev", "target"]
 
-# a canister in flight and a deployed puff share their shape so one snapshot
-# section and one client pass can draw both
-SMOKE_COMPS = ["pos", "vel", "smoke_r", "smoke_t", "smoke_s"]
+# A canister in flight and the cloud it bursts into are two different things, so
+# they are two archetypes: the flying charge carries a fuse and a velocity, the
+# deployed puff carries neither and is not going anywhere.  `smoke_t` is the
+# fuse for the one and the remaining life for the other.
+CANISTER_COMPS = ["pos", "vel", "smoke_r", "smoke_t", "smoke_s", "canister"]
+PUFF_COMPS = ["pos", "smoke_r", "smoke_t", "smoke_s", "smoke"]

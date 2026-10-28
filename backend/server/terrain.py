@@ -60,9 +60,11 @@ ROAD_WEIGHT = 100       # how hard a road tile outweighs its verges when the
                         # corridor is flattened: the asphalt stays level
 BUILDING_H = 8.0        # wall height of a building tile the map did not size
 TREE_H = 10.0           # how tall a tree stand stops sight (its canopy)
+INV_TILE = 1.0 / TILE
 TRUNK_R = 0.5           # trunk radius of a tree: the only thing a round or a
                         # hull actually meets in a tree tile (see _trunks)
 FLOOR_H = 4.0           # one storey of a town building
+CULL_TILES = 8          # coarse ray-cull block: 8 tiles = 128 m (see _build_cull)
 
 # command bases (tile coordinates)
 BASE_TILES = {0: (188.0, 188.0), 1: (812.0, 812.0)}
@@ -725,18 +727,74 @@ class Terrain:
         # trunk layout of the tree tiles that get asked about, tile index ->
         # ((x, z, r, h), ...) - built on demand, a few hundred entries
         self.trunk_cache: dict[int, tuple] = {}
+        self._build_cull()
+
+    def _build_cull(self) -> None:
+        """Max (ground + obstacle) per ``CULL_TILES`` square block.
+
+        ``_march`` samples every 8 m and each sample costs a bilinear height
+        read plus a wall lookup.  A point that is higher than *everything* the
+        block can hold cannot be stopped by it, so the sample is skipped - which
+        is exact, never a rejection of a real hit: the grid is the maximum of
+        the block, so a false "clear" is impossible and ballistics are
+        unchanged.  Two grids, because a round is stopped by trunks and walls
+        while a line of sight is also cut by canopies (``TREE_H``).
+        """
+        h = self.h
+        d, w = h.shape
+        nb = CULL_TILES
+        # the vertex grid and the tile grid are the same shape, so one block
+        # reduction serves both
+        solid = np.zeros_like(h)
+        sight = np.zeros_like(h)
+        build = self.tiles == TILE_BUILDING
+        wall = np.maximum(self.walls.astype(np.float32), BUILDING_H)
+        solid[build] = wall[build]
+        sight[build] = wall[build]
+        trees = (self.tiles == TILE_TREE) | (self.tiles == TILE_FOREST)
+        solid[trees] = TREE_H            # a trunk is shorter, TREE_H is safe
+        sight[trees] = TREE_H
+
+        win = np.lib.stride_tricks.sliding_window_view
+        step = [slice(None, None, nb), slice(None, None, nb)]
+
+        def blocks(a: np.ndarray) -> np.ndarray:
+            # max over the block *and* the one row/column of vertices on its far
+            # edge (a block of nb tiles spans nb+1 vertices, so a 9x9 window).
+            # Exact, not grown by a whole block: a dilated grid would make the
+            # cull useless in hilly country, which is where rays are longest.
+            return win(a, (nb + 1, nb + 1))[step[0], step[1]].max(axis=(2, 3))
+
+        self._cull_h = blocks(h)
+        self._cull_solid = self._cull_h + blocks(solid)
+        self._cull_sight = self._cull_h + blocks(sight)
+        self._cull_d, self._cull_w = self._cull_h.shape
+        self._cull_inv = 1.0 / (TILE * nb)
+        self._wmax = self.w - 1.001
+        self._dmax = self.d - 1.001
 
     # -- sampling ---------------------------------------------------------
     def height_at(self, x: float, z: float) -> float:
-        fx = min(max(x / TILE, 0.0), self.w - 1.001)
-        fz = min(max(z / TILE, 0.0), self.d - 1.001)
+        """Bilinear height.  This is the hottest scalar in the server (every
+        march sample, every hull, every sight line), so it reads the four
+        corners with `.item()` and does the blend in python floats: numpy
+        scalars cost ~110 ns per read and ~100 ns per arithmetic step, which
+        made the function three times slower than the arithmetic it does."""
+        fx = min(max(x * INV_TILE, 0.0), self._wmax)
+        fz = min(max(z * INV_TILE, 0.0), self._dmax)
         i = int(fx)
         j = int(fz)
         tx = fx - i
         tz = fz - j
-        h = self.h
-        return float((h[j, i] * (1 - tx) + h[j, i + 1] * tx) * (1 - tz) +
-                     (h[j + 1, i] * (1 - tx) + h[j + 1, i + 1] * tx) * tz)
+        item = self.h.item
+        h00 = item(j, i)
+        h10 = item(j, i + 1)
+        h01 = item(j + 1, i)
+        h11 = item(j + 1, i + 1)
+        # note: plain python floats (double), so this agrees with the client's
+        # float64 copy of the same formula slightly better than float32 did
+        return (h00 * (1.0 - tx) + h10 * tx) * (1.0 - tz) + \
+               (h01 * (1.0 - tx) + h11 * tx) * tz
 
     def _trunks(self, i: int, j: int) -> tuple:
         k = j * self.w + i
@@ -754,13 +812,15 @@ class Terrain:
         ground.  Off the field nothing flies on, which the caller reads as an
         immediate hit.
         """
-        i = int(np.floor(x / TILE))
-        j = int(np.floor(z / TILE))
+        # a scaled int, not np.floor(x / TILE): floor on a python float goes
+        # through numpy's dispatcher and costs as much as the rest together
+        i = int(x * INV_TILE) if x >= 0.0 else -1
+        j = int(z * INV_TILE) if z >= 0.0 else -1
         if i < 0 or j < 0 or i >= self.w or j >= self.d:
             return 1e6
-        t = self.tiles[j, i]
+        t = self.tiles.item(j, i)
         if t == TILE_BUILDING:
-            return float(self.walls[j, i]) or BUILDING_H
+            return self.walls.item(j, i) or BUILDING_H
         if t == TILE_TREE or t == TILE_FOREST:
             for tx, tz, r, h in self._trunks(i, j):
                 if (x - tx) ** 2 + (z - tz) ** 2 <= r * r:
@@ -771,13 +831,13 @@ class Terrain:
         """The height a line of sight is cut at: a building up to its roof, a
         tree stand at its canopy - the leaves hide what stands behind them even
         though they stop neither a round nor a hull."""
-        i = int(np.floor(x / TILE))
-        j = int(np.floor(z / TILE))
+        i = int(x * INV_TILE) if x >= 0.0 else -1
+        j = int(z * INV_TILE) if z >= 0.0 else -1
         if i < 0 or j < 0 or i >= self.w or j >= self.d:
             return 1e6
-        t = self.tiles[j, i]
+        t = self.tiles.item(j, i)
         if t == TILE_BUILDING:
-            return float(self.walls[j, i]) or BUILDING_H
+            return self.walls.item(j, i) or BUILDING_H
         if t == TILE_TREE or t == TILE_FOREST:
             return TREE_H
         return 0.0
@@ -791,19 +851,19 @@ class Terrain:
         return self.height_at(x, z) + self.sight_wall(x, z)
 
     def tile_type(self, x: float, z: float) -> int:
-        i = int(x / TILE)
-        j = int(z / TILE)
+        i = int(x * INV_TILE) if x >= 0.0 else -1
+        j = int(z * INV_TILE) if z >= 0.0 else -1
         if i < 0 or j < 0 or i >= self.w or j >= self.d:
             return TILE_ROCK
-        return int(self.tiles[j, i])
+        return self.tiles.item(j, i)
 
     def blocked(self, x: float, z: float) -> bool:
         """Whether a hull cannot stand at (x, z).  A tree blocks with its trunk
         only, so a hull drives under the canopy of a tree or a whole forest."""
         t = self.tile_type(x, z)
         if t == TILE_TREE or t == TILE_FOREST:
-            i = int(x / TILE)
-            j = int(z / TILE)
+            i = int(x * INV_TILE)
+            j = int(z * INV_TILE)
             for tx, tz, r, _h in self._trunks(i, j):
                 if (x - tx) ** 2 + (z - tz) ** 2 <= r * r:
                     return True
@@ -823,7 +883,7 @@ class Terrain:
         j1 = min(int((z + rad) / TILE), self.d - 1)
         for j in range(j0, j1 + 1):
             for i in range(i0, i1 + 1):
-                t = self.tiles[j, i]
+                t = self.tiles.item(j, i)
                 if t != TILE_TREE and t != TILE_FOREST:
                     continue
                 for tx, tz, r, _h in self._trunks(i, j):
@@ -846,8 +906,8 @@ class Terrain:
         through a building and burst behind it.
         """
         x, z = float(p0[0]), float(p0[2])
-        i = int(np.floor(x / TILE))
-        j = int(np.floor(z / TILE))
+        i = int(x * INV_TILE) if x >= 0.0 else -1
+        j = int(z * INV_TILE) if z >= 0.0 else -1
         sx = 1 if dx > 0 else -1
         sz = 1 if dz > 0 else -1
         tx = ((i + (1 if dx > 0 else 0)) * TILE - x) / dx if dx else 2.0
@@ -874,7 +934,7 @@ class Terrain:
         samples at, so it is solved as a cylinder instead of sampled - which is
         what makes a round fired at a tree actually stop in it.
         """
-        t = self.tiles[j, i]
+        t = self.tiles.item(j, i)
         if t != TILE_TREE and t != TILE_FOREST:
             return None
         a = dx * dx + dz * dz
@@ -899,7 +959,7 @@ class Terrain:
         return best
 
     def _march(self, p0: np.ndarray, p1: np.ndarray, step: float, at,
-               trunks: bool = False,
+               trunks: bool = False, cull: np.ndarray | None = None,
                ) -> tuple[bool, float, np.ndarray | tuple[float, float, float]]:
         """Walk the segment and report the first point at or below ``at``."""
         dx = float(p1[0] - p0[0])
@@ -911,13 +971,38 @@ class Terrain:
         if p0[1] <= at(p0[0], p0[2]) + 1.0:
             return True, 0.0, p0
         prev = 0.0
+        # coarse cull: a sample above the maximum of its block is skipped
+        cull = self._cull_solid if cull is None else cull
+        cdi, cwi, cinv = self._cull_d, self._cull_w, self._cull_inv
         for ta, tb, i, j in self._spans(p0, dx, dz):
             tt = (self._trunk_hit(p0, dx, dy, dz, i, j, ta, tb)
                   if trunks and 0 <= i < self.w and 0 <= j < self.d else None)
+            # a span that sits inside one block can be dismissed as a whole:
+            # both ends in the same 128 m cell means the cell bounds it, so
+            # `min(y)` above the cell maximum proves the whole span clear
+            if tt is None:
+                ax_ = int((p0[0] + dx * ta) * cinv)
+                az_ = int((p0[2] + dz * ta) * cinv)
+                bx_ = int((p0[0] + dx * tb) * cinv)
+                bz_ = int((p0[2] + dz * tb) * cinv)
+                if ax_ == bx_ and az_ == bz_ and 0 <= ax_ < cwi and 0 <= az_ < cdi:
+                    ya = p0[1] + dy * ta
+                    yb = p0[1] + dy * tb
+                    if (ya if ya < yb else yb) > cull[az_, ax_]:
+                        prev = tb
+                        continue
             n = max(1, int((tb - ta) * dist / step + 0.5))
             for k in range(1, n + 1):
                 t = ta + (tb - ta) * k / n
-                if p0[1] + dy * t > at(p0[0] + dx * t, p0[2] + dz * t):
+                tx = p0[0] + dx * t
+                tz = p0[2] + dz * t
+                ty = p0[1] + dy * t
+                ci = int(tx * cinv)
+                cj = int(tz * cinv)
+                if 0 <= ci < cwi and 0 <= cj < cdi and ty > cull[cj, ci]:
+                    prev = t
+                    continue
+                if ty > at(tx, tz):
                     prev = t
                     continue
                 if tt is not None and tt < t:
@@ -960,12 +1045,13 @@ class Terrain:
         on the face - where the smoke can be seen - instead of inside the hull.
         Leaves are not in the way; they only hide (`sight_at`).
         """
-        return self._march(p0, p1, step, self.obstacle_at, trunks=True)
+        return self._march(p0, p1, step, self.obstacle_at, trunks=True,
+                           cull=self._cull_solid)
 
     def los(self, a: np.ndarray, b: np.ndarray, step: float = 8.0) -> bool:
         """Whether ``a`` sees ``b``: the ground, the buildings and the tree
         canopies between them decide, not the trunks."""
-        hit, _, _ = self._march(a, b, step, self.sight_at)
+        hit, _, _ = self._march(a, b, step, self.sight_at, cull=self._cull_sight)
         return not hit
 
 

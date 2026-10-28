@@ -65,25 +65,7 @@ def run(world: World, dt: float) -> None:
     yaw = e["yaw"]
 
     # ---- hit spheres of every unit, gathered once per tick --------------
-    sc = []
-    sr = []
-    su = []
-    sm = []
-    sf = []
-    if units.size:
-        for uid in units:
-            et = int(etype[uid])
-            for mod, c, r in mu.unit_spheres(et, pos[uid], float(yaw[uid])):
-                sc.append(c)
-                sr.append(r)
-                su.append(int(uid))
-                sm.append(mod)
-                sf.append(int(faction[uid]))
-    sph_c = np.asarray(sc, np.float32).reshape(-1, 3)
-    sph_r = np.asarray(sr, np.float32)
-    sph_u = np.asarray(su, np.int32)
-    sph_m = np.asarray(sm, np.int32)
-    sph_f = np.asarray(sf, np.int32)
+    sph = sphere_table(world)
 
     for pid in pids:
         if not e.alive[pid]:
@@ -201,36 +183,70 @@ def run(world: World, dt: float) -> None:
         best_unit = -1
         best_mod = 0
         # ---- unit collision ---------------------------------------------
-        if sph_c.shape[0]:
+        if sph[0].shape[0]:
             seg = p1 - p0
             l2 = float(seg @ seg)
             if l2 > 1e-6:
-                rel = sph_c - p0
+                rel = sph[0] - p0
                 tt = np.clip((rel @ seg) / l2, 0.0, 1.0)
                 closest = p0 + seg[None, :] * tt[:, None]
-                dd = np.linalg.norm(sph_c - closest, axis=1)
+                dd = np.linalg.norm(sph[0] - closest, axis=1)
                 pr = 0.35 if k == 0 else 0.6
-                m = dd < (sph_r + pr)
-                m &= sph_f != int(faction[pid])
+                m = dd < (sph[1] + pr)
+                m &= sph[4] != int(faction[pid])
                 if int(age[pid]) < 0.12:
-                    m &= sph_u != int(src[pid])
+                    m &= sph[2] != int(src[pid])
                 if m.any():
                     cand = np.nonzero(m)[0]
                     j = int(cand[np.argmin(tt[cand])])
                     if float(tt[j]) < best_t:
                         best_t = float(tt[j])
-                        best_unit = int(sph_u[j])
-                        best_mod = int(sph_m[j])
+                        best_unit = int(sph[2][j])
+                        best_mod = int(sph[3][j])
         if best_t <= 1.0:
             hitp = (float(p0[0] + (p1[0] - p0[0]) * best_t),
                     float(p0[1] + (p1[1] - p0[1]) * best_t),
                     float(p0[2] + (p1[2] - p0[2]) * best_t))
-            _impact(world, hitp, wd, pid, best_unit, best_mod)
+            _impact(world, hitp, wd, pid, best_unit, best_mod, sph)
             e.destroy(pid)
 
 
+def sphere_table(world: World) -> tuple:
+    """``(centres, radii, units, modules, factions)`` for every unit this tick.
+
+    One pass over the battlefield per tick, shared by the collision sweep and
+    every blast - rebuilding it per impact is what made a rocket into a crowd
+    cost a full pass each time."""
+    e = world.ecs
+    units = world.units()
+    pos = e["pos"]
+    yaw = e["yaw"]
+    etype = e["etype"]
+    faction = e["faction"]
+    sc = []
+    sr = []
+    su = []
+    sm = []
+    sf = []
+    for uid in units:
+        et = int(etype[uid])
+        uid = int(uid)
+        for mod, c, r in mu.unit_spheres(et, pos[uid], float(yaw[uid])):
+            sc.append(c)
+            sr.append(r)
+            su.append(uid)
+            sm.append(mod)
+            sf.append(int(faction[uid]))
+    return (np.asarray(sc, np.float32).reshape(-1, 3),
+            np.asarray(sr, np.float32),
+            np.asarray(su, np.int32),
+            np.asarray(sm, np.int32),
+            np.asarray(sf, np.int32))
+
+
 def _impact(world: World, p: tuple[float, float, float], wd: dict, proj_id: int,
-            direct_unit: int = -1, direct_mod: int = 0) -> None:
+            direct_unit: int = -1, direct_mod: int = 0,
+            sph: tuple | None = None) -> None:
     e = world.ecs
     shooter = int(e["proj_src"][proj_id])
     pid = int(e["owner"][shooter]) if shooter >= 0 and e.alive[shooter] else -1
@@ -243,19 +259,24 @@ def _impact(world: World, p: tuple[float, float, float], wd: dict, proj_id: int,
         world.hit(direct_unit, direct_mod, wd, 0.0, pid)
     if r <= 0.0 or float(wd["ed"]) <= 0.0:
         return
-    spos = e["pos"]
     sfact = int(e["faction"][shooter]) if shooter >= 0 and e.alive[shooter] else -1
-    for uid in world.units():
-        if uid == direct_unit:
-            continue
-        if sfact >= 0 and int(e["faction"][uid]) == sfact:
-            continue
-        best = 1e9
-        bmod = 0
-        for mod, c, rr in mu.unit_spheres(int(e["etype"][uid]), spos[uid], float(e["yaw"][uid])):
-            d = math.dist(p, c) - rr
-            if d < best:
-                best = d
-                bmod = mod
-        if best <= r:
-            world.splash(uid, bmod, wd, max(best, 0.0), pid)
+    # One distance per hit sphere, straight off the table the run loop already
+    # built this tick: rebuilding every unit's spheres per impact made a single
+    # burst cost a full pass over the battlefield, which is what a rocket into a
+    # crowd turned into a 30 ms tick.
+    sph_c, sph_r, sph_u, sph_m, sph_f = sph if sph is not None else sphere_table(world)
+    d = np.sqrt(((sph_c - np.asarray(p, np.float32)) ** 2).sum(axis=1)) - sph_r
+    hit = d <= r
+    if direct_unit >= 0:
+        hit &= sph_u != direct_unit
+    if sfact >= 0:
+        hit &= sph_f != sfact
+    if not hit.any():
+        return
+    # one splash per unit, from its closest sphere
+    idx = np.nonzero(hit)[0]
+    order = idx[np.lexsort((d[idx], sph_u[idx]))]
+    first = np.ones(order.size, bool)
+    first[1:] = sph_u[order][1:] != sph_u[order][:-1]
+    for k in order[first]:
+        world.splash(int(sph_u[k]), int(sph_m[k]), wd, max(float(d[k]), 0.0), pid)

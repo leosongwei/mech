@@ -62,6 +62,11 @@ def register(ecs: ECS) -> None:
     ecs.register("reload_t", np.float32, (2,), 0.0)
     ecs.register("trigger", np.uint8, (), 0)         # bit0 left, bit1 right
     ecs.register("trigger_prev", np.uint8, (), 0)    # last tick's bits, for semi auto
+    # rearm work: seconds left at the wrench.  A pilot's mech carries it while a
+    # bought job (systems/rearm.py) runs; `player_input` and every firing path
+    # read it, so the job holds the machine still and silent until it is back to
+    # zero.  Idle is 0.0 - every unit gets the slot, only a player's mech uses it.
+    ecs.register("work_remaining_time", np.float32, (), 0.0)
 
     # ---- ai -------------------------------------------------------------
     ecs.register("target", np.int32, (), -1)
@@ -113,8 +118,8 @@ def register(ecs: ECS) -> None:
 
 UNIT_COMPS = ["pos", "vel", "drive", "veh", "yaw", "pitch", "leg_yaw", "turret_yaw", "etype", "faction",
               "owner", "hp", "hpmax", "weapon", "ammo", "mag", "cool", "reload_t",
-              "trigger", "trigger_prev", "target", "ai_state", "ai_timer", "path_i", "lane",
-              "spot_x", "spot_y", "spot_z", "spot_t", "flags"]
+              "trigger", "trigger_prev", "work_remaining_time", "target", "ai_state", "ai_timer",
+              "path_i", "lane", "spot_x", "spot_y", "spot_z", "spot_t", "flags"]
 
 CIV_COMPS = UNIT_COMPS + ["home_x", "home_z"]
 

@@ -91,6 +91,7 @@ export class HUD {
     this._modules(s, h);
     this._messages(s, w);
     this._status(s, w, h);
+    this._work(s, w, h);
     if (s.hitFlash > 0.01) {
       const a = Math.min(0.5, s.hitFlash * 0.5);
       const g = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.22,
@@ -710,6 +711,38 @@ export class HUD {
     ctx.restore();
   }
 
+  // The rearm bar, low in the middle of the screen: while a job runs the hull
+  // will not move and the triggers are dead, so the pilot is told why, for how
+  // long, and how much of it is done.  `meta.work` carries the seconds left,
+  // the length of the whole job and the label the server made of the lines.
+  _work(s, w, h) {
+    const wk = (s.meta || {}).work;
+    if (!wk || !(wk.total > 0)) return;
+    const ctx = this.ctx;
+    const bw = Math.min(420, w * 0.44), bh = 10;
+    const x = (w - bw) / 2;
+    const y = h * 0.78;
+    const r = Math.max(0, Math.min(1, 1 - (wk.t || 0) / wk.total));
+    ctx.save();
+    ctx.fillStyle = 'rgba(8,14,18,0.72)';
+    ctx.fillRect(x - 3, y - 3, bw + 6, bh + 6);
+    ctx.fillStyle = 'rgba(95,230,255,0.2)';
+    ctx.fillRect(x, y, bw, bh);
+    ctx.fillStyle = '#5fe6ff';
+    ctx.fillRect(x, y, bw * r, bh);
+    ctx.strokeStyle = 'rgba(95,230,255,0.8)';
+    ctx.lineWidth = 1.2;
+    ctx.strokeRect(x + 0.5, y + 0.5, bw - 1, bh - 1);
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 12px "Courier New", monospace';
+    ctx.fillStyle = '#e8f4ee';
+    ctx.fillText(`${wk.label || 'REARM'}  ${(wk.t || 0).toFixed(1)}s`, w / 2, y - 9);
+    ctx.font = '11px "Courier New", monospace';
+    ctx.fillStyle = 'rgba(255,207,90,0.9)';
+    ctx.fillText('HOLD POSITION · TRIGGERS SAFE', w / 2, y + bh + 16);
+    ctx.restore();
+  }
+
   _messages(s, w) {
     const ctx = this.ctx;
     ctx.save();
@@ -958,33 +991,51 @@ export class HUD {
       const room = Math.floor((pw * 0.52) / (fs * 0.92 * 0.62));
       const t = `* ${l.text}`;
       ctx.fillText(t.length > room ? t.slice(0, room - 1) + '…' : t, cx + 8, cy);
+      // the seconds this line books at the wrench, in its own column
+      if (l.dur > 0) {
+        ctx.textAlign = 'right';
+        ctx.fillStyle = 'rgba(150,220,255,0.8)';
+        ctx.fillText(`${l.dur.toFixed(1)}s`, cx + pw * 0.82, cy);
+        ctx.textAlign = 'left';
+        ctx.fillStyle = 'rgba(220,236,226,0.9)';
+      }
       ctx.textAlign = 'right';
       ctx.fillStyle = colour;
-      ctx.fillText(sign, cx + pw * 0.62, cy);
+      ctx.fillText(sign, cx + pw * 0.7, cy);
       ctx.textAlign = 'left';
       cy += lh;
     }
     const total = quote.total || 0;
     const short = total > money;
+    const dur = quote.dur || 0;
     ctx.font = `bold ${fs * 1.05}px "Courier New", monospace`;
     ctx.fillStyle = short ? '#ff8a8a' : total > 0 ? '#ffd8a0' : '#a9f0c0';
     const totalText = total > 0 ? `TOTAL: $-${total}` : `TOTAL: +$${-total}`;
-    ctx.fillText(lines.length ? totalText : '', cx, cy + lh * 0.15);
+    ctx.fillText(lines.length ? `${totalText}   ${dur.toFixed(1)}s` : '', cx, cy + lh * 0.15);
     if (short && lines.length) {
       ctx.textAlign = 'right';
       ctx.fillStyle = '#ff8a8a';
-      ctx.fillText('NOT ENOUGH MONEY', cx + pw * 0.62, cy + lh * 0.15);
+      ctx.fillText('NOT ENOUGH MONEY', cx + pw * 0.93, cy + lh * 0.15);
       ctx.textAlign = 'left';
     }
 
-    // confirm / cancel
+    // confirm / one-click repair+rearm / cancel
     const bw = pw * 0.2;
+    const gap = pw * 0.02;
     const bh = ph * 0.11;
     const by = py + ph * 0.81;
+    const bx = px + pw * 0.5 - (bw * 3 + gap * 2) / 2;
     const enabled = lines.length > 0 && !short;
-    btn('confirm', px + pw * 0.5 - bw - pw * 0.02, by, bw, bh,
+    btn('confirm', bx, by, bw, bh,
       ['CONFIRM', '(ENTER)'], { disabled: !enabled, active: enabled });
-    btn('cancel', px + pw * 0.5 + pw * 0.02, by, bw, bh, ['CANCEL', '(ESC)'], {});
+    // the everyday stop, in one click: every module welded, every rack filled.
+    // Its price and its time are on the button because it is pressed without
+    // opening anything in the draft.
+    const quick = s.shopQuick || { total: 0, dur: 0, ok: false };
+    btn('quickall', bx + bw + gap, by, bw, bh,
+      ['REPAIR & REARM', `$${quick.total} · ${quick.dur.toFixed(1)}s`],
+      { disabled: !quick.ok, active: quick.ok });
+    btn('cancel', bx + (bw + gap) * 2, by, bw, bh, ['CANCEL', '(ESC)'], {});
 
     // a pulled-down weapon list: it floats over the panel and its entries are
     // pushed last, so hitUi hands them the click before anything underneath

@@ -272,6 +272,15 @@ UNIT_DEFS = {
 REPAIR_FULL_COST = 400.0
 REPAIR_COST_PER_HP = REPAIR_FULL_COST / max(1.0, float(sum(UNIT_DEFS[ETYPE_MECH]["hp"])))
 
+# ---- rearm work (seconds at the wrench) ---------------------------------
+# Buying is not free in *time* either (systems/rearm.py): the hull stands where
+# it is with the wrench out and its triggers dead, so a repair inside an owned
+# town no longer doubles as a mid-fight reload.  Fitting a weapon and loading
+# its racks are two jobs, hence a swap costs both.
+REARM_SWAP_S = 2.0                 # fitting one weapon into an arm
+REARM_AMMO_S = 4.0                 # loading a full load of rounds into one arm
+REARM_REPAIR_PER_100HP_S = 2.0     # welding armour back on, per 100 hp
+
 # mech geometry (metres, relative to the ground point under the entity)
 MECH_HITSPHERES = [
     # (module, x right offset, y height, z forward offset, radius)

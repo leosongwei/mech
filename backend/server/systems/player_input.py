@@ -20,6 +20,7 @@ def run(world: World, dt: float) -> None:
     trigger = e["trigger"]
     etype = e["etype"]
     hp = e["hp"]
+    work = e["work_remaining_time"]
     speed = defs.UNIT_DEFS[defs.ETYPE_MECH]["speed"]
 
     for pl in world.players.values():
@@ -33,8 +34,12 @@ def run(world: World, dt: float) -> None:
         yaw[eid] = pl.in_yaw
         pitch[eid] = max(-0.45, min(0.75, pl.in_pitch))
 
+        # a rearm job (systems/rearm.py) holds the machine where it stands and
+        # kills the triggers: the pilot may still look around, nothing else
+        busy = work[eid] > 0.0
+
         mx, mz = pl.in_move
-        mag = math.hypot(mx, mz)
+        mag = math.hypot(mx, mz) if not busy else 0.0
         if mag > 0.001 and hp[eid, defs.MOD_CHASSIS] > 0.0:
             k = speed / max(mag, 1.0)
             vel[eid, 0] = mx * k
@@ -44,8 +49,8 @@ def run(world: World, dt: float) -> None:
             vel[eid, 2] = 0.0
 
         t = 0
-        if pl.fire[0] and hp[eid, defs.MOD_LEFT] > 0.0:
+        if not busy and pl.fire[0] and hp[eid, defs.MOD_LEFT] > 0.0:
             t |= 1
-        if pl.fire[1] and hp[eid, defs.MOD_RIGHT] > 0.0:
+        if not busy and pl.fire[1] and hp[eid, defs.MOD_RIGHT] > 0.0:
             t |= 2
         trigger[eid] = t

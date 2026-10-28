@@ -44,6 +44,7 @@ backend/
                          #   sight.py: the one line of sight (terrain + smoke), clear/why
                          #   smoke.py: hot smoke canisters, opaque puffs, blocks(a, b)
                          #   proximity.py: 30mm airburst fuse, bursts on people only
+                         #   rearm.py: the bought job at the base, `work_remaining_time`
     modes/                 # per-mode rule sets: map, setup, pipeline, spawn rules
       base.py              #   Mode interface every mode implements
       battle/              #   waves.py: town capture + reinforcement waves
@@ -119,10 +120,20 @@ frontend/
   per-type *data* (hull geometry, hp slots, which arm fires what) and is only
   read for that.
 * **World** (`world.py`) owns terrain, players, the ECS and the system
-  pipeline. Shared order: `player_input`, the mode's pre-systems (battle: `ai`),
-  `locking, smoke, weapons, movement, projectiles, proximity, economy, debris`,
-  then the mode's post-systems (battle: `waves`). `World.update(dt)` is the only
-  entry point; the loop in `main.py` calls it at a fixed 30 Hz (`TICK_DT = 1/30`).
+  pipeline. Shared order: `rearm`, `player_input`, the mode's pre-systems
+  (battle: `ai`), `locking, smoke, weapons, movement, projectiles, proximity,
+  economy, debris`, then the mode's post-systems (battle: `waves`).
+  `World.update(dt)` is the only entry point; the loop in `main.py` calls it at
+  a fixed 30 Hz (`TICK_DT = 1/30`).
+* **Buying costs time, not just money.** `shop.deal` charges the bill and books
+  the priced lines on the pilot, writing the seconds the draft cost into the
+  mech's `work_remaining_time` (a plain float, 0.0 = idle); `systems/rearm.py`
+  counts it down and only at zero applies the lines. `player_input` zeroes the
+  movement and both trigger bits while it is above zero, so a job is a real
+  pause in a fight — the mech can still look around. The job dies with the
+  mech (and the money with it), and a second order is refused until it ends.
+  Durations are `defs.REARM_*` (swap 2 s per arm, ammo 4 s per arm, repair 2 s
+  per 100 hp); `shop.quote` charges a swap both a fit and a reload.
 * **Grid** (`grid.py`) is a 128 m cell index over every `moves` entity, refiled
   at the top of each tick (`world.grid`) so "who is near me" is a box of cells
   instead of a scan of the field. It keeps its own copy of the positions — the

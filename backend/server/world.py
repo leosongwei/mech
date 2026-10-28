@@ -44,6 +44,17 @@ class Player:
         self.smoke_cd: float = 0.0     # seconds until the next pull is allowed
         self.smoke_charges: int = defs.SMOKE_CHARGES
         self.god: bool = False         # debug: ignore all damage to this pilot
+        # the rearm job the pilot paid for: the priced lines, and how long the
+        # whole thing took.  The countdown itself lives in the `work_remaining_time`
+        # component on the mech (systems/rearm.py); `work_total` is only what the
+        # progress bar needs to draw a fraction against.
+        self.work: list[dict] | None = None
+        self.work_total: float = 0.0
+
+    def end_work(self) -> None:
+        """Drop the rearm job - it finished, the mech died, or a round restarted."""
+        self.work = None
+        self.work_total = 0.0
 
 
 class World:
@@ -79,8 +90,8 @@ class World:
     # ------------------------------------------------------------------
     def _build_pipeline(self) -> None:
         from .systems import (debris, economy, locking, movement, player_input, projectiles,
-                              proximity, smoke, weapons)
-        self.systems: list[Callable[[World, float], None]] = [player_input.run]
+                              proximity, rearm, smoke, weapons)
+        self.systems: list[Callable[[World, float], None]] = [rearm.run, player_input.run]
         self.systems += self.mode_mod.pre_systems()
         self.systems += [locking.run, smoke.run, weapons.run, movement.run, projectiles.run,
                          proximity.run, economy.run, debris.run]
@@ -135,6 +146,7 @@ class World:
         player.smoke_charges = defs.SMOKE_CHARGES
         player.smoke_cd = 0.0
         player.smoke_q = False
+        player.end_work()
         spawn = self.mode_mod.mech_spawn(self, player)
         if spawn is None:
             base = self.terrain.bases[player.faction]
@@ -456,4 +468,5 @@ class World:
             pl.respawn = self.mode_mod.restart_respawn
             pl.lock_target = -1
             pl.lock_progress = 0.0
+            pl.end_work()
         self.emit("newmatch")

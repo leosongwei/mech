@@ -76,7 +76,9 @@ def static_payload(world: World) -> dict:
         rearm=dict(smoke_cost=defs.SMOKE_REFILL_COST,
                    smoke_charges=defs.SMOKE_REFILL_CHARGES,
                    sell_refund=defs.SELL_REFUND,
-                   repair_cost=defs.REPAIR_COST_PER_HP),
+                   repair_cost=defs.REPAIR_COST_PER_HP,
+                   swap_s=defs.REARM_SWAP_S, ammo_s=defs.REARM_AMMO_S,
+                   repair_s=defs.REARM_REPAIR_PER_100HP_S),
         debug=os.environ.get("MECH_DEBUG") == "1",
         mode=world.mode,
         lock=dict(frac=defs.LOCK_FRAC, fov=defs.BASE_FOV),
@@ -168,6 +170,11 @@ def meta_payload(world: World, pl: Player) -> dict:
     e = world.ecs
     mech_ok = pl.mech >= 0 and e.alive[pl.mech]
     hp = e["hp"][pl.mech].tolist() if mech_ok else [0, 0, 0, 0]
+    # the job at the wrench, for the progress bar at the bottom of the screen
+    work = None
+    if mech_ok and pl.work is not None:
+        work = dict(t=round(max(0.0, float(e["work_remaining_time"][pl.mech])), 2),
+                    total=round(pl.work_total, 2), label=shop.work_label(pl.work))
     return dict(
         t="meta",
         pid=pl.pid,
@@ -184,6 +191,7 @@ def meta_payload(world: World, pl: Player) -> dict:
         lock_progress=round(float(pl.lock_progress), 3),
         smoke=int(pl.smoke_charges),
         arms=[_arm_meta(world, pl, arm) for arm in (0, 1)],
+        work=work,
         smoke_cd=round(max(0.0, float(pl.smoke_cd)), 1),
         wave=world.wave,
         time=round(world.time, 1),

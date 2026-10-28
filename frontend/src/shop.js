@@ -32,10 +32,16 @@ function armState(meta, arm) {
 
 /**
  * Price a draft the way the server will.
+ *
+ * `dur` is the work it books, in seconds - a job holds the mech still and
+ * silent while it runs (server `systems/rearm.py`), so the panel shows it next
+ * to the bill.
+ *
  * @param {{weapons:object, buyable:number[], rearm:object}} cfg  from init
  * @param {object} meta  the live meta payload (money, arms, smoke, smoke_cd)
  * @param {object} draft from emptyDraft()
- * @returns {{lines:{text:string,delta:number}[], total:number, ok:boolean}}
+ * @returns {{lines:{text:string,delta:number,dur:number}[], total:number,
+ *            dur:number, ok:boolean}}
  */
 export function quote(cfg, meta, draft) {
   const weapons = (cfg && cfg.weapons) || {};
@@ -44,9 +50,15 @@ export function quote(cfg, meta, draft) {
   const perHp = prices.repair_cost === undefined ? 1 : prices.repair_cost;
   const smokeCost = prices.smoke_cost === undefined ? 250 : prices.smoke_cost;
   const smokeFull = prices.smoke_charges === undefined ? 10 : prices.smoke_charges;
+  // seconds at the wrench: a fit 2 s, a full load of rounds 4 s per arm,
+  // armour 2 s per 100 hp
+  const swapS = prices.swap_s === undefined ? 2 : prices.swap_s;
+  const ammoS = prices.ammo_s === undefined ? 4 : prices.ammo_s;
+  const repairS = prices.repair_s === undefined ? 2 : prices.repair_s;
 
   const lines = [];
   let total = 0;
+  let dur = 0;
 
   for (let arm = 0; arm < 2; arm++) {
     const cur = armState(meta, arm);
@@ -59,10 +71,14 @@ export function quote(cfg, meta, draft) {
     const rounds = r(cur.rounds * (cwd.ammo_cost || 0) * refund);
     const load = r((nwd.mag + nwd.reserve) * (nwd.ammo_cost || 0));
     const delta = nwd.cost + load - hardware - rounds;
+    // a weapon change is a fit *and* the racks it brings
+    const d = swapS + ammoS;
     total += delta;
+    dur += d;
     lines.push({
       text: `${ARM_NAMES[arm]}: ${cwd.name} (${cur.rounds}) -> ${nwd.name}`,
       delta,
+      dur: d,
     });
   }
 
@@ -76,7 +92,8 @@ export function quote(cfg, meta, draft) {
     if (missing <= 0) continue;
     const delta = r(missing * (wd.ammo_cost || 0));
     total += delta;
-    lines.push({ text: `${ARM_NAMES[arm]}: ${wd.name} REARM ${missing} rds`, delta });
+    dur += ammoS;
+    lines.push({ text: `${ARM_NAMES[arm]}: ${wd.name} REARM ${missing} rds`, delta, dur: ammoS });
   }
 
   if (draft.repair && meta) {
@@ -86,8 +103,10 @@ export function quote(cfg, meta, draft) {
     for (let i = 0; i < 4; i++) need += Math.max(0, (max[i] || 0) - (hp[i] || 0));
     const cost = r(need * perHp);
     if (cost > 0) {
+      const d = (need * repairS) / 100;
       total += cost;
-      lines.push({ text: `REPAIR ${Math.round(need)} hp`, delta: cost });
+      dur += d;
+      lines.push({ text: `REPAIR ${Math.round(need)} hp`, delta: cost, dur: d });
     }
   }
 
@@ -95,11 +114,23 @@ export function quote(cfg, meta, draft) {
     const charges = meta.smoke === undefined || meta.smoke === null ? smokeFull : meta.smoke;
     if (charges < smokeFull || (meta.smoke_cd || 0) > 0) {
       total += smokeCost;
-      lines.push({ text: `REARM SMOKE x${smokeFull}`, delta: smokeCost });
+      lines.push({ text: `REARM SMOKE x${smokeFull}`, delta: smokeCost, dur: 0 });
     }
   }
 
-  return { lines, total, ok: lines.length > 0 && total <= (meta ? meta.money : 0) };
+  return { lines, total, dur, ok: lines.length > 0 && total <= (meta ? meta.money : 0) };
+}
+
+/**
+ * The draft behind the REPAIR & REARM button: weld every module back to full
+ * and top both arms up, nothing else - no weapon change (which would cost a
+ * trade-in and a fit) and no smoke rack.
+ */
+export function quickDraft() {
+  const d = emptyDraft();
+  d.rearm = [true, true];
+  d.repair = true;
+  return d;
 }
 
 // The message the server expects: -1 for "leave this arm alone".

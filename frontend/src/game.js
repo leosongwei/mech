@@ -9,7 +9,7 @@ import { drawUnits } from './scene.js';
 import { HUD } from './hud.js';
 import { Particles } from './particles.js';
 import { clamp, dirFrom, invert4, mat4 } from './math.js';
-import { emptyDraft, isEmpty, quote, toMessage } from './shop.js';
+import { emptyDraft, isEmpty, quickDraft, quote, toMessage } from './shop.js';
 
 const BASE_FOV = 1.05;              // 1x vertical field of view, radians
 const AIM_LINE = 60000;             // metres, "infinity" for an unzeroed reticle
@@ -324,6 +324,9 @@ export class Game {
         this._message(mine ? 'TOWN SECURED' : 'TOWN LOST', mine ? '#7ce0a0' : '#ff9a9a');
       } else if (ev.k === 'respawn') {
         if (ev.pid === this.init.pid) this._message('RE-DEPLOYED', '#a9f0c0');
+      } else if (ev.k === 'rearm') {
+        // the wrench is out of the machine: rounds and armour are back
+        if (ev.pid === this.init.pid) this._message(`${ev.label || 'REARM'} COMPLETE`, '#a9f0c0');
       } else if (ev.k === 'gameover') {
         this.winner = ev.winner;
       } else if (ev.k === 'tiles') {
@@ -829,6 +832,10 @@ export class Game {
       this._message('REARM ONLY AT BASE OR AN OWNED TOWN', '#ff9a9a');
       return;
     }
+    if (this.net.meta && this.net.meta.work) {
+      this._message('ALREADY REARMING', '#ff9a9a');
+      return;
+    }
     this.shopOpen = true;
     this.shopDraft = emptyDraft();
     this.shopDrop = -1;
@@ -920,14 +927,20 @@ export class Game {
   }
 
   _shopConfirm() {
+    this._shopBuy(this.shopDraft);
+  }
+
+  // Send one priced draft.  The server prices it again, charges it and books
+  // the work it takes (the mech is held still until the bars are full again).
+  _shopBuy(draft) {
     if (!this.shopOpen) return;
-    if (isEmpty(this.shopDraft)) { this._message('NOTHING TO BUY', '#ff9a9a'); return; }
-    const q = quote(this._shopCfg(), this.net.meta || {}, this.shopDraft);
+    if (isEmpty(draft)) { this._message('NOTHING TO BUY', '#ff9a9a'); return; }
+    const q = quote(this._shopCfg(), this.net.meta || {}, draft);
     if (!q.ok) {
       this._message(q.lines.length ? 'NOT ENOUGH MONEY' : 'NOTHING TO BUY', '#ff9a9a');
       return;
     }
-    this.net.send(toMessage(this.shopDraft));
+    this.net.send(toMessage(draft));
     this._shopClose();
   }
 
@@ -955,6 +968,7 @@ export class Game {
     else if (id === 'lrearm') d.rearm[0] = !d.rearm[0];
     else if (id === 'rrearm') d.rearm[1] = !d.rearm[1];
     else if (id === 'confirm') this._shopConfirm();
+    else if (id === 'quickall') this._shopBuy(quickDraft());
     else if (id === 'cancel' || id === 'close') this._shopClose();
   }
 
@@ -1061,6 +1075,9 @@ export class Game {
       shopDraft: this.shopDraft,
       shopDrop: this.shopDrop,
       shopQuote: this.shopOpen ? quote(this._shopCfg(), m, this.shopDraft) : null,
+      // the one-click REPAIR & REARM button prices its own draft, so it can
+      // show what it would cost and how long it would take
+      shopQuick: this.shopOpen ? quote(this._shopCfg(), m, quickDraft()) : null,
       mouse: [this.input.mx, this.input.my],
       range: this.range,
       zoom: this.zoom,

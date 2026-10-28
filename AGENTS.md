@@ -53,6 +53,7 @@ tools/
   replay.py                # scripted battle replay: the simulation's sanity harness
   fixtures/                # its recorded tick summaries (checked in)
   smoke_lock_test.js       # browser-console driver: seeker A/B smoke test
+  vehicle_trace.py         # range APC route trace: SVG path plot + per-tick CSV
 frontend/
   webpack.config.js        # entry src/main.js -> ../backend/assets/bundle.js
   icons.json               # single source of truth for every HUD icon glyph
@@ -180,7 +181,37 @@ frontend/
 * **Lanes** — `world.lanes` counts from the red base, `world.lanes_rev` from
   the blue base. Every per-faction lookup (spawn point, path index, "front
   line") must use the faction's own copy; mixing them mirrors positions across
-  the map. `path_i` is always an index into the faction's own list.
+  the map. `path_i` is always an index into the faction's own list. A lane's
+  corners are **rounded to `terrain.LANE_FILLET` (= `defs.APC_TURN_R`, 11 m)**
+  at generation: a polyline kink is a direction change in zero metres, which
+  nothing wheeled can drive, and a path follower has to cut the inside of it.
+* **Wheeled hulls** — an APC carries the `vehicle` tag, and that tag changes
+  both halves of its movement. Locomotion (`movement._vehicle`) is a rear-axle
+  bicycle model: `leg_yaw` *is* the hull state (mirrored into `yaw` for the
+  client), `drive[0]` the signed speed rolling along it, `veh[]` the back-out
+  and blocked timers. The hull rolls only along its own axis and turns at
+  `speed / APC_TURN_R`, but never harder than `APC_LAT_ACCEL` of side load
+  (`yaw rate = min(u / R, lat / u)`) — that cap is what keeps it from swinging
+  lock-to-lock at speed, and it matches the speed the planner takes a bend at,
+  so the two agree by construction. It cannot strafe or pivot on the spot, and
+  it **never drives fast in reverse**: `APC_REVERSE` of top speed is only used
+  to back off something the nose is against (after `APC_BLOCKED` seconds). A
+  goal behind the hull is taken by turning round for it — the brake grows with
+  the heading error, so a U-turn comes down to the hull's radius instead of
+  being swung at top speed or (worse) reversed into. A few degrees of heading
+  error cost no speed at all: only a real bend or a half turn slows the car.
+  Throttle is thrust against drag, not a fixed ramp (`APC_THRUST` m/s^2 at a
+  standstill, balance point `APC_V_INF`), which is what gives a heavy hull a
+  brisk low end and a lazy top end: 0-25 km/h in 3.5 s, 0-100 in 20 s. Reverse
+  is `APC_REVERSE` of top speed and only ever used to back off a wall.
+  The command interface is unchanged — the AI still writes a direction and a
+  speed into `vel` — but the AI *plans* like a driver (`ai._advance_route`): it
+  projects the hull onto the lane, aims at the point `APC_ROUTE_LOOK` seconds of
+  travel ahead, and brakes for the curvature
+  it sees within `APC_CORNER_HORIZON` (`v = sqrt(lat_accel / curvature)`).
+  The gunner keeps the turret; the hull points where it drives, so `yaw` is not
+  the AI's to turn for a vehicle. `tools/vehicle_trace.py` drives one round the
+  range and draws the trace if you want to see the result.
 * **Terrain** (`terrain.py`) — 1000x1000 tiles of 16 m, heights on 4 m steps.
   Three extra bitmaps travel with the map: `roads` (direction bits `ROAD_N/E/
   S/W` for a straight, half-tile strip plus `ROAD_D_WS`/`ROAD_D_NE` for the two
@@ -369,6 +400,17 @@ cd frontend && npm install && npm run build      # -> backend/assets/
   ```bash
   .venv/bin/python tools/replay.py          # compare
   .venv/bin/python tools/replay.py --save   # re-baseline
+  ```
+* **`tools/vehicle_trace.py`** drives one APC round a route on the range map
+  (a 100 m square or the 3.7 km winding road) and writes an SVG - way points,
+  the rounded reference route, the driven trace coloured by speed, a velocity
+  vector every few dozen metres - plus a per-tick CSV. It steps `ai._advance_route`
+  by hand because the range runs no AI. Useful whenever the vehicle model or the
+  route follower changes: it prints the lap time, the mean speed, the worst
+  deviation off the route and the speed through the corners.
+  ```bash
+  .venv/bin/python tools/vehicle_trace.py                    # -> /tmp/apc_trace.{svg,csv}
+  .venv/bin/python tools/vehicle_trace.py --route winding --out /tmp/w
   ```
 
 ## Run

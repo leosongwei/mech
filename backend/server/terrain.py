@@ -69,6 +69,13 @@ CULL_TILES = 8          # coarse ray-cull block: 8 tiles = 128 m (see _build_cul
 # command bases (tile coordinates)
 BASE_TILES = {0: (188.0, 188.0), 1: (812.0, 812.0)}
 
+# Every corner of a lane is laid out as an arc of this radius instead of a
+# kink.  A polyline corner turns a heading change in zero metres, which nothing
+# wheeled can drive and which a path follower has to cut the inside of; one arc
+# of the hull's own turning radius (`defs.APC_TURN_R` - the widest thing on the
+# lanes) makes the lane a line a car can simply hold.
+LANE_FILLET = 11.0
+
 # lane way points in tile coordinates (three classic lanes on a square map).
 # A way point times TILE is a world position, so the half tile in every
 # coordinate keeps the traffic on the *centre* of a road tile - which is where
@@ -107,6 +114,47 @@ TOWN_PLAZA = 5               # tiles around the middle kept clear of buildings
 TOWN_REACH = 9               # how far a dead end looks for a street to join
 TOWN_RUNG = 4                # tiles between the side streets off a long street
 
+
+
+def _round_corners(pts: list[tuple[float, float]],
+                   r: float) -> list[tuple[float, float]]:
+    """Chamfer every corner of a polyline with an arc of radius ``r``.
+
+    The tangent points sit ``r * tan(angle / 2)`` either side of a vertex (less
+    when the two legs are too short for it, which shrinks that one arc), and the
+    arc is walked in steps of about 8 m so the result is a polyline again - just
+    one whose every direction change is spread over the metres a hull needs to
+    make it.
+    """
+    out = [pts[0]]
+    for k in range(1, len(pts) - 1):
+        (ax, az), (bx, bz), (cx, cz) = pts[k - 1], pts[k], pts[k + 1]
+        l1 = math.hypot(bx - ax, bz - az)
+        l2 = math.hypot(cx - bx, cz - bz)
+        if l1 < 1e-6 or l2 < 1e-6:
+            out.append((bx, bz))
+            continue
+        u1 = ((bx - ax) / l1, (bz - az) / l1)
+        u2 = ((cx - bx) / l2, (cz - bz) / l2)
+        cross = u1[0] * u2[1] - u1[1] * u2[0]
+        dot = max(-1.0, min(1.0, u1[0] * u2[0] + u1[1] * u2[1]))
+        ang = math.acos(dot)
+        if ang < 0.02 or abs(cross) < 1e-6:      # straight on (or dead astern)
+            out.append((bx, bz))
+            continue
+        t = min(r * math.tan(0.5 * ang), 0.45 * l1, 0.45 * l2)
+        rr = t / math.tan(0.5 * ang)
+        side = 1.0 if cross > 0.0 else -1.0
+        # the centre sits inside the turn, r away from both legs
+        ox, oz = -u1[1] * side, u1[0] * side
+        c0x, c0z = bx + (ox - u1[0]) * rr, bz + (oz - u1[1]) * rr
+        a0 = math.atan2(bz - c0z, bx - c0x) - side * 0.5 * ang
+        steps = max(2, int(math.ceil(ang * rr / 8.0)))
+        for i in range(steps + 1):
+            a = a0 + side * ang * (i / steps)
+            out.append((c0x + math.cos(a) * rr, c0z + math.sin(a) * rr))
+    out.append(pts[-1])
+    return out
 
 
 def _upsample(g: np.ndarray, w: int, h: int) -> np.ndarray:
@@ -1216,7 +1264,7 @@ def generate(seed: int = 11) -> Terrain:
                 pts.append(((a[0] + (b[0] - a[0]) * t) * TILE,
                             (a[1] + (b[1] - a[1]) * t) * TILE))
         pts.append((lane[-1][0] * TILE, lane[-1][1] * TILE))
-        lanes.append([(float(x), float(z)) for x, z in pts])
+        lanes.append(_round_corners([(float(x), float(z)) for x, z in pts], LANE_FILLET))
 
     bases = {fac: (btx * TILE, bty * TILE) for fac, (btx, bty) in BASE_TILES.items()}
     return Terrain(height, tiles, lanes, towns, bases, roads, walls)

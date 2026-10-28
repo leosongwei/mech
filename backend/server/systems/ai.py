@@ -102,7 +102,15 @@ def run(world: World, dt: float) -> None:
 
         if moving:
             b["trigger"][row] = 0
-            _advance(world, eid, b, row, speed, dt)
+            if "vehicle" in b:
+                _advance_route(world, b, row, speed)   # a car follows the lane
+            else:
+                _advance(world, eid, b, row, speed, dt)
+        elif "vehicle" in b:
+            # close enough to shoot: a carrier brakes for that, it does not
+            # roll on at the last commanded speed the way a walking hull's
+            # leftover velocity does
+            b["vel"][row, 0] = b["vel"][row, 2] = 0.0
 
 
 def _sees(world: World, eye: tuple[float, float, float],
@@ -190,11 +198,14 @@ def _aim_and_fire(world: World, eid: int, b: dict, row: int,
     tz = aim[2] - eye[2]
     want_yaw, want_pitch = mu.angles_to(tx, ty, tz)
 
-    turn = 3.2 if etype != defs.ETYPE_MECH else 1.7
-    yaw[row] = mu.turn_toward(float(yaw[row]), want_yaw, turn * dt)
-    pitch[row] = max(-0.4, min(0.7, float(pitch[row]) + (want_pitch - float(pitch[row])) * min(1.0, 6.0 * dt)))
     if etype == defs.ETYPE_APC:
+        # the hull of a wheeled carrier belongs to the driver: movement points
+        # it where it rolls, and the crew turns nothing but the turret
         turret[row] = mu.turn_toward(float(turret[row]), want_yaw, 2.2 * dt)
+    else:
+        turn = 1.7 if etype == defs.ETYPE_MECH else 3.2
+        yaw[row] = mu.turn_toward(float(yaw[row]), want_yaw, turn * dt)
+    pitch[row] = max(-0.4, min(0.7, float(pitch[row]) + (want_pitch - float(pitch[row])) * min(1.0, 6.0 * dt)))
 
     aim_yaw = float(turret[row]) if etype == defs.ETYPE_APC else float(yaw[row])
     err = abs(mu.wrap_pi(want_yaw - aim_yaw))
@@ -260,6 +271,119 @@ def _advance(world: World, eid: int, b: dict, row: int, speed: float,
     speed *= 1.0
     vel[row, 0] = dx * speed
     vel[row, 2] = dz * speed
+
+
+# ---------------------------------------------------------------------------
+# wheeled route following
+# ---------------------------------------------------------------------------
+# A hull with an 11 m turning radius cannot be steered at a point: it has to
+# follow a line.  The lane *is* that line - it is the road, and the map keeps
+# the lanes clear of houses and trees - so a vehicle is given the lane as a
+# reference path, aims at a lookahead point on it and brakes for the corners it
+# can see coming.  locomotion (systems/movement.py) turns the aim into throttle
+# and steering; nothing here sets a velocity of its own.
+
+def _seg(pts: list, k: int) -> float:
+    (ax, az), (bx, bz) = pts[k], pts[k + 1]
+    return math.hypot(bx - ax, bz - az)
+
+
+def _route_project(pts: list, i: int, px: float, pz: float) -> tuple[int, float]:
+    """Where the hull sits on the lane: (segment index, fraction along it).
+
+    Only the three segments around the index it is driving towards are tested -
+    a hull on its lane is within a segment of it - which keeps this cheap
+    enough to run for every APC every tick.
+    """
+    best, bk, bt = 1e18, 0, 0.0
+    for k in range(max(0, i - 1), min(len(pts) - 2, i + 1) + 1):
+        (ax, az), (bx, bz) = pts[k], pts[k + 1]
+        sx, sz = bx - ax, bz - az
+        ll = sx * sx + sz * sz
+        t = 0.0 if ll <= 1e-9 else max(0.0, min(1.0, ((px - ax) * sx + (pz - az) * sz) / ll))
+        d = (px - ax - sx * t) ** 2 + (pz - az - sz * t) ** 2
+        if d < best:
+            best, bk, bt = d, k, t
+    return bk, bt
+
+
+def _route_aim(pts: list, k: int, t: float, look: float) -> tuple[float, float, int]:
+    """The point ``look`` metres further along the lane, and its segment.
+
+    Arc length, not a straight line to the next way point: the lane's points
+    are 60 m apart, so aiming at one of them would make the aim jump a whole
+    corner at a time - exactly the corner a car has to start turning early for.
+    """
+    rem = look
+    while k < len(pts) - 1:
+        seg = _seg(pts, k)
+        left = seg * (1.0 - t)
+        if left >= rem and seg > 1e-6:
+            (ax, az), (bx, bz) = pts[k], pts[k + 1]
+            f = t + rem / seg
+            return ax + (bx - ax) * f, az + (bz - az) * f, k
+        rem -= left
+        k += 1
+        t = 0.0
+    return pts[-1][0], pts[-1][1], len(pts) - 1
+
+
+def _route_speed(pts: list, k: int, t: float, top: float) -> float:
+    """How fast the hull may be rolling now and still make the bends ahead.
+
+    A bend's curvature is the heading it turns over the length it turns in, and
+    a hull carries ``sqrt(accel / curvature)`` into it - a 15 m arc taken at
+    8 m/s.  Every vertex inside APC_CORNER_HORIZON sets a ceiling that rises
+    with the distance to it (``v^2 = v_bend^2 + 2 a d``), so the car brakes
+    coming in and rolls out of the bend instead of arriving at full speed with
+    a turning radius that cannot hold it.
+    """
+    limit = top
+    d = _seg(pts, k) * (1.0 - t)          # metres to the end of this segment
+    while k + 2 < len(pts) and d < defs.APC_CORNER_HORIZON:
+        (ax, az), (bx, bz), (cx, cz) = pts[k], pts[k + 1], pts[k + 2]
+        ang = abs(mu.wrap_pi(math.atan2(cz - bz, cx - bx) -
+                             math.atan2(bz - az, bx - ax)))
+        cur = ang / max(1.0, 0.5 * (_seg(pts, k) + _seg(pts, k + 1)))
+        if cur > 1e-5:
+            vb = min(top, math.sqrt(defs.APC_LAT_ACCEL / cur))
+            limit = min(limit, math.sqrt(vb * vb + 2.0 * defs.APC_BRAKE * d))
+        k += 1
+        d += _seg(pts, k)
+    return limit
+
+
+def _advance_route(world: World, b: dict, row: int, speed: float) -> None:
+    """Aim a wheeled hull down its lane - the direction, not the throttle."""
+    pos = b["pos"]
+    vel = b["vel"]
+    fac = int(b["faction"][row])
+    lane = int(b["lane"][row]) % len(world.lanes)
+    pts = world.lanes_rev[lane] if fac == defs.FACTION_BLUE else world.lanes[lane]
+    px, pz = float(pos[row, 0]), float(pos[row, 2])
+    i = max(0, min(int(b["path_i"][row]), len(pts) - 2))
+    k, t = _route_project(pts, i, px, pz)
+    # the aim sits APC_ROUTE_LOOK seconds of the *actual* rolling speed ahead:
+    # far enough to anticipate, near enough to turn into the bend it is in (a
+    # long lookahead cuts the inside of a corner by look^2 / 8R whatever the
+    # steering does)
+    look = max(defs.APC_ROUTE_LOOK_MIN,
+               min(defs.APC_ROUTE_LOOK_MAX,
+                   max(8.0, abs(float(b["drive"][row, 0]))) * defs.APC_ROUTE_LOOK))
+    ax, az, _ = _route_aim(pts, k, t, look)
+    # the end of the lane is the enemy side of the map: the last stretch runs
+    # at the command base, which is what a lane actually leads to
+    if (pts[-1][0] - px) ** 2 + (pts[-1][1] - pz) ** 2 <= look * look:
+        ax, az = world.terrain.bases[1 - fac]
+    b["path_i"][row] = k
+    dx, dz = ax - px, az - pz
+    d = math.hypot(dx, dz)
+    if d < 1e-3:
+        vel[row, 0] = vel[row, 2] = 0.0
+        return
+    v = _route_speed(pts, k, t, speed)
+    vel[row, 0] = dx / d * v
+    vel[row, 2] = dz / d * v
 
 
 def _civ(world: World, eid: int, b: dict, row: int, dt: float) -> None:

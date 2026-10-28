@@ -121,7 +121,10 @@ class World:
             e["mag"][eid, arm] = wd["mag"]
             e["ammo"][eid, arm] = wd["reserve"]
         e["lane"][eid] = lane if lane >= 0 else 255
-        e["path_i"][eid] = 0
+        # a unit that was given a lane starts on the stretch it spawned nearest
+        # to - a car told to follow the lane from its first way point would
+        # drive back to the base before setting off
+        e["path_i"][eid] = self.lane_index_near(lane, x, z, faction) if lane >= 0 else 0
         e["ai_state"][eid] = 0
         if etype == defs.ETYPE_CIV:
             e["home_x"][eid] = x

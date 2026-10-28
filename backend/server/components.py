@@ -23,6 +23,10 @@ def register(ecs: ECS) -> None:
     ecs.register("pos", np.float32, (3,), 0.0)
     ecs.register("vel", np.float32, (3,), 0.0)       # commanded velocity
     ecs.register("drive", np.float32, (2,), 0.0)     # mech hull: the speed it is really rolling
+    # wheeled hull locomotion state: 0 the speed it rolls along its own axis
+    # (negative while backing up), 1 seconds of back-out left, 2 how long the
+    # nose has been against something (see systems/movement.py)
+    ecs.register("veh", np.float32, (3,), 0.0)
     ecs.register("yaw", np.float32)
     ecs.register("pitch", np.float32)
     ecs.register("leg_yaw", np.float32)
@@ -42,6 +46,7 @@ def register(ecs: ECS) -> None:
     ecs.register("combat", np.uint8)                 # fights, may be fought, holds towns
     ecs.register("lockable", np.uint8)               # an IR seeker can track it
     ecs.register("moves", np.uint8)                  # has locomotion
+    ecs.register("vehicle", np.uint8)                # a wheeled hull: steers, does not strafe
     ecs.register("person", np.uint8)                 # a man on foot: a prox fuse goes off on him
     ecs.register("invulnerable", np.uint8)           # rounds stop, damage does nothing
 
@@ -106,7 +111,7 @@ def register(ecs: ECS) -> None:
     ecs.register("proj_prev", np.float32, (3,), 0.0)
 
 
-UNIT_COMPS = ["pos", "vel", "drive", "yaw", "pitch", "leg_yaw", "turret_yaw", "etype", "faction",
+UNIT_COMPS = ["pos", "vel", "drive", "veh", "yaw", "pitch", "leg_yaw", "turret_yaw", "etype", "faction",
               "owner", "hp", "hpmax", "weapon", "ammo", "mag", "cool", "reload_t",
               "trigger", "trigger_prev", "target", "ai_state", "ai_timer", "path_i", "lane",
               "spot_x", "spot_y", "spot_z", "spot_t", "flags"]

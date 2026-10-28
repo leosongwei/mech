@@ -64,6 +64,11 @@ def drive(world: World, pl, tick: int) -> None:
     if tick == 40:                            # something to shoot at
         world.spawn_unit(3, 1, px + 500.0, pz + 120.0)
         world.spawn_unit(1, 1, px + 260.0, pz + 60.0)
+        # a hostile man 300 m in front of that carrier: the AI then has to
+        # *stop* it, which is the one path where a wheeled hull brakes instead
+        # of following its lane (and where a row/id mix-up in the AI loop
+        # reaches into the wrong entity, so it is worth covering)
+        world.spawn_unit(1, 0, px + 790.0, pz + 160.0)
     if tick % 45 == 20:                       # steady churn of targets
         world.spawn_unit(3 if (tick // 45) % 3 == 0 else 1, 1,
                          px + 320.0 + tick % 90, pz - 140.0)

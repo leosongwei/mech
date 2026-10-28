@@ -126,7 +126,6 @@ def _send(world: World, etype: int, faction: int, lane: int, x: float, z: float)
     """Spawn one unit and point it down its lane at the enemy base."""
     eid = world.spawn_unit(etype, faction, x, z, lane=lane)
     e = world.ecs
-    e["path_i"][eid] = world.lane_index_near(lane, x, z, faction)
     ex, ez = world.terrain.bases[1 - faction]
     e["yaw"][eid] = math.atan2(ez - z, ex - x)
     e["leg_yaw"][eid] = e["yaw"][eid]

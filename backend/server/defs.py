@@ -224,11 +224,15 @@ UNIT_DEFS = {
                            speed=5.0, radius=0.55, height=1.8,
                            weapons=(WID_RPG, WID_NONE), ai_range=480, sight=650, reward=70,
                            splat=1.0, tags=("unit", "combat", "moves", "person")),
-    # one hull pool: the turret is hit geometry, not a second health bar
+    # one hull pool: the turret is hit geometry, not a second health bar.
+    # `vehicle` is what makes it steer instead of strafe (systems/movement.py)
+    # and follow the lane as a path instead of aiming at its goal (systems/ai.py)
+    # 100 km/h on the governor: the fastest thing on the lanes by a wide margin,
+    # but it takes its time getting there (see APC_THRUST)
     ETYPE_APC: dict(name="APC", hp=(100, 0, 0, 0), dp=10, de=20,
-                    speed=15.0, radius=2.2, height=2.8,
+                    speed=100.0 / 3.6, radius=2.2, height=2.8,
                     weapons=(WID_MG127, WID_SACLOS), ai_range=1800, sight=2600, reward=180,
-                    splat=3.0, tags=("unit", "combat", "lockable", "moves")),
+                    splat=3.0, tags=("unit", "combat", "lockable", "moves", "vehicle")),
     # hull pool 100 (chassis + torso), one arm 50 each; armour of a light tank
     ETYPE_MECH: dict(name="MECH", hp=(100, 0, 50, 50), dp=10, de=20,
                      speed=50.0, radius=1.9, height=6.5,
@@ -280,6 +284,36 @@ MECH_EYE = 5.05
 # the hull rolls up to speed instead of snapping to it: 0-100 km/h in ~3 s,
 # 0-180 in ~5.4 s
 MECH_ACCEL = 9.3           # m/s^2, top speed 180 km/h
+
+# ---- wheeled hulls ------------------------------------------------------
+# An APC is tagged `vehicle`, and a vehicle steers instead of strafing.  It is
+# a rear-axle bicycle model: the hull rolls only along its own axis and turns
+# at (speed / APC_TURN_R) per second, so it can neither pivot on the spot nor
+# slide sideways - the two things a hovercraft-like `vel` vector lets a hull
+# do.  The turning radius is why the AI follows the lane as a *path*: pointing
+# a car at its goal drives it into the first house on the way.
+APC_TURN_R = 11.0          # m, the tightest curve the hull can hold
+# Thrust against drag, not a fixed ramp: the engine pushes with APC_THRUST m/s^2
+# and the hull sheds APC_THRUST / APC_V_INF^2 per (m/s)^2 of speed, so the pull
+# is strongest off the line and fades out towards APC_V_INF.  The two numbers
+# are set from the two things that matter: the governor (the `speed` in
+# UNIT_DEFS, 100 km/h) and the 0-100 km/h time of 20 s, with the drag balance
+# 20 % above the governor so the last km/h is actually reachable.
+#   t(0 -> v) = (V / a) * artanh(v / V)   with V = APC_V_INF
+APC_V_INF = 33.33          # m/s, where thrust and drag would cancel (1.2 x top)
+APC_THRUST = 2.0           # m/s^2 at a standstill - 0-100 km/h in 20.0 s
+APC_BRAKE = 8.0            # m/s^2, it sheds speed faster than it picks it up
+APC_REVERSE = 0.4          # fraction of top speed the crew backs up at
+APC_STEER_LOCK = 0.30      # rad of heading error that puts the wheels on full lock
+APC_BACKOUT = 1.2          # s of reverse when the nose is against something
+APC_BLOCKED = 0.5          # s of pushing against a wall before the crew gives up
+APC_ROUTE_LOOK = 1.2       # s of travel the aim point on the lane sits ahead
+APC_ROUTE_LOOK_MIN = 14.0  # m, the lookahead floor
+APC_ROUTE_LOOK_MAX = 40.0  # m, the lookahead cap - a long one cuts the inside
+                           # of a bend by L^2 / 8R whatever the steering does
+APC_CORNER_HORIZON = 140.0 # m of lane the corner brake looks down
+APC_LAT_ACCEL = 6.0        # m/s^2 of side load a bend is taken at - the speed
+                           # a curve is driven at is sqrt(lat / its curvature)
 # The shoulder joint of each arm: lateral offset, height, and the forward
 # offset of the arm's front face (the round leaves from the weapon's own mouth,
 # `MECH_ARM_REACH` metres further out along the barrel).

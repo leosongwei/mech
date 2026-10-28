@@ -427,6 +427,18 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
   180 km/h hull hear a bang where it actually caught up with it - never cache
   the distance at emit time. Flashes, impacts, screen shake and the electronic
   cues (lock tone, RWR alarms, kill/denied chimes) stay immediate.
+* **A bang has a side, and a back.** `game._bearing(s, own, dist)` turns an
+  event's bearing into `pan` (its lateral share, `-1` left .. `+1` right) and
+  `behind` (how much of it is behind the view, 0..1), taken at the moment the
+  wavefront arrives - the live position *and* `input.viewYaw`, so turning the
+  head re-places the next bang, never the one already sounding. `audio._bus`
+  spends them: a `StereoPanner` in front of the master bus, and for `behind` a
+  lowpass (12 kHz down to 2 kHz) - two ears cannot place a sound along the
+  nose-to-tail axis, so the dulling is the whole of "behind you". Inside
+  `EAR_NEAR` (1 m) the pan is faded to the centre, because a bang on the canopy
+  has no side. The reverb send leaves ahead of `_bus`, so the room stays wide
+  while only the direct sound is placed. The machine's own voices (RWR warble,
+  lock tone, `hit`/`denied`) stay centred - they are not in the world.
 * **Every cue has its own voice.** `audio.boom()` is a round going off;
   `audio.explosion()` is a hull going up (`ev.blast`) - four layers (crack, fire,
   sub-bass thump, rumble) written because a dead mech is a different event, not a

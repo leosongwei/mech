@@ -23,6 +23,7 @@ const SMOKE_RGB = [0.58, 0.52, 0.44];   // dirt brown, like the charge it is
 const SMOKE_END_SHRINK = 0.35;      // s, last moments of a puff (it is opaque)
 const SOUND_TTL = 20;               // s, a bang still in the air after this is dropped
 const SOUND_FLOOR = 0.02;           // quieter than this on arrival, do not bother
+const EAR_NEAR = 1;                 // m, closer than this a bang has no side to be on
 const SHAKE_BOOM_BIG = 0.225;       // near blast, big round (a quarter of the old kick)
 const SHAKE_BOOM_SMALL = 0.0875;    // near blast, shell hit
 const SHAKE_LAUNCH = 0.5;           // own missile leaving the tube
@@ -259,6 +260,24 @@ export class Game {
     this.sounds.push({ t0: performance.now() / 1000, x, y, z, play });
   }
 
+  // Where a bang landed in the cockpit's ears: the lateral share of its bearing
+  // is the pan (-1 left .. +1 right), and how much of it was behind the pilot is
+  // all stereo cannot say - that comes back as a dulling (`audio._bus`).  Taken
+  // at the moment the wavefront arrives, from where the mech is *then* and the
+  // view yaw, because that is where the head is when the sound reaches it.
+  _bearing(s, own, dist) {
+    if (!own || !(dist > 0.5)) return [0, 0];
+    const yaw = this.input.viewYaw;
+    const dx = (s.x - own.x) / dist;
+    const dz = (s.z - own.z) / dist;
+    // dirFrom's forward is (cos yaw, sin yaw), so right is a quarter turn on
+    const right = -dx * Math.sin(yaw) + dz * Math.cos(yaw);
+    const fwd = dx * Math.cos(yaw) + dz * Math.sin(yaw);
+    // a bang right on the canopy is neither left nor right
+    const near = Math.min(1, dist / EAR_NEAR);
+    return [clamp(right, -1, 1) * near, Math.max(0, -fwd)];
+  }
+
   _pumpSounds() {
     const list = this.sounds;
     if (!list.length) return;
@@ -273,7 +292,10 @@ export class Game {
       const dist = own ? Math.hypot(s.x - own.x, s.y - own.y, s.z - own.z) : Infinity;
       if (age * SOUND_SPEED >= dist) {
         const vol = attenuation(dist);
-        if (vol > SOUND_FLOOR) s.play(vol, dist);
+        if (vol > SOUND_FLOOR) {
+          const [pan, behind] = this._bearing(s, own, dist);
+          s.play(vol, dist, pan, behind);
+        }
         continue;                                 // arrived: off the list
       }
       list[n++] = s;
@@ -295,9 +317,9 @@ export class Game {
         const d = own ? Math.hypot(ev.x - own.x, ev.z - own.z) : 3000;
         this.shake = Math.min(1.2, this.shake + clamp(1 - d / (ev.blast ? 500 : 300), 0, 1)
           * (ev.big ? SHAKE_BOOM_BIG : SHAKE_BOOM_SMALL) * (ev.blast ? 1.5 : 1));
-        this._sound(ev.x, ev.y, ev.z, (vol, dist) => (ev.blast
-          ? this.audio.explosion(vol, dist)
-          : this.audio.boom(vol, ev.big, dist)));
+        this._sound(ev.x, ev.y, ev.z, (vol, dist, pan, behind) => (ev.blast
+          ? this.audio.explosion(vol, dist, pan, behind)
+          : this.audio.boom(vol, ev.big, dist, pan, behind)));
       } else if (ev.k === 'shot') {
         if (ev.eid !== undefined) this.flashes.set(ev.eid, { t: 0.07, arm: ev.arm });
         const kind = (this.defs.weapons[ev.wid] || {}).kind || 'bullet';
@@ -308,7 +330,7 @@ export class Game {
           this.shake = Math.min(1.2, this.shake + (guided ? SHAKE_LAUNCH : SHAKE_GUN));
         }
         this._sound(ev.x, ev.y, ev.z,
-          (vol, dist) => this.audio.shot(ev.wid, kind, vol * 0.6, dist));
+          (vol, dist, pan, behind) => this.audio.shot(ev.wid, kind, vol * 0.6, dist, pan, behind));
       } else if (ev.k === 'kill') {
         if (ev.pid === this.init.pid) {
           this._message(`+$${ev.reward} KILL`, '#a9f0c0');

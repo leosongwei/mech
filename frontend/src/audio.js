@@ -161,8 +161,35 @@ export class GameAudio {
     return buf;
   }
 
+  // Where a voice enters the mix.  `pan` (-1 hard left .. +1 hard right) is the
+  // event's lateral bearing as the wavefront reaches the pilot; `behind` (0..1)
+  // is how far behind the cockpit it was, and it is spent as a lowpass - two
+  // ears cannot place a bang along the nose-to-tail axis, so rolling off its top
+  // end is what reads as "behind you".  Both are set once, when the cue fires:
+  // a one-shot is located where it was heard, not tracked as the head turns.
+  _bus(g, pan = 0, behind = 0) {
+    let out = g;
+    if (behind > 0.02) {
+      const lp = this.ctx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = 12000 - 10000 * Math.min(1, behind);   // 12k -> 2k
+      lp.Q.value = 0.4;
+      g.connect(lp);
+      out = lp;
+    }
+    if (Math.abs(pan) > 0.01 && this.ctx.createStereoPanner) {
+      const p = this.ctx.createStereoPanner();
+      p.pan.value = Math.max(-1, Math.min(1, pan));
+      out.connect(p);
+      out = p;
+    }
+    out.connect(this.master);
+  }
+
   // Send a voice into the shared room by `wet` (0..1).  Knobbed off it is a
   // single extra gain node per voice, which is nothing next to the convolver.
+  // The send leaves ahead of `_bus`, so the room stays wide while the direct
+  // sound is the part that is placed - which is how a real one behaves.
   _verbSend(node, wet) {
     if (!(wet > 0) || !this.verb) return;
     const g = this.ctx.createGain();
@@ -173,7 +200,8 @@ export class GameAudio {
 
   // `wet` overrides the distance-driven reverb send: a burst that is meant to be
   // heard as a rumble gets its room even from close up.
-  _noiseBurst(dur, freq, q, gain, type, sweepTo, dist = 0, wet = null) {
+  _noiseBurst(dur, freq, q, gain, type, sweepTo, dist = 0, wet = null,
+              pan = 0, behind = 0) {
     if (!this.ctx) return;
     const t = this.ctx.currentTime;
     const src = this.ctx.createBufferSource();
@@ -187,13 +215,14 @@ export class GameAudio {
     const g = this.ctx.createGain();
     g.gain.setValueAtTime(gain, t);
     g.gain.exponentialRampToValueAtTime(0.0008, t + dur);
-    src.connect(f); f.connect(g); g.connect(this.master);
+    src.connect(f); f.connect(g);
+    this._bus(g, pan, behind);
     this._verbSend(g, wet === null ? reverberation(dist) : wet);
     src.start(t, Math.random() * 0.4);
     src.stop(t + dur + 0.05);
   }
 
-  _thump(freq, dur, gain, dist = 0) {
+  _thump(freq, dur, gain, dist = 0, pan = 0, behind = 0) {
     if (!this.ctx) return;
     const t = this.ctx.currentTime;
     const o = this.ctx.createOscillator();
@@ -203,32 +232,37 @@ export class GameAudio {
     const g = this.ctx.createGain();
     g.gain.setValueAtTime(gain, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-    o.connect(g); g.connect(this.master);
+    o.connect(g);
+    this._bus(g, pan, behind);
     this._verbSend(g, reverberation(dist) * 0.6);
     o.start(t); o.stop(t + dur + 0.02);
   }
 
   // `dist` is how far the event was from the pilot when the wavefront reached
-  // them: it sets the reverb send, so a far shot is heard with its own echo
-  shot(wid, kind, vol = 1, dist = 0) {
+  // them: it sets the reverb send, so a far shot is heard with its own echo.
+  // `pan` / `behind` place it: left-right, and how much of it was at the pilot's
+  // back (see `_bus`).
+  shot(wid, kind, vol = 1, dist = 0, pan = 0, behind = 0) {
     this.ensure();
     if (!this.ctx) return;
     if (kind === 'bullet') {
-      this._noiseBurst(0.11, 1400 + Math.random() * 500, 1.2, 0.28 * vol, 'bandpass', 400, dist);
-      this._thump(120, 0.09, 0.25 * vol, dist);
+      this._noiseBurst(0.11, 1400 + Math.random() * 500, 1.2, 0.28 * vol, 'bandpass', 400,
+                       dist, null, pan, behind);
+      this._thump(120, 0.09, 0.25 * vol, dist, pan, behind);
     } else if (kind === 'rocket' || kind === 'saclos' || kind === 'top') {
-      this._noiseBurst(0.75, 700, 0.7, 0.32 * vol, 'lowpass', 220, dist);
-      this._thump(80, 0.35, 0.2 * vol, dist);
+      this._noiseBurst(0.75, 700, 0.7, 0.32 * vol, 'lowpass', 220, dist, null, pan, behind);
+      this._thump(80, 0.35, 0.2 * vol, dist, pan, behind);
     } else {
-      this._noiseBurst(0.08, 1800, 1.5, 0.2 * vol, 'bandpass', 600, dist);
+      this._noiseBurst(0.08, 1800, 1.5, 0.2 * vol, 'bandpass', 600, dist, null, pan, behind);
     }
   }
 
-  boom(vol = 1, big = false, dist = 0) {
+  boom(vol = 1, big = false, dist = 0, pan = 0, behind = 0) {
     this.ensure();
     if (!this.ctx) return;
-    this._noiseBurst(big ? 1.1 : 0.5, big ? 420 : 600, 0.8, Math.min(1, 0.5 * vol), 'lowpass', 90, dist);
-    this._thump(big ? 55 : 85, big ? 0.9 : 0.4, Math.min(1, 0.5 * vol), dist);
+    this._noiseBurst(big ? 1.1 : 0.5, big ? 420 : 600, 0.8, Math.min(1, 0.5 * vol),
+                     'lowpass', 90, dist, null, pan, behind);
+    this._thump(big ? 55 : 85, big ? 0.9 : 0.4, Math.min(1, 0.5 * vol), dist, pan, behind);
   }
 
   // A hull going up (defs.DEATH_BLAST).  Not a louder `boom()` - a dead mech is
@@ -236,19 +270,22 @@ export class GameAudio {
   // fire that falls away over two and a half seconds, a sub-bass thump under the
   // floor, and a rumble that is still rolling when the fireball has gone out.
   // Four layers timed to overlap, which is what makes it read as heavy.
-  explosion(vol = 1, dist = 0) {
+  explosion(vol = 1, dist = 0, pan = 0, behind = 0) {
     this.ensure();
     if (!this.ctx) return;
     const v = Math.min(1, vol);
     const wet = reverberation(dist);
     // the hull letting go: bright and short, gone under the blast that follows
-    this._noiseBurst(0.22, 2400, 0.7, Math.min(1, 0.6 * v), 'bandpass', 420, dist, 0.2 + 0.5 * wet);
+    this._noiseBurst(0.22, 2400, 0.7, Math.min(1, 0.6 * v), 'bandpass', 420, dist,
+                     0.2 + 0.5 * wet, pan, behind);
     // the fire: a broad wall of noise, low-passed hard and swept down
-    this._noiseBurst(2.5, 1000, 0.5, Math.min(1, 0.9 * v), 'lowpass', 60, dist, 0.35 + 0.65 * wet);
+    this._noiseBurst(2.5, 1000, 0.5, Math.min(1, 0.9 * v), 'lowpass', 60, dist,
+                     0.35 + 0.65 * wet, pan, behind);
     // the kick under the floor: a sine diving well below the bottom octave
-    this._thump(44, 1.9, Math.min(1, 0.95 * v), dist);
+    this._thump(44, 1.9, Math.min(1, 0.95 * v), dist, pan, behind);
     // the tail: the valley answering back long after the fire is out
-    this._noiseBurst(4.5, 240, 0.35, Math.min(1, 0.5 * v), 'lowpass', 40, dist, 0.55 + 0.45 * wet);
+    this._noiseBurst(4.5, 240, 0.35, Math.min(1, 0.5 * v), 'lowpass', 40, dist,
+                     0.55 + 0.45 * wet, pan, behind);
   }
 
   hit() {

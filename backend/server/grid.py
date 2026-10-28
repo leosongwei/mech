@@ -1,7 +1,8 @@
 """Uniform spatial grid over the units: a CSR of square cells.
 
-The battlefield is cut into 128 m cells and every unit is filed under the one
-it stands in.  ``start`` says where a cell's block of ``items`` begins, so
+The battlefield is cut into 128 m cells and every unit that moves *or* can be
+fought is filed under the one it stands in - the command base never moves, but
+it is a target.  ``start`` says where a cell's block of ``items`` begins, so
 "which units are near here" is two array lookups instead of a pass over the
 whole field.
 
@@ -46,9 +47,22 @@ class Grid:
         self.n = 0
 
     # -- building ---------------------------------------------------------
-    def build(self, ecs, tag: str = "moves") -> None:
-        """Refile every entity carrying ``tag`` under the cell it stands in."""
-        groups = ecs.groups(tag, "pos")
+    def build(self, ecs, tags: tuple[str, ...] = ("moves",)) -> None:
+        """Refile every entity carrying one of ``tags`` under the cell it stands in.
+
+        Two sets, not one: the movers and the things that can be shot.  The
+        command base is the one `combat` hull that never moves, and a grid of
+        `moves` alone left it out - so the AI drove at the thing its lane ends
+        at and never saw it as a target.  A hull carrying both tags is filed
+        once (the archetype is the same object under either query).
+        """
+        groups = []
+        seen: set = set()
+        for tag in tags:
+            for g in ecs.groups(tag, "pos"):
+                if g.arch not in seen:
+                    seen.add(g.arch)
+                    groups.append(g)
         if len(groups) == 1:
             g = groups[0]
             ids, p = g.ids, g.bufs["pos"][:g.n]

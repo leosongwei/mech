@@ -266,8 +266,8 @@ export class GameAudio {
   }
 
   // A hull going up (defs.DEATH_BLAST).  Not a louder `boom()` - a dead mech is
-  // a different event, so it gets its own voice: the plates cracking, a wall of
-  // fire that falls away over two and a half seconds, a sub-bass thump under the
+  // a different event, so it gets its own voice: a pressure front, a wall of
+  // fire that falls away over nearly three seconds, a bass thump under the
   // floor, and a rumble that is still rolling when the fireball has gone out.
   // Four layers timed to overlap, which is what makes it read as heavy.
   explosion(vol = 1, dist = 0, pan = 0, behind = 0) {
@@ -275,14 +275,14 @@ export class GameAudio {
     if (!this.ctx) return;
     const v = Math.min(1, vol);
     const wet = reverberation(dist);
-    // the hull letting go: bright and short, gone under the blast that follows
-    this._noiseBurst(0.22, 2400, 0.7, Math.min(1, 0.6 * v), 'bandpass', 420, dist,
+    // the pressure front: a low-mid shove rather than a gunshot's bright crack
+    this._noiseBurst(0.3, 650, 0.5, Math.min(1, 0.55 * v), 'lowpass', 90, dist,
                      0.2 + 0.5 * wet, pan, behind);
     // the fire: a broad wall of noise, low-passed hard and swept down
-    this._noiseBurst(2.5, 1000, 0.5, Math.min(1, 0.9 * v), 'lowpass', 60, dist,
+    this._noiseBurst(2.8, 800, 0.5, Math.min(1, 0.9 * v), 'lowpass', 60, dist,
                      0.35 + 0.65 * wet, pan, behind);
-    // the kick under the floor: a sine diving well below the bottom octave
-    this._thump(44, 1.9, Math.min(1, 0.95 * v), dist, pan, behind);
+    // the kick under the floor: audible bass before the sine dives below it
+    this._thump(58, 2.1, Math.min(1, 0.95 * v), dist, pan, behind);
     // the tail: the valley answering back long after the fire is out
     this._noiseBurst(4.5, 240, 0.35, Math.min(1, 0.5 * v), 'lowpass', 40, dist,
                      0.55 + 0.45 * wet, pan, behind);

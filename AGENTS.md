@@ -134,11 +134,14 @@ frontend/
   mech (and the money with it), and a second order is refused until it ends.
   Durations are `defs.REARM_*` (swap 2 s per arm, ammo 4 s per arm, repair 2 s
   per 100 hp); `shop.quote` charges a swap both a fit and a reload.
-* **Grid** (`grid.py`) is a 128 m cell index over every `moves` entity, refiled
-  at the top of each tick (`world.grid`) so "who is near me" is a box of cells
-  instead of a scan of the field. It keeps its own copy of the positions — the
-  build gathers them once per archetype, so a query touches no component view
-  at all. `ai._acquire` is the only user: it asks for the box covering the
+* **Grid** (`grid.py`) is a 128 m cell index over every unit that moves *or* can
+  be fought (`moves` ∪ `combat`), refiled at the top of each tick (`world.grid`)
+  so "who is near me" is a box of cells instead of a scan of the field. It keeps
+  its own copy of the positions — the build gathers them once per archetype, so
+  a query touches no component view at all. The second tag is what puts the
+  command base in the grid: it never moves, but it is a target, and a grid of
+  `moves` alone hid it from `ai._acquire`, so no AI hull ever shot the thing its
+  lane ends at. `ai._acquire` is the only user: it asks for the box covering the
   shooter's `sight` (exactly the range the old full scan filtered on, so the
   same target comes back) and then distance-sorts the few candidates in it.
   Rebuild before querying anything that has moved since; in the tick's pipeline

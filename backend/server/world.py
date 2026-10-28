@@ -480,8 +480,9 @@ class World:
         self.ecs.destroyed.clear()
         # refile every hull under the cell it stands in before anyone queries:
         # the build is one argsort, the systems below ask "who is near me"
-        # hundreds of times a tick
-        self.grid.build(self.ecs)
+        # hundreds of times a tick.  Movers *and* combatants: a command base
+        # never moves, and the AI has to find it to shoot it
+        self.grid.build(self.ecs, ("moves", "combat"))
         for system in self.systems:
             system(self, dt)
         if self.winner >= 0:

@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from .. import defs, mathutil as mu
-from . import smoke
+from . import sight
 from .weapons import aim_of
 
 if TYPE_CHECKING:
@@ -130,28 +130,26 @@ def run(world: World, dt: float) -> None:
         elif k == 3:                                # top attack IR missile
             tid = int(target[pid])
             speed = min(wd["maxvel"], speed + wd["thrust"] * dt)
-            # the seeker needs to see the hull: a smoke puff or a ridge on the
-            # line of sight blinds it, and the round coasts on its last heading
-            # like it does when the target dies
+            # the seeker needs to see the hull: anything that cuts a line of
+            # sight (a smoke puff, a ridge, a tree canopy) blinds it, and the
+            # round coasts on its last heading like it does when the target dies
             why = ""
+            spot = None
             if tid >= 0 and e.alive[tid]:
                 tp = pos[tid]
                 th = defs.UNIT_DEFS.get(int(etype[tid]), {}).get("height", 6.0)
                 # what the seeker looks at: the roof it is going to dive on
-                sight = (float(tp[0]), float(tp[1]) + th * 0.92, float(tp[2]))
-                if smoke.blocks(world, p0, sight):
-                    why = "smoke"
-                elif not terrain.los(p0, sight, 8.0):
-                    why = "terrain"
+                spot = (float(tp[0]), float(tp[1]) + th * 0.92, float(tp[2]))
+                why = sight.why(world, p0, spot)
             if why:
                 # the seeker is blind: log it, the smoke test on the range is
                 # read straight out of the server log
                 log.info("seeker of missile %d lost the lock on mech %d: %s "
                          "on the line of sight (%.0f m out, %.1f s in the air)",
-                         pid, tid, why, math.dist(p0, sight), float(age[pid]))
+                         pid, tid, why, math.dist(p0, spot), float(age[pid]))
                 world.emit("seeker", x=float(p0[0]), y=float(p0[1]), z=float(p0[2]),
                            faction=int(faction[pid]), tid=int(tid), proj=int(pid),
-                           why=why, dist=round(math.dist(p0, sight), 1))
+                           why=why, dist=round(math.dist(p0, spot), 1))
                 target[pid] = -1
                 tid = -1
             if tid >= 0 and e.alive[tid]:

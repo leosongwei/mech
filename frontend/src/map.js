@@ -29,8 +29,8 @@ export function treeHash(a, b) {
 // Where a tree tile's trunks stand: `{x, z, r, h}` each, 1-2 trees on a tree
 // tile and 3-5 on a forest tile, plus the three hash draws (`q1`-`q3`) the
 // renderer gives each tree its height, canopy and colour from.  The canopy
-// above the trunks is not in here: it hides what is behind it without stopping
-// anything that flies.
+// above the trunks is not a trunk: `canopyOf` builds it, and it hides what is
+// behind it without stopping anything that flies.
 export function treeTrunks(i, j, t, tile) {
   const r1 = treeHash(i, j);
   const n = t === 7 ? 3 + Math.floor(r1 * 3) : 1 + Math.floor(r1 * 2);
@@ -49,6 +49,100 @@ export function treeTrunks(i, j, t, tile) {
     });
   }
   return out;
+}
+
+// The volume one tree hides behind, from the same draws the renderer builds
+// the mesh from: a broadleaf (q3 > 0.45) is a ball on the trunk, a conifer a
+// cone standing on it.  Mirrors terrain._canopy - what hides a hull is what
+// the eye can see, not a slab over the whole tile.
+export function canopyOf(map, tr) {
+  const ground = map.heightAt(tr.x, tr.z);
+  const tall = 10.0 + tr.q3 * 8.0;
+  if (tr.q3 > 0.45) {
+    const rad = tall * 0.40 * (0.85 + tr.q1 * 0.3);
+    return { ball: true, x: tr.x, z: tr.z, y: ground + tall * 0.60,
+      rx: rad, ry: tall * 0.46, rz: rad, rad };
+  }
+  const rad = tall * 0.26 * (0.85 + tr.q1 * 0.3);
+  return { ball: false, x: tr.x, z: tr.z, y0: ground + tall * 0.15,
+    y1: ground + tall * 0.95, rad };
+}
+
+// the interval [lo, hi] where a*t^2 + b*t + c <= 0, or null
+function inRoots(a, b, c) {
+  if (Math.abs(a) < 1e-12) {
+    if (Math.abs(b) < 1e-12) return c <= 0 ? [0, 1] : null;
+    const t = -c / b;
+    return b > 0 ? [-1e9, t] : [t, 1e9];
+  }
+  const disc = b * b - 4 * a * c;
+  if (disc < 0) return null;
+  const sq = Math.sqrt(disc);
+  const r0 = (-b - sq) / (2 * a), r1 = (-b + sq) / (2 * a);
+  return r0 <= r1 ? [r0, r1] : [r1, r0];
+}
+
+// where a segment enters a canopy, in the segment's own t, or null (mirrors
+// terrain._canopy_hit: solved, never sampled - a canopy is a few metres
+// across, so an 8 m walk steps straight over its edge)
+function canopyHit(c, x0, y0, z0, dx, dy, dz, ta, tb) {
+  if (c.ball) {
+    const ax = (x0 - c.x) / c.rx, ay = (y0 - c.y) / c.ry, az = (z0 - c.z) / c.rz;
+    const ex = dx / c.rx, ey = dy / c.ry, ez = dz / c.rz;
+    const qa = ex * ex + ey * ey + ez * ez;
+    if (qa < 1e-12) return null;
+    const qb = 2 * (ax * ex + ay * ey + az * ez);
+    const qc = ax * ax + ay * ay + az * az - 1;
+    const iv = inRoots(qa, qb, qc);
+    if (!iv) return null;
+    const lo = Math.max(iv[0], ta);
+    return lo <= tb && lo <= iv[1] ? lo : null;
+  }
+  const u = (c.rad / (c.y1 - c.y0)) ** 2;
+  const ax = x0 - c.x, az = z0 - c.z;
+  const hh = c.y1 - y0;
+  const qa = dx * dx + dz * dz - u * dy * dy;
+  const qb = 2 * (ax * dx + az * dz) + 2 * u * hh * dy;
+  const qc = ax * ax + az * az - u * hh * hh;
+  const iv = inRoots(qa, qb, qc);
+  if (!iv) return null;
+  let lo = Math.max(iv[0], ta), hi = Math.min(iv[1], tb);
+  if (dy > 1e-9) {
+    lo = Math.max(lo, (c.y0 - y0) / dy); hi = Math.min(hi, (c.y1 - y0) / dy);
+  } else if (dy < -1e-9) {
+    lo = Math.max(lo, (c.y1 - y0) / dy); hi = Math.min(hi, (c.y0 - y0) / dy);
+  } else if (y0 < c.y0 || y0 > c.y1) return null;
+  return lo > tb || lo > hi ? null : lo;
+}
+
+// walk the segment tile by tile (a 2D DDA, like the server's _spans) and solve
+// the canopies of every tile it crosses
+function canopyBlocked(map, x0, y0, z0, dx, dy, dz) {
+  const T = map.tile;
+  let i = x0 >= 0 ? Math.floor(x0 / T) : -1;
+  let j = z0 >= 0 ? Math.floor(z0 / T) : -1;
+  const sx = dx > 0 ? 1 : -1, sz = dz > 0 ? 1 : -1;
+  let tx = dx ? ((i + (dx > 0 ? 1 : 0)) * T - x0) / dx : 2;
+  let tz = dz ? ((j + (dz > 0 ? 1 : 0)) * T - z0) / dz : 2;
+  let t = 0;
+  for (let guard = 0; guard < 8192; guard++) {
+    const tn = Math.min(tx, tz, 1);
+    if (i >= 0 && j >= 0 && i < map.w && j < map.h) {
+      for (const c of map.canopiesAt(i, j)) {
+        if (canopyHit(c, x0, y0, z0, dx, dy, dz, t, tn) !== null) return true;
+      }
+    }
+    if (tn >= 1) return false;
+    t = tn;
+    if (tx <= tz) {
+      i += sx;
+      tx = dx ? ((i + (dx > 0 ? 1 : 0)) * T - x0) / dx : 2;
+    } else {
+      j += sz;
+      tz = dz ? ((j + (dz > 0 ? 1 : 0)) * T - z0) / dz : 2;
+    }
+  }
+  return false;
 }
 
 function b64ToBytes(b64) {
@@ -75,6 +169,7 @@ export class MapData {
     this.roads = roads;          // Uint8Array(w*h), ROAD_* piece bits
     this.walls = walls;          // Uint8Array(w*h), wall/roof height in metres
     this.trunkCache = new Map(); // tile index -> trunk layout, filled on demand
+    this.canopyCache = new Map();   // tile index -> canopies reaching into it
   }
 
   static async load(info, lanes) {
@@ -186,6 +281,63 @@ export class MapData {
     return this.heightAt(x, z) + this.wallAt(x, z);
   }
 
+  // the obstacle column that cuts a *sight* line: a building up to its roof
+  // (mirrors Terrain.sight_wall).  The leaves of a tree are not a column - they
+  // are a volume of their own, up 10-18 m and a few metres across, so they are
+  // solved per tree in `canopiesAt`; a whole tile of them would hide a hull
+  // standing in the open beside the stand.
+  sightWall(x, z) {
+    const i = Math.floor(x / this.tile), j = Math.floor(z / this.tile);
+    if (i < 0 || j < 0 || i >= this.w || j >= this.h) return 1e6;
+    const k = j * this.w + i;
+    if (this.tiles[k] === TILE_BUILDING) return this.walls[k] || 8.0;
+    return 0;
+  }
+
+  // Every canopy that reaches into tile (i, j), the mirror of
+  // Terrain._canopies: one ball or one cone per tree, at the numbers the
+  // renderer builds the meshes from (`_buildProps`), plus the trees of the 3x3
+  // block around the tile - the leaves of the next tile over hang over this
+  // one, and the eye sees them.
+  canopiesAt(i, j) {
+    const k = j * this.w + i;
+    let c = this.canopyCache.get(k);
+    if (c !== undefined) return c;
+    c = [];
+    let near = false;
+    for (let jj = j - 1; jj <= j + 1 && !near; jj++) {
+      if (jj < 0 || jj >= this.h) continue;
+      for (let ii = i - 1; ii <= i + 1; ii++) {
+        if (ii < 0 || ii >= this.w) continue;
+        const t = this.tiles[jj * this.w + ii];
+        if (t === TILE_TREE || t === TILE_FOREST) { near = true; break; }
+      }
+    }
+    if (near) {
+      const x0 = i * this.tile, z0 = j * this.tile;
+      for (let jj = j - 1; jj <= j + 1; jj++) {
+        if (jj < 0 || jj >= this.h) continue;
+        for (let ii = i - 1; ii <= i + 1; ii++) {
+          if (ii < 0 || ii >= this.w) continue;
+          const t = this.tiles[jj * this.w + ii];
+          if (t !== TILE_TREE && t !== TILE_FOREST) continue;
+          for (const tr of this.trunksAt(ii, jj)) {
+            const cy = canopyOf(this, tr);
+            const dx = cy.x < x0 ? x0 - cy.x : (cy.x > x0 + this.tile ? cy.x - x0 - this.tile : 0);
+            const dz = cy.z < z0 ? z0 - cy.z : (cy.z > z0 + this.tile ? cy.z - z0 - this.tile : 0);
+            if (dx * dx + dz * dz <= cy.rad * cy.rad) c.push(cy);
+          }
+        }
+      }
+    }
+    this.canopyCache.set(k, c);
+    return c;
+  }
+
+  sightAt(x, z) {
+    return this.heightAt(x, z) + this.sightWall(x, z);
+  }
+
   // march a segment and report the first ground contact
   groundHit(x0, y0, z0, x1, y1, z1, step) {
     step = step || 12;
@@ -215,6 +367,48 @@ export class MapData {
     }
     return { hit: false, t: 1, x: x1, y: y1, z: z1 };
   }
+}
+
+// ---------- line of sight -----------------------------------------------
+// Does anything cut the sight line a->b?  The mirror of
+// backend/server/systems/sight.py, and the one rule the game has: the field
+// (ground, buildings, tree canopies - `sightAt`) and the deployed smoke puffs
+// hide; a trunk alone never does, and neither the leaves nor the smoke stop a
+// round.  The HUD asks it before it draws a pre-aim box, so a hull the seeker
+// could not lock is a hull the pilot gets no marker on either.
+
+// the ellipsoid test of systems/smoke.py: scale the segment into the unit
+// sphere of the puff and take the closest point
+function puffBlocks(p, ax, ay, az, bx, by, bz) {
+  const rx = p.rx, ry = p.ry, rz = p.rz;
+  if (!(rx > 0 && ry > 0 && rz > 0)) return false;
+  const pax = (ax - p.x) / rx, pay = (ay - p.y) / ry, paz = (az - p.z) / rz;
+  const dx = (bx - p.x) / rx - pax, dy = (by - p.y) / ry - pay, dz = (bz - p.z) / rz - paz;
+  const L = dx * dx + dy * dy + dz * dz;
+  let u = L < 1e-9 ? 0 : -(pax * dx + pay * dy + paz * dz) / L;
+  u = u < 0 ? 0 : (u > 1 ? 1 : u);
+  const qx = pax + dx * u, qy = pay + dy * u, qz = paz + dz * u;
+  return qx * qx + qy * qy + qz * qz <= 1;
+}
+
+// `puffs` is the deployed smoke (`net.smoke` without the canisters still in
+// the air); omit it and only the field is tested
+export function sightBlocked(map, x0, y0, z0, x1, y1, z1, puffs, step) {
+  step = step || 8;                 // half a tile, like the server's march
+  const dx = x1 - x0, dy = y1 - y0, dz = z1 - z0;
+  const dist = Math.hypot(dx, dy, dz);
+  if (dist < 1e-4) return y0 <= map.sightAt(x0, z0);
+  if (y0 <= map.sightAt(x0, z0) + 1.0) return true;   // the eye is in the ground
+  const n = Math.max(1, Math.ceil(dist / step));
+  for (let k = 1; k <= n; k++) {
+    const t = k / n;
+    if (y0 + dy * t <= map.sightAt(x0 + dx * t, z0 + dz * t)) return true;
+  }
+  if (canopyBlocked(map, x0, y0, z0, dx, dy, dz)) return true;
+  if (puffs) {
+    for (const p of puffs) if (puffBlocks(p, x0, y0, z0, x1, y1, z1)) return true;
+  }
+  return false;
 }
 
 // Ballistic prediction for direct fire weapons (bullets + unguided rockets).

@@ -1,7 +1,7 @@
 // Glue: connection, camera, aiming prediction, render loop and HUD state.
 
 import { Net } from './net.js';
-import { MapData, leadPoint, predictImpact, sightPoint, unitSpheres, zeroAt } from './map.js';
+import { MapData, leadPoint, predictImpact, sightBlocked, sightPoint, unitSpheres, zeroAt } from './map.js';
 import { Input } from './input.js';
 import { GameAudio, SOUND_SPEED, attenuation } from './audio.js';
 import { Renderer, makeCamera } from './renderer.js';
@@ -326,6 +326,24 @@ export class Game {
         if (ev.pid === this.init.pid) this._message('RE-DEPLOYED', '#a9f0c0');
       } else if (ev.k === 'gameover') {
         this.winner = ev.winner;
+      } else if (ev.k === 'tiles') {
+        // the debug tree planter painted tiles on the server: copy the same
+        // rectangle into our copy of the map and redraw what comes from it, so
+        // the stand that hides the target is a stand we can see
+        const m = this.map;
+        if (m && ev.rows && ev.cols) {
+          let k = 0;
+          for (let r = 0; r < ev.rows; r++) {
+            const row = (ev.j0 + r) * m.w + ev.i0;
+            for (let c = 0; c < ev.cols; c++, k++) m.tiles[row + c] = ev.data[k];
+          }
+          // the trunk and canopy caches are keyed by tile and hold what the
+          // old bitmap said: a stand planted on ground that was already asked
+          // about would never be found in them
+          m.trunkCache.clear();
+          m.canopyCache.clear();
+          if (this.renderer) this.renderer.repaintTiles(m);
+        }
       }
     }
   }
@@ -718,6 +736,9 @@ export class Game {
     // fixed zero the ring no longer means "lead the target" but "put the
     // centre cross here", and a standing hull 2 km out needs just as much of a
     // lift as a driving one needs lead.
+    // the smoke that is actually up: a canister still in the air is a charge,
+    // not a screen (the server only ever tests deployed puffs)
+    const puffs = this.net.smoke.filter((s) => !s.canister);
     const cand = [];
     for (const e of this.net.entities.values()) {
       if (e.type !== 3 && e.type !== 4) continue;           // APC / MECH only
@@ -737,12 +758,11 @@ export class Game {
     for (const c of cand.slice(0, LEAD_TARGETS)) {
       const e = c.e;
       const half = (c.ud.height || 3) * 0.5;               // hull centre above the ground
-      // no line of sight, no box: a hull behind a building or a ridge cannot
-      // be hit, and a marker floating on it would be a wallhack.  The march
-      // ends on the hull centre, so only a contact well short of it blocks.
-      const sight = this.map.groundHit(eye[0], eye[1], eye[2], e.x, e.y + half, e.z, 12);
-      if (sight.hit && Math.hypot(sight.x - e.x, sight.y - e.y - half, sight.z - e.z)
-        > (c.ud.radius || 2)) continue;
+      // no line of sight, no box: a hull behind a ridge, a building, a tree
+      // stand or a screen of smoke is one the seeker cannot lock either, and a
+      // marker floating on it would be a wallhack.  Same rule the server's AI
+      // and IR seeker obey (backend/server/systems/sight.py).
+      if (sightBlocked(this.map, eye[0], eye[1], eye[2], e.x, e.y + half, e.z, puffs)) continue;
       const t = {
         id: e.id,
         x: e.x, y: e.y + half, z: e.z,

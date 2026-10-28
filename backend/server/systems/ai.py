@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from .. import defs, mathutil as mu
-from . import smoke
+from . import sight
 
 if TYPE_CHECKING:
     from ..world import World
@@ -115,10 +115,9 @@ def run(world: World, dt: float) -> None:
 
 def _sees(world: World, eye: tuple[float, float, float],
           point: tuple[float, float, float]) -> bool:
-    """Line of sight: terrain, buildings *and* smoke."""
-    if not world.terrain.los(eye, point):
-        return False
-    return not smoke.blocks(world, eye, point)
+    """Line of sight: whatever the shared sight rule says (ground, buildings,
+    tree canopies and smoke)."""
+    return sight.clear(world, eye, point)
 
 
 def _acquire(world: World, fac: int, combat_fac: np.ndarray,

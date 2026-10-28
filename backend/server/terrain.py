@@ -59,7 +59,9 @@ ROAD_STRAIGHT = ROAD_N | ROAD_E | ROAD_S | ROAD_W
 ROAD_WEIGHT = 100       # how hard a road tile outweighs its verges when the
                         # corridor is flattened: the asphalt stays level
 BUILDING_H = 8.0        # wall height of a building tile the map did not size
-TREE_H = 10.0           # how tall a tree stand stops sight (its canopy)
+CANOPY_MAX = 18.0       # the tallest canopy on the map (a tree is 10..18 m
+                        # tall): the bound the sight cull has to assume under a
+                        # tree tile, not what actually blocks - see _canopies
 INV_TILE = 1.0 / TILE
 TRUNK_R = 0.5           # trunk radius of a tree: the only thing a round or a
                         # hull actually meets in a tree tile (see _trunks)
@@ -243,13 +245,15 @@ def _tree_hash(a: float, b: float) -> float:
     return s - math.floor(s)
 
 
-def _trunks(i: int, j: int, t: int) -> tuple[tuple[float, float, float, float], ...]:
-    """Where the trunks of a tree tile stand: ``(x, z, radius, height)`` each.
+def _trunks(i: int, j: int, t: int) -> tuple[tuple[float, ...], ...]:
+    """Where the trees of a tree tile stand: ``(x, z, r, h, q1, q3)`` each.
 
     One or two trees on a tree tile, three to five on a forest tile, spread over
     the tile but never touching its border - exactly the stand the client
-    draws.  The canopy above them is not part of this: it hides what is behind
-    it (`sight_at`) without stopping anything that flies.
+    draws.  ``r``/``h`` are the trunk, the only part that stops a round or a
+    hull; ``q1``/``q3`` are the hash draws the canopy is built from
+    (`_canopy`), which hides what stands behind the tree without stopping
+    anything that flies.
     """
     r1 = _tree_hash(i, j)
     n = 3 + int(r1 * 3) if t == TILE_FOREST else 1 + int(r1 * 2)
@@ -263,8 +267,102 @@ def _trunks(i: int, j: int, t: int) -> tuple[tuple[float, float, float, float], 
         out.append((cx + (q1 - 0.5) * TILE * 0.66,
                     cz + (q2 - 0.5) * TILE * 0.66,
                     TRUNK_R * (0.7 + q3 * 0.5),
-                    (10.0 + q3 * 8.0) * 0.40))
+                    (10.0 + q3 * 8.0) * 0.40,
+                    q1, q3))
     return tuple(out)
+
+
+def _canopy(tr: tuple, ground: float) -> tuple:
+    """The volume one tree hides behind: ``(shape, x, z, ...)``.
+
+    The same draws, the same numbers the client builds its meshes from
+    (`renderer._buildProps`): a broadleaf (`q3 > 0.45`) is an ellipsoid ball
+    sitting on the trunk - `("ball", x, z, y_centre, rx, ry, rz)` - and a
+    conifer is a cone standing on it - `("cone", x, z, y_base, y_tip, radius)`.
+    A whole tree tile as one 10 m slab is what the sight line used to see, and
+    it hid hulls standing in the open beside the stand.
+    """
+    x, z, _r, _h, q1, q3 = tr
+    tall = 10.0 + q3 * 8.0
+    if q3 > 0.45:
+        rad = tall * 0.40 * (0.85 + q1 * 0.3)
+        return ("ball", x, z, ground + tall * 0.60, rad, tall * 0.46, rad)
+    rad = tall * 0.26 * (0.85 + q1 * 0.3)
+    return ("cone", x, z, ground + tall * 0.15, ground + tall * 0.95, rad)
+
+
+def _canopy_hit(c: tuple, p0, dx: float, dy: float, dz: float,
+                ta: float, tb: float):
+    """Earliest ``t`` in ``[ta, tb]`` that lies inside canopy ``c``, or None.
+
+    Solved, never sampled: a canopy is a few metres across, so an 8 m walk
+    steps straight over the edge of the ball - exactly the way a trunk would be
+    missed.
+    """
+    if c[0] == "ball":
+        _s, cx, cz, cy, rx, ry, rz = c
+        # the segment, scaled into the unit sphere of the ball
+        ax = (p0[0] - cx) / rx
+        ay = (p0[1] - cy) / ry
+        az = (p0[2] - cz) / rz
+        ex, ey, ez = dx / rx, dy / ry, dz / rz
+        qa = ex * ex + ey * ey + ez * ez
+        if qa < 1e-12:
+            return None
+        qb = 2.0 * (ax * ex + ay * ey + az * ez)
+        qc = ax * ax + ay * ay + az * az - 1.0
+        lo, hi = _roots(qa, qb, qc)
+        if lo is None:
+            return None
+        lo = ta if lo < ta else lo
+        return lo if lo <= tb and lo <= hi else None
+    _s, cx, cz, y0, y1, rad = c
+    # a vertical cone, apex up: inside where the horizontal distance is under
+    # the radius the cone has at that height
+    u = (rad / (y1 - y0)) ** 2
+    ax, az = p0[0] - cx, p0[2] - cz
+    h = y1 - p0[1]                       # height left to the apex, this point
+    qa = dx * dx + dz * dz - u * dy * dy
+    qb = 2.0 * (ax * dx + az * dz) + 2.0 * u * h * dy
+    qc = ax * ax + az * az - u * h * h
+    lo, hi = _roots(qa, qb, qc, qc <= 0.0)
+    if lo is None:
+        return None
+    # the cone is cut off at its skirt: the segment has to be inside both the
+    # cone and the band between base and apex
+    lo = max(lo, ta)
+    hi = min(hi, tb)
+    if dy > 1e-9:
+        lo = max(lo, (y0 - p0[1]) / dy)
+        hi = min(hi, (y1 - p0[1]) / dy)
+    elif dy < -1e-9:
+        lo = max(lo, (y1 - p0[1]) / dy)
+        hi = min(hi, (y0 - p0[1]) / dy)
+    elif p0[1] < y0 or p0[1] > y1:
+        return None
+    if lo > tb or lo > hi:
+        return None
+    return lo
+
+
+def _roots(a: float, b: float, c: float, inside: bool = False):
+    """Interval ``[lo, hi]`` where ``a t^2 + b t + c <= 0``, or ``(None, None)``.
+
+    ``inside`` says the start of the segment is already within, which the
+    caller knows from ``c <= 0`` having been cheap to read.
+    """
+    if abs(a) < 1e-12:
+        if abs(b) < 1e-12:
+            return (0.0, 1.0) if inside else (None, None)
+        t = -c / b
+        return (-1e9, t) if b > 0.0 else (t, 1e9)
+    disc = b * b - 4.0 * a * c
+    if disc < 0.0:
+        return (None, None)
+    sq = math.sqrt(disc)
+    r0 = (-b - sq) / (2.0 * a)
+    r1 = (-b + sq) / (2.0 * a)
+    return (r0, r1) if r0 <= r1 else (r1, r0)
 
 
 # ---------------------------------------------------------------------------
@@ -725,8 +823,12 @@ class Terrain:
         self.walls = (np.zeros((self.d, self.w), np.uint8) if walls is None
                       else walls.astype(np.uint8))
         # trunk layout of the tree tiles that get asked about, tile index ->
-        # ((x, z, r, h), ...) - built on demand, a few hundred entries
+        # ((x, z, r, h, q1, q3), ...) - built on demand, a few hundred entries
         self.trunk_cache: dict[int, tuple] = {}
+        # canopies reaching into a tile, tile index -> (canopy, ...) - a canopy
+        # is up to ~8 m across, so a tree standing next door hangs over the
+        # tile and has to be in it as well
+        self.canopy_cache: dict[int, tuple] = {}
         self._build_cull()
 
     def _build_cull(self) -> None:
@@ -738,7 +840,7 @@ class Terrain:
         is exact, never a rejection of a real hit: the grid is the maximum of
         the block, so a false "clear" is impossible and ballistics are
         unchanged.  Two grids, because a round is stopped by trunks and walls
-        while a line of sight is also cut by canopies (``TREE_H``).
+        while a line of sight is also cut by the canopies over a tree tile.
         """
         h = self.h
         d, w = h.shape
@@ -752,8 +854,8 @@ class Terrain:
         solid[build] = wall[build]
         sight[build] = wall[build]
         trees = (self.tiles == TILE_TREE) | (self.tiles == TILE_FOREST)
-        solid[trees] = TREE_H            # a trunk is shorter, TREE_H is safe
-        sight[trees] = TREE_H
+        solid[trees] = 0.0               # a trunk is solved, not bounded
+        sight[trees] = CANOPY_MAX        # a canopy is 10..18 m up
 
         win = np.lib.stride_tricks.sliding_window_view
         step = [slice(None, None, nb), slice(None, None, nb)]
@@ -772,6 +874,33 @@ class Terrain:
         self._cull_inv = 1.0 / (TILE * nb)
         self._wmax = self.w - 1.001
         self._dmax = self.d - 1.001
+
+    def plant(self, x: float, z: float, half: int = 2,
+              forest: bool = True) -> tuple[int, int, int, int, np.ndarray]:
+        """Grow a stand of trees ``half`` tiles either side of (x, z).
+
+        The debug knob of the range: a tree hides what stands behind it, so a
+        tester has to be able to put one where he wants it, between his sights
+        and a target.  Only open ground turns into a stand - a building, a
+        road tile's kerb or a base is left as it is.  The cull grid holds the
+        canopy height of every block, so both grids are rebuilt with the map.
+
+        Returns ``(i0, j0, rows, cols, patch)`` - the rectangle it painted, so
+        the client can paint the same tiles: the trunks it draws and the sight
+        rule it applies come from this one bitmap.
+        """
+        i0 = max(0, int(x * INV_TILE) - half)
+        i1 = min(self.w - 1, int(x * INV_TILE) + half)
+        j0 = max(0, int(z * INV_TILE) - half)
+        j1 = min(self.d - 1, int(z * INV_TILE) + half)
+        patch = self.tiles[j0:j1 + 1, i0:i1 + 1]
+        free = (patch != TILE_BUILDING) & (patch != TILE_BASE) & (patch != TILE_SOLID) \
+            & (patch != TILE_ROCK)
+        patch[free] = TILE_FOREST if forest else TILE_TREE
+        self.trunk_cache.clear()
+        self.canopy_cache.clear()
+        self._build_cull()
+        return i0, j0, j1 - j0 + 1, i1 - i0 + 1, patch.copy()
 
     # -- sampling ---------------------------------------------------------
     def height_at(self, x: float, z: float) -> float:
@@ -804,6 +933,68 @@ class Terrain:
             self.trunk_cache[k] = tr
         return tr
 
+    def _canopies(self, i: int, j: int) -> tuple:
+        """Every canopy that reaches into tile ``(i, j)``.
+
+        A tree hangs over its neighbours - the biggest is a ball some 8 m
+        across around a trunk that stands up to 5 m off its tile's middle - so
+        the leaves of the next tile over are part of what this one hides.  The
+        3x3 block around the tile is exactly wide enough to hold every tree
+        that can reach in, and a tile with no tree in that block holds nothing.
+        """
+        k = j * self.w + i
+        c = self.canopy_cache.get(k)
+        if c is not None:
+            return c
+        out = []
+        t0 = TILE_TREE
+        t1 = TILE_FOREST
+        near = False
+        for jj in (j - 1, j, j + 1):
+            if jj < 0 or jj >= self.d:
+                continue
+            for ii in (i - 1, i, i + 1):
+                if ii < 0 or ii >= self.w:
+                    continue
+                t = int(self.tiles.item(jj, ii))
+                if t == t0 or t == t1:
+                    near = True
+        if near:
+            x0 = i * TILE
+            z0 = j * TILE
+            for jj in (j - 1, j, j + 1):
+                if jj < 0 or jj >= self.d:
+                    continue
+                for ii in (i - 1, i, i + 1):
+                    if ii < 0 or ii >= self.w:
+                        continue
+                    for tr in self._trunks(ii, jj):
+                        cx = _canopy(tr, self.height_at(tr[0], tr[1]))
+                        rad = cx[4] if cx[0] == "ball" else cx[5]
+                        # the square of this tile against the canopy's footprint
+                        dx = x0 - cx[1] if cx[1] < x0 else (
+                            cx[1] - x0 - TILE if cx[1] > x0 + TILE else 0.0)
+                        dz = z0 - cx[2] if cx[2] < z0 else (
+                            cx[2] - z0 - TILE if cx[2] > z0 + TILE else 0.0)
+                        if dx * dx + dz * dz <= rad * rad:
+                            out.append(cx)
+        c = tuple(out)
+        self.canopy_cache[k] = c
+        return c
+
+    def _canopy_hit(self, p0, dx: float, dy: float, dz: float,
+                    i: int, j: int, ta: float, tb: float):
+        """Where inside tile ``(i, j)`` the segment enters the leaves, or None."""
+        t = self.tiles.item(j, i)
+        if t != TILE_TREE and t != TILE_FOREST:
+            return None
+        best = None
+        for c in self._canopies(i, j):
+            h = _canopy_hit(c, p0, dx, dy, dz, ta, tb)
+            if h is not None and (best is None or h < best):
+                best = h
+        return best
+
     def wall_at(self, x: float, z: float) -> float:
         """Height of the obstacle standing on the ground at (x, z).
 
@@ -822,15 +1013,20 @@ class Terrain:
         if t == TILE_BUILDING:
             return self.walls.item(j, i) or BUILDING_H
         if t == TILE_TREE or t == TILE_FOREST:
-            for tx, tz, r, h in self._trunks(i, j):
+            for tx, tz, r, h, _q1, _q3 in self._trunks(i, j):
                 if (x - tx) ** 2 + (z - tz) ** 2 <= r * r:
                     return h
         return 0.0
 
     def sight_wall(self, x: float, z: float) -> float:
-        """The height a line of sight is cut at: a building up to its roof, a
-        tree stand at its canopy - the leaves hide what stands behind them even
-        though they stop neither a round nor a hull."""
+        """The height a line of sight is cut at by the *tile* it stands on: a
+        building up to its roof.
+
+        A tree is not in here any more: its leaves are a volume of their own
+        (`_canopies`), a few metres across and 10-18 m up, and treating the
+        whole 16 m tile as a 10 m slab hid hulls standing in the open beside a
+        stand.  `los` solves the canopies separately.
+        """
         i = int(x * INV_TILE) if x >= 0.0 else -1
         j = int(z * INV_TILE) if z >= 0.0 else -1
         if i < 0 or j < 0 or i >= self.w or j >= self.d:
@@ -838,8 +1034,6 @@ class Terrain:
         t = self.tiles.item(j, i)
         if t == TILE_BUILDING:
             return self.walls.item(j, i) or BUILDING_H
-        if t == TILE_TREE or t == TILE_FOREST:
-            return TREE_H
         return 0.0
 
     def obstacle_at(self, x: float, z: float) -> float:
@@ -864,7 +1058,7 @@ class Terrain:
         if t == TILE_TREE or t == TILE_FOREST:
             i = int(x * INV_TILE)
             j = int(z * INV_TILE)
-            for tx, tz, r, _h in self._trunks(i, j):
+            for tx, tz, r, _h, _q1, _q3 in self._trunks(i, j):
                 if (x - tx) ** 2 + (z - tz) ** 2 <= r * r:
                     return True
             return False
@@ -886,7 +1080,7 @@ class Terrain:
                 t = self.tiles.item(j, i)
                 if t != TILE_TREE and t != TILE_FOREST:
                     continue
-                for tx, tz, r, _h in self._trunks(i, j):
+                for tx, tz, r, _h, _q1, _q3 in self._trunks(i, j):
                     if (x - tx) ** 2 + (z - tz) ** 2 <= (rad + r) ** 2:
                         return True
         return False
@@ -941,7 +1135,7 @@ class Terrain:
         if a <= 1e-9:
             return None
         best = None
-        for tx, tz, r, h in self._trunks(i, j):
+        for tx, tz, r, h, _q1, _q3 in self._trunks(i, j):
             ex = p0[0] - tx
             ez = p0[2] - tz
             b = 2.0 * (ex * dx + ez * dz)
@@ -959,9 +1153,14 @@ class Terrain:
         return best
 
     def _march(self, p0: np.ndarray, p1: np.ndarray, step: float, at,
-               trunks: bool = False, cull: np.ndarray | None = None,
+               trunks: bool = False, canopies: bool = False,
+               cull: np.ndarray | None = None,
                ) -> tuple[bool, float, np.ndarray | tuple[float, float, float]]:
-        """Walk the segment and report the first point at or below ``at``."""
+        """Walk the segment and report the first point at or below ``at``.
+
+        ``trunks`` adds the solid cylinders a round bursts on, ``canopies`` the
+        leaf volumes that only hide - the two are never asked for together.
+        """
         dx = float(p1[0] - p0[0])
         dy = float(p1[1] - p0[1])
         dz = float(p1[2] - p0[2])
@@ -975,8 +1174,14 @@ class Terrain:
         cull = self._cull_solid if cull is None else cull
         cdi, cwi, cinv = self._cull_d, self._cull_w, self._cull_inv
         for ta, tb, i, j in self._spans(p0, dx, dz):
-            tt = (self._trunk_hit(p0, dx, dy, dz, i, j, ta, tb)
-                  if trunks and 0 <= i < self.w and 0 <= j < self.d else None)
+            tt = None
+            if 0 <= i < self.w and 0 <= j < self.d:
+                if trunks:
+                    tt = self._trunk_hit(p0, dx, dy, dz, i, j, ta, tb)
+                if canopies:
+                    tc = self._canopy_hit(p0, dx, dy, dz, i, j, ta, tb)
+                    if tc is not None and (tt is None or tc < tt):
+                        tt = tc
             # a span that sits inside one block can be dismissed as a whole:
             # both ends in the same 128 m cell means the cell bounds it, so
             # `min(y)` above the cell maximum proves the whole span clear
@@ -1050,8 +1255,16 @@ class Terrain:
 
     def los(self, a: np.ndarray, b: np.ndarray, step: float = 8.0) -> bool:
         """Whether ``a`` sees ``b``: the ground, the buildings and the tree
-        canopies between them decide, not the trunks."""
-        hit, _, _ = self._march(a, b, step, self.sight_at, cull=self._cull_sight)
+        canopies between them decide, not the trunks.
+
+        The canopies are the leaves the eye actually sees - one ball or one
+        cone per tree, at the height and the width they are drawn - so a hull
+        standing beside a stand is in plain view, and only one standing behind
+        the trees themselves is hidden.  `systems/sight.py` puts the smoke on
+        top of this and is the door every eye uses.
+        """
+        hit, _, _ = self._march(a, b, step, self.sight_at, canopies=True,
+                                cull=self._cull_sight)
         return not hit
 
 

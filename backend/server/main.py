@@ -273,9 +273,30 @@ async def ws_endpoint(ws: WebSocket) -> None:
                     x = float(pos[0]) + math.cos(ang) * dist
                     z = float(pos[2]) + math.sin(ang) * dist
                     faction = int(msg.get("faction", 1 - pl.faction))
+                    # the range has no lanes at all: a spawned hull just
+                    # stands where it was dropped
                     eid = world.spawn_unit(etype, faction, x, z,
-                                           weapons=msg.get("weapons"), lane=0)
+                                           weapons=msg.get("weapons"),
+                                           lane=0 if world.lanes else -1)
                     client.offer("t", json.dumps(dict(t="info", msg=f"DEBUG SPAWN {etype}"), default=_json_safe))
+            elif t == "debug_trees" and os.environ.get("MECH_DEBUG") == "1":
+                # development helper: grow a tree stand in front of the player.
+                # A tree hides what stands behind it but stops no round, so the
+                # sight rules are tested by putting one between the sights and
+                # a target - and the client has to draw the same stand it is
+                # hiding behind, hence the painted rectangle goes out with it.
+                if pl.mech >= 0 and world.ecs.alive[pl.mech]:
+                    dist = float(msg.get("dist", 200.0))
+                    ang = float(msg.get("angle", 0.0)) + pl.in_yaw
+                    pos = world.ecs["pos"][pl.mech]
+                    x = float(pos[0]) + math.cos(ang) * dist
+                    z = float(pos[2]) + math.sin(ang) * dist
+                    i0, j0, rows, cols, patch = world.terrain.plant(
+                        x, z, int(msg.get("radius", 2)), bool(msg.get("forest", True)))
+                    world.emit("tiles", i0=i0, j0=j0, rows=rows, cols=cols,
+                               data=patch.ravel().tolist())
+                    client.offer("t", json.dumps(dict(t="info", msg="DEBUG TREES"),
+                                                default=_json_safe))
             elif t == "debug_tp" and os.environ.get("MECH_DEBUG") == "1":
                 # development helper: teleport the mech along its yaw
                 if pl.mech >= 0 and world.ecs.alive[pl.mech]:

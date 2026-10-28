@@ -41,6 +41,7 @@ backend/
     netcode.py             # init payload, binary snapshots, JSON meta
     main.py                # FastAPI: websockets, static files, 30 Hz game loop
     systems/               # mechanics shared by every mode, each exposes run(world, dt)
+                         #   sight.py: the one line of sight (terrain + smoke), clear/why
                          #   smoke.py: hot smoke canisters, opaque puffs, blocks(a, b)
                          #   proximity.py: 30mm airburst fuse, bursts on people only
     modes/                 # per-mode rule sets: map, setup, pipeline, spawn rules
@@ -175,9 +176,11 @@ frontend/
   bursts open fast and then creeps (`_radii(age)`) for its 5 s life. The puffs
   are drawn **opaque** (solid pass, `renderer.smoke`), so a screen really hides
   what is behind it and costs nothing to blend. It has no
-  `unit`/`faction`/`etype`, so nothing can target or hit it; only the missile
-  seekers and the AI look for it, through `smoke.blocks(world, a, b)`. It travels
-  in its own snapshot block.
+  `unit`/`faction`/`etype`, so nothing can target or hit it. What it does do is
+  **hide**, and it hides through the same door a tree canopy does: `systems/
+  sight.py` asks `smoke.blocks(world, a, b)` for it, so the IR lock, the AI's
+  lookout and a missile's seeker all lose the hull behind a screen - exactly as
+  they lose one behind a stand of trees. It travels in its own snapshot block.
 * **Lanes** — `world.lanes` counts from the red base, `world.lanes_rev` from
   the blue base. Every per-faction lookup (spawn point, path index, "front
   line") must use the faction's own copy; mixing them mirrors positions across
@@ -257,11 +260,31 @@ frontend/
   then the height at the entry point) inside `_march`, mirrored by
   `MapData.trunkHit`. Hulls test the same cylinders (`trunk_blocked`, from
   `movement`) and drive under the canopy. `wall_at`/`blocked` return the trunk
-  only; `sight_wall`/`sight_at` still stop the line of sight at the whole tile
-  at `TREE_H` = 10 m, which is what `los()` - lock, seeker, AI - uses. Never
-  make a tree tile block a round or a hull again (`TREE_H` as an obstacle), and
-  never give the canopy a bullet collision: the plan is trunk-solid,
-  leaves-see-through.
+  only. **The leaves are a volume, not a tile**: `_canopy`/`canopyOf` build one
+  body per tree out of the same draws the renderer uses - a broadleaf
+  (`q3 > 0.45`) is an ellipsoid ball on the trunk, a conifer a **cone** standing
+  on it - and `_canopy_hit`/`canopyHit` solve the sight segment against each of
+  them (`_canopies`/`canopiesAt` cache, per tile, every canopy that reaches into
+  it, neighbours included: a ball is up to 8 m across and hangs over the next
+  tile). Two shapes, two solvers, and the client must keep them the same or the
+  box and the lock disagree. What a tile once did - a 10 m slab over the whole
+  16 m cell - hid hulls standing in the open beside a stand, so it is gone.
+  Never make a tree tile block a round or a hull, and never give a canopy a
+  bullet collision: the plan is trunk-solid, leaves-see-through.
+* **There is one line of sight, and it is `systems/sight.py`.** `sight.clear` /
+  `sight.why` answer "does anything cut a->b" out of the two halves that hide
+  things: the static field (`terrain.los` - ground, buildings up to the roof,
+  tree canopies) and the smoke (`smoke.blocks` - deployed puffs, `why` returns
+  "smoke"/"terrain" for the seeker's log). A tree hides what stands behind it
+  for good, a puff hides it for five seconds and is gone: nothing else differs
+  between them, so nothing pairs the two checks up on its own. Every eye goes
+  through it - the AI's `_sees`, the player's IR lock (`locking.py`, which used
+  to ask the field only and so let a hull be locked straight through a screen
+  of smoke) and the missile seeker. `map.js` mirrors the same rule for the HUD
+  (`MapData.sightAt` + `sightBlocked`, canopy and puffs); the pre-aim box is
+  drawn only through a clear line of sight, exactly what the seeker can lock.
+  The ballistic prediction (`sightPoint`, `groundHit`) stays on the *round's*
+  rule instead - leaves and smoke never stop a bullet.
 * **Towns are grown, not drawn.** Each one starts on its lane (`_on_lane` snaps
   the spot onto the nearest lane point, slides it ±3 tiles along the road and
   returns the lane direction) and then `_town_streets` grows the network
@@ -310,6 +333,7 @@ menu** (top right of the HUD, needs a free pointer: press `ESC`):
 | `debug_restart` | — | wipes the field and starts a fresh round, same map (`world.reset_match()`); info `MATCH RESTARTED` |
 | `debug_god` | `on: true/false` | stops the AI / damage from interrupting a test; meta `god` mirrors it (the menu button reads that back) |
 | `debug_spawn` | `etype` (default `3` APC), `dist` (m, default `800`), `angle` (rad, relative to your yaw), `faction` (default the enemy), `weapons` (optional list) | spawns a unit `dist` metres ahead |
+| `debug_trees` | `dist` (m, default `200`), `angle` (rad, relative to your yaw), `radius` (tiles either side, default `2`), `forest` (default `true`) | grows a stand of trees `dist` metres ahead (`Terrain.plant`): the server repaints the tiles, rebuilds the cull grid and hands the same rectangle to the clients, which repaint their ground and props. Buildings, rocks and bases are left alone |
 | `debug_tp` | `dist` (m, default `300`), `angle` (rad, relative to your yaw) | teleports the mech forward along its yaw |
 | `debug_hurt` | `module` (`0` hull / `1` torso, which charges the hull pool / `2` left arm / `3` right arm, default `1`), `amount` (default `100` = a whole hull), `base` (damage to the *enemy* command base) | wounds the player or the enemy base |
 
@@ -320,6 +344,7 @@ rifleman, `3` APC, `4` mech, `5` command base, `6` civilian, `9` bunker.
 g.net.send({ t: 'debug_spawn', etype: 3, dist: 400, angle: 0.3 });  // APC 400 m ahead
 g.net.send({ t: 'debug_hurt', module: 2, amount: 999 });            // blow off the left arm
 g.net.send({ t: 'debug_tp', dist: 1500 });                         // hop 1.5 km forward
+g.net.send({ t: 'debug_trees', dist: 150, radius: 2 });            // a tree stand in between
 g.net.send({ t: 'debug_god', on: true });                          // then confirm g.net.meta.god
 ```
 
@@ -364,7 +389,13 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
 * `map.js` must stay ballistically identical to the server: same gravity,
   same 1/30 step, same launch bias (`wd.bias`), the same "building walls are
   columns, tree trunks are cylinders" rule (`wallAt`/`obstacleAt`/`trunkHit`),
-  otherwise the predicted impact point drifts off the real one.
+  otherwise the predicted impact point drifts off the real one. It also carries
+  the **sight** rule (`sightWall`/`sightAt`, `canopiesAt`/`canopyOf`,
+  `sightBlocked`), because the HUD draws a pre-aim box only on a hull the seeker
+  could lock; the impact marker and the centre cross keep using the ballistic
+  rule instead (`sightPoint`/`groundHit`) - leaves and smoke never stop a
+  bullet. Both solvers are mirrored line for line, and the two shapes of canopy
+  (ball, cone) have their own.
 * **Sound is not immediate.** Gunfire and explosions go through
   `game._sound(x, y, z, play)` -> `game.sounds`, a list of acoustic events in
   the air (emit position + time, 20 s TTL). `_pumpSounds()` runs every frame and

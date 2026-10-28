@@ -6,9 +6,12 @@ seconds, and the lock drops the moment it leaves the circle - there is no
 hysteresis to hold a strafing hull.  Infantry is too small and too cold for
 the seeker: only vehicles and mechs can be locked.
 
-The seeker needs to see the hull: terrain, buildings and trees on the line
-of sight block the acquisition and break a lock that is already held, so a
-hull parked behind a ridge or a block is simply not lockable.
+The seeker needs to see the hull: anything that cuts a line of sight blocks
+the acquisition and breaks a lock that is already held - the ground, a
+building, a tree canopy, and a screen of smoke, which is a temporary piece of
+cover like the others (`systems/sight.py`, the rule the AI and the missile
+guidance obey too).  A hull behind a ridge, a block or a puff is simply not
+lockable, and no lock box is drawn on it.
 
 The circle is a fixed fraction of the screen, so the angular cone shrinks as
 the optics zoom in; the pilot sends the zoom and the viewport aspect with
@@ -23,6 +26,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from .. import defs, mathutil as mu
+from . import sight
 
 if TYPE_CHECKING:
     from ..world import Player, World
@@ -94,7 +98,7 @@ def run(world: World, dt: float) -> None:
             else:
                 ang, dist = angle_to(tracked)
                 if ang > cone or dist > wd["range"] \
-                        or not world.terrain.los(origin, _sight_point(pos, tracked), LOS_STEP):
+                        or not sight.clear(world, origin, _sight_point(pos, tracked), LOS_STEP):
                     tracked = -1
             if tracked < 0:
                 pl.lock_target = -1
@@ -116,7 +120,7 @@ def run(world: World, dt: float) -> None:
                         if ang[j] >= cone:
                             break
                         cand = int(ids[idx[j]])
-                        if world.terrain.los(origin, _sight_point(pos, cand), LOS_STEP):
+                        if sight.clear(world, origin, _sight_point(pos, cand), LOS_STEP):
                             best = cand
                             break
             if best >= 0:

@@ -865,6 +865,18 @@ export class Renderer {
     };
   }
 
+  // The debug tree planter changed the ground under us: the tile texture and
+  // the props (trunks, canopies) are drawn from `map.tiles`, so both are
+  // rebuilt from the new bitmap.  Heights, roads and walls are untouched.
+  repaintTiles(map) {
+    const gl = this.gl;
+    for (const b of this.propBatches || []) if (b) gl.deleteBuffer(b.vbo);
+    gl.bindTexture(gl.TEXTURE_2D, this.tileTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8UI, map.w, map.h, 0, gl.RED_INTEGER,
+      gl.UNSIGNED_BYTE, map.tiles);
+    this._buildProps(map);
+  }
+
   // -------------------------------------------------------------- dynamic
   beginDynamic() {
     for (const b of this.dyn) b.count = 0;

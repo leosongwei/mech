@@ -11,6 +11,33 @@
 
 ---
 
+## 2026-10-28 · 视线判定统一：树冠按单棵树算、烟幕与树冠同一条规则
+
+- **视线只有一条规则**（新增 `systems/sight.py`）：地形、建筑、树冠（静态）与
+  烟幕（临时）合成一个判定。树永远挡，烟 5 s 后自己消失——除此之外两者没有区别。
+  AI 索敌、玩家红外锁定、导弹导引头全部走这一个入口。
+- **修掉玩家可以"穿烟锁定"**：以前红外锁定只问地形，不看烟幕，隔着烟幕照样锁得住、
+  还能看到正在收缩的锁定圈；现在被烟幕隔断的目标**立刻脱锁、进度清零**，
+  预瞄白框也一起消失。
+- **树冠改成按单棵树判定**：以前一格 16 m 瓦片被当成一块 10 m 高的实心板，
+  站在树旁边（甚至离树三十米）的车也锁不上、看不到预瞄框，明显和画面不符。
+  现在每棵树按自己画出来的冠层判定——**阔叶树一个球冠、针叶树一个锥冠**
+  （10–18 m 高），所以**林间空隙、树侧面照常可锁、照样有预瞄**，
+  只有真被树冠挡住才断。客户端 `map.js` 逐行镜像同一套解法，白框与锁定不再互相打架。
+- **修掉靶场放不出 APC**：`debug_spawn` 在无车道的靶场会崩（车道索引除零），
+  现在靶场放下来的 APC 原地静止、不开火，用来做遮挡试验。
+- **新增调试图 `debug_trees`**：`g.net.send({t:'debug_trees', dist:150, radius:2})`
+  在身前种一片林子；服务端改瓦片、重建遮挡索引，并把同一块矩形发给客户端重画
+  地面与树，所以"挡视线的树"和"看得见的树"永远一致。
+- 涉及文件：`backend/server/systems/sight.py`（新）、`systems/locking.py`、
+  `systems/ai.py`、`systems/projectiles.py`、`terrain.py`（`_canopy`/`_canopies`/
+  `_canopy_hit`、`plant`）、`main.py`（`debug_trees`、`debug_spawn` 车道修复）、
+  `frontend/src/map.js`（`sightWall`/`sightAt`/`canopiesAt`/`canopyOf`/
+  `sightBlocked`）、`frontend/src/game.js`（白框改用统一视线判定、瓦片重画）、
+  `frontend/src/renderer.js`（`repaintTiles`）、`doc/product/{screens,weapons,range}.md`。
+
+---
+
 ## 2026-10-28 · 装甲车改成"到达半径"跟路点：允许切弯、允许开出路面（地图不再做圆角）
 
 - **地图不再给车道拐角做圆角**（上一版 11 m 圆角的做法撤回）：车道重新是原始的折线，

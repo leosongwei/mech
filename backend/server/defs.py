@@ -212,6 +212,10 @@ DEATH_BLAST_ETYPES = (ETYPE_APC, ETYPE_MECH)
 # weapons a player may buy, in hotbar order
 BUYABLE = [WID_AC30, WID_MG127, WID_ROCKET, WID_SACLOS, WID_TOPATTACK, WID_G105]
 
+# what a mech leaves the lobby with: the loadout is not a menu choice - it is
+# bought back at the wrench (shop) like any other piece of equipment
+DEFAULT_LOADOUT = [WID_AC30, WID_ROCKET]
+
 # ------------------------------------------------------------------- shop
 # A weapon is bought as "hardware + a full load of ammunition": the hardware
 # is `cost`, the rounds are `ammo_cost` each, and both are listed so the price
@@ -465,7 +469,11 @@ def _smoke_fan() -> tuple[tuple[float, float], ...]:
 SMOKE_FAN = _smoke_fan()
 SMOKE_COUNT = len(SMOKE_FAN)
 
-RESPAWN_TIME = 8.0
+RESPAWN_TIME = 8.0        # a mode's own rule (Mode.respawn_delay) may override it
+# Battle: the wait is the walk back to the front, so it is short on the enemy's
+# doorstep and long at home - interpolated on where the hull died.
+RESPAWN_AT_FRONT = 3.0    # killed at the enemy command base
+RESPAWN_AT_HOME = 40.0    # killed at your own command base
 BUILD_TIME = 5.0
 CORPSE_TIME = 5.0          # fallen infantry lingers this long
 WRECK_TIME = 10.0          # burning hulls linger this long

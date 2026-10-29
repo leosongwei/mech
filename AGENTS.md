@@ -201,9 +201,26 @@ frontend/
 * **Modes** (`modes/`) own everything that differs between game modes: the
   map, what a fresh round spawns, the mode's own systems and the rules the
   shared code asks about (`fixed_faction`, `start_money`, `rearm_anywhere`,
-  `restart_respawn`, `mech_spawn`). Adding a mode means adding a folder, never
-  another `if` in a shared system. Battle runs `ai` + `waves` (capture and
-  reinforcement waves); range runs `targets` and no AI at all.
+  `restart_respawn`, `mech_spawn`, `respawn_delay`). Adding a mode means adding
+  a folder, never another `if` in a shared system. Battle runs `ai` + `waves`
+  (capture and reinforcement waves); range runs `targets` and no AI at all.
+* **A death is planned from where it happened.** `World.kill` records
+  `Player.death_pos` and asks the mode for `respawn_delay`; the mode's
+  `mech_spawn` later turns that position into a place. Battle's version
+  (`modes/battle/__init__.py`) puts the pilot **one town back down the lane it
+  died on** (`waves.respawn_town` - own lane only, owned *and connected to the
+  base*, never the town it was killed at), else in the base ring
+  (`World.base_spawn`), and its wait interpolates from the distance to the
+  enemy base: 40 s on your own doorstep, 3 s on theirs. The first deploy has no
+  `death_pos` and lands on the most advanced connected town instead
+  (`_lead_town`), because 5 km out of the gate is not a spawn point. `spawn_mech`
+  clears `death_pos` once it has been spent.
+* **A town being fought over supplies nothing.** `waves._capture` recomputes
+  `town["contested"]` every tick - a unit of a faction other than the owner is
+  inside `CAPTURE_RADIUS` (170 m) - and `waves.front_town` walks the connected
+  chain backwards past every contested town, so the column comes out of the
+  next depot down the lane (or not at all). Ownership still decides the chain;
+  `contested` only decides who gets to raise troops.
 * **Players** are plain Python objects (`world.Player`) attached to a mech
   entity through `owner`; `pl.mech` is -1 while dead. Income and respawns live
   in `systems/economy.py`; wreck/corpse cleanup in `systems/debris.py`.
@@ -412,7 +429,7 @@ menu** (top right of the HUD, needs a free pointer: press `ESC`):
 
 | Message | Payload | Effect |
 | --- | --- | --- |
-| `respawn` | — | skips the 3 s death timer on the next tick (always allowed) |
+| `respawn` | — | skips the death timer (3-40 s, by where the hull died) on the next tick (always allowed) |
 | `debug_restart` | — | wipes the field and starts a fresh round, same map (`world.reset_match()`); info `MATCH RESTARTED` |
 | `debug_god` | `on: true/false` | stops the AI / damage from interrupting a test; meta `god` mirrors it (the menu button reads that back) |
 | `debug_spawn` | `etype` (default `3` APC), `dist` (m, default `800`), `angle` (rad, relative to your yaw), `faction` (default the enemy), `weapons` (optional list) | spawns a unit `dist` metres ahead |
@@ -653,8 +670,10 @@ byobu session (falls back to plain `tmux` when `~/.byobu` is not writable):
 tail -f /tmp/mech-server.log
 ```
 
-Then open <http://127.0.0.1:8010/>; the lobby picks callsign, side and the
-weapon in each arm before `DEPLOY`.
+Then open <http://127.0.0.1:8010/>; the lobby picks the callsign and the side
+before `DEPLOY` - the machine always comes out on the default pair
+(`defs.DEFAULT_LOADOUT`), a loadout is a rearm-panel purchase.  `DEPLOY` fires
+once; pressing `ENTER` in game must not send another `join`.
 
 `./dev.sh range` starts a second world (`run.py --range`, i.e. `MECH_RANGE=1`)
 on <http://127.0.0.1:8011>: a 4 km test map, one 200 m hill NW, plains

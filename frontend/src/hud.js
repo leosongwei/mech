@@ -812,7 +812,8 @@ export class HUD {
     ctx.fillText(`RE-DEPLOY IN ${(m.respawn || 0).toFixed(1)}s`, w / 2, h / 2 + 16);
     ctx.font = '12px "Courier New", monospace';
     ctx.fillStyle = 'rgba(220,200,200,0.75)';
-    ctx.fillText('RESPAWN IS AT THE MOST ADVANCED OWNED TOWN OR THE BASE', w / 2, h / 2 + 44);
+    ctx.fillText(s.range ? 'RESPAWN ON THE RANGE FIRING LINE'
+      : 'RESPAWN ONE TOWN BACK DOWN YOUR LANE, OR AT THE BASE', w / 2, h / 2 + 44);
     ctx.restore();
   }
 

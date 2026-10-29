@@ -28,13 +28,14 @@ class Player:
         self.kills: int = 0
         self.deaths: int = 0
         self.respawn: float = 0.0
+        self.death_pos: tuple[float, float] | None = None   # where the hull died
         self.in_yaw: float = 0.0
         self.in_pitch: float = 0.0
         self.in_move: tuple[float, float] = (0.0, 0.0)
         self.fire: tuple[bool, bool] = (False, False)
         self.lock_target: int = -1
         self.lock_progress: float = 0.0
-        self.loadout: list[int] = [defs.WID_AC30, defs.WID_ROCKET]
+        self.loadout: list[int] = list(defs.DEFAULT_LOADOUT)
         self.last_seq: int = 0
         self.score: int = 0
         self.zoom: float = 1.0         # optics magnification, mirrored for the IR seeker
@@ -157,8 +158,7 @@ class World:
         player.end_work()
         spawn = self.mode_mod.mech_spawn(self, player)
         if spawn is None:
-            base = self.terrain.bases[player.faction]
-            x, z = self._spawn_point(player.faction, base)
+            x, z = self.base_spawn(player.faction)
             yaw = self.rng.random() * math.tau
         else:
             x, z, yaw = spawn
@@ -169,6 +169,7 @@ class World:
         self.ecs["sight_yaw"][eid] = yaw
         player.mech = eid
         player.respawn = 0.0
+        player.death_pos = None     # spent: the next death is its own
         return eid
 
     # ------------------------------------------------------------------
@@ -325,7 +326,11 @@ class World:
             if pl:
                 pl.deaths += 1
                 pl.mech = -1
-                pl.respawn = defs.RESPAWN_TIME
+                # where it died is what the next life is planned from: the
+                # wait for the walk back, and the town one step behind it
+                pl.death_pos = (float(pos[0]), float(pos[2]))
+                pl.respawn = self.mode_mod.respawn_delay(
+                    self, pl, float(pos[0]), float(pos[2]))
 
         if etype == defs.ETYPE_BASE:
             winner = 1 - faction if faction in (0, 1) else -1
@@ -427,31 +432,11 @@ class World:
                 return False
         return True
 
-    def _spawn_point(self, faction: int, fallback: tuple[float, float]) -> tuple[float, float]:
-        towns = self.towns
-        enemy_base = self.terrain.bases[1 - faction]
-        best = None
-        best_d = 1e12
-        for t in towns:
-            if t["owner"] != faction:
-                continue
-            d = math.dist((t["x"], t["z"]), enemy_base)
-            if d < best_d:
-                best_d = d
-                best = t
-        # forward spawn: a ring around the town, never its centre - the middle
-        # of a town is exactly where the buildings are
-        if best is not None and best_d > 900.0:
-            for _ in range(20):
-                ang = self.rng.random() * math.tau
-                r = self.rng.uniform(40.0, 70.0)
-                x = best["x"] + math.cos(ang) * r
-                z = best["z"] + math.sin(ang) * r
-                if self._clear_spot(x, z):
-                    return x, z
-        # home spawn: stand off the command base, its bunker and pylons are
-        # solid and a mech that materialises inside one never gets free
-        bx, bz = fallback
+    def base_spawn(self, faction: int) -> tuple[float, float]:
+        """A free spot in the ring around the faction's own command base."""
+        bx, bz = self.terrain.bases[faction]
+        # stand off the command base: its bunker and pylons are solid and a
+        # mech that materialises inside one never gets free
         for _ in range(24):
             ang = self.rng.random() * math.tau
             r = self.rng.uniform(70.0, 130.0)
@@ -516,6 +501,7 @@ class World:
         for pl in self.players.values():
             pl.mech = -1
             pl.respawn = self.mode_mod.restart_respawn
+            pl.death_pos = None
             pl.lock_target = -1
             pl.lock_progress = 0.0
             pl.end_work()

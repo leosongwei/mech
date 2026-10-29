@@ -33,8 +33,6 @@
   #lobby input { flex: 1; background: #0b1418; border: 1px solid rgba(120,220,160,.3);
                             color: #d8f5e2; font-family: inherit; font-size: 14px; padding: 7px 9px;
                             letter-spacing: 2px; }
-  #lobby select { flex: 1; background: #0b1418; border: 1px solid rgba(120,220,160,.3);
-                  color: #d8f5e2; font-family: inherit; font-size: 13px; padding: 7px 8px; }
   #lobby .fac { flex: 1; margin: 0; padding: 9px 0; font-family: inherit; font-size: 13px;
                 letter-spacing: 3px; cursor: pointer; background: #0b1418; color: #9ab7c4;
                 border: 1px solid rgba(120,220,160,.25); border-radius: 2px; box-shadow: none; }
@@ -43,7 +41,6 @@
   #lobby .fac[data-fac="0"].on { background: #e05a4a; border-color: #e05a4a; }
   #lobby .fac[data-fac="1"].on { background: #5c8cf0; border-color: #5c8cf0; }
   #lobby .fac[data-fac="-1"].on { background: #7ce0a0; border-color: #7ce0a0; }
-  #wdesc { font-size: 11px; color: #9ab7c4; line-height: 1.5; min-height: 32px; width: 100%; }
 </style>
 </head>
 <body>
@@ -74,15 +71,6 @@
       <button class="fac" data-fac="1">BLUE</button>
       <button class="fac on" data-fac="-1">AUTO</button>
     </div>
-    <div class="row">
-      <label>LEFT ARM</label>
-      <select id="armL"></select>
-    </div>
-    <div class="row">
-      <label>RIGHT ARM</label>
-      <select id="armR"></select>
-    </div>
-    <div id="wdesc"></div>
   </div>
   <button id="startBtn">DEPLOY</button>
   <div id="err"></div>

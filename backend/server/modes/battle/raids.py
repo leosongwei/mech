@@ -2,7 +2,7 @@
 
 The lanes are a grind.  Every hull in the battle walks down one of them, so the
 fighting happens where the lanes meet and the winner is whoever feeds the front
-faster.  The answer to that is to stop feeding it: `waves._front_town` only
+faster.  The answer to that is to stop feeding it: `waves.front_town` only
 counts towns still **connected to the command base**, so a town taken out of the
 enemy's rear silences the lane beyond it - which is exactly what a raider is for.
 Every `RAID_INTERVAL` a side sends out `RAID_SIZE` mechs, **one per lane, the
@@ -683,7 +683,7 @@ def _pick_town(world: World, faction: int, lane: int, nav: Nav,
 
     The rear is where he is thin - the front is where his hulls are - so the
     weakest town is the one behind his line, and taking it cuts the chain that
-    feeds the front (`waves._front_town`).  The score is the force gradient *at
+    feeds the front (`waves.front_town`).  The score is the force gradient *at
     the town* (`_gradient`: defenders that could shoot a hull standing there),
     plus `THREAT_KM` per kilometre of march so two towns that are equally empty
     do not send a raider across the map for nothing.

@@ -12,7 +12,7 @@ from ...systems import ai
 from . import raids, waves
 
 if TYPE_CHECKING:
-    from ...world import World
+    from ...world import Player, World
 
 
 class Battle(Mode):
@@ -46,6 +46,57 @@ class Battle(Mode):
 
     def post_systems(self) -> list[Callable[[World, float], None]]:
         return [waves.run]
+
+    # ------------------------------------------------------------------
+    # players
+    # ------------------------------------------------------------------
+    def mech_spawn(self, world: World, player: Player) -> tuple[float, float, float]:
+        """Where a pilot's machine appears.
+
+        After a death: one town back down the lane the hull died on, the base
+        if there is none behind it.  On the first deploy: the most advanced
+        town still connected to the base, so a fresh pilot steps into the fight
+        rather than walking 5 km out of the gate.
+        """
+        if player.death_pos is None:
+            town = self._lead_town(world, player.faction)
+        else:
+            town = waves.respawn_town(world, player.faction, *player.death_pos)
+        if town is None:
+            x, z = world.base_spawn(player.faction)
+        else:
+            # a ring around the town, never its centre: the middle of a town is
+            # exactly where the buildings and the plaza crowd are
+            x, z = waves.clear_near(world, town["x"], town["z"], 40.0, 70.0)
+        ex, ez = world.terrain.bases[1 - player.faction]
+        return x, z, math.atan2(ez - z, ex - x)
+
+    def _lead_town(self, world: World, faction: int) -> dict | None:
+        """The front town nearest the enemy base on any lane, or None when
+        every one of them is a stone's throw from their guns (900 m)."""
+        enemy = world.terrain.bases[1 - faction]
+        best, best_d = None, 1e18
+        for lane in range(len(world.lanes)):
+            town = waves.front_town(world, faction, lane)
+            if town is None:
+                continue
+            d = math.dist((town["x"], town["z"]), enemy)
+            if d < best_d:
+                best, best_d = town, d
+        return best if best is not None and best_d > 900.0 else None
+
+    def respawn_delay(self, world: World, player: Player, x: float, z: float) -> float:
+        """The wait is the walk back: long at home, short on the enemy's step.
+
+        Interpolated on how far from the enemy command base the hull died, so a
+        death on their doorstep is a 3 s turn-round and one at your own base is
+        40 s without a machine.
+        """
+        home = world.terrain.bases[player.faction]
+        front = world.terrain.bases[1 - player.faction]
+        span = max(1.0, math.dist(home, front))
+        k = min(1.0, math.dist((x, z), front) / span)
+        return defs.RESPAWN_AT_FRONT + (defs.RESPAWN_AT_HOME - defs.RESPAWN_AT_FRONT) * k
 
     # ------------------------------------------------------------------
     # battlefield

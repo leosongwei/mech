@@ -6,7 +6,9 @@ the largest index in that faction's list, never a mirrored position.
 A lane supplies from its **front town only** - the furthest one still
 connected to its own command base.  red - red - red - blue - red means the
 last red town before the cut raises the troops and everything past the cut
-(the captured town included) is silent.
+(the captured town included) is silent.  A town with enemy hulls inside its
+capture ring supplies nothing either: the column is raised one town further
+back until the fight is over.
 """
 
 from __future__ import annotations
@@ -37,6 +39,7 @@ def bind(world: World) -> None:
         town["lane_i"] = i
         town["inf_t"] = INF_INTERVAL
         town["apc_t"] = APC_INTERVAL
+        town["contested"] = False
 
 
 def _lane_of(world: World, x: float, z: float) -> tuple[int, int]:
@@ -61,6 +64,8 @@ def run(world: World, dt: float) -> None:
 def _capture(world: World, dt: float) -> None:
     e = world.ecs
     ids = world.combat_units()
+    for town in world.towns:
+        town["contested"] = False          # recomputed below, never stale
     if ids.size == 0:
         return
     pos = e["pos"]
@@ -74,6 +79,9 @@ def _capture(world: World, dt: float) -> None:
                 town["progress"] = max(0.0, town["progress"] - dt * 0.5)
             continue
         f = fac[near]
+        # someone the town does not belong to is standing in the ring: the place
+        # is being fought over, and no column is raised out of a firefight
+        town["contested"] = bool((f != town["owner"]).any())
         red = bool((f == defs.FACTION_RED).any())
         blue = bool((f == defs.FACTION_BLUE).any())
         if red == blue:
@@ -90,28 +98,61 @@ def _capture(world: World, dt: float) -> None:
             world.emit("capture", x=town["x"], z=town["z"], faction=int(holder))
 
 
-def _front_town(world: World, faction: int, lane: int) -> dict | None:
-    """The furthest town on the lane still connected to the faction's base.
-
-    Only that one supplies: the depots behind it have already handed their
-    troops forward, so a lane raises one column at a time instead of a column
-    from every town it owns.  A captured town cuts the chain - the front falls
-    back to the last town before it.
-    """
+def _chain(world: World, faction: int, lane: int) -> list[dict]:
+    """The towns on the lane still connected to the faction's base, listed the
+    way that faction walks them: base end first, the front town last."""
     chain = [t for t in world.towns if t.get("lane") == lane]
     chain.sort(key=lambda t: t["lane_i"])              # red's base first
     if faction == defs.FACTION_BLUE:
         chain.reverse()                                # blue walks the other way
-    front = None
+    out = []
     for town in chain:
         if town["owner"] != faction:
             break                                      # cut off from the base
-        front = town
-    return front
+        out.append(town)
+    return out
 
 
-def _clear_near(world: World, x: float, z: float,
-                r0: float, r1: float) -> tuple[float, float]:
+def front_town(world: World, faction: int, lane: int) -> dict | None:
+    """The furthest town on the lane that can still raise a column.
+
+    The depots behind the front have already handed their troops forward, so a
+    lane raises one column at a time instead of a column from every town it
+    owns.  A captured town cuts the chain - the front falls back to the last
+    town before it - and a town with the enemy inside its ring supplies
+    nothing either, so the column comes from the one behind it until the
+    fight is over.
+    """
+    for town in reversed(_chain(world, faction, lane)):
+        if not town["contested"]:
+            return town
+    return None
+
+
+def respawn_town(world: World, faction: int, x: float, z: float) -> dict | None:
+    """The town a pilot who died at (x, z) comes back at.
+
+    One step back down **its own lane** from where the hull died: never the
+    town you were killed at or ahead of it, and never a town on another lane.
+    Towns cut off from the base cannot be reached from it and are skipped as
+    well - in `red - red - red - blue - red - red` a death at the last town
+    comes back at the third one, the last still connected.  None means the
+    base itself.
+    """
+    if not world.towns:
+        return None
+    lane, i = _lane_of(world, x, z)
+    step = 1 if faction == defs.FACTION_RED else -1
+    behind = None
+    for town in _chain(world, faction, lane):          # base end first
+        if step * (town["lane_i"] - i) >= 0:
+            break                                      # level with the death
+        behind = town
+    return behind
+
+
+def clear_near(world: World, x: float, z: float,
+               r0: float, r1: float) -> tuple[float, float]:
     """A free spot in the ring around (x, z); the point itself if none is."""
     for _ in range(16):
         ang = world.rng.random() * math.tau
@@ -145,7 +186,7 @@ def _base_waves(world: World, dt: float) -> None:
     for faction in (defs.FACTION_RED, defs.FACTION_BLUE):
         bx, bz = world.terrain.bases[faction]
         for lane in range(len(world.lanes)):
-            x, z = _clear_near(world, bx, bz, 70.0, 130.0)
+            x, z = clear_near(world, bx, bz, 70.0, 130.0)
             _send(world, defs.ETYPE_MECH, faction, lane, x, z)
 
 
@@ -153,18 +194,18 @@ def _town_waves(world: World, dt: float) -> None:
     """The front town of every lane raises the next column."""
     for faction in (defs.FACTION_RED, defs.FACTION_BLUE):
         for lane in range(len(world.lanes)):
-            town = _front_town(world, faction, lane)
+            town = front_town(world, faction, lane)
             if town is None:
                 continue
             town["inf_t"] -= dt
             town["apc_t"] -= dt
             if town["inf_t"] > 0.0 and town["apc_t"] > 0.0:
                 continue
-            x, z = _clear_near(world, town["x"], town["z"], 40.0, 70.0)
+            x, z = clear_near(world, town["x"], town["z"], 40.0, 70.0)
             if town["inf_t"] <= 0.0:
                 town["inf_t"] = INF_INTERVAL
                 for etype in INF_SQUAD:
-                    sx, sz = _clear_near(world, x, z, 5.0, 45.0)
+                    sx, sz = clear_near(world, x, z, 5.0, 45.0)
                     _send(world, etype, faction, lane, sx, sz)
             if town["apc_t"] <= 0.0:
                 town["apc_t"] = APC_INTERVAL

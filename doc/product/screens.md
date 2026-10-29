@@ -14,9 +14,7 @@
 | 键位表 | 两列：`W A S D` 移动、`MOUSE` 观瞄（车身/俯仰随后追上）、`WHEEL` 瞄具、`ALT + MOUSE` 自由观察、`LMB / RMB` 左右臂、`Q` 热烟幕、`B` 换装面板、`ENTER / ESC` 面板确认/取消、`ESC` 释放鼠标（释放后点右上角齿轮开设置） |
 | PILOT ID | 文本框，默认 `PILOT-<pid>`，最多 16 字符，自动全选 |
 | SIDE | 三个按钮 `RED` / `BLUE` / `AUTO`，选中的按钮填色（红/蓝/绿） |
-| LEFT ARM / RIGHT ARM | 下拉框，列出可购买武器：`名称  射程km` |
-| 武器说明 | 两行文本：`L 名称: AP x / AD y[/ ED z @ r m], 射程, 射速[, lock-on] - 描述` |
-| DEPLOY | 绿色主按钮；点击后进入游戏并请求指针锁定 |
+| DEPLOY | 绿色主按钮；点击后进入游戏并请求指针锁定（只生效一次，`ENTER` 不会再触发部署） |
 | 状态行 | 连接进度：`CONNECTING...` → `LOADING 16 KM MAP...` → `READY`；靶场服务器为 `LOADING RANGE...` |
 | 错误行 | 左下角红字：启动异常（`BOOT ERROR:`）、运行时错误（`ERROR:`）、未处理拒绝（`REJECT:`） |
 
@@ -320,8 +318,12 @@ ENEMY BASE   ▇▇▇▇░░░░░░
 ```
 MECH DESTROYED
 RE-DEPLOY IN 7.4s
-RESPAWN IS AT THE MOST ADVANCED OWNED TOWN OR THE BASE
+RESPAWN ONE TOWN BACK DOWN YOUR LANE, OR AT THE BASE
 ```
+
+第三行是重生规则的一句话说明（靶场服务器为 `RESPAWN ON THE RANGE FIRING LINE`，
+那里出生点固定）。倒计时按**阵亡地点**算：己方指挥部边上 40 s、敌方指挥部边上
+3 s，中间线性插值，见 [flow.md](flow.md#4-受伤死亡与重生)。
 
 相机切换为绕己方指挥部的缓慢环绕镜头，HUD 其余部分保留（可继续观察战况）。
 

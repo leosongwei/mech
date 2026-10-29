@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Callable
 
+from .. import defs
+
 if TYPE_CHECKING:
     from ..terrain import Terrain
     from ..world import Player, World
@@ -42,3 +44,7 @@ class Mode:
     def mech_spawn(self, world: World, player: Player) -> tuple[float, float, float] | None:
         """(x, z, yaw) for a (re)spawning player, or None for the default rule."""
         return None
+
+    def respawn_delay(self, world: World, player: Player, x: float, z: float) -> float:
+        """Seconds a pilot waits after a hull died at (x, z)."""
+        return defs.RESPAWN_TIME

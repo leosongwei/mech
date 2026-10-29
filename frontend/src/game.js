@@ -160,25 +160,8 @@ export class Game {
 
   // ------------------------------------------------------------- lobby
   _setupLobby(init) {
-    const defs = this.defs.weapons;
-    const list = init.buyable || [];
-    const fill = (sel, defWid) => {
-      sel.innerHTML = '';
-      for (const wid of list) {
-        const wd = defs[wid];
-        if (!wd) continue;
-        const opt = document.createElement('option');
-        opt.value = String(wid);
-        opt.textContent = `${wd.name}  ${(wd.range / 1000).toFixed(1)}km`;
-        if (wid === defWid) opt.selected = true;
-        sel.appendChild(opt);
-      }
-    };
-    this.armL = document.getElementById('armL');
-    this.armR = document.getElementById('armR');
-    fill(this.armL, init.loadout ? init.loadout[0] : 1);
-    fill(this.armR, init.loadout ? init.loadout[1] : 3);
-
+    // no loadout here: every mech leaves the lobby on the default pair and
+    // weapons are a rearm-panel purchase (`B`) like everything else
     this.nameEl = document.getElementById('pname');
     this.nameEl.value = `PILOT-${init.pid}`;
 
@@ -194,29 +177,19 @@ export class Game {
       // highlight the auto-assigned side but keep AUTO selectable
       this.nameEl.addEventListener('keydown', (e) => e.stopPropagation());
     }
-
-    const describe = () => {
-      const a = defs[parseInt(this.armL.value, 10)] || {};
-      const b = defs[parseInt(this.armR.value, 10)] || {};
-      const fmt = (w) => `${w.name}: AP ${w.ap} / AD ${w.ad}` +
-        `${w.ed ? ` / ED ${w.ed} @ ${w.er}m` : ''}, ${(w.range / 1000).toFixed(2)} km, ` +
-        `${w.rpm} rpm${w.lock ? ', lock-on' : ''} - ${w.desc}`;
-      document.getElementById('wdesc').innerHTML =
-        `L &nbsp;${fmt(a)}<br>R &nbsp;${fmt(b)}`;
-    };
-    this.armL.addEventListener('change', describe);
-    this.armR.addEventListener('change', describe);
-    describe();
   }
 
   start() {
-    if (!this.ready) return;
+    // once only: the DEPLOY button keeps DOM focus after the lobby fades out,
+    // and a later ENTER would fire its native click - a free respawn
+    if (!this.ready || this.started) return;
     this.started = true;
+    const btn = document.getElementById('startBtn');
+    if (btn && btn.blur) btn.blur();
     this.net.send({
       t: 'join',
       name: (this.nameEl && this.nameEl.value.trim()) || `PILOT-${this.init.pid}`,
       faction: this.factionChoice,
-      loadout: [parseInt(this.armL.value, 10), parseInt(this.armR.value, 10)],
     });
     this.input.enabled = true;
     this.audio.ensure();

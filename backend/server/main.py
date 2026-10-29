@@ -194,7 +194,7 @@ async def ws_endpoint(ws: WebSocket) -> None:
     try:
         init = dict(STATIC)
         init.update(t="init", pid=pl.pid, faction=int(pl.faction), loadout=pl.loadout,
-                    name=pl.name, respawn=defs.RESPAWN_TIME)
+                    name=pl.name)
         await ws.send_text(json.dumps(init, default=_json_safe))
         while True:
             raw = await ws.receive_text()
@@ -216,7 +216,9 @@ async def ws_endpoint(ws: WebSocket) -> None:
                     pl.smoke_q = True
                 pl.name = str(msg.get("name", pl.name))[:16]
             elif t == "join":
-                # lobby: callsign, side and initial weapon loadout
+                # lobby: callsign and side.  The machine always comes out on the
+                # default pair - a loadout is bought at the wrench, not picked
+                # in a menu - and a redeploy on this connection is the first one
                 fac = int(msg.get("faction", -1))
                 if fac in (defs.FACTION_RED, defs.FACTION_BLUE):
                     pl.faction = fac
@@ -225,17 +227,12 @@ async def ws_endpoint(ws: WebSocket) -> None:
                 name = str(msg.get("name", pl.name)).strip()
                 if name:
                     pl.name = name[:16]
-                lo = msg.get("loadout")
-                if isinstance(lo, list) and len(lo) == 2:
-                    clean = []
-                    for arm in range(2):
-                        wid = int(lo[arm])
-                        clean.append(wid if wid in defs.BUYABLE else defs.WID_AC30)
-                    pl.loadout = clean
+                pl.loadout = list(defs.DEFAULT_LOADOUT)
                 if pl.mech >= 0 and world.ecs.alive[pl.mech]:
                     world.ecs.destroy(pl.mech)
                 pl.mech = -1
                 pl.respawn = 0.0
+                pl.death_pos = None
                 world.spawn_mech(pl)
                 client.offer("t", json.dumps(dict(t="joined", pid=pl.pid, faction=int(pl.faction),
                                                   name=pl.name, loadout=pl.loadout),

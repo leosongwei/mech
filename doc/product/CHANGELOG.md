@@ -11,6 +11,42 @@
 
 ---
 
+## 2026-10-29 · 重生后排一座城、重生等待按距离、没有大厅装备、争夺中的城不出兵
+
+- **重生点改为"身后一座城"**：阵亡后不再出生在己方最靠前的城镇，而是按**被击杀的
+  位置**判断自己在那条兵线的哪一段，**沿同一条兵线朝己方基地退一座**出生
+  （`红基地 - 红1 - 红2 - 红3` 里死在红3 → 红2，死在红2 → 红1，死在红1 → 基地）。
+  只认**与指挥部连通**的城：`红基地 - 红1 - 红2 - 红3 - 蓝(截断) - 红4 - 红5` 下
+  死在红4 / 红5 都回到红3。**不跳兵线**。身后没有可用的城就回基地 70–130 m 环。
+- **首次部署仍在前线**：刚进游戏的第一次出生不改——出生在离敌方指挥部最近的、与
+  己方连通的非争夺城镇（该城已在敌方基地 900 m 内时回基地环），出生朝向敌方基地。
+- **重生等待按阵亡地点插值**：己方指挥部旁 **40 s**、敌方指挥部旁 **3 s**，中间线性
+  插值（半程约 21 s）。原来是固定 8 s。靶场模式仍是固定 8 s。
+- **大厅不再选装备**：`LEFT ARM` / `RIGHT ARM` 下拉框与武器说明行已删除，机甲
+  **一律以默认装备出生**（左臂 30mm 机炮 + 右臂无制导火箭巢，`defs.DEFAULT_LOADOUT`），
+  服务器忽略客户端在 `join` 里带的 `loadout`。换装只有基地/城镇的 `B` 面板一条路。
+- **修复：进入游戏后按 `ENTER` 会重新出生**。`DEPLOY` 按钮在部署后仍持有 DOM 焦点，
+  再按 `ENTER` 触发它的原生点击 → 又发一次 `join` → 满血满弹地原地重生一次。现在
+  `start()` 只生效一次，并在部署时让按钮交还焦点。
+- **争夺中的城镇不出兵**：城镇 `170 m` 占领圈里站着非持有一方的战斗单位时，这座城
+  在刷兵规则里暂时失效，兵从它**身后那座城**出（`红基地 - 红1 - 红2 - 红3(争夺) -
+  蓝1` → 从红2 出）；身后的也在打就继续后退，退到没有城就这条线这一波不出人（指挥部
+  机甲不受影响）。所以一次贴脸冲锋就能掐掉对方一条兵线的兵源，不必真把城打下来。
+  城镇数据多一个 `contested` 标志，由 `waves._capture` 每 tick 重算。
+- 涉及文件：`backend/server/defs.py`（`DEFAULT_LOADOUT`、`RESPAWN_AT_FRONT` /
+  `RESPAWN_AT_HOME`）、`backend/server/world.py`（`Player.death_pos`、
+  `base_spawn`、`kill` 里按模式取重生延迟）、`backend/server/modes/base.py`
+  （`respawn_delay`）、`backend/server/modes/battle/__init__.py`（`mech_spawn` /
+  `respawn_delay` / `_lead_town`）、`backend/server/modes/battle/waves.py`
+  （`_chain` / `front_town` / `respawn_town` / `contested`）、
+  `backend/server/main.py`（`join` 不再接受 `loadout`，init 不再带 `respawn`）、
+  `frontend/src/index.html`、`frontend/src/game.js`（大厅、`start()` 只生效一次）、
+  `frontend/src/hud.js`（死亡界面提示行）。`tools/fixtures/replay_battle.json`
+  已按新规则重新基线。
+- 文档：`flow.md`（2 大厅、4 死亡与重生加规则表、6 占领、7 增援）、
+  `screens.md`（大厅表格、死亡界面）、`units.md`（出生与重生、AI 增援）、
+  `range.md`（差异一览）、`README.md`（术语·城镇）。
+
 ## 2026-10-29 · 新武器：105mm 滑膛炮（10 发、5 s 装填、一发拆车）
 
 - **换装面板多第 6 件武器 `105mm SMOOTHBORE`**：本体 **$800**、弹药 **$60/发**，

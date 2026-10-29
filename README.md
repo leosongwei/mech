@@ -148,3 +148,7 @@ and the enemy command base (6500 HP) as the win condition.
   (`multiDrawArraysInstancedWEBGL`), with a per-command instanced fallback when
   the extension is missing.
 * Logarithmic depth in every shader keeps a 1 m … 32 km view stable.
+
+## License
+
+GNU General Public License v3.0 — see [LICENSE](LICENSE).

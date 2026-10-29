@@ -55,6 +55,8 @@ WID_RPG = 7
 # kind: bullet (ballistic), rocket (unguided thrust), saclos (beam riding),
 #       top (infrared lock-on, top attack)
 # cal: bore in mm, only used to size the tracer the browser draws
+# gatling: a rotary gun, client-only: the arm's model draws six barrels round
+#          the bore and turns them while the arm is firing
 # ap / ad: Armour Piercing power and the Armour-piercing Damage it delivers
 #          behind the plate, both measured against a target's `dp`
 # ed / er: Explosive Damage at the centre of the blast and the radius (m) it
@@ -88,10 +90,13 @@ WEAPONS = [
     # one belt of 1500, no reload: the gun runs dry and that is it.  1800 rpm is
     # exactly one round per tick, the fastest the 30 Hz clock can fire - twice
     # the cadence of the old 680 rpm (which quantised to one round every 3 ticks)
+    # it is a rotary gun (`gatling`, a client-only flag): six barrels on a ring,
+    # so the client draws it turning while this arm is firing and puts the
+    # muzzle flash on whichever barrel has come up to the top of the ring
     dict(wid=WID_MG127, key="mg127", name="12.7mm MACHINE GUN", kind="bullet", ap=8, ad=10, ed=0, er=0,
          rpm=1800, mag=1500, reserve=0, reload=0.0, vel=890, spread=0.00225, bias=0.0, g=9.81,
          thrust=0, maxvel=0, life=11.2, range=1800, cost=180, ammo_cost=0.1, lock=0, lock_time=0,
-         salvo=0, semi=0, color=(1.0, 0.68, 0.20), cal=12.7,
+         salvo=0, semi=0, color=(1.0, 0.68, 0.20), cal=12.7, gatling=True,
          desc="1.8 km suppressive fire"),
     # S-8 class: a launch charge throws the 80 mm rocket out at ~55 m/s, the
     # motor burns for a second and it leaves at 610 m/s.  A small shaped charge
@@ -364,6 +369,24 @@ MECH_ARM_REACH = {
     "top": 1.95,
     "none": 1.80,
 }
+# The rocket pod is a lattice of tubes, one round each - five across and eight
+# high, the same grid the client draws (`scene.js armModel`).  A round leaves
+# its own tube, and which tube that is follows from how much of the pod is
+# left: the bottom row goes first, left to right, so a pod with 32 rockets has
+# its lowest eight tubes empty.  The offset is in the arm's own frame: right
+# and up off the bore line.
+POD_COLS = 5
+POD_ROWS = 8
+POD_PITCH = 0.155         # m between tube centres
+
+
+def pod_tube(fired: int) -> tuple[float, float]:
+    """(right, up) of the tube the `fired`-th rocket of a pod leaves from."""
+    i = int(fired) % (POD_COLS * POD_ROWS)
+    col, row = i % POD_COLS, i // POD_COLS
+    return ((col - (POD_COLS - 1) / 2.0) * POD_PITCH,
+            (row - (POD_ROWS - 1) / 2.0) * POD_PITCH)
+
 
 # ------------------------------------------------------------------ smoke
 # hot smoke countermeasure: a short fan of canisters thrown out of the hull,

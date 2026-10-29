@@ -46,6 +46,26 @@ function at(R, shape, e, yaw, pitch, ox, oy, oz, sx, sy, sz, col, alpha) {
 
 const FORWARD = -Math.PI / 2;   // rotates a Y-axis primitive onto +X
 
+// The 12.7 mm gun (`defs.WEAPONS[...]["gatling"]`) is a rotary one: six barrels
+// on a ring round the bore, each half the 30 mm's bore and 60 % of its length,
+// and the barrel that has turned up to the top of the ring is the one firing.
+// The gun runs at 1800 rpm, which at 30 Hz is half a turn per frame - straight
+// through the ring's own 60 degree symmetry, so it would strobe instead of
+// turning.  The model therefore turns slower than the gun feeds; it only has to
+// read as turning.
+const GAT_RING = 0.17;          // m, radius of the circle the six tubes sit on
+const GAT_LEN = 1.92;           // m, 60 % of the 30 mm's 3.2 m barrel
+const GAT_BORE = 0.085;         // m, half the 30 mm's 0.17 m
+const GAT_MUZZLE = 0.90 + GAT_LEN;
+const GAT_COLLAR = 0.40;        // m the bearing ring sits behind the muzzles
+// the bearing ring, as a diameter like every primitive scale here: the tubes'
+// own circle is 2 * (GAT_RING + GAT_BORE / 2) = 0.425 across, and the ring
+// carries a lip past it so the barrels are visibly enclosed
+const GAT_HOOP = 0.56;
+const GAT_SPIN = 12;            // rad/s of the drawn cluster
+const GAT_COAST = 0.25;         // s it keeps turning after the last flash
+const SPIN = new Map();         // "eid:arm" -> { a, t, fire }: the draw is stateless
+
 export function drawUnits(R, entities, projectiles, defs, flashes, ownId) {
   R.beginDynamic();
   for (const e of entities.values()) {
@@ -263,6 +283,8 @@ function armModel(R, e, arm, wdefs, flashes, shoulderY, lateral) {
   const wid = e.weapon ? e.weapon[arm] : 0;
   const wd = wdefs[wid] || {};
   const kind = wd.kind || 'none';
+  const fl = flashes && flashes.get(e.id);
+  const flashing = !!(alive && fl && fl.arm === arm);
   const lat = side * lateral;
   const put = (shape, meshPitch, dist, sx, sy, sz, colour, dlat = 0, dy = 0) =>
     at(R, shape, e, yaw, meshPitch, lat + dlat,
@@ -273,7 +295,36 @@ function armModel(R, e, arm, wdefs, flashes, shoulderY, lateral) {
   // is a long box of its own and would only be swallowed by it.
   if (kind !== 'rocket') put('box', p, 0.25, 1.65, 0.70, 0.62, col);
   put('sphere', 0, 0, 0.66, 0.66, 0.66, alive ? METAL_L : DEAD);
-  if (kind === 'bullet') {
+  if (kind === 'bullet' && wd.gatling) {
+    // The 12.7 mm is a rotary gun: six barrels on a ring round the bore, each
+    // half the 30 mm's bore and 60 % of its length, turning while it feeds.
+    // The angle lives here because the draw is stateless, and it is wound up
+    // by the same `flashes` entry that lights the muzzle - the one bit of
+    // "this arm is firing right now" the server already sends.  That entry
+    // blinks at the meta rate, so the cluster coasts a moment after the last
+    // round instead of stopping dead between two of them.
+    const key = `${e.id}:${arm}`;
+    const now = performance.now() / 1000;
+    let sp = SPIN.get(key);
+    if (!sp) SPIN.set(key, (sp = { a: 0, t: now, fire: -1 }));
+    if (flashing) sp.fire = now;
+    if (alive && now - sp.fire < GAT_COAST) {
+      sp.a = (sp.a + GAT_SPIN * Math.min(0.1, now - sp.t)) % (Math.PI * 2);
+    }
+    sp.t = now;
+    if (SPIN.size > 256) SPIN.clear();
+    for (let i = 0; i < 6; i++) {
+      const th = sp.a + i * (Math.PI / 3);
+      put('cyl', FORWARD + p, 0.90 + GAT_LEN * 0.5, GAT_BORE, GAT_LEN, GAT_BORE,
+        [0.12, 0.13, 0.14], GAT_RING * Math.sin(th), GAT_RING * Math.cos(th));
+    }
+    // the axle they turn on, a housing plate at the back and the bearing ring
+    // near the muzzle that the barrels pass through - the ring is what reads
+    // the cluster as a rotary gun rather than a bundle of tubes
+    put('cyl', FORWARD + p, 0.90 + GAT_LEN * 0.45, 0.05, GAT_LEN * 0.9, 0.05, METAL_D);
+    put('cyl', FORWARD + p, 0.90 + 0.10, GAT_HOOP, 0.10, GAT_HOOP, [0.1, 0.1, 0.11]);
+    put('cyl', FORWARD + p, GAT_MUZZLE - GAT_COLLAR, GAT_HOOP, 0.16, GAT_HOOP, METAL_D);
+  } else if (kind === 'bullet') {
     const len = 3.2;
     put('cyl', FORWARD + p, 0.90 + len * 0.5, 0.17, len, 0.17, [0.12, 0.13, 0.14]);
     put('cyl', FORWARD + p, 0.90 + len + 0.18, 0.28, 0.42, 0.28, [0.1, 0.1, 0.11]);
@@ -297,11 +348,26 @@ function armModel(R, e, arm, wdefs, flashes, shoulderY, lateral) {
   } else {
     put('cyl', FORWARD + p, 1.35, 0.18, 0.90, 0.18, [0.12, 0.12, 0.13]);
   }
-  const fl = flashes && flashes.get(e.id);
   if (alive && fl && fl.arm === arm) {
-    const tip = kind === 'bullet' ? 4.35 : kind === 'rocket' ? 1.80 : 2.15;
-    put('sphere', p, tip, 0.75, 0.75, 0.75, [1.0, 0.72, 0.22]);
-    put('cone', FORWARD + p, tip + 0.85, 0.58, 1.4, 0.58, [1.0, 0.88, 0.45]);
+    // the gatling's flash comes out of the barrel that has just turned up to
+    // the top of the ring, not out of the middle of the cluster
+    const gat = kind === 'bullet' && wd.gatling;
+    // a rocket leaves its own tube of the nest, and which one that is follows
+    // from what is left in the pod - the server solves the launch point off
+    // the same lattice (`defs.pod_tube`).  The snapshot's magazine is the
+    // post-shot count, hence the +1.
+    const pod = kind === 'rocket';
+    const i = pod
+      ? ((((wd.mag || 40) - (((e.mag && e.mag[arm]) || 0) + 1)) % 40) + 40) % 40
+      : 0;
+    const right = pod ? ((i % 5) - 2) * 0.155 : 0;
+    const up = gat ? GAT_RING : pod ? (Math.floor(i / 5) - 3.5) * 0.155 : 0;
+    const tip = gat ? GAT_MUZZLE - 0.10
+      : kind === 'bullet' ? 4.35 : pod ? 1.80 : 2.15;
+    const s = gat ? 0.42 : 0.75;
+    put('sphere', p, tip, s, s, s, [1.0, 0.72, 0.22], right, up);
+    put('cone', FORWARD + p, tip + (gat ? 0.55 : 0.85), s * 0.77,
+      gat ? 0.9 : 1.4, s * 0.77, [1.0, 0.88, 0.45], right, up);
   }
 }
 

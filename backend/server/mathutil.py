@@ -58,12 +58,18 @@ def turn_toward_arr(cur: np.ndarray, target: np.ndarray,
 
 def muzzle_point(pos: np.ndarray, yaw: float, module: int,
                  arm_pitch: float = 0.0,
-                 reach: float | None = None) -> tuple[float, float, float]:
+                 reach: float | None = None,
+                 right: float = 0.0, up: float = 0.0) -> tuple[float, float, float]:
     """World position of the barrel tip of the given mech arm.
 
     The tip sits `reach` metres out along the barrel (default: the arm's front
     face), and the barrel swings with `arm_pitch`, exactly like the client
     builds the models - so the round leaves the mouth it was drawn on.
+
+    `right` and `up` move the mouth off the arm's centre line in the arm's own
+    frame: a rocket pod is a lattice of tubes and each round leaves its own,
+    so the offset is taken along the *pitched* arm (up turns with the bore)
+    exactly as the client places its tubes.
     """
     off = defs.MECH_ARM_MUZZLE.get(module, (0.0, 4.3, 0.9))
     rx, ry, rz = off
@@ -72,9 +78,12 @@ def muzzle_point(pos: np.ndarray, yaw: float, module: int,
     # local +z forward, +x right  -> world
     fx, fz = c, s
     rxw, rzw = -s, c
-    return (pos[0] + rxw * rx + fx * fwd * math.cos(arm_pitch),
-            pos[1] + ry + fwd * math.sin(arm_pitch),
-            pos[2] + rzw * rx + fz * fwd * math.cos(arm_pitch))
+    cp, sp = math.cos(arm_pitch), math.sin(arm_pitch)
+    out = fwd * cp - up * sp            # how far out along the ground track
+    high = fwd * sp + up * cp           # how far up the bore line has climbed
+    return (pos[0] + rxw * (rx + right) + fx * out,
+            pos[1] + ry + high,
+            pos[2] + rzw * (rx + right) + fz * out)
 
 
 def unit_spheres(etype: int, pos: np.ndarray,

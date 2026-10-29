@@ -161,10 +161,17 @@ def fire(world: World, eid: int, arm: int, wid: int, wd: dict, target: int = -1)
     pos = e["pos"]
     etype = int(e["etype"][eid])
     origin, yaw, pitch = aim_of(world, eid)
+    right = up = 0.0
     if etype == defs.ETYPE_MECH:
         reach = defs.MECH_ARM_REACH.get(wd["kind"], 1.8)
+        if wd["kind"] == "rocket":
+            # a pod is one tube per round: the rocket leaves the tube its slot
+            # in the magazine belongs to, so a half-empty pod fires out of its
+            # upper rows.  `mag` is still the pre-shot count here - the loop
+            # takes the round off the top of this call.
+            right, up = defs.pod_tube(int(wd["mag"]) - int(e["mag"][eid][arm]))
         origin = mu.muzzle_point(pos[eid], yaw, defs.MOD_LEFT if arm == 0 else defs.MOD_RIGHT,
-                                 pitch, reach)
+                                 pitch, reach, right, up)
 
     kind = KIND_ID.get(wd["kind"], 0)
     n = max(1, int(wd["salvo"]))

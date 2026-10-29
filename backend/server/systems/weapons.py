@@ -188,7 +188,9 @@ def fire(world: World, eid: int, arm: int, wid: int, wd: dict, target: int = -1)
     yaw, pitch = bore_of(world, eid)
     right = up = 0.0
     if etype == defs.ETYPE_MECH:
-        reach = defs.MECH_ARM_REACH.get(wd["kind"], 1.8)
+        # a weapon longer than its kind's figure says so itself (the 105 mm's
+        # barrel runs 5 m past its receiver)
+        reach = float(wd.get("reach", defs.MECH_ARM_REACH.get(wd["kind"], 1.8)))
         if wd["kind"] == "rocket":
             # a pod is one tube per round: the rocket leaves the tube its slot
             # in the magazine belongs to, so a half-empty pod fires out of its

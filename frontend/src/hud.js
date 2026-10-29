@@ -846,7 +846,6 @@ export class HUD {
       'LMB / RMB    LEFT / RIGHT ARM',
       'Q            HOT SMOKE (breaks incoming missiles)',
       'B            REARM / REPAIR PANEL (at base or own town)',
-      '1-5 / SHIFT  QUICK-FIT AN ARM, OR PICK IN THE PANEL',
       'ENTER / ESC  CONFIRM / CANCEL THE PANEL',
       'ESC          RELEASE MOUSE',
     ];

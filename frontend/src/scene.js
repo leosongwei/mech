@@ -91,6 +91,25 @@ const GAT_SPIN = 12;            // rad/s of the drawn cluster
 const GAT_COAST = 0.25;         // s it keeps turning after the last flash
 const SPIN = new Map();         // "eid:arm" -> { a, t, fire }: the draw is stateless
 
+// The 105 mm smoothbore (`defs.WEAPONS[...]["heavy"]`) is literally the 30 mm's
+// arm - the same box in the same place, the same tube out of its front - with
+// the box doubled in every direction: 2.40 m long along the barrel, 1.40 m
+// high and 0.80 m wide where the 30 mm's is 1.65 x 0.70 x 0.62.  That box is
+// the magazine, autoloader and breech in one, and it is big enough to be the
+// whole arm, so the shoulder ball is left out there.  Note the primitive's
+// scale order: X is forward, so the box is (length, height, width).  The bore
+// runs `GUN105_LEN` = 5 m out of the box's front face and ends at
+// `GUN105_FACE + GUN105_LEN` = 6.45 m, the same number the weapon carries as
+// its `reach`, so a round leaves the mouth of the barrel it was drawn on.
+const GUN105_BOX = 0.25;        // m, centre of the box along the arm (as the 30 mm)
+const GUN105_L = 2.40;          // m long, along the barrel
+const GUN105_H = 1.40;          // m tall
+const GUN105_W = 0.80;          // m across
+const GUN105_FACE = GUN105_BOX + GUN105_L * 0.5;   // 1.45 m: the box's front face
+const GUN105_BORE = 0.26;       // m of drawn barrel radius (a 105 mm bore)
+const GUN105_LEN = 5.0;         // m of barrel exposed past the box
+const GUN105_MUZZLE = GUN105_FACE + GUN105_LEN;    // 6.45 m: where it ends
+
 export function drawUnits(R, entities, projectiles, defs, flashes, ownId) {
   R.beginDynamic();
   for (const e of entities.values()) {
@@ -330,9 +349,18 @@ function armModel(R, e, arm, wdefs, flashes, shoulderY, lateral) {
       dist * Math.cos(p) - dy * Math.sin(p), sx, sy, sz, colour);
 
   // A plain station body for everything that is not a rocket nest: the nest
-  // is a long box of its own and would only be swallowed by it.
-  if (kind !== 'rocket') put('box', p, 0.25, 1.65, 0.70, 0.62, col);
-  put('sphere', 0, 0, 0.66, 0.66, 0.66, alive ? METAL_L : DEAD);
+  // is a long box of its own and would only be swallowed by it.  Every arm's
+  // box is the same idea - the 105 mm's is simply longer, narrower and taller,
+  // and on it the box is the whole magazine/autoloader/breech assembly.
+  const heavy = kind === 'bullet' && wd.heavy;
+  if (kind !== 'rocket') {
+    // the same box for every arm, only the 105 mm's is bigger - and it is big
+    // enough to fill the arm on its own, so the shoulder ball is left out
+    // there (a 0.66 m ball out of a 0.40 m box would be a ball, not a breech)
+    put('box', p, heavy ? GUN105_BOX : 0.25,
+      heavy ? GUN105_L : 1.65, heavy ? GUN105_H : 0.70, heavy ? GUN105_W : 0.62, col);
+  }
+  if (!heavy) put('sphere', 0, 0, 0.66, 0.66, 0.66, alive ? METAL_L : DEAD);
   if (kind === 'bullet' && wd.gatling) {
     // The 12.7 mm is a rotary gun: six barrels on a ring round the bore, each
     // half the 30 mm's bore and 60 % of its length, turning while it feeds.
@@ -362,6 +390,16 @@ function armModel(R, e, arm, wdefs, flashes, shoulderY, lateral) {
     put('cyl', FORWARD + p, 0.90 + GAT_LEN * 0.45, 0.05, GAT_LEN * 0.9, 0.05, METAL_D);
     put('cyl', FORWARD + p, 0.90 + 0.10, GAT_HOOP, 0.10, GAT_HOOP, [0.1, 0.1, 0.11]);
     put('cyl', FORWARD + p, GAT_MUZZLE - GAT_COLLAR, GAT_HOOP, 0.16, GAT_HOOP, METAL_D);
+  } else if (heavy) {
+    // 5 m of barrel out of the box, the 30 mm's tube scaled up: a heavy
+    // smoothbore with a thermal sleeve over the middle of it and a muzzle
+    // collar at the end (the round leaves at `GUN105_MUZZLE`).
+    put('cyl', FORWARD + p, GUN105_FACE + GUN105_LEN * 0.5, GUN105_BORE, GUN105_LEN,
+      GUN105_BORE, [0.12, 0.13, 0.14]);
+    put('cyl', FORWARD + p, GUN105_FACE + GUN105_LEN * 0.38, GUN105_BORE * 1.25,
+      GUN105_LEN * 0.62, GUN105_BORE * 1.25, METAL_D);
+    put('cyl', FORWARD + p, GUN105_MUZZLE - 0.11, GUN105_BORE * 1.3, 0.22,
+      GUN105_BORE * 1.3, [0.1, 0.1, 0.11]);
   } else if (kind === 'bullet') {
     const len = 3.2;
     put('cyl', FORWARD + p, 0.90 + len * 0.5, 0.17, len, 0.17, [0.12, 0.13, 0.14]);
@@ -401,8 +439,9 @@ function armModel(R, e, arm, wdefs, flashes, shoulderY, lateral) {
     const right = pod ? ((i % 5) - 2) * 0.155 : 0;
     const up = gat ? GAT_RING : pod ? (Math.floor(i / 5) - 3.5) * 0.155 : 0;
     const tip = gat ? GAT_MUZZLE - 0.10
-      : kind === 'bullet' ? 4.35 : pod ? 1.80 : 2.15;
-    const s = gat ? 0.42 : 0.75;
+      : heavy ? GUN105_MUZZLE - 0.15
+        : kind === 'bullet' ? 4.35 : pod ? 1.80 : 2.15;
+    const s = gat ? 0.42 : heavy ? 1.0 : 0.75;
     put('sphere', p, tip, s, s, s, [1.0, 0.72, 0.22], right, up);
     put('cone', FORWARD + p, tip + (gat ? 0.55 : 0.85), s * 0.77,
       gat ? 0.9 : 1.4, s * 0.77, [1.0, 0.88, 0.45], right, up);

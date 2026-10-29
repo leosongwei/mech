@@ -61,6 +61,12 @@ export const SOUND_FLOOR = 0.02;       // arriving level below this is not heard
 // heard.
 export const SOUND_LEVEL = { shot: 0.6, boom: 0.7, big: 0.8, blast: 1.0 };
 
+// The 105 mm's report is four times the gains a gun cue spends (see `shot`):
+// it is the loudest weapon on the field short of a hull going up, and the
+// master bus is limited, not clamped, so a cue is scaled up rather than
+// clamped flat.
+const HEAVY_GAIN = 1.36;
+
 export function attenuation(dist) {
   return Math.pow(SOUND_REF_DIST / Math.max(SOUND_REF_DIST, dist), SOUND_ROLLOFF);
 }
@@ -285,10 +291,20 @@ export class GameAudio {
   // wavefront reached them: between them they set the level, the air's lowpass
   // and the reverb send.  `pan` / `behind` place it: left-right, and how much
   // of it was at the pilot's back (see `_bus`).
-  shot(wid, kind, vol = 1, dist = 0, pan = 0, behind = 0) {
+  shot(wid, kind, vol = 1, dist = 0, pan = 0, behind = 0, heavy = false) {
     this.ensure();
     if (!this.ctx) return;
-    if (kind === 'bullet') {
+    if (heavy) {
+      // a 105 mm gun is not a louder autocannon round, it is a different
+      // event: a hard crack on top of a long low boom, and the whole report
+      // three times as long as the 30 mm's.  One round per five seconds, so it
+      // never has to stack up the way a burst does - and it is meant to be the
+      // loudest thing on the field short of a hull going up, so its gains sit
+      // four times where a gun's would (the master bus is limited, not clamped).
+      this._noiseBurst(0.34, 900 + Math.random() * 350, 1.0, HEAVY_GAIN * vol, 'bandpass', 180,
+                       dist, null, pan, behind);
+      this._thump(68, 0.34, HEAVY_GAIN * vol, dist, pan, behind);
+    } else if (kind === 'bullet') {
       this._noiseBurst(0.11, 1400 + Math.random() * 500, 1.2, 0.28 * vol, 'bandpass', 400,
                        dist, null, pan, behind);
       this._thump(120, 0.09, 0.25 * vol, dist, pan, behind);

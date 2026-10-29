@@ -105,11 +105,6 @@ export class Input {
       }
     }
     if (down && code === 'KeyB' && this.onShop) { this.onShop(); e.preventDefault(); return; }
-    if (down && this.onBuy && /^Digit[1-6]$/.test(code)) {
-      this.onBuy(parseInt(code.slice(5), 10) - 1, e.shiftKey);
-      e.preventDefault();
-      return;
-    }
     if (down && code === 'KeyH' && this.onToggleHelp) this.onToggleHelp();
     // one-shot keys: the browser repeats keydown while a key is held, so the
     // pull is latched and the sender clears it

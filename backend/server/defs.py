@@ -51,12 +51,21 @@ WID_SACLOS = 4
 WID_TOPATTACK = 5
 WID_RIFLE556 = 6
 WID_RPG = 7
+WID_G105 = 8
 
 # kind: bullet (ballistic), rocket (unguided thrust), saclos (beam riding),
 #       top (infrared lock-on, top attack)
 # cal: bore in mm, only used to size the tracer the browser draws
 # gatling: a rotary gun, client-only: the arm's model draws six barrels round
 #          the bore and turns them while the arm is firing
+# heavy:   a single big barrel on a boxed receiver, client-only: the 105 mm is
+#          modelled to its own numbers (scene.js `GUN105_*`) instead of the
+#          30 mm's slim tube
+# reach:   metres from the shoulder that the bore ends at, when the weapon is
+#          longer than its kind's figure in MECH_ARM_REACH (the 105 mm's box
+#          ends at 0.90 m and its barrel runs 5 m out from there).  Both
+#          `weapons.fire` and the client's muzzle read it, so a round leaves
+#          the mouth it was drawn on.
 # ap / ad: Armour Piercing power and the Armour-piercing Damage it delivers
 #          behind the plate, both measured against a target's `dp`
 # ed / er: Explosive Damage at the centre of the blast and the radius (m) it
@@ -132,6 +141,22 @@ WEAPONS = [
          rpm=25, mag=1, reserve=900, reload=6.5, vel=50, spread=0.008, bias=0.0, g=9.81, thrust=380,
          maxvel=300, life=33.3, range=500, cost=-1, ammo_cost=8.0, lock=0, lock_time=0, salvo=0,
          semi=0, color=(1.0, 0.5, 0.2), cal=85, desc="500 m anti-tank rocket"),
+    # 105 mm smoothbore: a tank gun hung on a mech arm, not an autocannon.  One
+    # round in the breech, five seconds of autoloader between shots, ten rounds
+    # in the rack - so the whole arm is ten trigger pulls a battle, and the
+    # magazine is 1 on purpose (`mag` 1 / `reserve` 9 is what makes the reload
+    # the cycle: a shot, then the countdown, then another).  1600 m/s of
+    # APFSDS: 30 m of drop at 4 km is the fire control's problem, not the
+    # pilot's, and 0.3 mrad of spread is a coin across 3 km.  AD 200 is past
+    # every hull pool in the game and AP 120 past the base's 80 of plate, so it
+    # is the one gun that takes a mech, an APC or a chunk of the enemy base
+    # apart with a single round - which is what a $800 barrel and $600 of
+    # ammunition buys.
+    dict(wid=WID_G105, key="g105", name="105mm SMOOTHBORE", kind="bullet", ap=120, ad=200, ed=15, er=3.0,
+         rpm=12, mag=1, reserve=9, reload=5.0, vel=1600, spread=0.0003, bias=0.0, g=9.81,
+         thrust=0, maxvel=0, life=6.3, range=4000, cost=800, ammo_cost=60.0, lock=0, lock_time=0,
+         salvo=0, semi=0, color=(1.0, 0.90, 0.55), cal=105, heavy=True, reach=6.45,
+         desc="APFSDS, 5 s autoloader"),
 ]
 
 
@@ -185,7 +210,7 @@ DEATH_BLAST_ETYPES = (ETYPE_APC, ETYPE_MECH)
 
 
 # weapons a player may buy, in hotbar order
-BUYABLE = [WID_AC30, WID_MG127, WID_ROCKET, WID_SACLOS, WID_TOPATTACK]
+BUYABLE = [WID_AC30, WID_MG127, WID_ROCKET, WID_SACLOS, WID_TOPATTACK, WID_G105]
 
 # ------------------------------------------------------------------- shop
 # A weapon is bought as "hardware + a full load of ammunition": the hardware

@@ -31,6 +31,10 @@ const SHAKE_BOOM_BIG = 0.225;       // near blast, big round (a quarter of the o
 const SHAKE_BOOM_SMALL = 0.0875;    // near blast, shell hit
 const SHAKE_LAUNCH = 0.5;           // own missile leaving the tube
 const SHAKE_GUN = 0.12;             // own cannon round, "slight" (a burst adds up)
+const SHAKE_HEAVY = 2.1;            // own 105 mm round: five times a gun's kick -
+                                    // it is fired once every 5 s, so it can be huge
+const SHAKE_MAX = 2.4;              // ceiling on the accumulator, set so a 105 mm
+                                    // round is felt in full instead of being cut off
 
 export class Game {
   constructor() {
@@ -112,15 +116,13 @@ export class Game {
         }
       };
       this.input.onBuy = (idx, right) => {
+        // buying goes through the panel: the digits only move the draft, and
+        // CONFIRM is what spends the money (a number pressed with the panel
+        // shut does nothing - a quick-fit key would be a purchase nobody asked
+        // for)
+        if (!this.shopOpen) return;
         const wid = this.buyable[idx];
-        if (this.shopOpen) {
-          // the panel only drafts: CONFIRM is what spends the money
-          if (wid !== undefined) this.shopDraft.arms[right ? 1 : 0] = wid;
-          return;
-        }
-        if (wid !== undefined) this.net.send({ t: 'buy', arm: right ? 1 : 0, weapon: wid });
-        // one past the last weapon is the smoke rack refill
-        else if (idx === this.buyable.length) this.net.send({ t: 'buy_smoke' });
+        if (wid !== undefined) this.shopDraft.arms[right ? 1 : 0] = wid;
       };
       this.input.onShop = () => this._shopToggle();
       this.input.onShopConfirm = () => this._shopConfirm();
@@ -323,15 +325,20 @@ export class Game {
           : this.audio.boom(vol, ev.big, dist, pan, behind)));
       } else if (ev.k === 'shot') {
         if (ev.eid !== undefined) this.flashes.set(ev.eid, { t: 0.07, arm: ev.arm });
-        const kind = (this.defs.weapons[ev.wid] || {}).kind || 'bullet';
+        const wd = this.defs.weapons[ev.wid] || {};
+        const kind = wd.kind || 'bullet';
         // the hull kicks with its own guns: a missile leaves the tube with a
-        // shove, a cannon just rocks the machine
+        // shove, a 105 mm round shoves it almost as hard (and is fired five
+        // seconds apart, so it never stacks into a buzz), a cannon just rocks
+        // the machine
         if (own && ev.eid === own.id) {
           const guided = kind === 'rocket' || kind === 'saclos' || kind === 'top';
-          this.shake = Math.min(1.2, this.shake + (guided ? SHAKE_LAUNCH : SHAKE_GUN));
+          this.shake = Math.min(guided ? 1.2 : SHAKE_MAX, this.shake
+            + (guided ? SHAKE_LAUNCH : wd.heavy ? SHAKE_HEAVY : SHAKE_GUN));
         }
         this._sound(ev.x, ev.y, ev.z, SOUND_LEVEL.shot,
-          (vol, dist, pan, behind) => this.audio.shot(ev.wid, kind, vol, dist, pan, behind));
+          (vol, dist, pan, behind) =>
+            this.audio.shot(ev.wid, kind, vol, dist, pan, behind, !!wd.heavy));
       } else if (ev.k === 'kill') {
         if (ev.pid === this.init.pid) {
           this._message(`+$${ev.reward} KILL`, '#a9f0c0');
@@ -647,7 +654,10 @@ export class Game {
     // arm, exactly like the server's `muzzle_point`
     const wd = (this.defs.weapons && this.defs.weapons[own.weapon ? own.weapon[arm] : 0]) || {};
     const reachTbl = this.defs.mech.reach || {};
-    const reach = reachTbl[wd.kind] === undefined ? off[2] : reachTbl[wd.kind];
+    // a weapon longer than its kind's figure carries its own (`wd.reach`, the
+    // 105 mm's 6.3 m bore - the server solves the launch point the same way)
+    const reach = wd.reach !== undefined ? wd.reach
+      : reachTbl[wd.kind] === undefined ? off[2] : reachTbl[wd.kind];
     const pitch = own.pitch;
     const yaw = own.yaw;
     const c = Math.cos(yaw), s = Math.sin(yaw);

@@ -13,6 +13,14 @@ const DEAD = [0.10, 0.10, 0.10];
 const HULK = [0.13, 0.12, 0.11];    // burnt metal: wrecks and corpses
 const SOOT = [0.09, 0.09, 0.09];
 
+// The commander's panoramic sight stands on the roof with its optical axis on
+// the machine's eye point (`defs.MECH_EYE`, mirrored to the client as
+// `defs.mech.eye`): the cockpit camera sits exactly there, at the sight window,
+// so the pilot's own head is left out of the draw list - it would be drawn
+// round the camera - while every other machine keeps it.  This number and
+// MECH_EYE move together.
+const SIGHT_Y = 5.05;
+
 function dim(c, k) {
   return [c[0] * k, c[1] * k, c[2] * k];
 }
@@ -38,14 +46,14 @@ function at(R, shape, e, yaw, pitch, ox, oy, oz, sx, sy, sz, col, alpha) {
 
 const FORWARD = -Math.PI / 2;   // rotates a Y-axis primitive onto +X
 
-export function drawUnits(R, entities, projectiles, defs, flashes) {
+export function drawUnits(R, entities, projectiles, defs, flashes, ownId) {
   R.beginDynamic();
   for (const e of entities.values()) {
     switch (e.type) {
       case 1: infantry(R, e, false); break;
       case 2: infantry(R, e, true); break;
       case 3: apc(R, e, flashes); break;
-      case 4: mech(R, e, defs, flashes); break;
+      case 4: mech(R, e, defs, flashes, e.id === ownId); break;
       case 5: base(R, e); break;
       case 6: civilian(R, e); break;
       case 7: wreck(R, e); break;
@@ -141,7 +149,7 @@ function apc(R, e, flashes) {
   }
 }
 
-function mech(R, e, defs, flashes) {
+function mech(R, e, defs, flashes, own) {
   const fac = facColor(e);
   const legYaw = e.leg;
   const yaw = e.yaw;
@@ -212,18 +220,21 @@ function mech(R, e, defs, flashes) {
   // foul the sight.
   at(R, 'cyl', e, yaw, 0, 0, 4.15, 0.25, 0.86, 0.16, 0.86, METAL_D);
   at(R, 'cyl', e, yaw, 0, 0, 4.24, 0.25, 0.70, 0.05, 0.70, METAL_L);
-  at(R, 'cyl', e, yaw, 0, 0, 4.16, -0.62, 0.52, 0.20, 0.52, METAL_D);
-  at(R, 'box', e, yaw, 0, 0, 4.50, -0.62, 0.34, 0.56, 0.34, METAL_D);
-  at(R, 'box', e, yaw, 0, 0, 4.90, -0.62, 0.56, 0.62, 0.62, METAL_L);
-  at(R, 'box', e, yaw, 0, 0, 5.22, -0.62, 0.18, 0.10, 0.54, METAL_D);
-  // One big sight window with a pair of small ones stacked beside it, set into
-  // the head's front face - flush, so the block still reads as one armoured
-  // box.  The big lens is the gunner's channel, the pair the wide/narrow
-  // backups; the asymmetry is what tells the head apart from a plain box.
-  at(R, 'cyl', e, yaw, FORWARD, 0.10, 4.90, -0.335, 0.36, 0.10, 0.36, GLASS);
-  for (const dy of [-0.16, 0.16]) {
-    at(R, 'cyl', e, yaw, FORWARD, -0.20, 4.90 + dy, -0.335,
-      0.16, 0.10, 0.16, GLASS);
+  if (!own) {
+    at(R, 'cyl', e, yaw, 0, 0, 4.16, -0.62, 0.52, 0.20, 0.52, METAL_D);
+    at(R, 'box', e, yaw, 0, 0, 4.50, -0.62, 0.34, 0.56, 0.34, METAL_D);
+    at(R, 'box', e, yaw, 0, 0, SIGHT_Y, -0.62, 0.56, 0.62, 0.62, METAL_L);
+    at(R, 'box', e, yaw, 0, 0, SIGHT_Y + 0.32, -0.62, 0.18, 0.10, 0.54, METAL_D);
+    // One big sight window with a pair of small ones stacked beside it, set
+    // into the head's front face - flush, so the block still reads as one
+    // armoured box.  The big lens is the gunner's channel, the pair the
+    // wide/narrow backups; the asymmetry is what tells the head apart from a
+    // plain box.
+    at(R, 'cyl', e, yaw, FORWARD, 0.10, SIGHT_Y, -0.335, 0.36, 0.10, 0.36, GLASS);
+    for (const dy of [-0.16, 0.16]) {
+      at(R, 'cyl', e, yaw, FORWARD, -0.20, SIGHT_Y + dy, -0.335,
+        0.16, 0.10, 0.16, GLASS);
+    }
   }
 
   // High, close-in weapon stations; module indices remain 2 / 3.

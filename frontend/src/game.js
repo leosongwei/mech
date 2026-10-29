@@ -31,11 +31,6 @@ const SHAKE_BOOM_BIG = 0.225;       // near blast, big round (a quarter of the o
 const SHAKE_BOOM_SMALL = 0.0875;    // near blast, shell hit
 const SHAKE_LAUNCH = 0.5;           // own missile leaving the tube
 const SHAKE_GUN = 0.12;             // own cannon round, "slight" (a burst adds up)
-const CAM_UP = 1.2;                 // m above the mech's eye point: the canopy
-                                    // dome is centred 5.15 m up with a 0.9 m
-                                    // radius, so the eye rides 0.2 m over it
-const CAM_FWD = 0.75;               // m ahead of the hull centre: straight over
-                                    // the middle of that dome
 
 export class Game {
   constructor() {
@@ -438,7 +433,8 @@ export class Game {
     this._threats(own);
     this._alarms(own);
     this._updateLockTone(own);
-    drawUnits(this.renderer, this.net.entities, this.net.projectiles, this.defs.weapons, this.flashes);
+    drawUnits(this.renderer, this.net.entities, this.net.projectiles,
+      this.defs.weapons, this.flashes, own ? own.id : -1);
     this.particles.render(this.renderer);
     this._drawSmoke();
     this.renderer.draw(cam);
@@ -655,15 +651,14 @@ export class Game {
     ];
   }
 
-  // The origin every aiming readout is measured from: the camera itself, up on
-  // the canopy.  The cross is drawn at the centre of the screen, so anything
-  // worked out from a lower or more forward point would disagree with it - at
-  // 1.7 km the 1.2 m the camera sits above the mech's nominal eye is already
-  // a dozen pixels of parallax.
+  // The origin every aiming readout is measured from: the eye is the machine's
+  // optic centre - the commander's sight head, whose optical axis is the eye
+  // point `defs.mech.eye` on the hull's own centre line, which is also where
+  // the server fires and locks from.  The cross is drawn at the centre of the
+  // screen, so the sight ray, the range readout and the lead circles all have
+  // to start here or they disagree with it.
   _sightEye(own) {
-    const yaw = this.input.viewYaw;
-    const h = ((this.defs.mech && this.defs.mech.eye) || 5.05) + CAM_UP;
-    return [own.x + Math.cos(yaw) * CAM_FWD, own.y + h, own.z + Math.sin(yaw) * CAM_FWD];
+    return [own.x, own.y + ((this.defs.mech && this.defs.mech.eye) || 5.05), own.z];
   }
 
   _aim(own) {
@@ -1037,11 +1032,13 @@ export class Game {
       invert4(cam.invViewProj, cam.viewProj);
       return cam;
     }
-    // cockpit camera: the eye sits on top of the canopy dome and looks exactly
-    // where the arms point, so the reticle is the centre of the screen at every
-    // zoom.  The machine itself is drawn in full (no separate view model), which
-    // is what makes the barrels, the hull and the muzzle flashes all sit where
-    // the rounds really come out.
+    // cockpit camera: the eye is the commander's sight head, on its optical
+    // axis (`defs.mech.eye`), and it looks exactly where the arms point, so
+    // the reticle is the centre of the screen at every zoom.  The machine
+    // itself is drawn in full (no separate view model), which is what makes
+    // the barrels, the hull and the muzzle flashes all sit where the rounds
+    // really come out - the only piece left out of the pilot's own machine is
+    // the sight head the eye sits in front of (scene.mech).
     let yaw = this.input.viewYaw;
     let pitch = clamp(this.input.pitch + this.input.freePitch * 0.8, -1.35, 1.35);
     if (this.shake > 0.01) {
@@ -1052,8 +1049,7 @@ export class Game {
       pitch += (Math.random() - 0.5) * s;
     }
     const dir = dirFrom(yaw, pitch);
-    const eyeH = ((this.defs.mech && this.defs.mech.eye) || 5.05) + CAM_UP;
-    const eye = [own.x + Math.cos(yaw) * CAM_FWD, own.y + eyeH, own.z + Math.sin(yaw) * CAM_FWD];
+    const eye = this._sightEye(own);
     const aspect = this.glCanvas.clientWidth / Math.max(1, this.glCanvas.clientHeight);
     const fov = clamp(BASE_FOV / this.zoom, 0.02, BASE_FOV);
     makeCamera(cam, eye, [eye[0] + dir[0], eye[1] + dir[1], eye[2] + dir[2]], fov, aspect, 0.4, this.renderer.far);

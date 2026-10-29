@@ -690,13 +690,18 @@ g.__cam = (eye, yaw, pitch) => { g._camera = (own, dt) => {
 g.__cam([x, y, z], Math.PI / 4, -0.45);      // yaw: dirFrom convention
 ```
 
-* `_camera` is a cockpit camera sitting on the canopy dome: it adds
-  `defs.mech.eye` (5.05 m) plus `CAM_UP` (1.2 m) to `own.y` and steps `CAM_FWD`
-  (0.75 m) along the view yaw, hence the `- 5.05` above (the eye then lands
-  1.2 m higher and 0.75 m ahead - close enough for scenery). The pilot's own
+* `_camera` is a cockpit camera whose eye is the commander's sight head: it
+  sits at `defs.mech.eye` (5.05 m) above `own.y`, on the hull's own centre line
+  and with no forward step, hence the `- 5.05` above. `_sightEye` returns that
+  same point - it is also the origin the server fires and locks from - so the
+  cross, the range readout and the lead circles cannot disagree. The pilot's own
   machine is drawn like any other unit, in full: there is **no separate
   first-person view model**, so the barrels on screen are the barrels the
-  rounds leave from.
+  rounds leave from. The one piece left out of it is the sight head the eye is
+  inside of (`scene.mech`, the `own` flag). That head is drawn with its optical
+  axis on `MECH_EYE` (`SIGHT_Y` in `scene.js` - the two numbers move together),
+  which is what keeps the eye *below* every other hull's sight roof instead of
+  looking down on it.
 * `input.pitch` is a plain field (settable), `input.viewYaw` is not: writing
   `g.input.viewYaw = ...` does nothing and the eye keeps looking along
   `input.yaw`, which is the *last thing sent to the server* - a still mech can

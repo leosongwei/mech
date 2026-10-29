@@ -655,8 +655,8 @@ export function solveElevation(wd, ox, oy, oz, yaw, pitch, target, maxElev) {
 //    where the sight line has to point, which is solved as a fixed point: `p`
 //    is a sight elevation, the round it would launch is integrated out to the
 //    target's range, and `p` is walked until that round meets the hull centre.
-//  * **Parallax** - the eye sits on the canopy, 1.4 m inboard of the arm and
-//    1.5 m above it, so a sight line and a bore that share a heading do not
+//  * **Parallax** - the eye sits in the sight head, 1.4 m inboard of the arm
+//    and 1.5 m above it, so a sight line and a bore that share a heading do not
 //    share a point at range.  The bearing is solved from the muzzle, so the
 //    round flies to the hull, and the ring is then drawn along that bearing
 //    *from the eye* - which is what the pilot actually lays the cross on.

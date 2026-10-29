@@ -411,3 +411,31 @@ WRECK_TIME = 10.0          # burning hulls linger this long
 # optics / IR seeker
 BASE_FOV = 1.05            # vertical field of view at 1x, radians
 LOCK_FRAC = 0.05           # lock circle diameter as a fraction of the view width
+
+# ---------------------------------------------------------------- acoustics
+# Whether a bang is worth putting on the wire is decided here, not by the
+# client: a 30 mm round going off 7 km away is a packet nobody hears.  What the
+# ear gets is `sound_gain`, and `frontend/src/audio.js` mirrors these numbers
+# line for line (`attenuation`, `SOUND_LEVEL`) - the client plays at exactly the
+# level the server tested.
+#
+# Spreading is inverse square *compressed*: over a 16 km map a true 1/r is 84 dB
+# of dynamic range, which is silence.  ROLLOFF 0.6 keeps the shape of the near
+# field (a gun at 100 m really is quieter than one at 20 m) and still leaves a
+# hull 8 km out audible.  A muzzle is not a point source, so nothing falls off
+# inside REF_DIST.
+SOUND_REF_DIST = 25.0      # m, where a source is at its full level
+SOUND_ROLLOFF = 0.60       # 1.0 = inverse square, 0 = no falloff at all
+SOUND_FLOOR = 0.02         # arriving gain under this is not sent at all
+SOUND_SPEED = 343.0        # m/s in air at 20 C (mirrors audio.js)
+# How long an event may stay in the air.  The loudest cue a pilot can hear is a
+# hull going up, good to ~17 km - which takes 50 s to arrive, so a shorter TTL
+# would be the real cutoff and the level test above would be dead letters.
+SOUND_TTL = 50.0           # s (mirrors game.js)
+# how loud each cue is at SOUND_REF_DIST (mirrors audio.js SOUND_LEVEL)
+SOUND_LEVEL = {"shot": 0.60, "boom": 0.70, "big": 0.80, "blast": 1.00}
+
+
+def sound_gain(dist: float, level: float = 1.0) -> float:
+    """Gain of a `level` loud source `dist` metres from the ear."""
+    return level * (SOUND_REF_DIST / max(SOUND_REF_DIST, float(dist))) ** SOUND_ROLLOFF

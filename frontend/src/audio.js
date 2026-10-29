@@ -32,21 +32,57 @@ const ALARM_GAIN = 1 / DEFAULT_ALARM;   // 50% on the slider = the old level
 const VERB_NEAR = 250;
 const VERB_FAR = 2500;
 const VERB_SEND = 0.7;
+// ...and how much of the distance the wet signal is allowed to lose.  The
+// direct sound pays the whole spreading loss, the diffuse field does not: a
+// bang 2 km out really is mostly the hills answering back.  Lifting the send by
+// `attenuation^(1 - VERB_FALLOFF)` is what turns "far away" into "echo" instead
+// of "somebody turned the volume down", which one gain curve can never say.
+const VERB_FALLOFF = 0.55;
 
 // speed of sound in air at 20 C, m/s
 export const SOUND_SPEED = 343;
 
-// Distance attenuation: exponential, halving every 500 m - half level at
-// 500 m, a quarter at 1 km, 1.6% at 3 km - so gunfire across the map is still
-// there, just distant.
+// Distance is three physical effects and the ear uses all three.  Geometric
+// spreading is the obvious one (-6 dB per doubling), but over a 16 km map a
+// true 1/r is 84 dB of dynamic range - everything past ~2 km would be silence,
+// which is why every game compresses it.  `SOUND_ROLLOFF` 0.6 keeps the *shape*
+// of the near field (a gun at 100 m really is quieter than one at 20 m) and
+// still leaves a hull 8 km out audible.  A muzzle is not a point source either,
+// so nothing falls off inside `SOUND_REF_DIST`.
+//
+// `defs.SOUND_*` mirrors these three numbers: the server tests an event against
+// the same curve before putting it on the wire.
+export const SOUND_REF_DIST = 25;      // m, where the level is 1.0
+export const SOUND_ROLLOFF = 0.6;      // 1.0 = inverse square, 0 = no falloff
+export const SOUND_FLOOR = 0.02;       // arriving level below this is not heard
+
+// How loud a cue is at SOUND_REF_DIST.  `defs.SOUND_LEVEL` mirrors this table,
+// so a bang the server drops as inaudible is exactly one the ear could not have
+// heard.
+export const SOUND_LEVEL = { shot: 0.6, boom: 0.7, big: 0.8, blast: 1.0 };
+
 export function attenuation(dist) {
-  return Math.pow(0.5, Math.max(1, dist) / 500);
+  return Math.pow(SOUND_REF_DIST / Math.max(SOUND_REF_DIST, dist), SOUND_ROLLOFF);
+}
+
+// Air and ground eat the top end far faster than the bottom (~0.4 dB/km at
+// 125 Hz against ~30 dB/km at 4 kHz, ISO 9613-1 at 20 C), so 2 km out the highs
+// are simply gone.  That, not the level, is what the ear reads as "far away": a
+// distant cannon is a dull thud with no crack left in it.  18 kHz inside 300 m,
+// 6 kHz at 2 km, floored at 600 Hz so the sub-bass layers keep their weight.
+export function airCutoff(dist) {
+  return Math.min(18000, Math.max(600, 18000 * Math.exp(-dist / 1800)));
 }
 
 // How much of a sound event is the terrain answering back, 0..1.  Distance is
 // the only knob: the wavefront of a far shot arrives smeared and raggedy.
 export function reverberation(dist) {
   return Math.max(0, Math.min(1, (dist - VERB_NEAR) / (VERB_FAR - VERB_NEAR)));
+}
+
+// The wet send's own distance law: 1 next to the cockpit, ~4.7 at 8 km.
+export function reverbLift(dist) {
+  return Math.min(6, Math.pow(1 / attenuation(dist), 1 - VERB_FALLOFF));
 }
 
 function storedVolume() {
@@ -165,14 +201,19 @@ export class GameAudio {
   // event's lateral bearing as the wavefront reaches the pilot; `behind` (0..1)
   // is how far behind the cockpit it was, and it is spent as a lowpass - two
   // ears cannot place a bang along the nose-to-tail axis, so rolling off its top
-  // end is what reads as "behind you".  Both are set once, when the cue fires:
-  // a one-shot is located where it was heard, not tracked as the head turns.
-  _bus(g, pan = 0, behind = 0) {
+  // end is what reads as "behind you".  All three are set once, when the cue
+  // fires: a one-shot is located where it was heard, not tracked as the head
+  // turns.  `dist` is the other lowpass - the air itself (see `airCutoff`) - and
+  // the two are one filter, because the steeper of the two is the only one that
+  // matters.
+  _bus(g, pan = 0, behind = 0, dist = 0) {
     let out = g;
-    if (behind > 0.02) {
+    const cut = Math.min(airCutoff(dist),
+                         behind > 0.02 ? 12000 - 10000 * Math.min(1, behind) : 1e9);
+    if (cut < 17500) {
       const lp = this.ctx.createBiquadFilter();
       lp.type = 'lowpass';
-      lp.frequency.value = 12000 - 10000 * Math.min(1, behind);   // 12k -> 2k
+      lp.frequency.value = cut;   // 12k -> 2k behind, 18k -> 600 Hz far
       lp.Q.value = 0.4;
       g.connect(lp);
       out = lp;
@@ -189,11 +230,12 @@ export class GameAudio {
   // Send a voice into the shared room by `wet` (0..1).  Knobbed off it is a
   // single extra gain node per voice, which is nothing next to the convolver.
   // The send leaves ahead of `_bus`, so the room stays wide while the direct
-  // sound is the part that is placed - which is how a real one behaves.
-  _verbSend(node, wet) {
+  // sound is the part that is placed - which is how a real one behaves.  `dist`
+  // lifts it back over the distance the dry sound just lost (`reverbLift`).
+  _verbSend(node, wet, dist = 0) {
     if (!(wet > 0) || !this.verb) return;
     const g = this.ctx.createGain();
-    g.gain.value = VERB_SEND * wet;
+    g.gain.value = VERB_SEND * wet * reverbLift(dist);
     node.connect(g);
     g.connect(this.verb);
   }
@@ -216,8 +258,8 @@ export class GameAudio {
     g.gain.setValueAtTime(gain, t);
     g.gain.exponentialRampToValueAtTime(0.0008, t + dur);
     src.connect(f); f.connect(g);
-    this._bus(g, pan, behind);
-    this._verbSend(g, wet === null ? reverberation(dist) : wet);
+    this._bus(g, pan, behind, dist);
+    this._verbSend(g, wet === null ? reverberation(dist) : wet, dist);
     src.start(t, Math.random() * 0.4);
     src.stop(t + dur + 0.05);
   }
@@ -233,15 +275,16 @@ export class GameAudio {
     g.gain.setValueAtTime(gain, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + dur);
     o.connect(g);
-    this._bus(g, pan, behind);
-    this._verbSend(g, reverberation(dist) * 0.6);
+    this._bus(g, pan, behind, dist);
+    this._verbSend(g, reverberation(dist) * 0.6, dist);
     o.start(t); o.stop(t + dur + 0.02);
   }
 
-  // `dist` is how far the event was from the pilot when the wavefront reached
-  // them: it sets the reverb send, so a far shot is heard with its own echo.
-  // `pan` / `behind` place it: left-right, and how much of it was at the pilot's
-  // back (see `_bus`).
+  // `vol` is the source level (`SOUND_LEVEL`) already multiplied by the
+  // distance loss, and `dist` is how far the event was from the pilot when the
+  // wavefront reached them: between them they set the level, the air's lowpass
+  // and the reverb send.  `pan` / `behind` place it: left-right, and how much
+  // of it was at the pilot's back (see `_bus`).
   shot(wid, kind, vol = 1, dist = 0, pan = 0, behind = 0) {
     this.ensure();
     if (!this.ctx) return;

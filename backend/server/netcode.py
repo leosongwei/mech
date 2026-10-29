@@ -203,3 +203,48 @@ def meta_payload(world: World, pl: Player) -> dict:
         towns=[dict(x=t["x"], z=t["z"], owner=int(t["owner"]), progress=round(t["progress"], 2),
                     name=t["name"]) for t in world.towns],
     )
+
+
+# The cues that are carried by the air.  Everything else on the event list is a
+# message or a light (a kill, a capture, the rearm label, new tiles) and is not
+# gated by distance.
+SOUND_KINDS = ("shot", "boom")
+
+
+def _source_level(ev: dict) -> float | None:
+    """How loud this event is at its own muzzle, or None if it makes no sound."""
+    k = ev.get("k")
+    if k not in SOUND_KINDS:
+        return None
+    if k == "shot":
+        return defs.SOUND_LEVEL["shot"]
+    if ev.get("blast"):
+        return defs.SOUND_LEVEL["blast"]
+    return defs.SOUND_LEVEL["big" if ev.get("big") else "boom"]
+
+
+def hearable(events: list[dict], ear: tuple[float, float, float] | None) -> list[dict]:
+    """The events whose wavefront still arrives loud enough to be heard.
+
+    `ear` is the pilot's mech *now*, not where it will be when the wavefront
+    gets there: at 8 km the curve is nearly flat (~3 % per km), so a hull that
+    covered another 300 m in the meantime hears a level within a few per cent -
+    the gate is not sensitive to it.  `None` (no mech, no ear) drops every sound
+    but keeps every message.
+    """
+    if not events:
+        return events
+    reach = defs.SOUND_SPEED * defs.SOUND_TTL      # nobody could still hear it
+    out = []
+    for ev in events:
+        level = _source_level(ev)
+        if level is None:
+            out.append(ev)
+            continue
+        if ear is None:
+            continue
+        dist = math.sqrt((ev["x"] - ear[0]) ** 2 + (ev.get("y", 0.0) - ear[1]) ** 2
+                         + (ev["z"] - ear[2]) ** 2)
+        if dist <= reach and defs.sound_gain(dist, level) > defs.SOUND_FLOOR:
+            out.append(ev)
+    return out

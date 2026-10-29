@@ -97,6 +97,14 @@ SNAP_EVERY = 2          # 15 Hz snapshots
 META_EVERY = 3          # 10 Hz meta
 
 
+def _ear(world: World, pl: Player | None) -> tuple[float, float, float] | None:
+    """Where a pilot's ear is, or None while he has no hull to sit in."""
+    if pl is None or pl.mech < 0 or not world.ecs.alive[pl.mech]:
+        return None
+    p = world.ecs["pos"][pl.mech]
+    return (float(p[0]), float(p[1]), float(p[2]))
+
+
 async def broadcast(tick: int) -> None:
     if not CONNECTIONS:
         return
@@ -107,15 +115,20 @@ async def broadcast(tick: int) -> None:
     if world.events:
         fx = list(world.events)
         world.events.clear()
-    fx_msg = json.dumps(dict(t="fx", events=fx), default=_json_safe) if fx else None
+    fx_all = json.dumps(dict(t="fx", events=fx), default=_json_safe) if fx else None
     for pid, client in list(CONNECTIONS.items()):
         pl = world.players.get(pid)
         if pl is None:
             continue
         if snap is not None:
             client.offer("b", snap)
-        if fx_msg is not None:
-            client.offer("t", fx_msg)
+        if fx_all is not None:
+            # sound is per ear: a bang nobody could hear is not put on the wire
+            mine = netcode.hearable(fx, _ear(world, pl))
+            if len(mine) == len(fx):
+                client.offer("t", fx_all)   # nothing dropped: the shared message
+            elif mine:
+                client.offer("t", json.dumps(dict(t="fx", events=mine), default=_json_safe))
         if tick % META_EVERY == 0:
             client.offer("t", json.dumps(netcode.meta_payload(world, pl), default=_json_safe))
 

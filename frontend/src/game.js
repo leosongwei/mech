@@ -3,7 +3,7 @@
 import { Net } from './net.js';
 import { MapData, leadPoint, predictImpact, sightBlocked, sightPoint, unitSpheres, zeroAt } from './map.js';
 import { Input } from './input.js';
-import { GameAudio, SOUND_SPEED, attenuation } from './audio.js';
+import { GameAudio, SOUND_FLOOR, SOUND_LEVEL, SOUND_SPEED, attenuation } from './audio.js';
 import { Renderer, makeCamera } from './renderer.js';
 import { drawUnits } from './scene.js';
 import { HUD } from './hud.js';
@@ -21,8 +21,11 @@ const LASER_RANGE = 3400;           // longest sight an enemy could shoot at
 const LASER_CONE = 0.05;            // rad, "his gun is pointed at me"
 const SMOKE_RGB = [0.58, 0.52, 0.44];   // dirt brown, like the charge it is
 const SMOKE_END_SHRINK = 0.35;      // s, last moments of a puff (it is opaque)
-const SOUND_TTL = 20;               // s, a bang still in the air after this is dropped
-const SOUND_FLOOR = 0.02;           // quieter than this on arrival, do not bother
+// A bang may stay in the air this long: the loudest thing a pilot can hear is a
+// hull going up ~17 km out, and its wavefront takes 50 s to arrive - a shorter
+// TTL would be the real cutoff and `SOUND_FLOOR` would never be reached.  The
+// server gates events by the same two numbers (`defs.SOUND_TTL`).
+const SOUND_TTL = 50;               // s, a bang still in the air after this is dropped
 const EAR_NEAR = 1;                 // m, closer than this a bang has no side to be on
 const SHAKE_BOOM_BIG = 0.225;       // near blast, big round (a quarter of the old kick)
 const SHAKE_BOOM_SMALL = 0.0875;    // near blast, shell hit
@@ -250,14 +253,15 @@ export class Game {
 
   // -------------------------------------------------------------- acoustics
   // A bang is not a point event: it leaves the source as a sphere growing at
-  // the speed of sound.  Every acoustic cue goes on this list with where and
-  // when it happened, and each frame the sphere is compared with where the mech
-  // is *now* - so a hull that has driven on since the shell landed hears it
-  // once the wavefront actually catches up (running away delays it, closing on
-  // it hurries it), and the volume is the level at that arrival distance.
-  // No Doppler: the pitch is whatever the synth produced.
-  _sound(x, y, z, play) {
-    this.sounds.push({ t0: performance.now() / 1000, x, y, z, play });
+  // the speed of sound.  Every acoustic cue goes on this list with where, when
+  // and how loud it happened (`level`, the source level from `SOUND_LEVEL`), and
+  // each frame the sphere is compared with where the mech is *now* - so a hull
+  // that has driven on since the shell landed hears it once the wavefront
+  // actually catches up (running away delays it, closing on it hurries it), and
+  // the volume is the level at that arrival distance.  No Doppler: the pitch is
+  // whatever the synth produced.
+  _sound(x, y, z, level, play) {
+    this.sounds.push({ t0: performance.now() / 1000, x, y, z, level, play });
   }
 
   // Where a bang landed in the cockpit's ears: the lateral share of its bearing
@@ -291,7 +295,7 @@ export class Game {
       // no mech, no ear: the event just ages out (a dead pilot hears nothing)
       const dist = own ? Math.hypot(s.x - own.x, s.y - own.y, s.z - own.z) : Infinity;
       if (age * SOUND_SPEED >= dist) {
-        const vol = attenuation(dist);
+        const vol = s.level * attenuation(dist);
         if (vol > SOUND_FLOOR) {
           const [pan, behind] = this._bearing(s, own, dist);
           s.play(vol, dist, pan, behind);
@@ -317,7 +321,9 @@ export class Game {
         const d = own ? Math.hypot(ev.x - own.x, ev.z - own.z) : 3000;
         this.shake = Math.min(1.2, this.shake + clamp(1 - d / (ev.blast ? 500 : 300), 0, 1)
           * (ev.big ? SHAKE_BOOM_BIG : SHAKE_BOOM_SMALL) * (ev.blast ? 1.5 : 1));
-        this._sound(ev.x, ev.y, ev.z, (vol, dist, pan, behind) => (ev.blast
+        const level = ev.blast ? SOUND_LEVEL.blast
+                               : (ev.big ? SOUND_LEVEL.big : SOUND_LEVEL.boom);
+        this._sound(ev.x, ev.y, ev.z, level, (vol, dist, pan, behind) => (ev.blast
           ? this.audio.explosion(vol, dist, pan, behind)
           : this.audio.boom(vol, ev.big, dist, pan, behind)));
       } else if (ev.k === 'shot') {
@@ -329,8 +335,8 @@ export class Game {
           const guided = kind === 'rocket' || kind === 'saclos' || kind === 'top';
           this.shake = Math.min(1.2, this.shake + (guided ? SHAKE_LAUNCH : SHAKE_GUN));
         }
-        this._sound(ev.x, ev.y, ev.z,
-          (vol, dist, pan, behind) => this.audio.shot(ev.wid, kind, vol * 0.6, dist, pan, behind));
+        this._sound(ev.x, ev.y, ev.z, SOUND_LEVEL.shot,
+          (vol, dist, pan, behind) => this.audio.shot(ev.wid, kind, vol, dist, pan, behind));
       } else if (ev.k === 'kill') {
         if (ev.pid === this.init.pid) {
           this._message(`+$${ev.reward} KILL`, '#a9f0c0');

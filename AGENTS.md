@@ -421,15 +421,39 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
   bullet. Both solvers are mirrored line for line, and the two shapes of canopy
   (ball, cone) have their own.
 * **Sound is not immediate.** Gunfire and explosions go through
-  `game._sound(x, y, z, play)` -> `game.sounds`, a list of acoustic events in
-  the air (emit position + time, 20 s TTL). `_pumpSounds()` runs every frame and
-  compares the wavefront radius (`SOUND_SPEED` = 343 m/s x age) with the
-  distance to the mech's **current** position: the event plays (at
-  `attenuation(dist)`, inverse square anchored at 1 km = 50%) and leaves the
-  list when the front catches up. Using the live position is what makes a
-  180 km/h hull hear a bang where it actually caught up with it - never cache
-  the distance at emit time. Flashes, impacts, screen shake and the electronic
-  cues (lock tone, RWR alarms, kill/denied chimes) stay immediate.
+  `game._sound(x, y, z, level, play)` -> `game.sounds`, a list of acoustic events
+  in the air (emit position, time, source level, 50 s TTL - a 17 km
+  blast takes that long to arrive). `_pumpSounds()` runs
+  every frame and compares the wavefront radius (`SOUND_SPEED` = 343 m/s x age)
+  with the distance to the mech's **current** position: the event plays (at
+  `level * attenuation(dist)`) and leaves the list when the front catches up.
+  Using the live position is what makes a 180 km/h hull hear a bang where it
+  actually caught up with it - never cache the distance at emit time. Flashes,
+  impacts, screen shake and the electronic cues (lock tone, RWR alarms,
+  kill/denied chimes) stay immediate.
+* **Distance is three effects, not one curve.** `audio.attenuation` is inverse
+  square *compressed* (`SOUND_ROLLOFF` 0.6, reference `SOUND_REF_DIST` 25 m):
+  true 1/r over 16 km is 84 dB of dynamic range, i.e. silence, so the shape of
+  the near field is kept (a gun at 100 m is 7 dB below one at 20 m) and the far
+  field stays audible (-32 dB at 12 km). `audio.airCutoff` is the second: air
+  absorbs the top end far faster than the bottom (0.4 dB/km at 125 Hz, 30 dB/km
+  at 4 kHz), 18 kHz inside 300 m down to 600 Hz past 8 km - a distant cannon is
+  a dull thud, and *that*, not the level, is what the ear reads as distance. It
+  shares one filter with the "behind you" lowpass in `audio._bus(g, pan, behind,
+  dist)`. Third is the direct/reverberant split: the wet send is lifted by
+  `reverbLift(dist)` so the diffuse field decays slower than the direct sound
+  (wet is ~13 dB above dry at 8 km) - far away is "echo", not "turned down".
+  `SOUND_LEVEL` (shot .6 / boom .7 / big .8 / blast 1) is how loud a cue is at
+  the reference distance.
+* **The server decides what a pilot's ear gets.** `defs.SOUND_*` mirror the
+  client's curve (`attenuation`, `SOUND_LEVEL`, same numbers), and
+  `netcode.hearable(events, ear)` drops every `shot`/`boom` whose arriving gain
+  is under `SOUND_FLOOR` (2 %: a cannon reaches ~7.2 km, a hull's death blast
+  17 km). `main.broadcast` filters per connection against that pilot's mech
+  position - a dead pilot has no ear and gets no sound events at all, while
+  messages (kill, capture, rearm, tiles, gameover) always pass. Otherwise every
+  bang on a 16 km map would be broadcast to everybody: measured, 861 events in
+  15 s at the median 6.4 km, none of them worth the packet.
 * **A bang has a side, and a back.** `game._bearing(s, own, dist)` turns an
   event's bearing into `pan` (its lateral share, `-1` left .. `+1` right) and
   `behind` (how much of it is behind the view, 0..1), taken at the moment the

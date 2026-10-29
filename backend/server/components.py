@@ -31,6 +31,14 @@ def register(ecs: ECS) -> None:
     ecs.register("pitch", np.float32)
     ecs.register("leg_yaw", np.float32)
     ecs.register("turret_yaw", np.float32)
+    # Where the gunner is *looking*, as opposed to where the metal points.  For
+    # a mech the sight is a free turret on the roof: it answers the view (a
+    # pilot's mouse, a crew's intent) instantly, and `yaw` / `pitch` slew
+    # towards it at the machine's own rates (`systems/gunnery.py`), never the
+    # other way round.  Every unit owns the pair; only a mech's is ever at an
+    # angle to its hull.
+    ecs.register("sight_yaw", np.float32)
+    ecs.register("sight_pitch", np.float32)
 
     # ---- identity -------------------------------------------------------
     # `etype` is the entity's data (hull geometry, hp slots, which arm fires
@@ -133,7 +141,8 @@ def register(ecs: ECS) -> None:
     ecs.register("proj_prev", np.float32, (3,), 0.0)
 
 
-UNIT_COMPS = ["pos", "vel", "drive", "veh", "yaw", "pitch", "leg_yaw", "turret_yaw", "etype", "faction",
+UNIT_COMPS = ["pos", "vel", "drive", "veh", "yaw", "pitch", "leg_yaw", "turret_yaw",
+              "sight_yaw", "sight_pitch", "etype", "faction",
               "owner", "hp", "hpmax", "weapon", "ammo", "mag", "cool", "reload_t",
               "trigger", "trigger_prev", "work_remaining_time", "target", "ai_state", "ai_timer",
               "path_i", "lane", "spot_x", "spot_y", "spot_z", "spot_t", "flags"]

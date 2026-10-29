@@ -20,6 +20,10 @@ const SOOT = [0.09, 0.09, 0.09];
 // round the camera - while every other machine keeps it.  This number and
 // MECH_EYE move together.
 const SIGHT_Y = 5.05;
+// The pillar the head turns on, in the hull's own frame: `defs.MECH_SIGHT_Z`,
+// the same pivot the server puts the pilot's eye on.  The two numbers move
+// together, and the geometry only reads right if they do.
+const SIGHT_Z = -0.62;
 
 function dim(c, k) {
   return [c[0] * k, c[1] * k, c[2] * k];
@@ -45,6 +49,27 @@ function at(R, shape, e, yaw, pitch, ox, oy, oz, sx, sy, sz, col, alpha) {
 }
 
 const FORWARD = -Math.PI / 2;   // rotates a Y-axis primitive onto +X
+
+// A piece of the sight head.  `at` turns the *offset* with the same yaw it
+// turns the mesh with, which is right for anything bolted to a hull - and
+// wrong for the head, whose pivot is fixed to the hull while the head turns on
+// it: the head must rotate on the pillar, not orbit the machine.  So the
+// pivot's place comes from the hull's yaw and only the offset from the
+// pivot - `right` / `up` / `fwd` in the head's own frame, pitch and all -
+// follows the sight's.
+function headAt(R, shape, e, hullYaw, syaw, spitch,
+                 right, up, fwd, sx, sy, sz, col, meshPitch) {
+  const ch = Math.cos(hullYaw), sh = Math.sin(hullYaw);
+  const px = e.x + ch * SIGHT_Z, pz = e.z + sh * SIGHT_Z;   // the pillar
+  const cp = Math.cos(spitch), sp = Math.sin(spitch);
+  const out = fwd * cp - up * sp;         // out along the head's ground track
+  const high = fwd * sp + up * cp;        // up the pitched head axis
+  const cy = Math.cos(syaw), sn = Math.sin(syaw);
+  const x = px + (-sn) * right + cy * out;
+  const z = pz + cy * right + sn * out;
+  R[shape](x, e.y + SIGHT_Y + high, z, syaw,
+    meshPitch === undefined ? spitch : meshPitch, sx, sy, sz, col[0], col[1], col[2], 1);
+}
 
 // The 12.7 mm gun (`defs.WEAPONS[...]["gatling"]`) is a rotary one: six barrels
 // on a ring round the bore, each half the 30 mm's bore and 60 % of its length,
@@ -246,19 +271,32 @@ function mech(R, e, defs, flashes, own) {
   at(R, 'cyl', e, yaw, 0, 0, 4.15, 0.25, 0.86, 0.16, 0.86, METAL_D);
   at(R, 'cyl', e, yaw, 0, 0, 4.24, 0.25, 0.70, 0.05, 0.70, METAL_L);
   if (!own) {
-    at(R, 'cyl', e, yaw, 0, 0, 4.16, -0.62, 0.52, 0.20, 0.52, METAL_D);
-    at(R, 'box', e, yaw, 0, 0, 4.50, -0.62, 0.34, 0.56, 0.34, METAL_D);
-    at(R, 'box', e, yaw, 0, 0, SIGHT_Y, -0.62, 0.56, 0.62, 0.62, METAL_L);
-    at(R, 'box', e, yaw, 0, 0, SIGHT_Y + 0.32, -0.62, 0.18, 0.10, 0.54, METAL_D);
+    // The head is a free turret: it stands on its pillar (whose axis is the
+    // sight's, `SIGHT_Z` behind the hull's) and answers the view while the hull
+    // is still coming round, so it is drawn on the *sight's* angles - the
+    // snapshot's `syaw` / `spitch`, not the hull's.  It turns about the pillar
+    // and tilts about its own centre, which is the eye point: nothing here can
+    // move the camera that sits in it.
+    const syaw = e.syaw === undefined ? yaw : e.syaw;
+    const spitch = e.spitch === undefined ? 0 : e.spitch;
+    // the pedestal and the hinge are the hull's: the pillar is a post, and the
+    // head turns on top of it
+    at(R, 'cyl', e, yaw, 0, 0, 4.16, SIGHT_Z, 0.52, 0.20, 0.52, METAL_D);
+    at(R, 'box', e, yaw, 0, 0, 4.50, SIGHT_Z, 0.34, 0.56, 0.34, METAL_D);
+    headAt(R, 'box', e, yaw, syaw, spitch, 0, 0, 0, 0.56, 0.62, 0.62, METAL_L);
+    headAt(R, 'box', e, yaw, syaw, spitch, 0, 0.32, 0, 0.18, 0.10, 0.54, METAL_D);
     // One big sight window with a pair of small ones stacked beside it, set
     // into the head's front face - flush, so the block still reads as one
     // armoured box.  The big lens is the gunner's channel, the pair the
     // wide/narrow backups; the asymmetry is what tells the head apart from a
-    // plain box.
-    at(R, 'cyl', e, yaw, FORWARD, 0.10, SIGHT_Y, -0.335, 0.36, 0.10, 0.36, GLASS);
+    // plain box.  The windows ride the tilted face, not the yaw plane.
+    // (the windows are cylinders lying along the optical axis: their mesh
+    // pitch is the forward one, tilted by the head's own elevation)
+    const bore = FORWARD + spitch;
+    headAt(R, 'cyl', e, yaw, syaw, spitch, 0.10, 0, 0.285, 0.36, 0.10, 0.36, GLASS, bore);
     for (const dy of [-0.16, 0.16]) {
-      at(R, 'cyl', e, yaw, FORWARD, -0.20, SIGHT_Y + dy, -0.335,
-        0.16, 0.10, 0.16, GLASS);
+      headAt(R, 'cyl', e, yaw, syaw, spitch, -0.20, dy, 0.285,
+        0.16, 0.10, 0.16, GLASS, bore);
     }
   }
 

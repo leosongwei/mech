@@ -89,12 +89,15 @@ class World:
     # setup
     # ------------------------------------------------------------------
     def _build_pipeline(self) -> None:
-        from .systems import (debris, economy, locking, movement, player_input, projectiles,
-                              proximity, rearm, smoke, weapons)
+        from .systems import (debris, economy, gunnery, locking, movement, player_input,
+                              projectiles, proximity, rearm, smoke, weapons)
         self.systems: list[Callable[[World, float], None]] = [rearm.run, player_input.run]
         self.systems += self.mode_mod.pre_systems()
-        self.systems += [locking.run, smoke.run, weapons.run, movement.run, projectiles.run,
-                         proximity.run, economy.run, debris.run]
+        # the crews have said where they are looking (player_input, the mode's
+        # own AI); the machines now slew towards it, so `yaw` / `pitch` are the
+        # laid gun by the time anything fires or draws
+        self.systems += [gunnery.run, locking.run, smoke.run, weapons.run, movement.run,
+                         projectiles.run, proximity.run, economy.run, debris.run]
         self.systems += self.mode_mod.post_systems()
 
     # ------------------------------------------------------------------
@@ -119,6 +122,10 @@ class World:
         e["turret_yaw"][eid] = yaw
         e["leg_yaw"][eid] = yaw
         e["pitch"][eid] = 0.0
+        # the sight starts on the hull's own line of sight, or a fresh mech
+        # would swing its hull round to nothing on its first tick
+        e["sight_yaw"][eid] = yaw
+        e["sight_pitch"][eid] = 0.0
         e["etype"][eid] = etype
         e["faction"][eid] = faction
         e["owner"][eid] = owner
@@ -159,6 +166,7 @@ class World:
                               weapons=player.loadout)
         self.ecs["yaw"][eid] = yaw
         self.ecs["leg_yaw"][eid] = yaw
+        self.ecs["sight_yaw"][eid] = yaw
         player.mech = eid
         player.respawn = 0.0
         return eid

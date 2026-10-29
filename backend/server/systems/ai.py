@@ -59,7 +59,11 @@ def run(world: World, dt: float) -> None:
         d = defs.UNIT_DEFS[t]
         speed = d["speed"]
         px, py, pz = float(b["pos"][row, 0]), float(b["pos"][row, 1]), float(b["pos"][row, 2])
-        eye = (px, py + d["height"] * 0.75, pz)
+        if t == defs.ETYPE_MECH:
+            # a mech looks through its sight, on the roof, not out of its chest
+            eye = mu.sight_eye(b["pos"][row], float(b["yaw"][row]))
+        else:
+            eye = (px, py + d["height"] * 0.75, pz)
 
         timer = b["ai_timer"]
         target = b["target"]
@@ -193,6 +197,8 @@ def _aim_and_fire(world: World, eid: int, b: dict, row: int,
     yaw = b["yaw"]
     pitch = b["pitch"]
     turret = b["turret_yaw"]
+    sight_yaw = b["sight_yaw"]
+    sight_pitch = b["sight_pitch"]
     trigger = b["trigger"]
     etype = int(b["etype"][row])
     hp = b["hp"]
@@ -203,19 +209,33 @@ def _aim_and_fire(world: World, eid: int, b: dict, row: int,
     tz = aim[2] - eye[2]
     want_yaw, want_pitch = mu.angles_to(tx, ty, tz)
 
-    if etype == defs.ETYPE_APC:
+    if etype == defs.ETYPE_MECH:
+        # the crew lays the sight on the intercept; the hull and the arms slew
+        # after it at their own rates (systems/gunnery.py), which is why the
+        # trigger below waits for the *bore*, not for the sight.  A shot the
+        # mounts cannot elevate to is one they never take: hold the sight at
+        # the stop instead of driving the arms against it for ever
+        want_pitch = max(defs.MECH_PITCH_MIN, min(defs.MECH_PITCH_MAX, want_pitch))
+        sight_yaw[row] = want_yaw
+        sight_pitch[row] = want_pitch
+    elif etype == defs.ETYPE_APC:
         # the hull of a wheeled carrier belongs to the driver: movement points
         # it where it rolls, and the crew turns nothing but the turret
         turret[row] = mu.turn_toward(float(turret[row]), want_yaw, 2.2 * dt)
+        pitch[row] = max(-0.4, min(0.7, float(pitch[row]) + (want_pitch - float(pitch[row])) * min(1.0, 6.0 * dt)))
     else:
-        turn = 1.7 if etype == defs.ETYPE_MECH else 3.2
-        yaw[row] = mu.turn_toward(float(yaw[row]), want_yaw, turn * dt)
-    pitch[row] = max(-0.4, min(0.7, float(pitch[row]) + (want_pitch - float(pitch[row])) * min(1.0, 6.0 * dt)))
+        # a rifleman turns his whole body onto the target: no sight to lead
+        yaw[row] = mu.turn_toward(float(yaw[row]), want_yaw, 3.2 * dt)
+        pitch[row] = max(-0.4, min(0.7, float(pitch[row]) + (want_pitch - float(pitch[row])) * min(1.0, 6.0 * dt)))
 
     aim_yaw = float(turret[row]) if etype == defs.ETYPE_APC else float(yaw[row])
     err = abs(mu.wrap_pi(want_yaw - aim_yaw))
+    # a mech's barrels are laid by the gunnery slew, not by this loop: the gun
+    # opens up when the bore is actually on the intercept, so a hull still
+    # coming round (or an arm still climbing) does not hose the dirt
+    laid = etype != defs.ETYPE_MECH or abs(float(want_pitch) - float(pitch[row])) < 0.02
     t = 0
-    if err < 0.14:
+    if err < 0.14 and laid:
         if hp[row, 0] > 0:
             t |= 1
         if etype == defs.ETYPE_MECH and hp[row, defs.MOD_RIGHT] > 0 and dist < 2200:

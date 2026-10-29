@@ -309,6 +309,20 @@ MECH_HITSPHERES = [
     (MOD_RIGHT, 1.43, 3.55, 0.10, 0.85),
 ]
 MECH_EYE = 5.05
+# The commander's panoramic sight is a free turret standing on the roof, and it
+# is *not* on the hull's own rotation axis: it is bolted `MECH_SIGHT_Z` behind
+# it, which is where the model draws it and where the pilot's eye sits.  That
+# offset is the whole point of the decoupling - the sight answers the view
+# instantly, the hull and the arms slew to catch up (systems/gunnery.py), and
+# because the two axes differ, a hull catching up underneath a sight that
+# already points elsewhere walks the sight - and the eye - along an arc.
+MECH_SIGHT_Z = -0.62       # m, the sight head's pivot behind the hull centre
+MECH_HULL_RATE = math.radians(80.0)   # rad/s the hull swings after the sight
+MECH_ARM_RATE = math.radians(50.0)    # rad/s the arms elevate after the sight
+# the mechanical elevation limits of the arm mounts: the sight may look at the
+# sky, the barrels cannot follow it there
+MECH_PITCH_MIN = -0.45
+MECH_PITCH_MAX = 0.75
 # the hull rolls up to speed instead of snapping to it: 0-100 km/h in ~3 s,
 # 0-180 in ~5.4 s
 MECH_ACCEL = 9.3           # m/s^2, top speed 180 km/h

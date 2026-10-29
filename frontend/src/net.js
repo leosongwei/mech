@@ -1,7 +1,7 @@
 // WebSocket protocol client: compressed init, binary snapshots, JSON meta/fx.
 
 const HEADER = 14;
-const UNIT_STRIDE = 64;
+const UNIT_STRIDE = 72;
 const PROJ_STRIDE = 32;
 const SMOKE_STRIDE = 32;
 const TICK_HZ = 30;
@@ -68,7 +68,8 @@ export class Net {
       const target = dv.getUint16(off + 6, true);
       let e = this.entities.get(id);
       if (!e) {
-        e = { id, x: 0, y: 0, z: 0, yaw: 0, pitch: 0, turret: 0, leg: 0, vx: 0, vz: 0, hp: [0, 0, 0, 0], ammo: [0, 0], mag: [0, 0], weapon: [0, 0] };
+        e = { id, x: 0, y: 0, z: 0, yaw: 0, pitch: 0, turret: 0, leg: 0, syaw: 0, spitch: 0,
+          vx: 0, vz: 0, hp: [0, 0, 0, 0], ammo: [0, 0], mag: [0, 0], weapon: [0, 0] };
         this.entities.set(id, e);
       }
       e.type = type;
@@ -92,9 +93,14 @@ export class Net {
       e.mag[1] = dv.getUint16(off + 58, true);
       e.weapon[0] = dv.getUint16(off + 60, true);
       e.weapon[1] = dv.getUint16(off + 62, true);
+      // where the crew is looking (the hull and the arms are slewing to it);
+      // `yaw` / `pitch` above are the laid gun
+      e.tsyaw = dv.getFloat32(off + 64, true);
+      e.tspitch = dv.getFloat32(off + 68, true);
       if (!e.init) {
         e.x = e.tx; e.y = e.ty; e.z = e.tz;
         e.yaw = e.tyaw; e.pitch = e.tpitch; e.turret = e.tturret; e.leg = e.tleg;
+        e.syaw = e.tsyaw; e.spitch = e.tspitch;
         e.init = true;
         e.px = e.tx; e.pz = e.tz; e.ptick = tick;
       } else if (tick > e.ptick) {
@@ -178,6 +184,8 @@ export class Net {
       e.pitch += (e.tpitch - e.pitch) * alpha;
       e.turret += wrapPi(e.tturret - e.turret) * alpha;
       e.leg += wrapPi(e.tleg - e.leg) * alpha;
+      e.syaw += wrapPi(e.tsyaw - e.syaw) * alpha;
+      e.spitch += (e.tspitch - e.spitch) * alpha;
     }
   }
 

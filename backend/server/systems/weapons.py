@@ -24,15 +24,21 @@ MAG_OF = np.array([int(w["mag"]) for w in defs.WEAPONS], np.int32)
 
 
 def aim_of(world: World, eid: int) -> tuple[tuple[float, float, float], float, float]:
-    """(origin, yaw, pitch) used by every weapon of this unit."""
+    """(origin, yaw, pitch) of the *sight*: where this unit's crew is looking.
+
+    For a mech that is the free turret on the roof - the eye the camera sits in
+    (`mathutil.sight_eye`), the line the IR seeker sweeps, and the beam a SACLOS
+    missile rides.  It answers the view instantly and is therefore *not* the
+    barrels: those are on the hull and slew after it (`bore_of`), so ask for
+    them at the muzzle, never here.
+    """
     e = world.ecs
     pos = e["pos"][eid]
     etype = int(e["etype"][eid])
     if etype == defs.ETYPE_MECH:
-        yaw = float(e["yaw"][eid])
-        pitch = float(e["pitch"][eid])
-        origin = (float(pos[0]), float(pos[1]) + defs.MECH_EYE, float(pos[2]))
-        return origin, yaw, pitch
+        # the head is bolted to the hull, so the hull's yaw places the eye
+        origin = mu.sight_eye(pos, float(e["yaw"][eid]))
+        return origin, float(e["sight_yaw"][eid]), float(e["sight_pitch"][eid])
     if etype == defs.ETYPE_APC:
         yaw = float(e["turret_yaw"][eid])
         pitch = float(e["pitch"][eid])
@@ -42,6 +48,21 @@ def aim_of(world: World, eid: int) -> tuple[tuple[float, float, float], float, f
     h = defs.UNIT_DEFS.get(etype, {}).get("height", 1.8)
     return ((float(pos[0]), float(pos[1]) + h * 0.8, float(pos[2])),
             float(e["yaw"][eid]), float(e["pitch"][eid]))
+
+
+def bore_of(world: World, eid: int) -> tuple[float, float]:
+    """(yaw, pitch) the barrels of this unit are *actually* laid at.
+
+    A mech's arms ride on the hull and elevate on their own pivots, so this is
+    the hull's yaw and the arms' `pitch` - which trail the sight by up to the
+    slew rates in `systems/gunnery.py`.  A round leaves along these, not along
+    the sight line: what the cross promises and what the gun delivers only agree
+    once the machine has caught up.
+    """
+    e = world.ecs
+    if int(e["etype"][eid]) == defs.ETYPE_APC:
+        return float(e["turret_yaw"][eid]), float(e["pitch"][eid])
+    return float(e["yaw"][eid]), float(e["pitch"][eid])
 
 
 def run(world: World, dt: float) -> None:
@@ -160,7 +181,11 @@ def fire(world: World, eid: int, arm: int, wid: int, wd: dict, target: int = -1)
     e = world.ecs
     pos = e["pos"]
     etype = int(e["etype"][eid])
-    origin, yaw, pitch = aim_of(world, eid)
+    # the fire control solves from the sight's eye, the round leaves the mouth
+    # of the barrel: two points, and with the machine lagging the sight, two
+    # headings as well
+    origin, _, _ = aim_of(world, eid)
+    yaw, pitch = bore_of(world, eid)
     right = up = 0.0
     if etype == defs.ETYPE_MECH:
         reach = defs.MECH_ARM_REACH.get(wd["kind"], 1.8)

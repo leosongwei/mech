@@ -28,6 +28,10 @@ UNIT_DTYPE = np.dtype([
     ("vx", "<f4"), ("vz", "<f4"),
     ("hp", "<u2", 4),
     ("ammo", "<u2", 2), ("mag", "<u2", 2), ("weapon", "<u2", 2),
+    # the sight: where the crew is looking, which is where the hull and the arms
+    # are slewing to.  `yaw` / `pitch` above are the laid gun; a mech's head is
+    # drawn on these (the client's own head is its camera, so it uses its view)
+    ("syaw", "<f4"), ("spitch", "<f4"),
 ])
 PROJ_DTYPE = np.dtype([
     ("id", "<u2"), ("kind", "u1"), ("wid", "u1"), ("faction", "u1"), ("pad", "u1"),
@@ -43,7 +47,7 @@ SMOKE_DTYPE = np.dtype([
     ("rx", "<f4"), ("ry", "<f4"), ("rz", "<f4"),
     ("t", "<f4"),
 ])
-assert UNIT_DTYPE.itemsize == 64, UNIT_DTYPE.itemsize
+assert UNIT_DTYPE.itemsize == 72, UNIT_DTYPE.itemsize
 assert PROJ_DTYPE.itemsize == 32, PROJ_DTYPE.itemsize
 assert SMOKE_DTYPE.itemsize == 32, SMOKE_DTYPE.itemsize
 
@@ -69,6 +73,7 @@ def static_payload(world: World) -> dict:
         towns=t.towns,
         mech=dict(hp=list(defs.UNIT_DEFS[defs.ETYPE_MECH]["hp"]),
                   hitspheres=defs.MECH_HITSPHERES, eye=defs.MECH_EYE,
+                  sight_z=defs.MECH_SIGHT_Z,
                   muzzles={int(k): v for k, v in defs.MECH_ARM_MUZZLE.items()},
                   reach=dict(defs.MECH_ARM_REACH),
                   modules=defs.MODULE_NAMES),
@@ -126,6 +131,8 @@ def snapshot_bytes(world: World) -> bytes:
         arr["ammo"] = ammo
         arr["mag"] = mag
         arr["weapon"] = e["weapon"][uids].astype(np.uint16)
+        arr["syaw"] = e["sight_yaw"][uids]
+        arr["spitch"] = e["sight_pitch"][uids]
 
     parr = np.zeros(len(pids), PROJ_DTYPE)
     if len(pids):

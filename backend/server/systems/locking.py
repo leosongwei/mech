@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from .. import defs, mathutil as mu
-from . import sight
+from . import sight, weapons
 
 if TYPE_CHECKING:
     from ..world import Player, World
@@ -56,8 +56,6 @@ def cone_of(pl: Player) -> float:
 def run(world: World, dt: float) -> None:
     e = world.ecs
     pos = e["pos"]
-    yaw = e["yaw"]
-    pitch = e["pitch"]
     faction = e["faction"]
     hp = e["hp"]
     ids = world.lockable_units()
@@ -76,8 +74,11 @@ def run(world: World, dt: float) -> None:
             pl.lock_progress = 0.0
             continue
 
-        origin = (float(pos[eid, 0]), float(pos[eid, 1]) + defs.MECH_EYE, float(pos[eid, 2]))
-        d = np.asarray(mu.dir_from(float(yaw[eid]), float(pitch[eid])), np.float32)
+        # the seeker is in the sight head, not on the barrels: it sweeps the
+        # line the pilot's cross is on and answers the view instantly, so a
+        # target can be locked while the hull is still swinging round to it
+        origin, sy, sp = weapons.aim_of(world, eid)
+        d = np.asarray(mu.dir_from(sy, sp), np.float32)
         cone = cone_of(pl)
 
         def angle_to(tid: int) -> tuple[float, float]:

@@ -41,6 +41,7 @@ backend/
     netcode.py             # init payload, binary snapshots, JSON meta
     main.py                # FastAPI: websockets, static files, 30 Hz game loop
     systems/               # mechanics shared by every mode, each exposes run(world, dt)
+                         #   gunnery.py: the sight leads, the hull and the arms slew after it
                          #   sight.py: the one line of sight (terrain + smoke), clear/why
                          #   smoke.py: hot smoke canisters, opaque puffs, blocks(a, b)
                          #   proximity.py: 30mm airburst fuse, bursts on people only
@@ -124,10 +125,33 @@ frontend/
   read for that.
 * **World** (`world.py`) owns terrain, players, the ECS and the system
   pipeline. Shared order: `rearm`, `player_input`, the mode's pre-systems
-  (battle: `ai`), `locking, smoke, weapons, movement, projectiles, proximity,
-  economy, debris`, then the mode's post-systems (battle: `waves`).
+  (battle: `ai`), `gunnery, locking, smoke, weapons, movement, projectiles,
+  proximity, economy, debris`, then the mode's post-systems (battle: `waves`).
+  `gunnery` sits between the crews saying where they are looking and anything
+  reading a barrel, so `yaw` / `pitch` are the *laid gun* by the time a weapon
+  fires or the client draws.
   `World.update(dt)` is the only entry point; the loop in `main.py` calls it at
   a fixed 30 Hz (`TICK_DT = 1/30`).
+* **The sight leads, the machine follows** (`systems/gunnery.py`, `defs.MECH_
+  SIGHT_Z`).  A mech's aim is a free turret on the roof, mounted *on the hull*
+  `MECH_SIGHT_Z` (0.62 m) behind the hull's own rotation axis.  Two component
+  pairs, never one: `sight_yaw` / `sight_pitch` is where the crew is looking
+  (a pilot's view, an AI's intercept), and it answers instantly; `yaw` (the
+  hull) swings after it at `MECH_HULL_RATE` (80 deg/s) and the arms' `pitch`
+  climbs after it at `MECH_ARM_RATE` (50 deg/s), stopping at the mount's
+  `MECH_PITCH_MIN/MAX` (-26 / +43 deg) while the sight keeps looking at the
+  sky.  Firing uses the *bore* (`weapons.bore_of`); the eye, the IR seeker and
+  a SACLOS beam use the *sight* (`weapons.aim_of`), because a gunner keeps his
+  cross on the target and the launcher catches up.  The eye is the sight's own
+  pivot (`mathutil.sight_eye(pos, hull_yaw)`) - so turning the *sight* does not
+  move it, and turning the *hull* walks it along a 0.62 m arc.  That is the
+  whole point of the split: the camera rides the machine, and the machine can
+  be felt moving under a view that has already turned.  Every other unit aims
+  with its whole mount and has nothing to catch up with; `gunnery` mirrors its
+  sight from the hull (or from a carrier's turret) so the meaning of the
+  component never changes.  The AI lays the sight on the intercept and only
+  pulls the trigger when the *bore* is on it (`err < 0.14` rad, `|d pitch| <
+  0.02`), or a hull still coming round would hose the dirt.
 * **Buying costs time, not just money.** `shop.deal` charges the bill and books
   the priced lines on the pilot, writing the seconds the draft cost into the
   mech's `work_remaining_time` (a plain float, 0.0 = idle); `systems/rearm.py`
@@ -367,6 +391,13 @@ frontend/
 * **Netcode** — one init payload with the map and all definitions, then binary
   snapshots at 15 Hz (`SNAP_EVERY`) and JSON meta at 10 Hz (`META_EVERY`).
   Entity state is authoritative on the server; the client only interpolates.
+  A unit row is 72 bytes (`UNIT_DTYPE`): `yaw` / `pitch` are the *laid gun*
+  (hull and arms), `syaw` / `spitch` where the crew is looking.  The client's
+  own machine reads its pose from the snapshot like any other - overriding it
+  with the view is exactly the teleporting hull this split removed - while the
+  *camera* is the local view (an instant sight) sitting on the server-side
+  eye.  `defs.MECH_SIGHT_Z` travels in the init payload (`mech.sight_z`) so
+  `game._sightEye` mounts the eye where `mathutil.sight_eye` does.
 * **Debug messages** are accepted only when `MECH_DEBUG=1` (see `main.py`),
   except `respawn`, which is always allowed. All of them are sent from the
   console as `g.net.send({t: '...', ...})`; the payloads are in
@@ -403,7 +434,16 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
 ### Client
 
 * `game.js` sends input at 30 Hz (`{t:"in",yaw,pitch,mx,mz,fl,fr}`) and drives
-  the frame: interpolate snapshots, aim, build the draw list, draw, HUD.
+  the frame: interpolate snapshots, aim, build the draw list, draw, HUD.  The
+  `yaw` / `pitch` on the wire are the *sight* (where the pilot looks), never the
+  hull: `player_input` writes them into `sight_yaw` / `sight_pitch`.
+* **Two headings, and the client keeps them apart.** `_aim` solves the centre
+  cross, the range readout and the seeker ring from the view (`dirFrom(input)`,
+  the sight line from `_sightEye`) and each arm's impact marker from the *bore*
+  (`own.yaw`, `own.pitch`, `_muzzle`): mid-flick the second trails the first,
+  which is the lag the pilot is meant to see.  A marker whose point falls behind
+  the camera draws nothing at all - the old fallback dropped it on the centre of
+  the screen, where it read as "on target" for exactly the moment it is not.
 * `renderer.js` draws the ground twice: a radial LOD grid out to the horizon
   (far) and a **tile-aligned patch** (`TILE_PATCH` tiles around the eye, moved
   by the `uOrigin` uniform) that carries the OpenTTD look - every vertex is a
@@ -438,6 +478,14 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
   forward, +Y up, +Z right** (see `math.js compose`). A Y-axis primitive is
   laid along the barrel with `pitch = FORWARD` (`-PI/2`); use
   `FORWARD + p` when a pitch is already in play.
+* **`at()` turns a piece's offset with the same yaw it turns the mesh with**,
+  which is what everything bolted to a hull wants - and what the sight head must
+  *not* do: its pivot is fixed to the hull, so the head has to rotate on the
+  pillar, not orbit the machine. `headAt()` is that case - the pivot's place
+  comes from the hull's `yaw` (`SIGHT_Z`, the same 0.62 m as
+  `defs.MECH_SIGHT_Z`) and only the offset from the pivot follows `syaw` /
+  `spitch`. Getting this wrong (passing the sight's angles to `at`) draws the
+  head a metre and a half off its own pillar whenever the two disagree.
 * `map.js` must stay ballistically identical to the server: same gravity,
   same 1/30 step, same launch bias (`wd.bias`), the same "building walls are
   columns, tree trunks are cylinders" rule (`wallAt`/`obstacleAt`/`trunkHit`),
@@ -534,6 +582,16 @@ cd frontend && npm install && npm run build      # -> backend/assets/
   (`uv venv && uv pip install -r backend/pyproject.toml`).
 * No test suite, no linter, no type checker. Verify by running the game and
   watching `/tmp/mech-server.log` plus the browser console.
+* **`tools/gunnery_check.py`** is the sight/hull/arm check: headless on the
+  range map it flicks the view 90 degrees and measures the hull rate, the arm
+  rate, the stop at the elevation limit, the eye's place on the pivot (turning
+  the sight must not move it, turning the hull must walk it round the 0.62 m
+  arc) and, by firing mid-flick, that a round leaves along the *barrel* rather
+  than along the cross.  Every line it prints is a number with what it should
+  be.
+  ```bash
+  .venv/bin/python tools/gunnery_check.py        # -v for a per-tick trace
+  ```
 * **`tools/replay.py` is the one automated check there is.** It drives a
   scripted 30 s battle (900 ticks: both weapons, smoke pulls, debug spawns,
   forced kills, AI waves), records per-tick aggregates — entity counts, total
@@ -685,16 +743,23 @@ g.__cam = (eye, yaw, pitch) => { g._camera = (own, dt) => {
   // dropped - the real knobs are `yaw` and `freeYaw`
   g.input.yaw = yaw; g.input.freeYaw = 0;
   g.input.pitch = pitch;                     // -1.45 = straight down
-  return g.__origCam({ x: eye[0], y: eye[1] - 5.05, z: eye[2] }, dt);
+  // the eye is mounted on the hull `mech.sight_z` behind its rotation axis, so
+  // a fake `own` needs a `yaw` too - without one the mount offset is NaN and
+  // the camera goes with it
+  return g.__origCam({ x: eye[0], y: eye[1] - 5.05, z: eye[2], yaw }, dt);
 }; };
 g.__cam([x, y, z], Math.PI / 4, -0.45);      // yaw: dirFrom convention
 ```
 
 * `_camera` is a cockpit camera whose eye is the commander's sight head: it
-  sits at `defs.mech.eye` (5.05 m) above `own.y`, on the hull's own centre line
-  and with no forward step, hence the `- 5.05` above. `_sightEye` returns that
-  same point - it is also the origin the server fires and locks from - so the
-  cross, the range readout and the lead circles cannot disagree. The pilot's own
+  sits at `defs.mech.eye` (5.05 m) above `own.y`, `defs.mech.sight_z` (-0.62 m)
+  behind the hull's rotation axis and carried by the hull's yaw - hence the
+  `- 5.05` above and the `yaw` in the fake `own`. `_sightEye` returns that same
+  point, and it is the origin the server's sight, seeker and fire control solve
+  from, so the cross, the range readout and the lead circles cannot disagree.
+  The sight *head's* own rotation does not move it (the head turns about the
+  pillar, the eye is the pivot); the hull swinging underneath does, which is
+  the geometry the decoupled sight is for. The pilot's own
   machine is drawn like any other unit, in full: there is **no separate
   first-person view model**, so the barrels on screen are the barrels the
   rounds leave from. The one piece left out of it is the sight head the eye is

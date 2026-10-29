@@ -1,4 +1,10 @@
-"""Player intent -> ECS components (torso yaw, arm pitch, velocity, trigger)."""
+"""Player intent -> ECS components (sight, velocity, trigger).
+
+The pilot only ever asks for two things: where to *look* and where to drive.
+Looking writes the sight (`sight_yaw` / `sight_pitch`); the hull and the arms
+slew after it at the machine's own rates in `systems/gunnery.py` and are the
+only thing a weapon or a camera reads.
+"""
 
 from __future__ import annotations
 
@@ -15,8 +21,8 @@ def run(world: World, dt: float) -> None:
     e = world.ecs
     pos = e["pos"]
     vel = e["vel"]
-    yaw = e["yaw"]
-    pitch = e["pitch"]
+    sight_yaw = e["sight_yaw"]
+    sight_pitch = e["sight_pitch"]
     trigger = e["trigger"]
     etype = e["etype"]
     hp = e["hp"]
@@ -30,9 +36,11 @@ def run(world: World, dt: float) -> None:
         if int(etype[eid]) != defs.ETYPE_MECH:
             continue
 
-        # torso follows the mouse, arms follow mouse-Y
-        yaw[eid] = pl.in_yaw
-        pitch[eid] = max(-0.45, min(0.75, pl.in_pitch))
+        # the sight answers the mouse instantly; the hull and the arms are
+        # what has to catch up with it (systems/gunnery.py), and the arms stop
+        # at their own elevation limits on the way
+        sight_yaw[eid] = pl.in_yaw
+        sight_pitch[eid] = pl.in_pitch
 
         # a rearm job (systems/rearm.py) holds the machine where it stands and
         # kills the triggers: the pilot may still look around, nothing else

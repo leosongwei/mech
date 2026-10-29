@@ -407,11 +407,11 @@ export class Game {
     this._pumpSounds();
     this._sendInput(dt);
 
+    // the own machine's pose is the *server's* now: the hull swings after the
+    // sight and the arms climb after it at their own rates, so overriding yaw /
+    // pitch with the view here would draw (and predict for) a machine that
+    // snaps to wherever the pilot looks - exactly what it no longer does
     const own = this.ownEntity();
-    if (own) {
-      own.yaw = this.input.yaw;
-      own.pitch = this.input.pitch;
-    }
 
     if (this.shopOpen && !own) this._shopClose();
     this._checkDamage(own);
@@ -634,6 +634,11 @@ export class Game {
   }
 
   // ------------------------------------------------------------- aiming
+  // The barrel the pilot is looking down: where it *is*, not where the cross
+  // is.  A mech's arms ride on the hull and elevate on their own pivots, so the
+  // bore is the hull's yaw (`own.yaw`) and the arms' pitch (`own.pitch`) - both
+  // from the server, both slewing after the sight.  Mid-flick the bore is
+  // behind the cross, and the impact marker drawn off it has to be too.
   _muzzle(own, arm) {
     const mod = arm === 0 ? '2' : '3';
     const off = (this.defs.mech.muzzles && this.defs.mech.muzzles[mod]) || [0, 4.3, 0.9];
@@ -643,8 +648,8 @@ export class Game {
     const wd = (this.defs.weapons && this.defs.weapons[own.weapon ? own.weapon[arm] : 0]) || {};
     const reachTbl = this.defs.mech.reach || {};
     const reach = reachTbl[wd.kind] === undefined ? off[2] : reachTbl[wd.kind];
-    const pitch = clamp(this.input.pitch, -0.45, 0.75);
-    const yaw = this.input.yaw;
+    const pitch = own.pitch;
+    const yaw = own.yaw;
     const c = Math.cos(yaw), s = Math.sin(yaw);
     const rx = -s, rz = c;
     const fwd = reach * Math.cos(pitch);
@@ -655,23 +660,37 @@ export class Game {
     ];
   }
 
-  // The origin every aiming readout is measured from: the eye is the machine's
-  // optic centre - the commander's sight head, whose optical axis is the eye
-  // point `defs.mech.eye` on the hull's own centre line, which is also where
-  // the server fires and locks from.  The cross is drawn at the centre of the
-  // screen, so the sight ray, the range readout and the lead circles all have
-  // to start here or they disagree with it.
+  // The origin every aiming readout is measured from: the eye sits in the
+  // commander's sight head, which is bolted to the *hull* `defs.mech.sight_z`
+  // behind the hull's own rotation axis (`mathutil.sight_eye` on the server,
+  // line for line).  The head's own rotation about its pivot does not move it -
+  // the head turns, the eye is the pivot - but the hull swinging underneath
+  // does: that arc is the geometry the decoupled sight exists for, and it is
+  // why the machine can be felt moving under a view that has already turned.
   _sightEye(own) {
-    return [own.x, own.y + ((this.defs.mech && this.defs.mech.eye) || 5.05), own.z];
+    const mech = this.defs.mech || {};
+    const oz = mech.sight_z === undefined ? -0.62 : mech.sight_z;
+    const c = Math.cos(own.yaw), s = Math.sin(own.yaw);
+    return [
+      own.x + c * oz,
+      own.y + (mech.eye || 5.05),
+      own.z + s * oz,
+    ];
   }
 
   _aim(own) {
     this.crosshairs = [null, null];
     this.sightRange = null;
     if (!own) return;
-    const yaw = this.input.yaw;
-    const pitch = this.input.pitch;
-    const dir = dirFrom(yaw, pitch);
+    // two headings, and they are different things.  `dir` is the sight: the
+    // cross, the range readout, the seeker ring, the beam a SACLOS missile
+    // rides.  The arms are laid along the bore (`own.yaw` / `own.pitch`), which
+    // trails the sight while the machine catches up - that is what each arm's
+    // marker is predicted from below
+    const dir = dirFrom(this.input.yaw, this.input.pitch);
+    const byaw = own.yaw;
+    const bpitch = own.pitch;
+    const bdir = dirFrom(byaw, bpitch);
     const units = [];
     for (const e of this.net.entities.values()) {
       // wrecks and corpses are inert: rounds fly straight through them, so the
@@ -710,30 +729,33 @@ export class Game {
         // sits still across a crest line instead of dancing on the ridge.  bias
         // is absorbed by the solution, hence the copy with bias 0
         const z = this.init.zero || { range: 4000, max_elev: 1.05 };
-        const theta = zeroAt(wd, yaw, pitch, m[0], m[1], m[2], this.zeroRange, z.max_elev);
+        const theta = zeroAt(wd, byaw, bpitch, m[0], m[1], m[2], this.zeroRange, z.max_elev);
         const shot = theta === null ? wd : { ...wd, bias: 0 };
         point = predictImpact(this.map, shot, m[0], m[1], m[2],
-          theta === null ? dir : dirFrom(yaw, theta), units, {}, own.faction);
+          theta === null ? bdir : dirFrom(byaw, theta), units, {}, own.faction);
         hit = point.hit;
         dist = point.dist;
         // a setting the round cannot reach (or a shot that runs off the map)
-        // leaves the marker on the aim line and the reading red
+        // leaves the marker on the bore line and the reading red
         far = !point.hit;
         if (theta === null) {
-          point = { x: m[0] + dir[0] * AIM_LINE, y: m[1] + dir[1] * AIM_LINE,
-            z: m[2] + dir[2] * AIM_LINE };
+          point = { x: m[0] + bdir[0] * AIM_LINE, y: m[1] + bdir[1] * AIM_LINE,
+            z: m[2] + bdir[2] * AIM_LINE };
         }
       } else if (wd) {
+        // a guided round follows the *sight*, not the tube it left: the marker
+        // sits on the cross even while the arms are still coming round
         const near = Math.min(wd.range, 2400);
         point = { x: m[0] + dir[0] * near, y: m[1] + dir[1] * near, z: m[2] + dir[2] * near, hit: false, dist: near };
         dist = near;
       }
       if (!point) continue;
       const scr = this.hud._project(point.x, point.y, point.z);
-      this.crosshairs[arm] = {
-        screen: scr || [this.hud.w / 2, this.hud.h / 2],
-        hit, dist, disabled, far,
-      };
+      // no marker for a barrel pointing behind the pilot: the old fallback put
+      // it on the centre of the screen, which with a lagging bore would read as
+      // "on target" for the moment a flick takes the arms off the view
+      if (!scr) continue;
+      this.crosshairs[arm] = { screen: scr, hit, dist, disabled, far };
     }
   }
 

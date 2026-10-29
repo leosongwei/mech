@@ -56,6 +56,23 @@ def turn_toward_arr(cur: np.ndarray, target: np.ndarray,
     return np.where(np.abs(d) <= max_step, target, stepped)
 
 
+def sight_eye(pos: np.ndarray, hull_yaw: float) -> tuple[float, float, float]:
+    """World position of the commander's sight head: the pilot's eye.
+
+    The sight is bolted to the *hull*, `defs.MECH_SIGHT_Z` behind the hull's own
+    rotation axis and `defs.MECH_EYE` up, so the eye is not a point in space -
+    it is carried round by the hull.  That is the geometry the decoupled sight
+    exists for: swinging the hull underneath a sight already pointing somewhere
+    else walks the eye along an arc, and the view slides with it.
+
+    The head's own rotation does not move it: it turns about the pillar it
+    stands on, and the eye is that pillar.
+    """
+    c, s = math.cos(hull_yaw), math.sin(hull_yaw)
+    oz = defs.MECH_SIGHT_Z
+    return (pos[0] + c * oz, pos[1] + defs.MECH_EYE, pos[2] + s * oz)
+
+
 def muzzle_point(pos: np.ndarray, yaw: float, module: int,
                  arm_pitch: float = 0.0,
                  reach: float | None = None,

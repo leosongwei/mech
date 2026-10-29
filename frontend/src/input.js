@@ -1,10 +1,12 @@
-// Mouse + keyboard.  Mouse X drives the torso, mouse Y drives arm elevation,
-// ALT frees the view without moving the torso or the arms.
+// Mouse + keyboard.  The mouse drives the *sight* - the free turret on the
+// roof that answers it instantly; the hull and the arms slew after it at their
+// own rates (systems/gunnery.py on the server).  ALT frees the view without
+// moving the sight, so nothing follows it either.
 
 import { clamp, wrapPi } from './math.js';
 
 // optics steps selected with the wheel; sensitivity is divided by the
-// magnification so a 20x sight does not whip the torso around
+// magnification so a 20x sight does not whip the turret around
 export const ZOOM_LEVELS = [1, 4, 10, 20];
 // sight settings in metres: CTRL+wheel steps the zero, the plain wheel the
 // optics.  Replaced by the server's list (`defs.ZERO_STEPS`) once a world

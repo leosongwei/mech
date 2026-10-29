@@ -129,6 +129,9 @@ def _send(world: World, etype: int, faction: int, lane: int, x: float, z: float)
     ex, ez = world.terrain.bases[1 - faction]
     e["yaw"][eid] = math.atan2(ez - z, ex - x)
     e["leg_yaw"][eid] = e["yaw"][eid]
+    # fresh out of the gate the machine looks where it is pointed: a sight left
+    # on the spawn's random heading would swing the hull round for nothing
+    e["sight_yaw"][eid] = e["yaw"][eid]
     return eid
 
 

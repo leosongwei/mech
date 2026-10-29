@@ -469,11 +469,15 @@ export class Game {
   }
 
   _missileTrails() {
-    // one puff every few metres of flight, per round
+    // one puff every few metres of flight, per round, laid down where the
+    // nozzle is - the model hangs its flame 2.4 m behind the round's centre
+    // along the flight path, so the plume has to start there too
     for (const p of this.net.projectiles) {
       if (p.kind === 0) continue;
+      const sp = Math.hypot(p.vx, p.vy, p.vz) || 1;
+      const k = 2.4 / sp;
       this.particles.lastTrail = this._trailPos.get(p.id) || null;
-      this.particles.trail(p.x, p.y, p.z, 7);
+      this.particles.trail(p.x - p.vx * k, p.y - p.vy * k, p.z - p.vz * k, 7);
       this._trailPos.set(p.id, this.particles.lastTrail || [p.x, p.y, p.z]);
     }
     if (this._trailPos.size > 200) this._trailPos.clear();

@@ -141,11 +141,16 @@ function apc(R, e, flashes) {
       at(R, 'sphere', e, yaw, 0, s * 1.75, 0.62, f, 1.25, 1.25, 1.25, [0.08, 0.08, 0.09]);
     }
   }
+  // the turret's barrel and its flash go out along the *elevated* bore, not
+  // along the hull's ground track (`at` lays an offset out in the yaw plane)
+  const cp = Math.cos(e.pitch), sp = Math.sin(e.pitch);
   at(R, 'box', e, tYaw, e.pitch, 0, 2.85, 0, 2.1, 1.0, 2.3, METAL_L);
-  at(R, 'cyl', e, tYaw, FORWARD + e.pitch, 0, 2.9, 1.6, 0.26, 3.6, 0.26, [0.12, 0.12, 0.13]);
+  at(R, 'cyl', e, tYaw, FORWARD + e.pitch, 0, 2.9 + 1.6 * sp, 1.6 * cp,
+    0.26, 3.6, 0.26, [0.12, 0.12, 0.13]);
   const af = flashes && flashes.get(e.id);
   if (af) {
-    at(R, 'sphere', e, tYaw, e.pitch, 0, 2.9, 3.5, 0.8, 0.8, 0.8, [1.0, 0.85, 0.4]);
+    at(R, 'sphere', e, tYaw, e.pitch, 0, 2.9 + 3.5 * sp, 3.5 * cp,
+      0.8, 0.8, 0.8, [1.0, 0.85, 0.4]);
   }
 }
 
@@ -334,8 +339,14 @@ function projectile(R, p, defs) {
     const wid = Math.max(0.08, cal * 0.011);
     at(R, 'pyramid', fake, yaw, FORWARD + pitch + Math.PI, 0, 0, 0, wid, len, wid, col);
   } else {
-    at(R, 'cyl', fake, yaw, FORWARD + pitch, 0, 0, -0.6, 0.32, 3.2, 0.32, [0.78, 0.78, 0.8]);
-    at(R, 'cone', fake, yaw, FORWARD + pitch, 0, 0, 1.4, 0.32, 1.1, 0.32, col);
-    at(R, 'sphere', fake, yaw, pitch, 0, 0, -2.4, 1.0, 1.0, 1.0, [1.0, 0.72, 0.25]);
+    // Every piece sits `d` metres along the round's own flight path, not along
+    // its ground track: `at` only lays an offset out in the yaw plane, so a
+    // rocket climbing away would keep its nose, body and flame in the air
+    // where a level one would have them - the pieces come apart.
+    const put = (shape, d, sx, sy, sz, colour) => at(R, shape, fake, yaw,
+      FORWARD + pitch, 0, d * Math.sin(pitch), d * Math.cos(pitch), sx, sy, sz, colour);
+    put('cyl', -0.6, 0.32, 3.2, 0.32, [0.78, 0.78, 0.8]);
+    put('cone', 1.4, 0.32, 1.1, 0.32, col);
+    put('sphere', -2.4, 1.0, 1.0, 1.0, [1.0, 0.72, 0.25]);
   }
 }

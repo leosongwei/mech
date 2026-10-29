@@ -102,15 +102,16 @@ class World:
     # ------------------------------------------------------------------
     def spawn_unit(self, etype: int, faction: int, x: float, z: float, owner: int = -1,
                    weapons: list[int] | None = None, hp_scale: float = 1.0,
-                   lane: int = -1) -> int:
+                   lane: int = -1, extra: tuple[str, ...] = ()) -> int:
         e = self.ecs
         d = defs.UNIT_DEFS[etype]
         # the component set *is* the entity's type, and it is decided once, here:
         # the shared bundle plus the tags this etype declares (`unit`, `combat`,
         # `moves`...), which is what every system queries instead of switching
-        # on `etype`
+        # on `etype`.  `extra` is what a *mission* adds on top of the type - the
+        # `raider` tag and the plan it is executing (modes/battle/raids.py).
         comps = components.CIV_COMPS if etype == defs.ETYPE_CIV else components.UNIT_COMPS
-        eid = e.create((*comps, *d["tags"]))
+        eid = e.create((*comps, *d["tags"], *extra))
         yaw = self.rng.random() * math.tau
         e["pos"][eid] = (x, self.terrain.height_at(x, z), z)
         e["vel"][eid] = (0.0, 0.0, 0.0)
@@ -210,6 +211,10 @@ class World:
 
     def lockable_units(self) -> np.ndarray:
         return self.ecs.query("lockable")
+
+    def raiders(self) -> np.ndarray:
+        """Hulls on a raiding mission: the ones the raid AI drives off the lanes."""
+        return self.ecs.query("raider")
 
     def movable(self) -> np.ndarray:
         return self.ecs.query("moves")

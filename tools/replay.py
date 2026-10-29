@@ -41,7 +41,7 @@ DT = 1.0 / 30.0
 FLOAT_SERIES = ("hp_total", "pos_x", "pos_z", "vel_x", "vel_z")
 # series compared as counts, at most one off
 COUNT_SERIES = ("n_units", "n_combat", "n_proj", "n_smoke", "n_canister",
-                "n_debris", "n_all", "wave", "kills", "deaths")
+                "n_debris", "n_all", "n_raider", "wave", "kills", "deaths")
 
 
 # ----------------------------------------------------------------------
@@ -96,6 +96,7 @@ def summary(world: World, pl) -> dict[str, float]:
         n_smoke=int(e.query("smoke").size),
         n_canister=int(e.query("canister").size),
         n_debris=int(e.query("wreck_t").size),
+        n_raider=int(e.query("raider").size),
         hp_total=float(hp.sum()),
         pos_x=float(pos[:, 0].sum()), pos_z=float(pos[:, 2].sum()),
         vel_x=float(vel[:, 0].sum()), vel_z=float(vel[:, 2].sum()),
@@ -155,11 +156,59 @@ def _death_blast() -> None:
     e.validate()
 
 
+def _raid_plan() -> None:
+    """Regression: a raider is briefed, and its route goes where it can drive.
+
+    A raider plans off the map and off the enemy's positions (`modes/battle/
+    raids.py`), and the two things that can silently break are the plan (an empty
+    route, or a march in the wrong direction) and the two-level split (a street
+    leg that starts at the wrong end, so the way points run backwards into the
+    town).  The route has to start under the raider, end at the town it was sent
+    to, and no way point may be inside a building.
+    """
+    import math
+    from server.modes.battle import raids
+    from server.terrain import TILE_BUILDING
+    world = World(seed=11, mode="battle")
+    world.raid_timer = {0: 0.0, 1: 1e9}       # one side only: the route is checked
+    for _ in range(60):
+        world.update(DT)
+    ids = world.raiders()
+    assert ids.size == raids.RAID_SIZE, f"{ids.size} raiders, want {raids.RAID_SIZE}"
+    world.ecs.validate()
+    for eid in ids:
+        eid = int(eid)
+        k = raids.key(world, eid)
+        path = world.raid_paths.get(k) or []
+        assert len(path) >= 2, f"raider {eid} was given no route"
+        p = world.ecs["pos"][eid]
+        assert math.dist(path[0], (float(p[0]), float(p[2]))) < 200.0, \
+            "the route does not start under the raider"
+        goal = int(world.ecs["raid_goal"][eid])
+        if goal != raids.NO_TOWN:
+            town = world.towns[goal]
+            assert math.dist(path[-1], (town["x"], town["z"])) < 1.0, \
+                "the route does not end at the town"
+            assert int(town["owner"]) == 1 - int(world.ecs["faction"][eid]), \
+                "the raider was sent to a town that is not the enemy's"
+            assert world.ecs["lane"][eid] == town.get("lane"), \
+                "the raider's lane and its target's lane disagree"
+        for x, z in path[1:-1]:
+            assert world.terrain.tile_type(x, z) != TILE_BUILDING, \
+                f"way point ({x:.0f}, {z:.0f}) is inside a building"
+
+
 def run(ticks: int = TICKS, verbose: bool = False) -> list[dict[str, float]]:
     _cache_after_growth()
     _death_blast()
+    _raid_plan()
     world = World(seed=11, mode="battle")
     pl = world.add_player("REPLAY")           # spawns the mech too
+    # the first raiding party leaves on its own clock (60 s into the round, well
+    # past this harness's 30 s), so it is brought forward: two hulls that plan a
+    # route, drive it and take a town are the part of the battle nothing else
+    # here exercises
+    world.raid_timer = {0: 0.2, 1: 0.4}
     out = []
     for tick in range(ticks):
         drive(world, pl, tick)

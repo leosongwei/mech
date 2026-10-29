@@ -82,6 +82,23 @@ def register(ecs: ECS) -> None:
     ecs.register("spot_z", np.float32)
     ecs.register("spot_t", np.float32)
 
+    # ---- raid (battle mode) ---------------------------------------------
+    # A raider is a *mission*, not a type: the hulls are ordinary mechs that
+    # carry the `raider` tag, which is what takes them out of the lane AI's
+    # hands (modes/battle/raids.py drives them instead) and what `raids.run`
+    # queries.  `raid_goal` and `raid_i` are the state of the plan being
+    # executed - which town, and how far along its own way point list - and
+    # `raid_party` which launch it belongs to.  The list itself lives on the
+    # world, keyed by (faction, party, lane), and the `lane` component is the
+    # one the raider was sent to cut.  Only an entity carrying `raider` owns any
+    # of these at all.
+    ecs.register("raider", np.uint8)
+    ecs.register("raid_goal", np.uint8, (), 255)     # index into world.towns, 255 = the enemy base
+    ecs.register("raid_i", np.int32)
+    ecs.register("raid_party", np.uint8)             # which launch a hull belongs to
+    ecs.register("raid_stuck", np.float32)           # seconds spent pushing at something
+    ecs.register("raid_t", np.float32)               # seconds left of the HOLD phase
+
     # ---- misc -----------------------------------------------------------
     ecs.register("flags", np.uint8)
     ecs.register("home_x", np.float32)               # wandering civilians

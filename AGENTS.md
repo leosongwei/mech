@@ -48,6 +48,8 @@ backend/
     modes/                 # per-mode rule sets: map, setup, pipeline, spawn rules
       base.py              #   Mode interface every mode implements
       battle/              #   waves.py: town capture + reinforcement waves
+                           #   raids.py: the raiding parties - one mech per lane,
+                           #   force-gradient + two-level (128 m / 16 m) pathfinding
       range/               #   targets.py: passive APC targets, bunkers.py: ridge blockhouses
                            #   (nothing on the range shoots back)
   assets/                  # compiled client (webpack output, gitignored)
@@ -56,6 +58,7 @@ tools/
   fixtures/                # its recorded tick summaries (checked in)
   smoke_lock_test.js       # browser-console driver: seeker A/B smoke test
   vehicle_trace.py         # range APC route trace: SVG path plot + per-tick CSV
+  raid_trace.py            # a battle's raiders: force-gradient + driven traces as SVG
 frontend/
   webpack.config.js        # entry src/main.js -> ../backend/assets/bundle.js
   icons.json               # single source of truth for every HUD icon glyph
@@ -146,6 +149,31 @@ frontend/
   same target comes back) and then distance-sorts the few candidates in it.
   Rebuild before querying anything that has moved since; in the tick's pipeline
   only `player_input` runs ahead of `ai`, and it moves nothing.
+* **Raiders** (`modes/battle/raids.py`) are the one unit that plans.  Every
+  `RAID_INTERVAL` a side sends `RAID_SIZE` mechs out, **one per lane, the lanes
+  drawn at random**, and each of them is briefed separately (a plan belongs to a
+  hull, keyed `(faction, party, lane)` on the world - two raiders two minutes
+  apart are kilometres apart, so a shared route would send the older one
+  backwards).  Both halves of the briefing come off one **force gradient**
+  (`_gradient`): the enemy army binned per 128 m node, spread over each hull's
+  own `sight` with a triangular falloff and weighted by `FORCE_WEIGHT`, i.e.
+  "defenders that could shoot a hull standing here".  `_pick_town` takes the
+  lowest-gradient enemy town on the raider's lane; `_astar` costs a node as
+  `1 + WOOD_COST·wood + WALL_COST·buildings + GRADIENT_COST·force`, so the route
+  bends round the enemy without doubling the march (`GRADIENT_COST` is the one
+  tuned-by-measurement constant in the file).  The plan is **two-level**: the
+  128 m strategic grid crosses the field and hands over to a 16 m `StreetNav`
+  grid 400 m out, because at 128 m a town is a smear of half walls and a route
+  drawn on it strands a hull against a house.  A hull that pushes at something
+  for `STUCK_SKIP` seconds drops the way point, and after `STUCK_REPLAN` it is
+  re-routed on the street grid (`_rescue`) instead of re-planned.  The mission
+  is `ai_state`: MARCH, then ASSAULT (stand in the 170 m ring - `waves._capture`
+  does the taking), then HOLD for `RAID_HOLD` (a raider in the ring is what
+  keeps the enemy from taking the cut back), then the next weak spot.  The
+  `raider` tag is what takes them out of `ai._advance`; the guns stay `ai.run`'s.
+  Raiders die like any other hull - 58% of them in a measured round - which is
+  why the plan dict is pruned when a party is gone.  `tools/raid_trace.py` runs
+  a battle and draws the gradient, the planned routes and where the hulls died.
 * **Modes** (`modes/`) own everything that differs between game modes: the
   map, what a fresh round spawns, the mode's own systems and the rules the
   shared code asks about (`fixed_faction`, `start_money`, `rearm_anywhere`,
@@ -510,13 +538,35 @@ cd frontend && npm install && npm run build      # -> backend/assets/
   scripted 30 s battle (900 ticks: both weapons, smoke pulls, debug spawns,
   forced kills, AI waves), records per-tick aggregates — entity counts, total
   hp, the sum of every position and velocity, money / kills / deaths — and
-  compares them with `tools/fixtures/replay_battle.json`. It is tolerant by
+  compares them with `tools/fixtures/replay_battle.json`. The first raiding
+  party is brought forward into the window, so a round of `raids.py` (plan,
+  march, fight, die) is covered as well, and a separate assertion checks that a
+  raider's route starts under it, ends at the town it was sent to, stays on its
+  lane, and touches no building tile. It is tolerant by
   design: float sums may drift 1 %, counts may be off by one. Run it after
   anything that touches `ecs.py`, `systems/` or `terrain.py`; `--save` rewrites
   the fixture when a change is meant to move the numbers.
   ```bash
   .venv/bin/python tools/replay.py          # compare
   .venv/bin/python tools/replay.py --save   # re-baseline
+  ```
+* **`tools/raid_trace.py`** runs a whole battle headless and draws the raiders:
+  the **force gradient** of both armies, every raider's planned route (dashed)
+  against the trace it actually drove (solid), the capture rings it was sent to
+  hold, the towns changing hands and an × where a hull died.  Per raider it
+  prints distance, time, woods crossed, mean enemy exposure against what the
+  straight line would have been, deviation off its own route, time in a fight,
+  time holding, replans/rescues and when it was destroyed - the four things a
+  raid is judged on (target, movement, fighting, losses).  It also writes the
+  per-sample trace as CSV.  Pass `--bbox X0,Z0,X1,Z1` to plot one corner of the
+  map at street scale.
+  ```bash
+  .venv/bin/python tools/raid_trace.py                       # -> /tmp/raid_trace.{svg,csv}
+  .venv/bin/python tools/raid_trace.py --minutes 20 --seed 7 --out /tmp/r7
+  .venv/bin/python tools/raid_trace.py --bbox 9600,10000,14000,14200
+  # the SVG is hand-written: render it with headless chrome if you want a PNG
+  google-chrome --headless --screenshot=/tmp/r.png --window-size=1180,1320 \
+      --user-data-dir=/tmp/chrome-prof file:///tmp/raid_trace.svg
   ```
 * **`tools/vehicle_trace.py`** drives one APC round a route on the range map
   (a 100 m square or the 3.7 km winding road) and writes an SVG - way points,

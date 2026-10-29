@@ -102,7 +102,13 @@ def run(world: World, dt: float) -> None:
 
         if moving:
             b["trigger"][row] = 0
-            if "vehicle" in b:
+            if "raider" in b:
+                # a raiding party has a route of its own, off the lanes: the
+                # mode's raid system (modes/battle/raids.py) writes its
+                # velocity.  Everything above - acquire, lead, fire - it shoots
+                # with the same crew as any other hull.
+                pass
+            elif "vehicle" in b:
                 _advance_route(world, b, row, speed)   # a car follows the lane
             else:
                 _advance(world, eid, b, row, speed, dt)

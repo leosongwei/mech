@@ -97,7 +97,16 @@ def _burst(world: World, bid: int, sph: tuple) -> None:
     first = np.ones(order.size, bool)
     first[1:] = units[order][1:] != units[order][:-1]
     pid = int(e["blast_pid"][bid])
+    # the table was built earlier in this tick: an id it holds can have been
+    # freed by a round landing since and handed out again (LIFO) to something
+    # else - a burst, a puff.  `ecs.destroyed` is what this tick reaped, so it
+    # is exactly the stale set, and a burst must not splash whatever now wears
+    # the id.
+    stale = set(e.destroyed)
     for k in order[first]:
+        uid = int(units[k])
+        if uid in stale:
+            continue
         dist = max(float(d[k]), 0.0)
-        combat.splash(world, int(units[k]), int(modules[k]), wd, dist, pid,
+        combat.splash(world, uid, int(modules[k]), wd, dist, pid,
                       src=f"blast {dist:.1f} m")

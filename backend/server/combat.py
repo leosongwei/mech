@@ -51,6 +51,14 @@ def apply(world: World, eid: int, module: int, amount: float, pid: int = -1,
             if pilot is not None and pilot.god:
                 return
     bufs, row = e.slot(eid)
+    if "hp" not in bufs:
+        # `hp` is the whole of "this can be hurt": an id that no longer owns a
+        # pool is not a target any more.  A caller holding ids from earlier in
+        # the tick can meet one - the hit-sphere table is built once a tick,
+        # and an id freed by a round that landed can already belong to the
+        # burst entity that round left behind (`systems/blasts.py`) - so the
+        # library refuses instead of raising on the buffer it cannot find.
+        return
     # debug only: a round in the air is worth a line of its own - it starts
     # with 10 hp, so the numbers say whether it was a graze or a kill - but
     # interception is settled, so this is off unless a tool asks for it

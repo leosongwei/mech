@@ -79,7 +79,7 @@ def census(world: World) -> dict[str, int]:
 # ----------------------------------------------------------------------
 # one timed run
 # ----------------------------------------------------------------------
-def run(minutes: float, seed: int, profile: bool = False) -> dict:
+def run(minutes: float, seed: int, window: float = 0.0) -> dict:
     ticks = int(round(minutes * TICKS_PER_MIN))
     world, pilots = make_world(seed)
 
@@ -122,6 +122,7 @@ def run(minutes: float, seed: int, profile: bool = False) -> dict:
     Grid.build = timed_grid
 
     timeline: list[dict] = []
+    ticks_ns: list[int] = []          # per-tick cost, for the 30 Hz question
     update_ns = 0
     minute_ns = 0
     sample = TICKS_PER_MIN
@@ -134,11 +135,16 @@ def run(minutes: float, seed: int, profile: bool = False) -> dict:
     net_ns = 0
     snap_n = 0
 
-    prof = cProfile.Profile() if profile else None
-    if prof:
-        prof.enable()
+    # cProfile over a whole long run costs 1.7x the run and describes mostly
+    # the quiet early minutes.  `window` seconds of *game* time at the *end* of
+    # the run is the mature battlefield, which is the one that has to be
+    # explained; the per-system numbers above stay whole-run.
+    prof = cProfile.Profile() if window > 0 else None
+    prof_from = ticks - int(round(window * 30)) if prof else ticks
     wall0 = time.perf_counter()
     for tick in range(ticks):
+        if prof and tick == prof_from:
+            prof.enable()
         for pl in pilots:
             drive(world, pl, tick)
         t0 = time.perf_counter_ns()
@@ -146,6 +152,7 @@ def run(minutes: float, seed: int, profile: bool = False) -> dict:
         d = time.perf_counter_ns() - t0
         update_ns += d
         minute_ns += d
+        ticks_ns.append(d)
         if (tick + 1) % SNAP_EVERY == 0:
             t0 = time.perf_counter_ns()
             netcode.snapshot_bytes(world)
@@ -156,13 +163,27 @@ def run(minutes: float, seed: int, profile: bool = False) -> dict:
                 netcode.meta_payload(world, pl)
             net_ns += time.perf_counter_ns() - t0
         if (tick + 1) % sample == 0:
+            cen = census(world)
             timeline.append(dict(minute=(tick + 1) // sample,
-                                 ms_per_tick=minute_ns / 1e6 / sample,
-                                 **census(world)))
+                                 ms_per_tick=minute_ns / 1e6 / sample, **cen))
             minute_ns = 0
+            print(f"    min {(tick + 1) // sample:>3}: {timeline[-1]['ms_per_tick']:7.2f}"
+                  f" ms/tick  entities {cen['n_all']:5}  combat {cen['n_combat']:4}"
+                  f"  proj {cen['n_proj']:4}", flush=True)
     wall = time.perf_counter() - wall0
     if prof:
         prof.disable()
+
+    # can this hold 30 Hz?  The tick budget is 1/30 s of wall time, and with
+    # the sleep removed that is exactly the compute the tick may not exceed.
+    hist = np.asarray(ticks_ns, np.float64) / 1e6
+    budget = 1000.0 / 30.0
+    tick_stats = dict(ms_p50=float(np.percentile(hist, 50)),
+                      ms_p90=float(np.percentile(hist, 90)),
+                      ms_p99=float(np.percentile(hist, 99)),
+                      ms_max=float(hist.max()),
+                      over_budget=float((hist > budget).mean()),
+                      mean=float(hist.mean()))
 
     total = sum(acc.values()) + grid_acc[0]
     sys_rows = []
@@ -184,7 +205,7 @@ def run(minutes: float, seed: int, profile: bool = False) -> dict:
                          worst_ms=0.0))
     sys_rows.sort(key=lambda r: -r["total_s"])
 
-    out = dict(minutes=minutes, ticks=ticks, seed=seed,
+    out = dict(minutes=minutes, ticks=ticks, seed=seed, profile_window_s=window,
                wall_s=wall, tick_rate=ticks / wall,
                ms_per_tick=1000.0 * wall / ticks,
                sim_seconds=ticks * DT,
@@ -192,6 +213,7 @@ def run(minutes: float, seed: int, profile: bool = False) -> dict:
                update_ms_per_tick=update_ns / 1e6 / ticks,
                netcode_ms_per_tick=net_ns / 1e6 / ticks,
                netcode_share_of_tick=net_ns / (update_ns + net_ns) if update_ns else 0.0,
+               tick_stats=tick_stats,
                systems=sys_rows,
                timeline=timeline)
     if prof:
@@ -210,13 +232,16 @@ def main() -> None:
     ap.add_argument("--minutes", default="5", help="comma separated, e.g. 5,10,20,30")
     ap.add_argument("--seed", type=int, default=11)
     ap.add_argument("--out", default="/tmp/profile_battle.json")
+    ap.add_argument("--window", type=float, default=60.0,
+                    help="seconds of game time to cProfile at the END of the run "
+                         "(0 = the whole run)")
     ap.add_argument("--no-profile", action="store_true", help="skip cProfile")
     a = ap.parse_args()
 
     runs = []
     for m in [float(v) for v in a.minutes.split(",")]:
         print(f"=== {m:g} min =========================================", flush=True)
-        r = run(m, a.seed, profile=not a.no_profile)
+        r = run(m, a.seed, window=0.0 if a.no_profile else a.window)
         runs.append(r)
         print(f"  {r['ticks']} ticks in {r['wall_s']:.1f} s "
               f"= {r['ms_per_tick']:.3f} ms/tick, {r['tick_rate']:.0f} ticks/s, "
@@ -227,6 +252,11 @@ def main() -> None:
                   flush=True)
         print(f"    {'netcode.wire':<22} {r['netcode_share_of_tick']*100:5.1f}%  "
               f"{r['netcode_ms_per_tick']*1000:8.1f} us/tick", flush=True)
+        t = r["tick_stats"]
+        print(f"  tick cost: p50 {t['ms_p50']:.2f}  p90 {t['ms_p90']:.2f}  "
+              f"p99 {t['ms_p99']:.2f}  max {t['ms_max']:.2f} ms - "
+              f"{t['over_budget']*100:.1f}% of ticks over the 33.3 ms budget",
+              flush=True)
         pathlib.Path(a.out).write_text(json.dumps(runs, indent=1))
     print("wrote", a.out)
 

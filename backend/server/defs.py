@@ -73,6 +73,113 @@ WID_G105 = 8
 # prox:    proximity fuse radius (m) - the round bursts when its flight path
 #          passes that close to enemy *personnel* (systems/proximity.py).
 #          Absent/0 = impact fuse only.  A hull never sets it off.
+# rack:    `rack(...)` (below) for a launcher that carries its rounds in tubes
+#          - a round leaves its own tube.  Absent = the round leaves the bore.
+#
+# ---------------------------------------------------------------- tube racks
+# A launcher that carries its rounds in tubes is described once, here, and both
+# halves read that one description: the server fires the n-th round out of the
+# tube the lattice puts it in (`rack_tube`), the client draws the same lattice
+# and the body around it from the same numbers (`scene.js armModel`), and the
+# mouth of the tubes *is* the weapon's `reach`, so a round leaves the mouth it
+# was drawn on.  A new racked launcher is therefore a data change, not code.
+
+
+def rack(cols: int, rows: int, count: int | None = None, *, bore: float = 0.19,
+         length: float = 1.30, centre: float = 0.75, wall: float = 0.04,
+         pitch: float | None = None, end: float = 0.10, frame: float = 0.10,
+         elev: float = 0.0,
+         box: tuple[float, float, float] | None = None) -> dict:
+    """Describe a tube launcher: the lattice, the tubes and the body round them.
+
+    cols / rows  the lattice - `count` rounds are carried (default: every cell)
+    bore         tube outside diameter, m
+    length       tube length, m
+    wall         gap between two tube walls, m  ->  pitch = bore + wall
+    pitch        centre spacing, when the tubes are drawn overlapping (the
+                 rocket nest packs its cells 0.155 m apart on a 0.27 m bore)
+    centre       how far the launcher sits along the bore, m
+    end          how far the tubes poke out of each end face, m
+    frame        how much wider the body is than the lattice, per side, m
+    elev         the launcher's own elevation, rad: a bolted quadrant the tubes
+                 are fixed at, which the arm's slewing does not move (0 = the
+                 launcher follows the arm)
+    box          explicit (length, width, height) when the drawn body is not
+                 the one the lattice derives
+
+    The body is a box around the cells and nothing more: the lattice plus
+    `frame`, `end` shorter than the tubes at each end - so it reads as a
+    launcher with mouths rather than as a solid block with dots on it.
+    """
+    cells = int(cols) * int(rows)
+    n = cells if count is None else int(count)
+    if not 0 < n <= cells:
+        raise ValueError(f"rack: {n} rounds do not fit {cols}x{rows} cells")
+    p = float(bore + wall if pitch is None else pitch)
+    lat_w = (int(cols) - 1) * p + float(bore)
+    lat_h = (int(rows) - 1) * p + float(bore)
+    bl, bw, bh = float(length) - 2.0 * float(end), lat_w + 2.0 * float(frame), lat_h + 2.0 * float(frame)
+    if box is not None:
+        bl, bw, bh = (float(v) for v in box)
+    return dict(cols=int(cols), rows=int(rows), count=n, bore=float(bore),
+                length=float(length), pitch=p, centre=float(centre),
+                mouth=float(centre) + float(length) * 0.5, elev=float(elev),
+                box_len=bl, box_w=bw, box_h=bh)
+
+
+def rack_tube(fired: int, spec: dict) -> tuple[float, float]:
+    """(right, up) of the tube the `fired`-th round of a rack leaves from.
+
+    Bottom row first, left to right - so a forty-cell nest with 32 rockets in it
+    has its lowest eight cells empty and a four-cell rack empties its lower pair
+    first.  `count` may be smaller than the lattice (`rack` refuses anything
+    that does not fit); the walk then simply stops before the top row.
+    """
+    cols, count = int(spec["cols"]), int(spec["count"])
+    pitch = float(spec["pitch"])
+    i = int(fired) % count
+    col, row = i % cols, i // cols
+    return ((col - (cols - 1) / 2.0) * pitch,
+            (row - (int(spec["rows"]) - 1) / 2.0) * pitch)
+
+
+# The rocket nest: forty rounds, forty cells, five across and eight high.  The
+# cells are 0.135 m hexagons packed 0.155 m apart (a little air between them) in
+# a 0.82 m body, which is what makes the face read as a roll of tubes rather
+# than as a slab with dots on it.
+RACK_ROCKET = rack(5, 8, 40, bore=0.135, pitch=0.155, length=2.15, centre=0.60,
+                   box=(1.90, 0.82, 1.26))
+# The top-attack rack: four tubes as big as the round in them - 0.20 m across
+# and 1.40 m long - a hand's width between centres, and a body a wall thick
+# round the whole lattice (2 x 2 at 0.20 m needs 0.50 m, so 0.74 m is frame and
+# armour).  The body is centred on the arm's own axis (`centre` 0: the shoulder
+# is its middle, not its rear end), and the tubes are a fifth longer than the
+# body, hanging out of *both* end faces - so the mouths read from in front and
+# from behind, and a launcher on an arm you can walk round is a row of tubes,
+# not a solid block.  The launcher is bolted at its own quadrant (`elev`,
+# 42 deg): the tubes do not follow the arm, which is why the missile always
+# leaves at that angle whatever the pilot's cross is doing - and why the drawn
+# tubes have to stand at the same angle.
+#
+# WORKAROUND (2026-10-30): the machine's own model was never dimensioned
+# against the weapons hung on it, so a launcher drawn at its real 0.20 x 1.40 m
+# reads as a toy next to a 3.6 m hull, and at twice that it swamps it.  The
+# tubes sit at 1.2x real - 0.24 m across and 1.70 m long - in a lattice of 2 x 4
+# = eight rounds.  Nothing else about the machine is re-dimensioned; when the
+# hull is, these numbers come down to a real ATGM launcher (0.20 x 1.40).
+#
+# The cells are packed the way the rocket nest packs its forty - its 0.155 m
+# pitch on a 0.135 m bore is 1.15 tube widths, and that is what makes a face
+# read as a bundle of tubes instead of a grid of dots.  Same ratio here: eight
+# 0.24 m tubes on a 0.28 m pitch, two across and four high, in a body that is
+# nothing but a 0.025 m sheet-metal edge round them (0.53 x 1.09 x 1.20 m).
+# Not a wall-spaced lattice (a 0.60 pitch and a 0.24 frame on the doubled bore):
+# that came out 1.48 m wide and sat 0.17 m *inside* the hull, and it read as
+# eight dots in a big empty box.
+RACK_TOP = rack(2, 4, 8, bore=0.24, pitch=0.28, length=1.70, centre=0.0, end=0.25,
+                frame=0.025, elev=0.73299)
+
+
 WEAPONS = [
     dict(wid=WID_NONE, key="none", name="EMPTY", kind="none", ap=0, ad=0, ed=0, er=0,
          rpm=1, mag=0, reserve=0, reload=1, vel=1, spread=0, bias=0.0, g=0, thrust=0, maxvel=0,
@@ -114,7 +221,7 @@ WEAPONS = [
     dict(wid=WID_ROCKET, key="rocket", name="UNGUIDED ROCKET POD", kind="rocket", ap=40, ad=20, ed=35, er=10.0,
          rpm=600, mag=40, reserve=0, reload=0.0, vel=55, spread=0.003, bias=0.0429, g=9.81, thrust=560,
          maxvel=610, life=16.4, range=3200, cost=350, ammo_cost=4.0, lock=0, lock_time=0, salvo=1,
-         semi=0, color=(1.0, 0.45, 0.15), cal=80, rcs=0.005,
+         semi=0, color=(1.0, 0.45, 0.15), cal=80, rcs=0.005, rack=RACK_ROCKET,
          desc="40 rounds, hold to fire, sighted to 1 km"),
     # TOW class: 40 m/s soft launch, then 100 m/s^2 of boost for 5.6 s takes it
     # to its 600 m/s cruise - and that is where the motor burns out, 1.8 km down
@@ -149,13 +256,22 @@ WEAPONS = [
     # reach.  Fire and forget, AD 120 takes any hull in one hit; the price is
     # the lock, the 5-27 s flight and the climb the target can hide behind -
     # measured envelope in doc/top_attack_plan.md, tool tools/top_attack_trace.py
+    #
+    # Eight rounds in a 2 x 4 rack and nothing behind them: no magazine, no
+    # reload, 0.5 s between launches (`rpm` 120).  The rack is the rocket pod's
+    # mechanism, not a second one - one round per tube, out of the tube it was
+    # drawn in - and a fresh rack is bought at the base like a fresh belt.
+    # `body` is how the round itself is drawn, (across, long): a 1.3 m missile
+    # in a 1.4 m tube, so what leaves the launcher is the size of the mouth it
+    # leaves from.  (`dia` is not that - it is the aero reference area, 127 mm,
+    # and moving it would move the measured envelope.)
     dict(wid=WID_TOPATTACK, key="topattack", name="TOP-ATTACK IR ATGM", kind="top", ap=900, ad=120, ed=60,
-         er=7.0, rpm=32, mag=2, reserve=8, reload=4.6, vel=20, spread=0.002, bias=0.0, g=9.81,
-         thrust=110.0,
+         er=7.0, rpm=120, mag=8, reserve=0, reload=0.0, vel=20, spread=0.002, bias=0.0,
+         g=9.81, thrust=110.0,
          maxvel=306.0, life=30.0, range=4000, cost=700, ammo_cost=45.0,
          mass=20.0, dia=0.127, cd0=0.75, k_cl=0.12, cl_alpha=16.0, cl_max=5.0,
-         burn=3.4, ignite=0.15, loft=0.73299, apex=950.0, turn_r=700.0,
-         pn_n=4.0, pn_r=300.0, pn_v=120.0,
+         burn=3.4, ignite=0.15, loft=RACK_TOP["elev"], apex=950.0, turn_r=700.0,
+         pn_n=4.0, pn_r=300.0, pn_v=120.0, rack=RACK_TOP, body=(0.18, 1.30),
          lock=1, lock_time=1.1, salvo=0, semi=0, color=(1.0, 0.35, 0.9), cal=127, rcs=0.02,
          desc="4 km lock-on, fire and forget"),
     dict(wid=WID_RIFLE556, key="rifle556", name="5.56mm RIFLE", kind="bullet", ap=5, ad=4, ed=0, er=0,
@@ -547,32 +663,13 @@ MECH_ARM_MUZZLE = {MOD_LEFT: (-1.43, 3.55, 0.9), MOD_RIGHT: (1.43, 3.55, 0.9)}
 # leaves the mouth of the barrel it was drawn on.  A 4.1 m cannon and a 1.8 m
 # nest differ by more than two metres; using one figure for both put the
 # rockets inside their own tubes and the cannon shells well short of the brake.
+# A launcher made of tubes does not need an entry: its `rack` carries the
+# mouth (`rack["mouth"]`) and the round leaves from there.
 MECH_ARM_REACH = {
     "bullet": 4.30,       # 30 mm: just inside the muzzle brake
-    "rocket": 1.75,       # forty-cell nest: the mouth of the tubes
     "saclos": 1.95,       # guided box: the launch tube
-    "top": 1.95,
     "none": 1.80,
 }
-# The rocket pod is a lattice of tubes, one round each - five across and eight
-# high, the same grid the client draws (`scene.js armModel`).  A round leaves
-# its own tube, and which tube that is follows from how much of the pod is
-# left: the bottom row goes first, left to right, so a pod with 32 rockets has
-# its lowest eight tubes empty.  The offset is in the arm's own frame: right
-# and up off the bore line.
-POD_COLS = 5
-POD_ROWS = 8
-POD_PITCH = 0.155         # m between tube centres
-
-
-def pod_tube(fired: int) -> tuple[float, float]:
-    """(right, up) of the tube the `fired`-th rocket of a pod leaves from."""
-    i = int(fired) % (POD_COLS * POD_ROWS)
-    col, row = i % POD_COLS, i // POD_COLS
-    return ((col - (POD_COLS - 1) / 2.0) * POD_PITCH,
-            (row - (POD_ROWS - 1) / 2.0) * POD_PITCH)
-
-
 # ------------------------------------------------------------------ smoke
 # hot smoke countermeasure: a short fan of canisters thrown out of the hull,
 # each popping 50 m away into one big opaque puff.  A dozen of them are enough

@@ -187,17 +187,29 @@ def fire(world: World, eid: int, arm: int, wid: int, wd: dict, target: int = -1)
     yaw, pitch = bore_of(world, eid)
     right = up = 0.0
     if etype == defs.ETYPE_MECH:
-        # a weapon longer than its kind's figure says so itself (the 105 mm's
-        # barrel runs 5 m past its receiver)
-        reach = float(wd.get("reach", defs.MECH_ARM_REACH.get(wd["kind"], 1.8)))
-        if wd["kind"] == "rocket":
-            # a pod is one tube per round: the rocket leaves the tube its slot
-            # in the magazine belongs to, so a half-empty pod fires out of its
-            # upper rows.  `mag` is still the pre-shot count here - the loop
-            # takes the round off the top of this call.
-            right, up = defs.pod_tube(int(wd["mag"]) - int(e["mag"][eid][arm]))
+        # where the bore ends, in order of who knows best: the weapon itself
+        # (the 105 mm's barrel runs 5 m past its receiver), then its rack (a
+        # launcher of tubes ends at the mouth of the tubes), then the kind's
+        # figure.
+        rack = wd.get("rack")
+        reach = wd.get("reach")                     # the weapon's own bore
+        if reach is None:
+            # a launcher of tubes ends at the mouth of the tubes
+            reach = rack["mouth"] if rack else defs.MECH_ARM_REACH.get(wd["kind"], 1.8)
+        reach = float(reach)
+        # a launcher bolted at its own quadrant does not follow the arm: its
+        # mouth is up there whatever the pilot's cross is doing, which is the
+        # same angle the round leaves at (below).  The client draws the tubes
+        # on that angle, so the mouth drawn is the mouth fired from.
+        mount = float(rack["elev"]) if rack and rack.get("elev") else pitch
+        if rack:
+            # a launcher of tubes is one round per tube: the round leaves the
+            # tube its slot in the rack belongs to, so a half-empty pod fires
+            # out of its upper rows.  `mag` is still the pre-shot count here -
+            # the loop takes the round off the top of this call.
+            right, up = defs.rack_tube(int(wd["mag"]) - int(e["mag"][eid][arm]), rack)
         origin = mu.muzzle_point(pos[eid], yaw, defs.MOD_LEFT if arm == 0 else defs.MOD_RIGHT,
-                                 pitch, reach, right, up)
+                                 mount, reach, right, up)
 
     kind = KIND_ID.get(wd["kind"], 0)
     n = max(1, int(wd["salvo"]))

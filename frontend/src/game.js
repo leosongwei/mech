@@ -690,11 +690,15 @@ export class Game {
     // arm, exactly like the server's `muzzle_point`
     const wd = (this.defs.weapons && this.defs.weapons[own.weapon ? own.weapon[arm] : 0]) || {};
     const reachTbl = this.defs.mech.reach || {};
-    // a weapon longer than its kind's figure carries its own (`wd.reach`, the
-    // 105 mm's 6.3 m bore - the server solves the launch point the same way)
+    // where the bore ends, in the same order the server uses: the weapon's own
+    // figure (`wd.reach`, the 105 mm's 6.3 m bore), then its rack's mouth of
+    // tubes, then the kind's figure
     const reach = wd.reach !== undefined ? wd.reach
-      : reachTbl[wd.kind] === undefined ? off[2] : reachTbl[wd.kind];
-    const pitch = own.pitch;
+      : wd.rack ? wd.rack.mouth
+        : reachTbl[wd.kind] === undefined ? off[2] : reachTbl[wd.kind];
+    // a launcher bolted at its own quadrant stands there whatever the arm is
+    // doing - the same angle the server solves the launch point from
+    const pitch = wd.rack && wd.rack.elev ? wd.rack.elev : own.pitch;
     const yaw = own.yaw;
     const c = Math.cos(yaw), s = Math.sin(yaw);
     const rx = -s, rz = c;

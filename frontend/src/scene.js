@@ -109,6 +109,11 @@ const GUN105_FACE = GUN105_BOX + GUN105_L * 0.5;   // 1.45 m: the box's front fa
 const GUN105_BORE = 0.26;       // m of drawn barrel radius (a 105 mm bore)
 const GUN105_LEN = 5.0;         // m of barrel exposed past the box
 const GUN105_MUZZLE = GUN105_FACE + GUN105_LEN;    // 6.45 m: where it ends
+// A launcher of tubes is drawn from its `rack` - the same description the
+// server fires it from (`defs.rack`): lattice, bore, length, body.  Nothing
+// about a pod or a rack lives in this file any more.
+const TUBE_COL = [0.08, 0.08, 0.09];     // a loaded cell
+const SPENT_TUBE = [0.03, 0.03, 0.04];   // a cell that has fired
 
 export function drawUnits(R, entities, projectiles, defs, flashes, ownId) {
   R.beginDynamic();
@@ -321,9 +326,64 @@ function mech(R, e, defs, flashes, own) {
 
   // High, close-in weapon stations; module indices remain 2 / 3.
   for (const side of [-1, 1]) {
-    at(R, 'box', e, yaw, 0, side * 0.99, 3.55, 0.30, 0.34, 0.22, 0.86, METAL_D);
+    const wd = wdefs[e.weapon ? e.weapon[side < 0 ? 0 : 1] : 0] || {};
+    if (wd.rack) {
+      // a launcher of tubes is slung on the arm's own pivot, so its link leaves
+      // the hull *there* and meets the body dead centre: a link 0.3 m further
+      // forward grabs a launcher standing at its own elevation under its lower
+      // edge, which reads as clipping.  Longer, too - it has to reach into the
+      // body, not stop at its face.
+      at(R, 'box', e, yaw, 0, side * 1.04, 3.55, 0, 0.26, 0.26, 0.46, METAL_D);
+    } else {
+      at(R, 'box', e, yaw, 0, side * 0.99, 3.55, 0.30, 0.30, 0.34, 0.22, METAL_D);
+    }
   }
   for (let arm = 0; arm < 2; arm++) armModel(R, e, arm, wdefs, flashes, 3.55, 1.43);
+}
+
+// A launcher that carries its rounds in tubes draws one hexagonal cell per
+// round on the grid the server fires them out of (`defs.rack_tube`): same
+// columns, same rows, same pitch, so the mouth a round leaves is the mouth that
+// was drawn.  The body is the box `defs.rack` derived for it - the lattice plus
+// a frame, shorter than the tubes so every mouth stands proud of the face
+// instead of being punched through a slab.
+function rack(put, p, spec, colour, flash) {
+  // `bore` is the tube's outside diameter, and every primitive here scales as a
+  // width, not a radius: drawing it at `bore / 2` put a tube a quarter of the
+  // area on the face and left a hole's worth of empty box around it.
+  const r = spec.bore;
+  // a box scales on X = along the bore, Y = up, Z = across (`box_h` is the
+  // height and `box_w` the width - a five-across / eight-high nest is taller
+  // than it is wide, and the other way round it would cut its own tubes off)
+  put('box', p, spec.centre, spec.box_len, spec.box_h, spec.box_w, colour);
+  for (let row = 0; row < spec.rows; row++) {
+    for (let col = 0; col < spec.cols; col++) {
+      // the cells still loaded are drawn as bores; spent ones go dark, which is
+      // the only way the rack itself can show it is running out
+      const idx = row * spec.cols + col;
+      const spent = flash && idx < flash.spent;
+      put('hex', FORWARD + p, spec.centre, r, spec.length, r,
+        spent ? SPENT_TUBE : TUBE_COL,
+        (col - (spec.cols - 1) / 2) * spec.pitch,
+        (row - (spec.rows - 1) / 2) * spec.pitch);
+    }
+  }
+}
+
+// Which tube of a racked launcher the round that has just gone left: the
+// bottom row first, left to right, the order `defs.rack_tube` gives the
+// server.  `null` for a weapon that fires off the bore.
+function tubeOf(wd, e, arm) {
+  const spec = wd && wd.rack;
+  if (!spec) return null;
+  const mag = (e.mag && e.mag[arm]) || 0;
+  // cells already empty, and the one that has just gone: the snapshot's
+  // magazine is the post-shot count, and the cells go bottom row first
+  const spent = Math.min(spec.count, Math.max(0, spec.count - mag));
+  const i = Math.max(0, spent - 1);
+  return { right: (i % spec.cols - (spec.cols - 1) / 2) * spec.pitch,
+           up: (Math.floor(i / spec.cols) - (spec.rows - 1) / 2) * spec.pitch,
+           spent };
 }
 
 // One high-mounted weapon station. Every piece is placed `dist` metres out
@@ -334,12 +394,17 @@ function armModel(R, e, arm, wdefs, flashes, shoulderY, lateral) {
   const hp = e.hp || [1, 1, 1, 1];
   const alive = hp[mod] > 0;
   const col = alive ? METAL : DEAD;
-  const p = alive ? e.pitch : -0.5;
-  const yaw = e.yaw;
-  const fac = facColor(e);
   const wid = e.weapon ? e.weapon[arm] : 0;
   const wd = wdefs[wid] || {};
   const kind = wd.kind || 'none';
+  // a launcher bolted at its own quadrant (`rack.elev`) stands at that angle
+  // and does not answer the cross: the tubes are the ones the round leaves
+  // from, so the arm is drawn where the barrel really is, not where the sight
+  // is looking.  Everything else elevates with the arm.
+  const mount = wd.rack && wd.rack.elev;
+  const p = alive ? (mount ? mount : e.pitch) : -0.5;
+  const yaw = e.yaw;
+  const fac = facColor(e);
   const fl = flashes && flashes.get(e.id);
   const flashing = !!(alive && fl && fl.arm === arm);
   const lat = side * lateral;
@@ -352,15 +417,20 @@ function armModel(R, e, arm, wdefs, flashes, shoulderY, lateral) {
   // is a long box of its own and would only be swallowed by it.  Every arm's
   // box is the same idea - the 105 mm's is simply longer, narrower and taller,
   // and on it the box is the whole magazine/autoloader/breech assembly.
+  // A launcher that carries its rounds in tubes (`wd.rack`) is the whole arm in
+  // the same way, and it has to be *seen* as tubes: the station body would
+  // swallow the mouths at both ends and the shoulder ball would hide the rear
+  // ones, so a racked arm draws neither and hangs off the bracket alone.
+  const racked = !!wd.rack;
   const heavy = kind === 'bullet' && wd.heavy;
-  if (kind !== 'rocket') {
+  if (kind !== 'rocket' && !racked) {
     // the same box for every arm, only the 105 mm's is bigger - and it is big
     // enough to fill the arm on its own, so the shoulder ball is left out
     // there (a 0.66 m ball out of a 0.40 m box would be a ball, not a breech)
     put('box', p, heavy ? GUN105_BOX : 0.25,
       heavy ? GUN105_L : 1.65, heavy ? GUN105_H : 0.70, heavy ? GUN105_W : 0.62, col);
   }
-  if (!heavy) put('sphere', 0, 0, 0.66, 0.66, 0.66, alive ? METAL_L : DEAD);
+  if (!heavy && !racked) put('sphere', 0, 0, 0.66, 0.66, 0.66, alive ? METAL_L : DEAD);
   if (kind === 'bullet' && wd.gatling) {
     // The 12.7 mm is a rotary gun: six barrels on a ring round the bore, each
     // half the 30 mm's bore and 60 % of its length, turning while it feeds.
@@ -404,19 +474,12 @@ function armModel(R, e, arm, wdefs, flashes, shoulderY, lateral) {
     const len = 3.2;
     put('cyl', FORWARD + p, 0.90 + len * 0.5, 0.17, len, 0.17, [0.12, 0.13, 0.14]);
     put('cyl', FORWARD + p, 0.90 + len + 0.18, 0.28, 0.42, 0.28, [0.1, 0.1, 0.11]);
-  } else if (kind === 'rocket') {
-    // Forty rounds, forty cells: five across and eight high.  Each cell is a
-    // six-walled tube running the launcher's whole length and poking out of
-    // both end faces, so the mouth is a hexagon instead of a dot while the
-    // sides of the nest stay a clean blue box.
-    put('box', p, 0.60, 1.90, 1.26, 0.82, alive ? fac : DEAD);
-    for (let row = 0; row < 8; row++) {
-      for (let col = 0; col < 5; col++) {
-        put('hex', FORWARD + p, 0.60, 0.135, 2.15, 0.135, [0.08, 0.08, 0.09],
-          (col - 2) * 0.155, (row - 3.5) * 0.155);
-      }
-    }
-  } else if (kind === 'saclos' || kind === 'top') {
+  } else if (wd.rack) {
+    // Any launcher that carries its rounds in tubes: the rocket nest (5 x 8,
+    // forty rounds) and the top-attack rack (2 x 2, four) are the same model
+    // with different numbers in their `rack`.
+    rack(put, p, wd.rack, alive ? fac : DEAD, tubeOf(wd, e, arm));
+  } else if (kind === 'saclos') {
     put('box', p, 0.95, 1.40, 0.80, 0.76, alive ? fac : DEAD);
     for (const q of [-1, 1]) {
       put('hex', FORWARD + p, 1.76, 0.24, 0.30, 0.24, [0.08, 0.08, 0.09], q * 0.22);
@@ -428,19 +491,17 @@ function armModel(R, e, arm, wdefs, flashes, shoulderY, lateral) {
     // the gatling's flash comes out of the barrel that has just turned up to
     // the top of the ring, not out of the middle of the cluster
     const gat = kind === 'bullet' && wd.gatling;
-    // a rocket leaves its own tube of the nest, and which one that is follows
-    // from what is left in the pod - the server solves the launch point off
-    // the same lattice (`defs.pod_tube`).  The snapshot's magazine is the
-    // post-shot count, hence the +1.
-    const pod = kind === 'rocket';
-    const i = pod
-      ? ((((wd.mag || 40) - (((e.mag && e.mag[arm]) || 0) + 1)) % 40) + 40) % 40
-      : 0;
-    const right = pod ? ((i % 5) - 2) * 0.155 : 0;
-    const up = gat ? GAT_RING : pod ? (Math.floor(i / 5) - 3.5) * 0.155 : 0;
+    // a round leaves its own tube of the rack, and which one that is follows
+    // from what is left in it - the server solves the launch point off the same
+    // lattice (`defs.rack_tube`).  The snapshot's magazine is the post-shot
+    // count, hence the +1.
+    const cell = tubeOf(wd, e, arm);
+    const right = cell ? cell.right : 0;
+    const up = gat ? GAT_RING : cell ? cell.up : 0;
     const tip = gat ? GAT_MUZZLE - 0.10
       : heavy ? GUN105_MUZZLE - 0.15
-        : kind === 'bullet' ? 4.35 : pod ? 1.80 : 2.15;
+        : kind === 'bullet' ? 4.35
+          : wd.rack ? wd.rack.mouth - 0.05 : 2.15;
     const s = gat ? 0.42 : heavy ? 1.0 : 0.75;
     put('sphere', p, tip, s, s, s, [1.0, 0.72, 0.22], right, up);
     put('cone', FORWARD + p, tip + (gat ? 0.55 : 0.85), s * 0.77,
@@ -488,8 +549,14 @@ function projectile(R, p, defs) {
     // where a level one would have them - the pieces come apart.
     const put = (shape, d, sx, sy, sz, colour) => at(R, shape, fake, yaw,
       FORWARD + pitch, 0, d * Math.sin(pitch), d * Math.cos(pitch), sx, sy, sz, colour);
-    put('cyl', -0.6, 0.32, 3.2, 0.32, [0.78, 0.78, 0.8]);
-    put('cone', 1.4, 0.32, 1.1, 0.32, col);
-    put('sphere', -2.4, 1.0, 1.0, 1.0, [1.0, 0.72, 0.25]);
+    // The round is drawn at its own size when the table says it (`body`, the
+    // (across, long) pair - a missile has to be the size of the mouth it leaves
+    // from), and at the shared big body everything else flies as otherwise:
+    // large enough to read at 2 km, which is what a tracer's shape is for.
+    const size = (wd && wd.body) || [0.32, 3.2];
+    const bd = size[0], bl = size[1];
+    put('cyl', bl * -0.19, bd, bl, bd, [0.78, 0.78, 0.8]);
+    put('cone', bl * 0.44, bd, bl * 0.34, bd, col);
+    put('sphere', bl * -0.75, bd * 3.1, bd * 3.1, bd * 3.1, [1.0, 0.72, 0.25]);
   }
 }

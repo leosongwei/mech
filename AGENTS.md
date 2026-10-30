@@ -177,6 +177,28 @@ frontend/
   mech (and the money with it), and a second order is refused until it ends.
   Durations are `defs.REARM_*` (swap 2 s per arm, ammo 4 s per arm, repair 2 s
   per 100 hp); `shop.quote` charges a swap both a fit and a reload.
+* **A launcher of tubes is described once, in `defs.rack`.** `rack(cols, rows,
+  count, bore=, length=, centre=, ...)` hands back a plain dict — the lattice,
+  the tube diameter and length, the pitch, the mouth (`centre + length/2`) and
+  the body it is drawn as — and `defs.rack_tube(fired, spec)` says which cell
+  the next round leaves from (bottom row first, left to right). `weapons.fire`
+  solves its launch point off those two and `scene.js`'s `rack()` draws the same
+  lattice from the *same spec*, which travels to the client with the rest of the
+  weapon table: a mouth that was drawn is a mouth a round leaves. The gun's own
+  length wins first (`wd["reach"]`), then the rack's mouth, then the kind's
+  figure in `MECH_ARM_REACH` — a racked weapon never needs an entry there.
+  Ammunition is one round per tube: the rocket nest is 5 × 8 with 40 rockets in
+  it, the top-attack rack is 2 × 4 with `mag=8, reserve=0, reload=0` — it fires
+  its eight and goes quiet until the pilot buys a fresh one at the base, which
+  is why the two share one mechanism instead of two.  The cells are packed at
+  about 1.15 tube widths (the nest's 0.155 on a 0.135 bore), which is what makes
+  a face read as a bundle of tubes; the body is a 0.04 m sheet-metal edge round
+  the lattice and nothing more.  `elev` is a launcher bolted at its own
+  quadrant: the arm's slewing does not move it, and the server both draws and
+  *fires* from that angle — the top-attack rack is 42°, the nest follows the arm
+  (0).  `bore` is the tube's outside diameter in **both** halves of the file:
+  the client's hexagon scales as a width, so passing half a bore draws a tube a
+  quarter of its area and leaves a hole's worth of empty box around it.
 * **Grid** (`grid.py`) is a 128 m cell index over every unit that moves *or* can
   be fought (`moves` ∪ `combat`), refiled at the top of each tick (`world.grid`)
   so "who is near me" is a box of cells instead of a scan of the field. It keeps
@@ -672,7 +694,15 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
 * `scene.js` builds unit models from primitives in a local frame: **+X
   forward, +Y up, +Z right** (see `math.js compose`). A Y-axis primitive is
   laid along the barrel with `pitch = FORWARD` (`-PI/2`); use
-  `FORWARD + p` when a pitch is already in play.
+  `FORWARD + p` when a pitch is already in play. A **box** scales on X = along
+  the bore, **Y = up, Z = across** — `put('box', p, dist, len, height, width)`,
+  and swapping the last two draws a tall pod lying on its side.
+* **An arm that carries its own launcher draws nothing behind it.** A weapon with
+  a `rack` (the rocket nest, the top-attack rack) *is* the arm: the plain station
+  body and the 0.66 m shoulder ball are skipped for it, because they swallow the
+  tube mouths at both ends — which is exactly why the first top-attack rack could
+  not be seen from behind. `rack()` draws the body `defs.rack` derived plus one
+  hexagon per cell, dark for a cell that has fired.
 * **`at()` turns a piece's offset with the same yaw it turns the mesh with**,
   which is what everything bolted to a hull wants - and what the sight head must
   *not* do: its pivot is fixed to the hull, so the head has to rotate on the

@@ -11,7 +11,7 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING
 
-from .. import defs, mathutil as mu
+from .. import combat, defs, mathutil as mu
 
 if TYPE_CHECKING:
     from ..world import World
@@ -48,7 +48,7 @@ def run(world: World, dt: float) -> None:
 
         mx, mz = pl.in_move
         mag = math.hypot(mx, mz) if not busy else 0.0
-        if mag > 0.001 and hp[eid, defs.MOD_CHASSIS] > 0.0:
+        if mag > 0.001 and hp[eid] > 0.0:
             k = speed / max(mag, 1.0)
             vel[eid, 0] = mx * k
             vel[eid, 2] = mz * k
@@ -57,8 +57,8 @@ def run(world: World, dt: float) -> None:
             vel[eid, 2] = 0.0
 
         t = 0
-        if not busy and pl.fire[0] and hp[eid, defs.MOD_LEFT] > 0.0:
+        if not busy and pl.fire[0] and combat.arm_alive(world, eid, 0):
             t |= 1
-        if not busy and pl.fire[1] and hp[eid, defs.MOD_RIGHT] > 0.0:
+        if not busy and pl.fire[1] and combat.arm_alive(world, eid, 1):
             t |= 2
         trigger[eid] = t

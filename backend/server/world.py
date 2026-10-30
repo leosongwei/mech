@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Callable
 
 import numpy as np
 
-from . import components, defs, mathutil as mu, modes
+from . import components, defs, modes
 from .ecs import ECS
 from .grid import Grid
 from .terrain import TILE
@@ -76,7 +76,8 @@ class World:
         self.winner: int = -1
         self.end_timer: float = 0.0
         self.events: list[dict] = []
-        self.last_hit: dict[int, int] = {}
+        self._sph: tuple | None = None      # this tick's hit-sphere table
+        self._sph_tick: int = -1
         self.towns: list[dict] = self.terrain.towns
         self.lanes: list[list[tuple[float, float]]] = self.terrain.lanes
         self.lanes_rev: list[list[tuple[float, float]]] = [
@@ -90,15 +91,21 @@ class World:
     # setup
     # ------------------------------------------------------------------
     def _build_pipeline(self) -> None:
-        from .systems import (debris, economy, gunnery, locking, movement, player_input,
-                              projectiles, proximity, rearm, smoke, weapons)
+        from .systems import (blasts, debris, economy, gunnery, locking, mortality,
+                              movement, player_input, projectiles, proximity, rearm,
+                              smoke, weapons)
         self.systems: list[Callable[[World, float], None]] = [rearm.run, player_input.run]
         self.systems += self.mode_mod.pre_systems()
         # the crews have said where they are looking (player_input, the mode's
         # own AI); the machines now slew towards it, so `yaw` / `pitch` are the
         # laid gun by the time anything fires or draws
         self.systems += [gunnery.run, locking.run, smoke.run, weapons.run, movement.run,
-                         projectiles.run, proximity.run, economy.run, debris.run]
+                         projectiles.run, proximity.run]
+        # the damage chain: a round and a burst both *write* hp where they land
+        # (combat.apply), the bursts are judged one system after the rounds that
+        # made them, and only `mortality` decides that a hull has died - so no
+        # system ever destroys an entity while walking its own list
+        self.systems += [blasts.run, mortality.run, economy.run, debris.run]
         self.systems += self.mode_mod.post_systems()
 
     # ------------------------------------------------------------------
@@ -115,6 +122,8 @@ class World:
         # on `etype`.  `extra` is what a *mission* adds on top of the type - the
         # `raider` tag and the plan it is executing (modes/battle/raids.py).
         comps = components.CIV_COMPS if etype == defs.ETYPE_CIV else components.UNIT_COMPS
+        if d.get("arms"):
+            comps = (*comps, *components.ARM_COMPS)
         eid = e.create((*comps, *d["tags"], *extra))
         yaw = self.rng.random() * math.tau
         e["pos"][eid] = (x, self.terrain.height_at(x, z), z)
@@ -130,9 +139,16 @@ class World:
         e["etype"][eid] = etype
         e["faction"][eid] = faction
         e["owner"][eid] = owner
-        hp = np.asarray(d["hp"], np.float32) * hp_scale
+        # one pool, and `hp <= 0` is the whole of "dead"; a hull with arms gets
+        # one pool more per arm, which is the only difference there is
+        hp = float(d["hp"]) * hp_scale
         e["hp"][eid] = hp
         e["hpmax"][eid] = hp
+        if d.get("arms"):
+            arms = np.asarray(d["arms"], np.float32) * hp_scale
+            e["arm_hp"][eid] = arms
+            e["arm_hpmax"][eid] = arms
+        e["armor"][eid] = (float(d.get("dp", 0.0)), float(d.get("de", 0.0)))
         ws = weapons if weapons is not None else d["weapons"]
         for arm in (0, 1):
             wid = int(ws[arm])
@@ -234,171 +250,21 @@ class World:
     def smoke_puffs(self) -> np.ndarray:
         return self.ecs.query("smoke")
 
-    # ------------------------------------------------------------------
-    # damage
-    # ------------------------------------------------------------------
-    def hit(self, eid: int, module: int, wd: dict, dist: float = 0.0, pid: int = -1) -> None:
-        """Resolve one round landing on a unit: penetration plus blast.
+    def blasts(self) -> np.ndarray:
+        return self.ecs.query("blast")
 
-        `dist` is how far the target's nearest surface is from the burst, in
-        metres - 0 for a direct hit - and the blast half falls off to nothing
-        over the weapon's `er`.
+    def sphere_table(self) -> tuple:
+        """Every unit's hit spheres, built once per tick and shared.
+
+        `systems/projectiles.py` sweeps it and `systems/blasts.py` measures
+        against it; the table is the same for both, and it is only asked for
+        before anything is destroyed (mortality runs last of the damage chain).
         """
-        e = self.ecs
-        if not e.alive[eid] or (wd["ad"] <= 0.0 and wd["ed"] <= 0.0):
-            return
-        amount = defs.hit_damage(wd, defs.UNIT_DEFS[int(e["etype"][eid])], dist)
-        self.damage(eid, module, amount, pid)
-
-    def splash(self, eid: int, module: int, wd: dict, dist: float, pid: int = -1) -> None:
-        """Blast-only damage for a unit near (not under) a burst.
-
-        A charge going off a few metres away cannot punch a plate, so the
-        penetration half of `hit` does not apply here.
-        """
-        e = self.ecs
-        if not e.alive[eid] or wd["ed"] <= 0.0:
-            return
-        amount = defs.blast_damage(float(wd["ed"]), float(defs.UNIT_DEFS[int(e["etype"][eid])]["de"]),
-                                   float(wd["er"]), dist)
-        self.damage(eid, module, amount, pid)
-
-    def damage(self, eid: int, module: int, amount: float, pid: int = -1) -> None:
-        e = self.ecs
-        if not e.alive[eid] or amount <= 0:
-            return
-        if e.has(eid, "invulnerable"):
-            return                      # concrete: rounds hit it, nothing breaks
-        pilot = self.players.get(int(e["owner"][eid]))
-        if pilot is not None and pilot.god:
-            return
-        hp = e["hp"]
-        etype = int(e["etype"][eid])
-        if pid >= 0:
-            self.last_hit[eid] = pid
-        if etype == defs.ETYPE_MECH:
-            # one hull pool: the torso charges the chassis, and so does a round
-            # that hits an arm that is already gone
-            if module == defs.MOD_TORSO or hp[eid, module] <= 0.0:
-                module = defs.MOD_CHASSIS
-            hp[eid, module] = max(0.0, float(hp[eid, module]) - amount)
-            dead = hp[eid, defs.MOD_CHASSIS] <= 0.0
-            if hp[eid, defs.MOD_LEFT] <= 0.0:
-                e["mag"][eid, 0] = 0
-                e["ammo"][eid, 0] = 0
-            if hp[eid, defs.MOD_RIGHT] <= 0.0:
-                e["mag"][eid, 1] = 0
-                e["ammo"][eid, 1] = 0
-        else:
-            hp[eid, 0] = max(0.0, float(hp[eid, 0]) - amount)
-            dead = hp[eid, 0] <= 0.0
-        if dead:
-            self.kill(eid, pid)
-
-    def kill(self, eid: int, pid: int = -1) -> None:
-        e = self.ecs
-        if not e.alive[eid]:
-            return
-        etype = int(e["etype"][eid])
-        faction = int(e["faction"][eid])
-        pos = e["pos"][eid].copy()
-        d = defs.UNIT_DEFS.get(etype, {})
-        blast = etype in defs.DEATH_BLAST_ETYPES
-        self.emit("boom", x=float(pos[0]), y=float(pos[1]), z=float(pos[2]),
-                  r=float(d.get("splat", 2.0)),
-                  big=1 if blast or etype == defs.ETYPE_BASE else 0,
-                  blast=1 if blast else 0,      # the client draws a fireball for this one
-                  faction=faction)
-
-        if pid >= 0 and pid in self.players:
-            killer = self.players[pid]
-            if killer.faction != faction and faction in (defs.FACTION_RED, defs.FACTION_BLUE):
-                reward = int(d.get("reward", 0))
-                killer.money += reward
-                killer.kills += 1
-                killer.score += reward
-                self.emit("kill", pid=pid, victim=int(e["owner"][eid]) if e["owner"][eid] >= 0 else -1,
-                          reward=reward, etype=etype)
-
-        owner = int(e["owner"][eid])
-        if owner >= 0:
-            pl = self.players.get(owner)
-            if pl:
-                pl.deaths += 1
-                pl.mech = -1
-                # where it died is what the next life is planned from: the
-                # wait for the walk back, and the town one step behind it
-                pl.death_pos = (float(pos[0]), float(pos[2]))
-                pl.respawn = self.mode_mod.respawn_delay(
-                    self, pl, float(pos[0]), float(pos[2]))
-
-        if etype == defs.ETYPE_BASE:
-            winner = 1 - faction if faction in (0, 1) else -1
-            self.winner = winner
-            self.end_timer = 40.0
-            self.emit("gameover", winner=winner)
-
-        self._leave_debris(etype, faction, pos, float(e["yaw"][eid]))
-        e.destroy(eid)
-        self.last_hit.pop(eid, None)
-        if blast:
-            self._death_blast(pos, pid)
-
-    def _death_blast(self, pos: np.ndarray, pid: int = -1) -> None:
-        """A wreck goes up: `defs.DEATH_BLAST` at `pos`, no side spared.
-
-        Solved like a weapon burst - one reading per unit, off its nearest hit
-        sphere - but every reading is taken *before* any damage lands, so a
-        chain reaction (a blast that finishes the hull beside it, which bursts
-        in turn) cannot then damage the wreck that hull has become. The dead
-        machine itself is already gone and carries no `unit` tag any more, so
-        it is not in here either.
-        """
-        e = self.ecs
-        wd = defs.DEATH_BLAST
-        er = float(wd["er"])
-        p = np.asarray(pos, np.float32)
-        pos_v, yaw_v, etype_v = e["pos"], e["yaw"], e["etype"]
-        best: dict[int, tuple[float, int]] = {}
-        reach = (er + 6.0) ** 2                 # a mech's hit spheres reach ~3 m out
-        for uid in self.units():
-            uid = int(uid)
-            centre = pos_v[uid]
-            if float(((centre - p) ** 2).sum()) > reach:
-                continue                        # cheap reject before solving spheres
-            for mod, c, rad in mu.unit_spheres(int(etype_v[uid]), centre, float(yaw_v[uid])):
-                dist = max(0.0, math.sqrt((c[0] - p[0]) ** 2 + (c[1] - p[1]) ** 2
-                                          + (c[2] - p[2]) ** 2) - rad)
-                if dist <= er and (uid not in best or dist < best[uid][0]):
-                    best[uid] = (dist, mod)
-        for uid, (dist, mod) in best.items():
-            if e.alive[uid] and e.has(uid, "unit"):
-                self.splash(uid, mod, wd, dist, pid)
-
-    def _leave_debris(self, etype: int, faction: int, pos: np.ndarray, yaw: float) -> None:
-        """Corpse for infantry, smoking hulk for vehicles - purely visual."""
-        if etype in (defs.ETYPE_INF_RIFLE, defs.ETYPE_INF_ROCKET, defs.ETYPE_CIV):
-            kind, life = 0, defs.CORPSE_TIME
-            dtype = defs.ETYPE_CORPSE
-        elif etype == defs.ETYPE_APC:
-            kind, life = 1, defs.WRECK_TIME
-            dtype = defs.ETYPE_DEBRIS
-        elif etype == defs.ETYPE_MECH:
-            kind, life = 2, defs.WRECK_TIME
-            dtype = defs.ETYPE_DEBRIS
-        else:
-            return
-        e = self.ecs
-        eid = e.create(components.DEBRIS_COMPS)
-        e["pos"][eid] = (float(pos[0]), self.terrain.height_at(float(pos[0]), float(pos[2])),
-                         float(pos[2]))
-        e["yaw"][eid] = yaw
-        e["leg_yaw"][eid] = yaw
-        e["turret_yaw"][eid] = yaw
-        e["etype"][eid] = dtype
-        e["faction"][eid] = faction
-        e["wreck_t"][eid] = life
-        e["wreck_kind"][eid] = kind
+        if self._sph is None or self._sph_tick != self.tick:
+            from .systems.projectiles import sphere_table
+            self._sph = sphere_table(self)
+            self._sph_tick = self.tick
+        return self._sph
 
     def emit(self, kind: str, **data: object) -> None:
         # json.dumps cannot handle numpy scalars, so every payload is
@@ -476,11 +342,12 @@ class World:
         # per-tick scratch: a system that spawns the replacement of a dead slot
         # must not see last tick's deaths
         self.ecs.destroyed.clear()
+        self._sph = None
         # refile every hull under the cell it stands in before anyone queries:
         # the build is one argsort, the systems below ask "who is near me"
         # hundreds of times a tick.  Movers *and* combatants: a command base
         # never moves, and the AI has to find it to shoot it
-        self.grid.build(self.ecs, ("moves", "combat"))
+        self.grid.build(self.ecs, ("moves", "combat", "unit"))
         for system in self.systems:
             system(self, dt)
         if self.winner >= 0:
@@ -493,7 +360,6 @@ class World:
         e = self.ecs
         for eid in list(e.query()):
             e.destroy(eid)
-        self.last_hit.clear()
         self.events.clear()
         self.winner = -1
         self.end_timer = 0.0

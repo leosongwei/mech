@@ -31,6 +31,7 @@ import numpy as np
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "backend"))
 
+from server import combat, defs  # noqa: E402
 from server.world import World  # noqa: E402
 
 FIXTURE = ROOT / "tools" / "fixtures" / "replay_battle.json"
@@ -75,7 +76,7 @@ def drive(world: World, pl, tick: int) -> None:
     if tick % 100 == 60:                      # force a kill: corpse / wreck path
         for eid in world.combat_units():
             if int(world.ecs["faction"][eid]) != int(pl.faction):
-                world.damage(int(eid), 0, 9999.0, -1)
+                combat.apply(world, int(eid), defs.MOD_CHASSIS, 9999.0, -1)
                 break
 
 
@@ -87,7 +88,10 @@ def summary(world: World, pl) -> dict[str, float]:
     ids = e.query("pos")                      # everything that has a position
     pos = e["pos"][ids].astype(np.float64) if len(ids) else np.zeros((0, 3))
     vel = e["vel"][ids].astype(np.float64) if len(ids) else np.zeros((0, 3))
-    hp = e["hp"][e.query("hp")].astype(np.float64)
+    hp = float(e["hp"][e.query("hp")].astype(np.float64).sum())
+    armed = e.query("arm_hp")
+    if armed.size:
+        hp += float(e["arm_hp"][armed].astype(np.float64).sum())
     return dict(
         n_all=int(ids.size),
         n_units=int(e.query("unit").size),
@@ -97,7 +101,7 @@ def summary(world: World, pl) -> dict[str, float]:
         n_canister=int(e.query("canister").size),
         n_debris=int(e.query("wreck_t").size),
         n_raider=int(e.query("raider").size),
-        hp_total=float(hp.sum()),
+        hp_total=hp,
         pos_x=float(pos[:, 0].sum()), pos_z=float(pos[:, 2].sum()),
         vel_x=float(vel[:, 0].sum()), vel_z=float(vel[:, 2].sum()),
         wave=int(world.wave), kills=int(pl.kills), deaths=int(pl.deaths),
@@ -125,7 +129,7 @@ def _cache_after_growth() -> None:
 
 
 def _death_blast() -> None:
-    """Regression: a destroyed hull bursts for ER 30 m / ED 10 (`World._death_blast`).
+    """Regression: a destroyed hull bursts for ER 30 m / ED 10 (`systems/mortality.py` -> `systems/blasts.py`).
 
     The blast takes no sides, so the hull parked beside the dead machine - its
     own faction - has to take damage off it; a man four metres away and another
@@ -141,18 +145,71 @@ def _death_blast() -> None:
     far = world.spawn_unit(defs.ETYPE_APC, 1, 660.0, 600.0)
     man = world.spawn_unit(defs.ETYPE_INF_RIFLE, 0, 600.0, 604.0)
     man_far = world.spawn_unit(defs.ETYPE_INF_RIFLE, 0, 620.0, 600.0)
-    world.damage(dead, 0, 9999.0)
+    combat.apply(world, dead, defs.MOD_CHASSIS, 9999.0)
+    # one tick for `mortality` to judge the kill and leave the burst behind it,
+    # one more for `blasts` to go off with it: a chain reaction is a tick apart
+    # by construction, which is the whole reason explosions are entities
+    world.update(DT)
+    world.update(DT)
     # the dead ids come back as the wrecks (LIFO reuse), so "dead" means "no
     # longer a unit", not "no longer alive"
     assert not e.has(dead, "unit"), "the mech did not die"
-    assert e.has(beside, "unit") and float(e["hp"][beside, 0]) < 100.0, \
+    assert e.has(beside, "unit") and float(e["hp"][beside]) < 100.0, \
         "the blast did not touch the hull beside it"
-    assert e.has(man, "unit") and float(e["hp"][man, 0]) < 10.0, \
+    assert e.has(man, "unit") and float(e["hp"][man]) < 10.0, \
         "the blast did not reach the man four metres away"
-    assert e.has(man_far, "unit") and float(e["hp"][man_far, 0]) < 10.0, \
+    assert e.has(man_far, "unit") and float(e["hp"][man_far]) < 10.0, \
         "the blast did not reach a man twenty metres out"
-    assert float(e["hp"][far, 0]) == 100.0, "the blast reached a hull 60 m away"
+    assert float(e["hp"][far]) == 100.0, "the blast reached a hull 60 m away"
     assert len(e.query("wreck_t")) == 1, "the burning hulk did not leave a wreck"
+    e.validate()
+
+
+def _damage_model() -> None:
+    """Regression: one hp pool per hull, and arm pools only where arms exist.
+
+    `hp` is the health and `hp <= 0` is the death for *every* unit; the mech is
+    the only hull that carries `arm_hp`, and the three rules that make an arm
+    worth shooting are: a hit on it stays off the hull, losing it costs its
+    ammunition, and a round into an arm that is already gone goes inwards.
+    """
+    world = World(seed=3, mode="range")
+    e = world.ecs
+    mech = world.spawn_unit(defs.ETYPE_MECH, 1, 600.0, 600.0)
+    assert float(e["hp"][mech]) == 100.0 and float(e["hpmax"][mech]) == 100.0
+    assert e["arm_hp"][mech].tolist() == [50.0, 50.0]
+    assert e["armor"][mech].tolist() == [10.0, 20.0]
+
+    combat.apply(world, mech, defs.MOD_LEFT, 20.0, 1)
+    assert float(e["hp"][mech]) == 100.0, "an arm hit reached the hull"
+    assert float(e["arm_hp"][mech, 0]) == 30.0
+    combat.apply(world, mech, defs.MOD_LEFT, 100.0, 2)          # the arm comes off
+    assert float(e["arm_hp"][mech, 0]) == 0.0
+    assert int(e["mag"][mech, 0]) == 0 and int(e["ammo"][mech, 0]) == 0, \
+        "the lost arm kept its rounds"
+    assert not combat.arm_alive(world, mech, 0), "a lost arm can still fire"
+    assert combat.arm_alive(world, mech, 1)
+    assert float(e["hp"][mech]) == 100.0, "losing an arm is not losing the hull"
+    combat.apply(world, mech, defs.MOD_LEFT, 30.0, 3)           # arm gone -> hull
+    assert float(e["hp"][mech]) == 70.0, "a round into a lost arm skipped the hull"
+    combat.apply(world, mech, defs.MOD_TORSO, 10.0, 4)          # torso is hit geometry
+    assert float(e["hp"][mech]) == 60.0, "the torso did not charge the hull"
+    assert int(e["last_hit"][mech]) == 4
+
+    # a single-pool hull has no arms, and its hits land on the one pool
+    apc = world.spawn_unit(defs.ETYPE_APC, 0, 700.0, 700.0)
+    assert not e.has(apc, "arm_hp"), "an APC grew arm pools"
+    wd = defs.WEAPONS[defs.WID_AC30]
+    before = float(e["hp"][apc])
+    combat.hit(world, apc, defs.MOD_CHASSIS, wd, 0.0, -1)
+    assert abs((before - float(e["hp"][apc])) - defs.hit_damage(wd, 10.0, 20.0, 0.0)) < 1e-4, \
+        "a direct hit did not take exactly one hit's worth"
+    assert float(e["hp"][apc]) > 0.0
+
+    # concrete: rounds stop on it, the hp never moves
+    bunker = world.spawn_unit(defs.ETYPE_BUNKER, 0, 900.0, 900.0)
+    combat.apply(world, bunker, defs.MOD_CHASSIS, 1e6)
+    assert float(e["hp"][bunker]) == 999999.0, "the bunker took damage"
     e.validate()
 
 
@@ -200,6 +257,7 @@ def _raid_plan() -> None:
 
 def run(ticks: int = TICKS, verbose: bool = False) -> list[dict[str, float]]:
     _cache_after_growth()
+    _damage_model()
     _death_blast()
     _raid_plan()
     world = World(seed=11, mode="battle")

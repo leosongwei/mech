@@ -152,7 +152,7 @@ def run(world: World, dt: float) -> None:
                     f = 0.45 + 0.55 * max(0.0, align)
                 else:
                     f = 1.0
-                if hp[row, defs.MOD_CHASSIS] <= 0.0:
+                if hp[row] <= 0.0:
                     f *= 0.2
                 ax = float(drive[row, 0])
                 az = float(drive[row, 1])

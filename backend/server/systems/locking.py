@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from .. import defs, mathutil as mu
+from .. import combat, defs, mathutil as mu
 from . import sight, weapons
 
 if TYPE_CHECKING:
@@ -57,7 +57,6 @@ def run(world: World, dt: float) -> None:
     e = world.ecs
     pos = e["pos"]
     faction = e["faction"]
-    hp = e["hp"]
     ids = world.lockable_units()
 
     for pl in world.players.values():
@@ -67,7 +66,7 @@ def run(world: World, dt: float) -> None:
         wd = None
         for arm in (0, 1):
             w = int(e["weapon"][eid, arm])
-            if w and defs.WEAPONS[w]["lock"] and hp[eid, defs.MOD_LEFT if arm == 0 else defs.MOD_RIGHT] > 0:
+            if w and defs.WEAPONS[w]["lock"] and combat.arm_alive(world, eid, arm):
                 wd = defs.WEAPONS[w]
         if wd is None:
             pl.lock_target = -1

@@ -103,29 +103,55 @@ def muzzle_point(pos: np.ndarray, yaw: float, module: int,
             pos[2] + rzw * (rx + right) + fz * out)
 
 
+_GEOM_CACHE: dict[int, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
+
+
+def sphere_geom(etype: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """``(local[n,3], radius[n], module[n])`` for a unit type - built once.
+
+    `local` is (right, up, forward) in the hull's own frame, straight out of
+    ``defs.UNIT_DEFS[etype]["spheres"]``.  Cached, because the hit geometry of a
+    type never changes: the projectile sweep asks for it once a tick and would
+    otherwise rebuild the same tuples for every hull on the field.
+    """
+    g = _GEOM_CACHE.get(etype)
+    if g is None:
+        d = defs.UNIT_DEFS.get(etype) or {}
+        rows = d.get("spheres") or ((0, 0.0, 1.0, 0.0, 1.5),)
+        arr = np.asarray(rows, np.float64)
+        g = (np.ascontiguousarray(arr[:, 1:4]),
+             np.ascontiguousarray(arr[:, 4]),
+             np.ascontiguousarray(arr[:, 0]).astype(np.int32))
+        _GEOM_CACHE[etype] = g
+    return g
+
+
+def sphere_world(local: np.ndarray, pos: np.ndarray, yaw: np.ndarray) -> np.ndarray:
+    """``(m,3)`` local offsets -> ``(m*n,3)`` world centres for m hulls.
+
+    One hull's spheres come out contiguously, in the order of `local`, which is
+    how the collision sweep keeps its rows aligned with its unit ids.  The
+    rotation is the hull's own: +x right, +z forward, exactly what
+    ``compose`` in the client builds a model with.
+    """
+    c = np.asarray(np.cos(yaw), np.float64)
+    s = np.asarray(np.sin(yaw), np.float64)
+    px = np.asarray(pos, np.float64)[:, None, :]
+    right, up, forward = local[:, 0], local[:, 1], local[:, 2]
+    x = px[:, :, 0] - s[:, None] * right[None, :] + c[:, None] * forward[None, :]
+    y = px[:, :, 1] + up[None, :]
+    z = px[:, :, 2] + c[:, None] * right[None, :] + s[:, None] * forward[None, :]
+    return np.stack((x, y, z), axis=-1).reshape(-1, 3)
+
+
 def unit_spheres(etype: int, pos: np.ndarray,
                  yaw: float) -> list[tuple[int, tuple[float, float, float], float]]:
-    """List of (module, center, radius) hit spheres for a unit type."""
-    px, py, pz = float(pos[0]), float(pos[1]), float(pos[2])
-    if etype == defs.ETYPE_MECH:
-        c, s = math.cos(yaw), math.sin(yaw)
-        rxw, rzw = -s, c
-        out = []
-        for mod, ox, oy, oz, r in defs.MECH_HITSPHERES:
-            out.append((mod,
-                        (px + rxw * ox + c * oz, py + oy, pz + rzw * ox + s * oz),
-                        r))
-        return out
-    if etype == defs.ETYPE_APC:
-        return [(0, (px, py + 1.1, pz), 1.7), (1, (px, py + 2.4, pz), 1.2)]
-    if etype == defs.ETYPE_BASE:
-        return [(0, (px, py + 5.0, pz), 8.5)]
-    if etype == defs.ETYPE_BUNKER:
-        # stepped blockhouse: a squat mass and the observation deck on top
-        return [(0, (px, py + 4.0, pz), 5.0), (0, (px, py + 8.8, pz), 3.6)]
-    if etype == defs.ETYPE_INF_RIFLE or etype == defs.ETYPE_INF_ROCKET or etype == defs.ETYPE_CIV:
-        return [(0, (px, py + 0.9, pz), 0.65)]
-    return [(0, (px, py + 1.0, pz), 1.5)]
+    """List of (module, center, radius) hit spheres for one unit."""
+    local, radius, module = sphere_geom(etype)
+    c = sphere_world(local, np.asarray(pos, np.float64)[None, :],
+                     np.asarray([yaw], np.float64))
+    return [(int(module[i]), (float(c[i, 0]), float(c[i, 1]), float(c[i, 2])),
+             float(radius[i])) for i in range(radius.shape[0])]
 
 
 def solve_lead(origin: np.ndarray, tpos: np.ndarray, tvel: np.ndarray | None,

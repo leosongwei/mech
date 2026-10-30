@@ -8,8 +8,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from .. import defs, mathutil as mu
-from . import sight
+from .. import combat, defs, mathutil as mu
+from . import blasts, sight
 from .weapons import aim_of
 
 if TYPE_CHECKING:
@@ -66,7 +66,7 @@ def run(world: World, dt: float) -> None:
     yaw = e["yaw"]
 
     # ---- hit spheres of every unit, gathered once per tick --------------
-    sph = sphere_table(world)
+    sph = world.sphere_table()
 
     for pid in pids:
         if not e.alive[pid]:
@@ -220,7 +220,7 @@ def run(world: World, dt: float) -> None:
             hitp = (float(p0[0] + (p1[0] - p0[0]) * best_t),
                     float(p0[1] + (p1[1] - p0[1]) * best_t),
                     float(p0[2] + (p1[2] - p0[2]) * best_t))
-            _impact(world, hitp, wd, pid, best_unit, best_mod, sph)
+            impact(world, hitp, wd, pid, best_unit, best_mod)
             e.destroy(pid)
             continue
         # ---- out of flight -------------------------------------------------
@@ -229,45 +229,50 @@ def run(world: World, dt: float) -> None:
         # anything standing at the end of the wire catches the blast
         maxdist = float(wd.get("maxdist", 0.0))
         if maxdist > 0.0 and float(trav[pid]) >= maxdist:
-            _impact(world, (float(p1[0]), float(p1[1]), float(p1[2])), wd, pid, -1, 0, sph)
+            impact(world, (float(p1[0]), float(p1[1]), float(p1[2])), wd, pid)
             e.destroy(pid)
 
 
 def sphere_table(world: World) -> tuple:
     """``(centres, radii, units, modules, factions)`` for every unit this tick.
 
-    One pass over the battlefield per tick, shared by the collision sweep and
-    every blast - rebuilding it per impact is what made a rocket into a crowd
-    cost a full pass each time."""
+    Built once per tick and shared: the sweep below and every burst
+    (systems/blasts.py) read the same table, so a rocket into a crowd does not
+    rebuild the battlefield per impact.  The geometries come off a per-type
+    cache (`mathutil.sphere_geom`), and each type's hulls are solved in one
+    numpy pass - no per-entity loop, which is what the table used to cost."""
     e = world.ecs
     units = world.units()
-    pos = e["pos"]
-    yaw = e["yaw"]
-    etype = e["etype"]
-    faction = e["faction"]
-    sc = []
-    sr = []
-    su = []
-    sm = []
-    sf = []
-    for uid in units:
-        et = int(etype[uid])
-        uid = int(uid)
-        for mod, c, r in mu.unit_spheres(et, pos[uid], float(yaw[uid])):
-            sc.append(c)
-            sr.append(r)
-            su.append(uid)
-            sm.append(mod)
-            sf.append(int(faction[uid]))
-    c = np.asarray(sc, np.float32).reshape(-1, 3)
-    r = np.asarray(sr, np.float32)
     t = world.terrain
-    return (c, r,
-            np.asarray(su, np.int32),
-            np.asarray(sm, np.int32),
-            np.asarray(sf, np.int32),
-            _block_index(world, c, r),
-            (t._cull_inv, t._cull_w, t._cull_d))
+    cull = (t._cull_inv, t._cull_w, t._cull_d)
+    if units.size == 0:
+        return (np.zeros((0, 3), np.float32), np.zeros(0, np.float32),
+                np.zeros(0, np.int32), np.zeros(0, np.int32), np.zeros(0, np.int32),
+                (np.zeros(1, np.int32), np.zeros(0, np.int32)), cull)
+    pos = np.asarray(e["pos"][units], np.float64)
+    yaw = np.asarray(e["yaw"][units], np.float64)
+    kinds = np.asarray(e["etype"][units])
+    fac = np.asarray(e["faction"][units])
+    sc, sr, su, sm, sf = [], [], [], [], []
+    for et in np.unique(kinds):
+        sel = np.nonzero(kinds == et)[0]
+        local, radius, module = mu.sphere_geom(int(et))
+        n = radius.shape[0]
+        sc.append(mu.sphere_world(local, pos[sel], yaw[sel]))
+        sr.append(np.tile(radius, sel.size))
+        su.append(np.repeat(units[sel], n))
+        sm.append(np.tile(module, sel.size))
+        sf.append(np.repeat(fac[sel], n))
+    c = np.concatenate(sc).astype(np.float32)
+    r = np.concatenate(sr).astype(np.float32)
+    u = np.concatenate(su).astype(np.int32)
+    m = np.concatenate(sm).astype(np.int32)
+    f = np.concatenate(sf).astype(np.int32)
+    # back into unit order (ascending id, sphere order within the hull): the
+    # sweep breaks distance ties by position in this table
+    order = np.argsort(u, kind="stable")
+    c, r, u, m, f = c[order], r[order], u[order], m[order], f[order]
+    return (c, r, u, m, f, _block_index(world, c, r), cull)
 
 
 def _block_index(world: World, c: np.ndarray, r: np.ndarray) -> tuple:
@@ -325,40 +330,24 @@ def _leg_spheres(sph: tuple, p0: np.ndarray, p1: np.ndarray, pr: float) -> np.nd
     return np.unique(np.concatenate(parts))
 
 
-def _impact(world: World, p: tuple[float, float, float], wd: dict, proj_id: int,
-            direct_unit: int = -1, direct_mod: int = 0,
-            sph: tuple | None = None) -> None:
+def impact(world: World, p: tuple[float, float, float], wd: dict, proj_id: int,
+            direct_unit: int = -1, direct_mod: int = 0) -> None:
+    """A round goes off at `p`: the hull it landed on, then a burst entity.
+
+    The area half is not solved here any more - it becomes a `blast`, which
+    `systems/blasts.py` judges a stage later (and, for a round that killed
+    something, is what makes a chain reaction a tick apart by construction)."""
     e = world.ecs
     shooter = int(e["proj_src"][proj_id])
-    pid = int(e["owner"][shooter]) if shooter >= 0 and e.alive[shooter] else -1
-    if pid < 0 and shooter >= 0:
-        pid = -1
+    shooter_ok = shooter >= 0 and e.alive[shooter]
+    pid = int(e["owner"][shooter]) if shooter_ok else -1
+    faction = int(e["faction"][shooter]) if shooter_ok else -1
     r = float(wd["er"])
     world.emit("boom", x=p[0], y=p[1], z=p[2], r=r, wid=int(wd["wid"]),
                big=1 if r >= 5.0 else 0, proj=int(proj_id))
     if direct_unit >= 0:
-        world.hit(direct_unit, direct_mod, wd, 0.0, pid)
+        combat.hit(world, direct_unit, direct_mod, wd, 0.0, pid)
     if r <= 0.0 or float(wd["ed"]) <= 0.0:
         return
-    sfact = int(e["faction"][shooter]) if shooter >= 0 and e.alive[shooter] else -1
-    # One distance per hit sphere, straight off the table the run loop already
-    # built this tick: rebuilding every unit's spheres per impact made a single
-    # burst cost a full pass over the battlefield, which is what a rocket into a
-    # crowd turned into a 30 ms tick.
-    table = sph if sph is not None else sphere_table(world)
-    sph_c, sph_r, sph_u, sph_m, sph_f = table[:5]
-    d = np.sqrt(((sph_c - np.asarray(p, np.float32)) ** 2).sum(axis=1)) - sph_r
-    hit = d <= r
-    if direct_unit >= 0:
-        hit &= sph_u != direct_unit
-    if sfact >= 0:
-        hit &= sph_f != sfact
-    if not hit.any():
-        return
-    # one splash per unit, from its closest sphere
-    idx = np.nonzero(hit)[0]
-    order = idx[np.lexsort((d[idx], sph_u[idx]))]
-    first = np.ones(order.size, bool)
-    first[1:] = sph_u[order][1:] != sph_u[order][:-1]
-    for k in order[first]:
-        world.splash(int(sph_u[k]), int(sph_m[k]), wd, max(float(d[k]), 0.0), pid)
+    blasts.spawn(world, p, (float(wd["ed"]), r), friendly=False,
+                 skip=direct_unit, pid=pid, faction=faction)

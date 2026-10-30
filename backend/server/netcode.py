@@ -71,7 +71,7 @@ def static_payload(world: World) -> dict:
         bases={int(k): v for k, v in t.bases.items()},
         lanes=t.lanes,
         towns=t.towns,
-        mech=dict(hp=list(defs.UNIT_DEFS[defs.ETYPE_MECH]["hp"]),
+        mech=dict(hp=mech_hp_slots(),
                   hitspheres=defs.MECH_HITSPHERES, eye=defs.MECH_EYE,
                   sight_z=defs.MECH_SIGHT_Z,
                   muzzles={int(k): v for k, v in defs.MECH_ARM_MUZZLE.items()},
@@ -92,6 +92,36 @@ def static_payload(world: World) -> dict:
     )
 
 
+def mech_hp_slots() -> list[int]:
+    """The mech's four hp columns as the client indexes them (`MOD_*`)."""
+    d = defs.UNIT_DEFS[defs.ETYPE_MECH]
+    arms = list(d.get("arms") or ())
+    slots = [0, 0, 0, 0]
+    slots[defs.MOD_CHASSIS] = int(d["hp"])
+    for a, hp in enumerate(arms[:2]):
+        slots[defs.MOD_LEFT + a] = int(hp)
+    return slots
+
+
+def hp_columns(world: World, eids: np.ndarray) -> np.ndarray:
+    """``(n, 4)`` uint16 - the hull pool in column 0, the arm pools in 2 and 3.
+
+    Column 1 (`MOD_TORSO`) is always zero: the torso is hit geometry, not a
+    health bar.  The layout is the client's (`net.js` reads four u16 per unit),
+    so it is built here rather than stored per entity.
+    """
+    e = world.ecs
+    out = np.zeros((eids.size, 4), np.uint16)
+    if eids.size == 0:
+        return out
+    out[:, defs.MOD_CHASSIS] = np.clip(e["hp"][eids], 0, 65535).astype(np.uint16)
+    armed = e.has_arr(eids, "arm_hp")
+    if armed.any():
+        out[armed, defs.MOD_LEFT:defs.MOD_RIGHT + 1] = np.clip(
+            e["arm_hp"][eids[armed]], 0, 65535).astype(np.uint16)
+    return out
+
+
 def snapshot_bytes(world: World) -> bytes:
     e = world.ecs
     uids = world.all_units()
@@ -99,7 +129,7 @@ def snapshot_bytes(world: World) -> bytes:
     arr = np.zeros(len(uids), UNIT_DTYPE)
     if len(uids):
         owner = e["owner"][uids]
-        hp = np.clip(e["hp"][uids], 0, 65535).astype(np.uint16)
+        hp = hp_columns(world, uids)
         ammo = np.clip(e["ammo"][uids], 0, 65535).astype(np.uint16)
         mag = np.clip(e["mag"][uids], 0, 65535).astype(np.uint16)
         trig = e["trigger"][uids]
@@ -176,7 +206,7 @@ def _arm_meta(world: World, pl: Player, arm: int) -> dict:
 def meta_payload(world: World, pl: Player) -> dict:
     e = world.ecs
     mech_ok = pl.mech >= 0 and e.alive[pl.mech]
-    hp = e["hp"][pl.mech].tolist() if mech_ok else [0, 0, 0, 0]
+    hp = hp_columns(world, np.asarray([pl.mech])).ravel().tolist() if mech_ok else [0, 0, 0, 0]
     # the job at the wrench, for the progress bar at the bottom of the screen
     work = None
     if mech_ok and pl.work is not None:

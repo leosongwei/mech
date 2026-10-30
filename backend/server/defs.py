@@ -200,15 +200,16 @@ def blast_damage(ed: float, de: float, er: float, dist: float) -> float:
     return max(e - de, e / 5.0)
 
 
-def hit_damage(wd: dict, unit: dict, dist: float = 0.0) -> float:
-    """Damage one hit of `wd` does to a `unit`, `dist` metres from the blast."""
-    return (pen_damage(float(wd["ap"]), float(wd["ad"]), float(unit["dp"]))
-            + blast_damage(float(wd["ed"]), float(unit["de"]), float(wd["er"]), dist))
+def hit_damage(wd: dict, dp: float, de: float, dist: float = 0.0) -> float:
+    """Damage one hit of `wd` does to armour `dp`/`de`, `dist` metres from the blast."""
+    return (pen_damage(float(wd["ap"]), float(wd["ad"]), float(dp))
+            + blast_damage(float(wd["ed"]), float(de), float(wd["er"]), dist))
 
 
 # A wreck goes up with its own fuel and ammunition: ER 30 m at ED 10, blast
-# only (a burst, not a round through a plate) - `world.kill` fires it through
-# `World._death_blast`.  It is the one blast in the game that takes no sides:
+# only (a burst, not a round through a plate) - `systems/mortality.py` spawns it
+# from the dying type's `death["blast"]`.  It is the one blast in the game that
+# takes no sides:
 # what stands within thirty metres of a mech that just came apart is in the
 # wrong place whatever colour it is painted, so crews of the dead machine's own
 # faction are cooked too.  ED 10 over 30 m is a wide, thin shock - a scorch on
@@ -217,7 +218,11 @@ def hit_damage(wd: dict, unit: dict, dist: float = 0.0) -> float:
 # `er` doubles as the radius of the fireball the client draws, which is why the
 # two hulls carry it as their `splat`.
 DEATH_BLAST = {"ed": 10.0, "er": 30.0, "ad": 0.0}
-DEATH_BLAST_ETYPES = (ETYPE_APC, ETYPE_MECH)
+# how long the dead thing's remains linger: a fallen man topples and is gone in
+# five seconds, a hull keeps smoking for ten.  Each type's `death["wreck"]`
+# names its own (see UNIT_DEFS) - systems/debris.py counts them down.
+CORPSE_TIME = 5.0
+WRECK_TIME = 10.0
 
 
 # weapons a player may buy, in hotbar order
@@ -260,76 +265,123 @@ ZERO_DEFAULT = 1000.0    # metres the sight is set to at spawn
 # soldier, because no query ever returns it for one.
 #
 # `dp` / `de` are the two defences every hit is measured against: `dp` soaks
-# penetration (see `pen_damage`), `de` soaks blast (`blast_damage`).
-# `hp` is one row per health slot: every unit except the mech has a single slot
-# (index 0), the mech has the hull pool at MOD_CHASSIS and one arm at each of
-# MOD_LEFT / MOD_RIGHT.  MOD_TORSO is hit geometry only - the torso no longer
-# has a health pool of its own, it shares the chassis one.
+# penetration (see `pen_damage`), `de` soaks blast (`blast_damage`).  They are
+# copied into the `armor` component at spawn, so the damage path never reads a
+# definition dict.
+#
+# `hp` is *the* health of the entity - one number, and `hp <= 0` is what kills
+# it.  A hull built out of separately damaged modules declares `arms=(left,
+# right)` as well and gets a second and a third pool for them: the factory adds
+# `components.ARM_COMPS`, so the archetype itself carries `arm_hp` and every
+# system tests *that* rather than the unit's type.  The mech's torso has no pool
+# at all: it is hit geometry that charges the hull (`MOD_TORSO`).
+#
+# `death` is the recipe `systems/mortality.py` follows when the hull goes:
+#   blast=(ed, er)      it bursts on the spot, no sides spared (systems/blasts.py)
+#   loud="blast"/"big"  which cue the client plays and how hard the screen kicks
+#   wreck=(etype, life, kind)  what is left behind, and the wire `kind` byte
+#   ends_match=True     killing this one decides the round
+# Anything missing means "none of that".
+#
+# `spheres` is the hit geometry: (module, right, up, forward, radius) in the
+# hull's own frame, solved against a line, not sampled - one table per type,
+# cached as numpy by `mathutil.sphere_geom`.
 #
 # `person` is what a proximity fuse may go off on (systems/proximity.py): a man
 # is a man whether he carries a rifle, an RPG or a shopping bag.  Armour is not
 # tagged, so an APC 4 m off the path leaves the fuse cold.
+MECH_HITSPHERES = [
+    # (module, x right offset, y height, z forward offset, radius)
+    (MOD_CHASSIS, 0.0, 1.45, 0.0, 1.45),
+    (MOD_TORSO, 0.0, 4.15, 0.0, 1.30),
+    (MOD_LEFT, -1.43, 3.55, 0.10, 0.85),
+    (MOD_RIGHT, 1.43, 3.55, 0.10, 0.85),
+]
+
 UNIT_DEFS = {
     # 10 hp is a deliberate knife edge: one 12.7 mm round (AD 10) kills
     # outright, while a rifle (AD 4) needs exactly three - two leave him
     # standing.  Infantry is therefore no threat to armour at all, and is gone
     # the moment anything with a heavy machine gun looks at it.
-    ETYPE_INF_RIFLE: dict(name="RIFLEMAN", hp=(10, 0, 0, 0), dp=1, de=1,
+    ETYPE_INF_RIFLE: dict(name="RIFLEMAN", hp=10, dp=1, de=1,
                           speed=5.5, radius=0.55, height=1.8,
                           weapons=(WID_RIFLE556, WID_NONE), ai_range=420, sight=600, reward=45,
                           splat=1.0, targets=(ETYPE_INF_RIFLE, ETYPE_INF_ROCKET),
+                          spheres=((MOD_CHASSIS, 0.0, 0.9, 0.0, 0.65),),
+                          death=dict(loud="boom", wreck=(ETYPE_CORPSE, CORPSE_TIME, 0)),
                           tags=("unit", "combat", "moves", "person")),
-    ETYPE_INF_ROCKET: dict(name="AT RIFLEMAN", hp=(10, 0, 0, 0), dp=1, de=1,
+    ETYPE_INF_ROCKET: dict(name="AT RIFLEMAN", hp=10, dp=1, de=1,
                            speed=5.0, radius=0.55, height=1.8,
                            weapons=(WID_RPG, WID_NONE), ai_range=480, sight=650, reward=70,
-                           splat=1.0, tags=("unit", "combat", "moves", "person")),
+                           splat=1.0,
+                           spheres=((MOD_CHASSIS, 0.0, 0.9, 0.0, 0.65),),
+                           death=dict(loud="boom", wreck=(ETYPE_CORPSE, CORPSE_TIME, 0)),
+                           tags=("unit", "combat", "moves", "person")),
     # one hull pool: the turret is hit geometry, not a second health bar.
     # `vehicle` is what makes it steer instead of strafe (systems/movement.py)
     # and follow the lane as a path instead of aiming at its goal (systems/ai.py)
     # 100 km/h on the governor: the fastest thing on the lanes by a wide margin,
     # but it takes its time getting there (see APC_THRUST)
-    ETYPE_APC: dict(name="APC", hp=(100, 0, 0, 0), dp=10, de=20,
+    ETYPE_APC: dict(name="APC", hp=100, dp=10, de=20,
                     speed=100.0 / 3.6, radius=2.2, height=2.8,
                     weapons=(WID_MG127, WID_SACLOS), ai_range=1800, sight=2600, reward=180,
-                    splat=DEATH_BLAST["er"], tags=("unit", "combat", "lockable", "moves", "vehicle")),
+                    splat=DEATH_BLAST["er"],
+                    spheres=((MOD_CHASSIS, 0.0, 1.1, 0.0, 1.7),
+                             (MOD_CHASSIS, 0.0, 2.4, 0.0, 1.2)),
+                    death=dict(blast=(DEATH_BLAST["ed"], DEATH_BLAST["er"]), loud="blast",
+                               wreck=(ETYPE_DEBRIS, WRECK_TIME, 1)),
+                    tags=("unit", "combat", "lockable", "moves", "vehicle")),
     # hull pool 100 (chassis + torso), one arm 50 each; armour of a light tank
-    ETYPE_MECH: dict(name="MECH", hp=(100, 0, 50, 50), dp=10, de=20,
+    ETYPE_MECH: dict(name="MECH", hp=100, arms=(50, 50), dp=10, de=20,
                      speed=50.0, radius=1.9, height=6.5,
                      weapons=(WID_AC30, WID_ROCKET), ai_range=2600, sight=3400, reward=350,
-                     splat=DEATH_BLAST["er"], tags=("unit", "combat", "lockable", "moves")),
+                     splat=DEATH_BLAST["er"], spheres=tuple(MECH_HITSPHERES),
+                     death=dict(blast=(DEATH_BLAST["ed"], DEATH_BLAST["er"]), loud="blast",
+                                wreck=(ETYPE_DEBRIS, WRECK_TIME, 2)),
+                     tags=("unit", "combat", "lockable", "moves")),
     # the objective: a target, but it never moves and cannot be locked.  4000 hp
     # behind 80 of plate: neither 80 mm rockets (AP 40) nor 30 mm rounds (AP 15)
     # get through, so both only do their blast - which prices the base at
     # exactly 267 rockets (15 each) or 1334 cannon rounds (3 each)
-    ETYPE_BASE: dict(name="COMMAND BASE", hp=(4000, 0, 0, 0), dp=80, de=20,
+    ETYPE_BASE: dict(name="COMMAND BASE", hp=4000, dp=80, de=20,
                      speed=0.0, radius=7.0, height=12.0,
                      weapons=(WID_NONE, WID_NONE), ai_range=0, sight=0, reward=2000, splat=8.0,
+                     spheres=((MOD_CHASSIS, 0.0, 5.0, 0.0, 8.5),),
+                     death=dict(loud="big", ends_match=True),
                      tags=("unit", "combat")),
-    ETYPE_CIV: dict(name="CIVILIAN", hp=(10, 0, 0, 0), dp=1, de=1,
+    ETYPE_CIV: dict(name="CIVILIAN", hp=10, dp=1, de=1,
                     speed=4.0, radius=0.5, height=1.7,
                     weapons=(WID_NONE, WID_NONE), ai_range=0, sight=60, reward=0, splat=1.0,
+                    spheres=((MOD_CHASSIS, 0.0, 0.9, 0.0, 0.65),),
+                    death=dict(loud="boom", wreck=(ETYPE_CORPSE, CORPSE_TIME, 0)),
                     tags=("unit", "moves", "person")),
     # inert: drawn by the client, but not a unit any more
-    ETYPE_DEBRIS: dict(name="WRECK", hp=(0, 0, 0, 0), dp=0, de=0,
+    ETYPE_DEBRIS: dict(name="WRECK", hp=0, dp=0, de=0,
                        speed=0.0, radius=2.0, height=2.6,
                        weapons=(WID_NONE, WID_NONE), ai_range=0, sight=0, reward=0, splat=2.0,
-                       tags=()),
-    ETYPE_CORPSE: dict(name="CORPSE", hp=(0, 0, 0, 0), dp=0, de=0,
+                       spheres=((MOD_CHASSIS, 0.0, 1.0, 0.0, 1.5),),
+                       death=None, tags=()),
+    ETYPE_CORPSE: dict(name="CORPSE", hp=0, dp=0, de=0,
                        speed=0.0, radius=0.5, height=0.4,
                        weapons=(WID_NONE, WID_NONE), ai_range=0, sight=0, reward=0, splat=1.0,
-                       tags=()),
+                       spheres=((MOD_CHASSIS, 0.0, 1.0, 0.0, 1.5),),
+                       death=None, tags=()),
     # concrete blockhouse: rounds stop on it, damage does not
-    ETYPE_BUNKER: dict(name="BUNKER", hp=(999999, 0, 0, 0), dp=1000, de=1000,
+    ETYPE_BUNKER: dict(name="BUNKER", hp=999999, dp=1000, de=1000,
                        speed=0.0, radius=6.0, height=9.0,
                        weapons=(WID_NONE, WID_NONE), ai_range=0, sight=0, reward=0, splat=6.0,
-                       tags=("unit", "invulnerable")),
+                       # stepped blockhouse: a squat mass and the deck on top
+                       spheres=((MOD_CHASSIS, 0.0, 4.0, 0.0, 5.0),
+                                (MOD_CHASSIS, 0.0, 8.8, 0.0, 3.6)),
+                       death=None, tags=("unit", "invulnerable")),
 }
 
 # repair: welding a mech from nothing back to full armour costs
 # REPAIR_FULL_COST, split evenly over its 200 points (hull 100 + both arms 50).
 # Kept as a total so the bill stays sane if the hp table moves.
 REPAIR_FULL_COST = 400.0
-REPAIR_COST_PER_HP = REPAIR_FULL_COST / max(1.0, float(sum(UNIT_DEFS[ETYPE_MECH]["hp"])))
+REPAIR_COST_PER_HP = REPAIR_FULL_COST / max(
+    1.0, float(UNIT_DEFS[ETYPE_MECH]["hp"] + sum(UNIT_DEFS[ETYPE_MECH]["arms"])))
 
 # ---- rearm work (seconds at the wrench) ---------------------------------
 # Buying is not free in *time* either (systems/rearm.py): the hull stands where
@@ -340,14 +392,9 @@ REARM_SWAP_S = 2.0                 # fitting one weapon into an arm
 REARM_AMMO_S = 4.0                 # loading a full load of rounds into one arm
 REARM_REPAIR_PER_100HP_S = 2.0     # welding armour back on, per 100 hp
 
-# mech geometry (metres, relative to the ground point under the entity)
-MECH_HITSPHERES = [
-    # (module, x right offset, y height, z forward offset, radius)
-    (MOD_CHASSIS, 0.0, 1.45, 0.0, 1.45),
-    (MOD_TORSO, 0.0, 4.15, 0.0, 1.30),
-    (MOD_LEFT, -1.43, 3.55, 0.10, 0.85),
-    (MOD_RIGHT, 1.43, 3.55, 0.10, 0.85),
-]
+# mech geometry (metres, relative to the ground point under the entity).
+# `MECH_HITSPHERES` itself is declared above `UNIT_DEFS`, because the mech's
+# `spheres` table is built from it.
 MECH_EYE = 5.05
 # The commander's panoramic sight is a free turret standing on the roof, and it
 # is *not* on the hull's own rotation axis: it is bolted `MECH_SIGHT_Z` behind
@@ -486,8 +533,6 @@ RESPAWN_TIME = 8.0        # a mode's own rule (Mode.respawn_delay) may override 
 RESPAWN_AT_FRONT = 3.0    # killed at the enemy command base
 RESPAWN_AT_HOME = 40.0    # killed at your own command base
 BUILD_TIME = 5.0
-CORPSE_TIME = 5.0          # fallen infantry lingers this long
-WRECK_TIME = 10.0          # burning hulls linger this long
 
 # optics / IR seeker
 BASE_FOV = 1.05            # vertical field of view at 1x, radians

@@ -109,10 +109,9 @@ def run(world: World, dt: float) -> None:
     # part of the simulation: keep the query order, do not group it.
     trigger = e["trigger"]
     trigger_prev = e["trigger_prev"]
-    hp = e["hp"]
-    etype = e["etype"]
     owner = e["owner"]
     rows, archs = e.locate(ids)
+    arm_bufs = e.buffers("arm_hp")
     cool_bufs = e.buffers("cool")
     reload_bufs = e.buffers("reload_t")
     mag_bufs = e.buffers("mag")
@@ -145,9 +144,9 @@ def run(world: World, dt: float) -> None:
                 continue
             if not (trig >> arm) & 1:
                 continue
-            if int(etype[eid]) == defs.ETYPE_MECH:
-                if hp[eid, defs.MOD_LEFT if arm == 0 else defs.MOD_RIGHT] <= 0.0:
-                    continue
+            arm_hp = arm_bufs[ai]
+            if arm_hp is not None and float(arm_hp[row, arm]) <= 0.0:
+                continue                       # that arm was shot off
             wd = defs.WEAPONS[wid]
             # semi automatic arms fire once per pull: the trigger has to be
             # released and pressed again, holding it does nothing

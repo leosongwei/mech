@@ -152,8 +152,8 @@ def run(world: World, minutes: float) -> tuple[list[Mission], list[dict]]:
             # samples is still a hull that died, and the fighting it did is the
             # reason it did
             if m.hp_min <= 0.0:
-                m.hp_min = float(e["hp"][eid, 0])
-            m.hp_min = min(m.hp_min, float(e["hp"][eid, 0]))
+                m.hp_min = float(e["hp"][eid])
+            m.hp_min = min(m.hp_min, float(e["hp"][eid]))
             if int(e["target"][eid]) >= 0:
                 m.engaged += DT
             if int(e["trigger"][eid]):

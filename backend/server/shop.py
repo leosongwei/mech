@@ -39,7 +39,6 @@ def _r(v: float) -> int:
     """Round money the way the browser's Math.round does, so a preview and the
     bill never differ by a dollar."""
     return int(math.floor(float(v) + 0.5))
-MODULE_OF_ARM = (defs.MOD_LEFT, defs.MOD_RIGHT)
 
 
 def repair_time(need: float) -> float:
@@ -88,9 +87,13 @@ def arm_state(world: World, pl: Player, arm: int) -> dict[str, Any]:
     wd = defs.WEAPONS[wid] if 0 <= wid < len(defs.WEAPONS) else defs.WEAPONS[defs.WID_NONE]
     mid = pl.mech
     if mid >= 0 and e.alive[mid]:
-        slot = MODULE_OF_ARM[arm]
-        hp = float(e["hp"][mid, slot])
-        hpmax = max(1.0, float(e["hpmax"][mid, slot]))
+        # the arm's own pool (`arm_hp`, left 0 / right 1) - a hull without arms
+        # has no such component and its arms never fall off
+        if e.has(mid, "arm_hp"):
+            hp = float(e["arm_hp"][mid, arm])
+            hpmax = max(1.0, float(e["arm_hpmax"][mid, arm]))
+        else:
+            hp = hpmax = 1.0
         mag = int(e["mag"][mid, arm])
         reserve = int(e["ammo"][mid, arm])
     else:
@@ -155,9 +158,10 @@ def quote(world: World, pl: Player, req: dict[str, Any]) -> dict[str, Any]:
 
     # armour: weld every module back to full
     if req["repair"]:
-        hp = e["hp"][mid]
-        hpmax = e["hpmax"][mid]
-        need = sum(max(0.0, float(hpmax[i]) - float(hp[i])) for i in range(4))
+        need = max(0.0, float(e["hpmax"][mid]) - float(e["hp"][mid]))
+        if e.has(mid, "arm_hp"):
+            need += float(sum(max(0.0, float(e["arm_hpmax"][mid, a]) - float(e["arm_hp"][mid, a]))
+                              for a in (0, 1)))
         cost = _r(need * defs.REPAIR_COST_PER_HP)
         if cost > 0:
             t = repair_time(need)
@@ -205,6 +209,8 @@ def apply_line(world: World, pl: Player, line: dict[str, Any]) -> None:
         e["reload_t"][mid, arm] = 0.0
     elif kind == "repair":
         e["hp"][mid] = e["hpmax"][mid]
+        if e.has(mid, "arm_hp"):
+            e["arm_hp"][mid] = e["arm_hpmax"][mid]
     elif kind == "smoke":
         pl.smoke_charges = defs.SMOKE_REFILL_CHARGES
         pl.smoke_cd = 0.0

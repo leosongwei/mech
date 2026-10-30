@@ -33,11 +33,12 @@ backend/
     ecs.py                 # archetype ECS: component set is the entity's type
     components.py          # every component the game declares
     defs.py                # entity types, weapons, unit stats, mech geometry
-    world.py               # World: terrain, players, spawning, damage, tick
+    world.py               # World: terrain, players, spawning, tick, queries
     terrain.py             # 1000x1000 tiles of 16 m -> 16 km square map
     mathutil.py            # angles, lead solving, terrain helpers
     grid.py                # 128 m cell index over the units, refiled every tick (AI broadphase)
     ballistics.py          # fire control: sight setting elevation (player) / sight-point solve (AI)
+    combat.py              # damage resolution: the only writer of `hp` (apply/hit/splash)
     netcode.py             # init payload, binary snapshots, JSON meta
     main.py                # FastAPI: websockets, static files, 30 Hz game loop
     systems/               # mechanics shared by every mode, each exposes run(world, dt)
@@ -45,6 +46,8 @@ backend/
                          #   sight.py: the one line of sight (terrain + smoke), clear/why
                          #   smoke.py: hot smoke canisters, opaque puffs, blocks(a, b)
                          #   proximity.py: 30mm airburst fuse, bursts on people only
+                         #   blasts.py: an explosion is an entity; the only area damage
+                         #   mortality.py: `hp <= 0` -> wreck, burst, kill money, victory
                          #   rearm.py: the bought job at the base, `work_remaining_time`
     modes/                 # per-mode rule sets: map, setup, pipeline, spawn rules
       base.py              #   Mode interface every mode implements
@@ -121,15 +124,20 @@ frontend/
   tag they can handle — `world.units()`, `combat_units()`, `lockable_units()`,
   `movable()`, `smoke_puffs()` — so an entity that is not a unit (a smoke puff,
   a shell) is invisible to combat code without any exclusion list. `etype` is
-  per-type *data* (hull geometry, hp slots, which arm fires what) and is only
+  per-type *data* (hull geometry, death recipe, which arm fires what) and is only
   read for that.
 * **World** (`world.py`) owns terrain, players, the ECS and the system
   pipeline. Shared order: `rearm`, `player_input`, the mode's pre-systems
   (battle: `ai`), `gunnery, locking, smoke, weapons, movement, projectiles,
-  proximity, economy, debris`, then the mode's post-systems (battle: `waves`).
+  proximity, blasts, mortality, economy, debris`, then the mode's post-systems
+  (battle: `waves`).
   `gunnery` sits between the crews saying where they are looking and anything
   reading a barrel, so `yaw` / `pitch` are the *laid gun* by the time a weapon
-  fires or the client draws.
+  fires or the client draws.  The last three are the damage chain and their
+  order is load bearing: `projectiles` and `proximity` write hp where they land
+  and leave bursts behind, `blasts` judges the bursts (including the ones the
+  previous tick's deaths left), and `mortality` decides who died - after every
+  damage source, before `waves` counts hulls to take a town.
   `World.update(dt)` is the only entry point; the loop in `main.py` calls it at
   a fixed 30 Hz (`TICK_DT = 1/30`).
 * **The sight leads, the machine follows** (`systems/gunnery.py`, `defs.MECH_
@@ -242,25 +250,45 @@ frontend/
   beating the target's `dp` outright delivers the full `ad`, beating only half
   of it shaves `ad/5`, anything duller does nothing. `defs.blast_damage(ed, de,
   er, dist)` falls off linearly to `er` and always keeps `max(e - de, e/5)`. A
-  round *landing* on a unit takes `world.hit()` (both halves); a unit merely
-  near the burst takes `world.splash()` (blast only - a charge going off a few
-  metres away cannot punch a plate). `world.damage()` stays the raw hp
-  subtractor and is what debug knobs use.
-* **A wreck goes up.** `world.kill()` of an APC or a mech fires
-  `defs.DEATH_BLAST` (ER 30 m, ED 10) through `World._death_blast` *after* the
-  unit is destroyed and its hulk placed, so the dead machine is not in it. It is
-  the one blast in the game that takes no sides - crews of the dead hull's own
-  faction are cooked too - but ED 10 over 30 m is a wide, thin shock: a scorch
-  on armour (2 points at contact), a wound on men (9, never a kill), not a
-  second warhead. It is solved
-  (nearest hit sphere per unit) before any damage lands, so a chain reaction
-  cannot hit the wreck the next hull has already become. The kill's credit goes
-  to whoever killed the first hull.
-* **One hull pool.** A mech's chassis and torso share `hp[MOD_CHASSIS]`; a hit
-  on either body sphere, and a hit on an arm that is already gone, is charged
-  there. `MOD_TORSO`'s health slot is unused (0) - it only names the upper hit
-  sphere. Arms keep their own 50.
-* **Debris** — `world.kill()` leaves an inert entity behind: a corpse
+  round *landing* on a unit takes `combat.hit()` (both halves); a unit merely
+  near the burst takes `combat.splash()` (blast only - a charge going off a few
+  metres away cannot punch a plate). `combat.apply()` is the raw hp subtractor
+  and is what debug knobs use. It is also **the only writer of `hp`** (plus
+  `shop`'s repair, which restores it), and it decides nothing: no death, no
+  destruction, in the heat of a hit.
+* **Damage is not a system.** `combat.py` is a library next to `ballistics.py`
+  and `shop.py`: a round writes hp where it lands, inside the system that fired
+  it. There is deliberately no damage queue - a system owns state, and damage
+  owns none. The consequence to remember: **hp a system reads is the hp at its
+  own stage**, and a hull at 0 is still in the record until `mortality` runs
+  (last of the damage chain), which is why `combat.apply` also zeroes `vel` /
+  `drive` - a hull at 0 stops where it is instead of driving on for a stage.
+* **Death has one judge.** `systems/mortality.py` asks one question for every
+  unit, `hp <= 0`, and then follows the type's own recipe from
+  `defs.UNIT_DEFS[...]["death"]`: `blast=(ed, er)` burst, `loud` for the cue,
+  `wreck=(etype, seconds, wire kind)`, `ends_match` for the base. The three
+  match rules live there too (cross-faction kill money, the respawn plan from
+  where it died, victory) - they are rules, not unit properties. `kill()` is
+  gone; so is `DEATH_BLAST_ETYPES` and the four-way `_leave_debris`.
+* **An explosion is an entity** (`systems/blasts.py`). Whoever wants one - a
+  round landing, a proximity fuse, a wreck - only calls `blasts.spawn`, and the
+  one implementation of area damage reads it a stage later: `blast_power` =
+  `[ed, er]`, `blast_t` the fuse, `blast_friendly` (a weapon burst spares its
+  own side, a wreck does not), `blast_skip` the hull already hit directly,
+  `blast_pid` the credit frozen at creation. A hull that dies this tick leaves
+  a burst that goes off on the next one, so **a chain reaction is a tick apart
+  by construction** and cannot damage the hulk the dead hull has already
+  become. `blast_t > dt` would be a burning area; nothing uses that yet.
+* **`hp` is one number, and `hp <= 0` is the whole of "dead".** A hull built out
+  of separately damaged modules declares `arms=(left, right)` in its defs and
+  the factory gives it `arm_hp` / `arm_hpmax` (a mech: hull 100, one arm 50
+  each). Every system tests *the component*, never the type - `combat.arm_alive`
+  is `arm_hp[eid, arm] > 0`, and the arm index is the weapon index. Three rules
+  live in `combat._mech_hit` and nowhere else: a hit on an arm stays off the
+  hull, an arm at 0 loses its ammunition, and a round into an arm that is
+  already gone goes inwards. `MOD_TORSO` is hit geometry only - it charges the
+  hull, and column 1 of the wire `hp` is always 0.
+* **Debris** — `systems/mortality.py` leaves an inert entity behind: a corpse
   (`ETYPE_CORPSE`, 5 s) for infantry, a smoking hulk (`ETYPE_DEBRIS`, 10 s,
   original model in snapshot `flags` bits 4-5) for vehicles and mechs. They are
   spawned without the `unit` tag, so `world.units()` (rounds, damage, AI,
@@ -622,7 +650,13 @@ cd frontend && npm install && npm run build      # -> backend/assets/
   lane, and touches no building tile. It is tolerant by
   design: float sums may drift 1 %, counts may be off by one. Run it after
   anything that touches `ecs.py`, `systems/` or `terrain.py`; `--save` rewrites
-  the fixture when a change is meant to move the numbers.
+  the fixture when a change is meant to move the numbers.  Three self-checks run
+  before the battle and assert instead of comparing
+  (`_cache_after_growth`, `_damage_model`, `_death_blast`, `_raid_plan`):
+  `_damage_model` is the hp layout - one pool per hull, `hp <= 0` kills, the mech
+  is the only hull with `arm_hp` and losing an arm costs its ammunition - and
+  `_death_blast` is the wreck going up, which needs two `world.update` calls
+  because the kill and the burst it leaves are deliberately a tick apart.
   ```bash
   .venv/bin/python tools/replay.py          # compare
   .venv/bin/python tools/replay.py --save   # re-baseline

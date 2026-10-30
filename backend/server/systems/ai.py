@@ -202,6 +202,7 @@ def _aim_and_fire(world: World, eid: int, b: dict, row: int,
     trigger = b["trigger"]
     etype = int(b["etype"][row])
     hp = b["hp"]
+    arm_hp = b.get("arm_hp")
     weapon = b["weapon"]
 
     tx = aim[0] - eye[0]
@@ -236,9 +237,13 @@ def _aim_and_fire(world: World, eid: int, b: dict, row: int,
     laid = etype != defs.ETYPE_MECH or abs(float(want_pitch) - float(pitch[row])) < 0.02
     t = 0
     if err < 0.14 and laid:
-        if hp[row, 0] > 0:
+        if hp[row] > 0.0:
             t |= 1
-        if etype == defs.ETYPE_MECH and hp[row, defs.MOD_RIGHT] > 0 and dist < 2200:
+        # the second arm exists only on a hull that carries arm pools, and
+        # only fires while that arm is still there (`combat.arm_alive`, but
+        # the buffers are already in hand here, so no entity lookup)
+        has_arm = arm_hp is not None and float(arm_hp[row, 1]) > 0.0
+        if has_arm and dist < 2200:
             w1 = int(weapon[row, 1])
             if w1 and defs.WEAPONS[w1]["kind"] in ("rocket", "saclos") and dist < defs.WEAPONS[w1]["range"]:
                 t |= 2

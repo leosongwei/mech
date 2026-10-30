@@ -103,6 +103,9 @@ def run(world: World, dt: float) -> None:
                  wd["name"], pid, burst[0], burst[1], burst[2], gap[k], int(puid[k]),
                  f * math.sqrt(l2), math.sqrt(l2), p0[0], p0[1], p0[2],
                  p1[0], p1[1], p1[2])
-        projectiles._impact(world, (float(burst[0]), float(burst[1]), float(burst[2])),
-                            wd, int(pid))
+        # the round goes off where it fused: one entry point for "a round
+        # detonates", so the flash, the burst entity and the credit all come
+        # out the same way a direct hit's do
+        projectiles.impact(world, (float(burst[0]), float(burst[1]), float(burst[2])),
+                           wd, int(pid))
         e.destroy(pid)

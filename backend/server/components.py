@@ -59,8 +59,24 @@ def register(ecs: ECS) -> None:
     ecs.register("invulnerable", np.uint8)           # rounds stop, damage does nothing
 
     # ---- health ---------------------------------------------------------
-    ecs.register("hp", np.float32, (4,), 0.0)
-    ecs.register("hpmax", np.float32, (4,), 0.0)
+    # One hull, one pool: `hp` is *the* health of the entity and `hp <= 0` is
+    # what kills it - there is no per-slot mask and no "fatal slot" table,
+    # because nothing on the battlefield has a second way to die.
+    ecs.register("hp", np.float32, (), 0.0)
+    ecs.register("hpmax", np.float32, (), 0.0)
+    # A hull built out of separately damaged modules carries one extra pool per
+    # arm, and *only* it does: `arm_hp` exists on the archetypes that declare the
+    # `arms` tag (the mech), so an APC or a rifleman owns no such buffer at all.
+    # The index is the weapon arm - left 0, right 1 - which is what makes
+    # `combat.arm_alive` a straight read instead of a lookup table.
+    ecs.register("arm_hp", np.float32, (2,), 0.0)
+    ecs.register("arm_hpmax", np.float32, (2,), 0.0)
+    # `dp` / `de`: penetration and blast armour, copied off the type at spawn so
+    # the damage path never reads a definition dict.
+    ecs.register("armor", np.float32, (2,), 0.0)
+    # who put the last *lethal* hit in - the credit for a kill.  A component,
+    # not a dict on the world, so it dies with the entity that owns it.
+    ecs.register("last_hit", np.int32, (), -1)
 
     # ---- weapons --------------------------------------------------------
     ecs.register("weapon", np.uint8, (2,), 0)        # 0 = left arm, 1 = right arm
@@ -116,6 +132,18 @@ def register(ecs: ECS) -> None:
     ecs.register("wreck_t", np.float32)              # seconds left before it fades
     ecs.register("wreck_kind", np.uint8)             # 0 infantry 1 apc 2 mech
 
+    # ---- blast ----------------------------------------------------------
+    # An explosion is an entity (systems/blasts.py): whoever makes one - a round
+    # going off, a proximity fuse, a wreck - only has to create it, and the one
+    # implementation of area damage reads it a stage later.  Nothing else owns
+    # these buffers, so the cost is paid by explosions and by nobody else.
+    ecs.register("blast", np.uint8)                  # a burst in the air
+    ecs.register("blast_power", np.float32, (2,), 0.0)   # [ed, er]
+    ecs.register("blast_t", np.float32)              # seconds left (<= dt: one tick)
+    ecs.register("blast_friendly", np.uint8)         # 0 = enemies only, 1 = no sides
+    ecs.register("blast_skip", np.int32, (), -1)     # already hit directly
+    ecs.register("blast_pid", np.int32, (), -1)      # credit, resolved at creation
+
     # ---- smoke ----------------------------------------------------------
     # A pull throws `canister` entities out of the hull; each one flies, then
     # trades the `canister` tag for `smoke` and becomes an oblate ellipsoid that
@@ -146,14 +174,22 @@ def register(ecs: ECS) -> None:
 
 UNIT_COMPS = ["pos", "vel", "drive", "veh", "yaw", "pitch", "leg_yaw", "turret_yaw",
               "sight_yaw", "sight_pitch", "etype", "faction",
-              "owner", "hp", "hpmax", "weapon", "ammo", "mag", "cool", "reload_t",
+              "owner", "hp", "hpmax", "armor", "last_hit",
+              "weapon", "ammo", "mag", "cool", "reload_t",
               "trigger", "trigger_prev", "work_remaining_time", "target", "ai_state", "ai_timer",
               "path_i", "lane", "spot_x", "spot_y", "spot_z", "spot_t", "flags"]
+
+# the extra pair of pools a modular hull (the mech) carries, added by the factory
+# when the type declares the `arms` tag
+ARM_COMPS = ("arm_hp", "arm_hpmax")
 
 CIV_COMPS = UNIT_COMPS + ["home_x", "home_z"]
 
 DEBRIS_COMPS = ["pos", "vel", "yaw", "pitch", "leg_yaw", "turret_yaw", "etype", "faction",
                 "owner", "hp", "hpmax", "flags", "wreck_t", "wreck_kind"]
+
+BLAST_COMPS = ["pos", "faction", "blast_power", "blast_t", "blast_friendly",
+               "blast_skip", "blast_pid", "blast"]
 
 PROJ_COMPS = ["pos", "vel", "faction", "proj_kind", "proj_wid", "proj_life", "proj_src",
               "proj_age", "proj_seed", "proj_prev", "proj_trav", "target"]

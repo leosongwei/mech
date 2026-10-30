@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 
 import numpy as np
 
-from . import defs, netcode, shop
+from . import combat, defs, netcode, shop
 from .world import Player, World
 
 # uvicorn only configures its own loggers; ours ("mech.*": smoke lock breaks,
@@ -321,12 +321,13 @@ async def ws_endpoint(ws: WebSocket) -> None:
             elif t == "debug_hurt" and os.environ.get("MECH_DEBUG") == "1":
                 # development helper: wound the player or the enemy base
                 if pl.mech >= 0 and world.ecs.alive[pl.mech]:
-                    world.damage(pl.mech, int(msg.get("module", 1)),
+                    combat.apply(world, pl.mech, int(msg.get("module", 1)),
                                  float(msg.get("amount", 100)), -1)
                 if msg.get("base"):
                     base = world.base_entity.get(1 - pl.faction)
                     if base is not None and world.ecs.alive[base]:
-                        world.damage(base, 0, float(msg.get("base", 5000)), -1)
+                        combat.apply(world, base, defs.MOD_CHASSIS,
+                                     float(msg.get("base", 5000)), -1)
             elif t == "debug_god" and os.environ.get("MECH_DEBUG") == "1":
                 # development helper: stop the AI from interrupting a test
                 pl.god = bool(msg.get("on", True))

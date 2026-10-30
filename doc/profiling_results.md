@@ -259,10 +259,11 @@ profile 最后 120 s（3600 tick，成熟战场）。窗口内 148.5 s，合计 
    **复用本 tick 已经建好的命中球表**（`world.sphere_table`，弹丸系统每 tick 都要建），
    别再用 `mu.unit_spheres` 逐炮塔重建一遍；③ 只有"给定 (wid, d, h) 的仰角解"这一层
    是纯函数、可以缓存，但它本来就不贵。
-4. **`ai._acquire` 与 `_sees` 是"单位数 × 候选数"**：16 s + 16 s，两个都是随部队规模
-   平方增长的结构。1.5 km 内 400 个目标时，每 tick 每个 AI 单位都要筛一遍候选并逐个
-   做视线检查（每次一条 `_march`）。视线结果按 (观察者格, 目标格) 缓存一秒，或者把
-   "谁看得见谁"整体降到每单位每 2–3 tick 算一次，就能砍掉一半以上。
+4. **`ai._acquire` 与 `_sees` 是"单位数 × 候选数"**：16.6 s + 22.3 s（折算各自约
+   1.9 / 2.5 ms/tick）。注意**选目标本来就是 0.45 s 一次的节流查询**（`ai_timer`），
+   每 tick 花掉的是"我已经锁定的那个目标现在还看得见吗"——每 tick 约 25 次射线、每次
+   ~100 µs，是打/停火的那一拍。可行的减法不是"按格子缓存 1 s"（山脊线上 1 s 足够让
+   答案翻面），而是脏检查：眼或目标位移 > 5 m 才重算，或每 4 tick 一次、各车错开相位。
 5. **netcode 不是瓶颈**（5.1 %，978 µs/tick），但它随实体数线性；每 2 tick 打包
    ~2 ms，其中 `_gather`/`item()` 占大头——快照是 numpy 取列 + `.item()` 拼字节的活。
 
@@ -362,7 +363,7 @@ Python 函数调用，每一次都在做"标量级"的活**（沿射线取一格
 | --- | --- | ---: | --- | --- |
 | 1 | `terrain._march`（`height_at` / `tile_type` / `blocked` / `trunk_*`） | 22 %，被四家共用 | 每 tick 159 次射线走查，8 m 一步，每步几个纯 Python 标量函数；单次 62 µs | 高度场与墙高**本来就是 numpy 数组**：把一段射线按 tile 用向量化采样（`_spans` 已经算出格子序列，直接 fancy-index 取 `heights[z, x]` 并 `argmax` 找第一个挡住的格），把 8 m 采样与二分留在 numpy 里。这一处会让 ai / weapons / movement / projectiles **同时**变快 |
 | 2 | `ballistics.sight_point`（从 `weapons.fire → zero_pitch` 进） | 19 %（30.4 s；`solve_elevation` 只有 0.2 s） | 每发弹丸发射前都要对**射程内每台车体的每个命中球**做射线-球求交。10 分钟窗口拆开：`_unit_hit` 16.4 s，其中**逐台重建球 9.2 s**（`unit_spheres` → `sphere_world` 每次只算 1 行 + 造 Python tuple，`unit_spheres` 全库只有这一个调用点）、求交数学 5.7 s；`sight_point` 另外约 11 s 是地形走查 | ① 只读复用**上一 tick 建好的** `sphere_table`（正是 tick 开始时的位置，见下注），零额外建表成本；② 射线-球求交向量化（一次 numpy 解全部候选球）；③ 剩下 11 s 是地形走查，同第 1 条；④ 仰角解 `(wid, d, h)` 可缓存，但它只占 0.7 %，先别管 |
-| 3 | `ai._sees → sight.clear → terrain.los` | 14 %（22 s） | 每次选目标对每个候选做一次视线检查，每次一条 `_march` | 视线结果按 `(观察者格, 目标格)` 缓存 ~0.5–1 s；或把"谁看得见谁"降到每 2–3 tick 一次（不改变武器解算，只改变 AI 感知的刷新率） |
+| 3 | `ai._sees → sight.clear → terrain.los` | 14 %（22 s；折算约 **2.5 ms/tick，每 tick 25 次、每次 ~100 µs**） | **选目标已经节流**（`ai_timer` 0.45 s × 抖动），每 tick 这次是"我现在还看得见他吗"——打/停火那一拍；每条都是完整 `_march` | 脏检查节流：眼或目标位移超过 ~5 m 才重算，或每 4 tick（0.13 s）重算一次、各车错开相位。不要用 `(观察者格, 目标格)` 缓存 0.5–1 s——答案会在山脊线上翻面，1 s 太久。更根本的是把 `_march` 本身做快（第 1 条），那样这 2.5 ms 直接变几百 µs 且没有滞后 |
 | 4 | `ai._acquire`（`grid.box` + `_unique` + 距离排序） | 10 %（16.6 s） | 每 tick 每个 AI 单位筛一遍 1.5 km 内的所有目标，候选集随单位数涨 | 只对"换了格子/换了目标集"的单位重算；`grid.box` 的结果按 (格子, 半径) 缓存一 tick |
 | 5 | `projectiles.run` 主循环 + `sphere_table` | 35 %（54.7 s，其中自身 13 s） | 逐发弹丸一个 Python 循环：制导、地形碰撞、命中解算、写到 ECS 各一段；每 tick 还重建整张球表（`sphere_world` 5.5 s） | 球表按"只有移动过的单位"增量更新；弹丸的直线飞行可以整批向量化（同 tick 内位置是解析的），地形碰撞只对"可能撞地"的那几发做 |
 | 6 | ECS 视图税（`__getitem__` / `_gather` / `item()`） | 21 % | 每 tick 1113 万次视图取用、5317 万次 `ndarray.item()` | 系统内用 `groups()` 把 buffer 一次取出（已有范式）；`float(row[0])` 改成取 numpy 标量或用 `.tolist()`；`min/max` 内置调用（2600 万次）换成 `np.clip`/比较 |

@@ -54,13 +54,14 @@ def fly(target, rng=0.0, tv=(0.0, 0.0, 0.0), hull_h=MECH_H, wd=WD, trace=None):
     burst = False
     while t < life:
         tp = [tgt[0] + tv[0] * t, tgt[1] + tv[1] * t, tgt[2] + tv[2] * t]
-        v = flight.step(p, v, t, trav, tp, tv, hull_h, wd, DT)
+        # what the seeker stares at: the deck of the hull (`defs.AIM_ROOF`)
+        roof = (tp[0], tp[1] + defs.AIM_ROOF * hull_h, tp[2])
+        v = flight.step(p, v, t, trav, roof, tv, wd, DT)
         p = [p[0] + v[0] * DT, p[1] + v[1] * DT, p[2] + v[2] * DT]
         speed = math.sqrt(v[0] ** 2 + v[1] ** 2 + v[2] ** 2)
         trav += speed * DT
         t += DT
         apex = max(apex, p[1])
-        roof = (tp[0], tp[1] + 0.92 * hull_h, tp[2])
         d = math.dist(p, roof)
         if d < dmin:
             dmin, dmin_t, v_end = d, t, speed
@@ -85,7 +86,7 @@ def _alpha(p, v, tp, tv, hull_h, wd, age, trav, speed):
     vhat = (v[0] / speed, v[1] / speed, v[2] / speed)
     dx, dz = tp[0] - p[0], tp[2] - p[2]
     r = math.hypot(dx, dz)
-    roof_y = tp[1] + 0.92 * hull_h
+    roof_y = tp[1] + defs.AIM_ROOF * hull_h
     r0 = max(trav + r, 1.0)
     if r <= float(wd["pn_r"]) and speed >= float(wd["pn_v"]):
         a = flight.pn_accel(p, v, (tp[0], roof_y, tp[2]), tv, float(wd["pn_n"]))

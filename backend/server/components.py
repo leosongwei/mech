@@ -178,6 +178,19 @@ def register(ecs: ECS) -> None:
     # distance and cooks off where it runs out (`defs.WEAPONS[...]["maxdist"]`)
     ecs.register("proj_trav", np.float32)
 
+    # ---- seeker ---------------------------------------------------------
+    # What the IR seeker is looking at, kept on the round rather than derived
+    # from a live target id, because the target does not have to survive the
+    # flight: `tgt_mem` is the point it stares at (the deck of the hull it will
+    # dive on) and `tgt_vel` the velocity that hull had when it was last seen.
+    # While the lock holds both are refreshed every tick; once the lock is gone
+    # the stare point keeps walking at that velocity and guidance follows it
+    # exactly as it followed the hull (`seeker.py`).  A round fired without a
+    # lock owns (0, 0, 0) in `tgt_mem`, which is what says it has nothing to
+    # stare at and is a rock with a warhead.
+    ecs.register("tgt_mem", np.float32, (3,), 0.0)
+    ecs.register("tgt_vel", np.float32, (3,), 0.0)
+
 
 UNIT_COMPS = ["pos", "vel", "drive", "veh", "yaw", "pitch", "leg_yaw", "turret_yaw",
               "sight_yaw", "sight_pitch", "etype", "faction",
@@ -206,8 +219,12 @@ PROJ_COMPS = ["pos", "vel", "faction", "proj_kind", "proj_wid", "proj_life", "pr
 # once at spawn.  It owns a pool of health and its own armour, so `combat.apply`
 # and `combat.hit`/`splash` work on it with no special case anywhere, and the
 # `interceptable` tag is what puts it in the hit-sphere table and the fuse's
-# target set.  A 5.56 mm round never pays for any of it.
-MISSILE_COMPS = PROJ_COMPS + ["interceptable", "hp", "hpmax", "armor", "last_hit"]
+# target set.  A 5.56 mm round never pays for any of it.  The seeker's memory
+# (`tgt_mem` / `tgt_vel`) rides along with the pool: a guided round is the only
+# thing on the field that has to remember where something it can no longer see
+# was going.
+MISSILE_COMPS = PROJ_COMPS + ["interceptable", "hp", "hpmax", "armor", "last_hit",
+                              "tgt_mem", "tgt_vel"]
 
 # A canister in flight and the cloud it bursts into are two different things, so
 # they are two archetypes: the flying charge carries a fuse and a velocity, the

@@ -2,20 +2,17 @@
 
 from __future__ import annotations
 
-import logging
 import math
 from typing import TYPE_CHECKING
 
 import numpy as np
 
-from .. import combat, defs, flight, mathutil as mu
-from . import blasts, sight
+from .. import combat, defs, flight, mathutil as mu, seeker
+from . import blasts
 from .weapons import aim_of
 
 if TYPE_CHECKING:
     from ..world import World
-
-log = logging.getLogger("mech.smoke")
 
 # collision sphere of each weapon's rounds, by `wid`: the half-calibre of a
 # missile (`defs.WEAPONS[...]["hit_r"]`) and 0 for anything a bullet is - only
@@ -54,7 +51,6 @@ def run(world: World, dt: float) -> None:
     pids = world.projectiles()
     if pids.size == 0:
         return
-    units = world.units()
     terrain = world.terrain
     pos = e["pos"]
     vel = e["vel"]
@@ -66,10 +62,8 @@ def run(world: World, dt: float) -> None:
     age = e["proj_age"]
     seed = e["proj_seed"]
     prev = e["proj_prev"]
-    target = e["target"]
     trav = e["proj_trav"]
     etype = e["etype"]
-    yaw = e["yaw"]
 
     # ---- hit spheres of every unit and missile, gathered once a tick ----
     sph = world.sphere_table(dt)
@@ -160,46 +154,18 @@ def run(world: World, dt: float) -> None:
             else:
                 v = np.asarray(sp, np.float32) * speed
         elif k == 3:                                # top attack IR missile
-            tid = int(target[pid])
-            # the seeker needs to see the hull: anything that cuts a line of
-            # sight (a smoke puff, a ridge, a tree canopy) blinds it, and the
-            # round coasts on its last heading like it does when the target dies
-            spot = None
-            if tid >= 0 and e.alive[tid]:
-                tp = pos[tid]
-                th = defs.UNIT_DEFS.get(int(etype[tid]), {}).get("height", 6.0)
-                # what the seeker looks at: the roof it is going to dive on
-                spot = (float(tp[0]), float(tp[1]) + th * 0.92, float(tp[2]))
-                why = sight.why(world, p0, spot)
-                if why:
-                    # the seeker is blind: log it, the smoke test on the range
-                    # is read straight out of the server log
-                    log.info("seeker of missile %d lost the lock on mech %d: %s "
-                             "on the line of sight (%.0f m out, %.1f s in the air)",
-                             pid, tid, why, math.dist(p0, spot), float(age[pid]))
-                    world.emit("seeker", x=float(p0[0]), y=float(p0[1]), z=float(p0[2]),
-                               faction=int(faction[pid]), tid=int(tid), proj=int(pid),
-                               why=why, dist=round(math.dist(p0, spot), 1))
-                    target[pid] = -1
-                    tid = -1
-            # the airframe flies it (`flight.py`): thrust along the nose, lift
-            # square to the velocity, drag against it, gravity.  Blind or
-            # targetless it is handed no target and becomes a rock with a
-            # warhead - same rule the seeker has always had, now with an
-            # airframe behind it.
-            if tid >= 0 and e.alive[tid]:
-                tp = pos[tid]
-                tv = vel[tid]
-                th = defs.UNIT_DEFS.get(int(etype[tid]), {}).get("height", 6.0)
-                v = np.asarray(flight.step(
-                    p0, v, float(age[pid]) - dt, float(trav[pid]),
-                    (float(tp[0]), float(tp[1]), float(tp[2])),
-                    (float(tv[0]), float(tv[1]), float(tv[2])), float(th), wd, dt),
-                    np.float32)
-            else:
-                v = np.asarray(flight.step(
-                    p0, v, float(age[pid]) - dt, float(trav[pid]),
-                    None, None, 0.0, wd, dt), np.float32)
+            # the seeker (`seeker.py`) owns the lock: it refreshes the stare
+            # point off the live hull while it can see it, keeps the memory
+            # walking at the hull's last velocity when it cannot, and takes any
+            # enemy hull it finds inside its cone.  What comes back is the point
+            # to dive on - the airframe below cannot tell a live hull from a
+            # memory, and does not need to.
+            spot = seeker.track(world, pid, p0, dt)
+            tvel = e["tgt_vel"][pid]
+            v = np.asarray(flight.step(
+                p0, v, float(age[pid]) - dt, float(trav[pid]), spot,
+                (float(tvel[0]), float(tvel[1]), float(tvel[2])) if spot else None,
+                wd, dt), np.float32)
         vel[pid] = v
         p1 = p0 + v * dt
         pos[pid] = p1

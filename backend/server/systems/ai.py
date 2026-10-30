@@ -37,6 +37,9 @@ SPOT_MEMORY = 4.0              # seconds an AI keeps firing at a lost target's s
 # here, and a 12.7 mm carrier (2.25 mrad of spread, no fuse) stays out of it.
 INTERCEPT_RANGE = 1500.0       # m: inside the gun's reach it is worth the ammo
 CPA_HIT = 40.0                 # m: closer than this and the round is coming for me
+# m: a guided round with no lock flies at the point it last saw its target, and
+# that point is inside this much of the hull it is still coming for (`_threat`)
+CPA_MEM = 100.0
 
 
 def run(world: World, dt: float) -> None:
@@ -168,6 +171,9 @@ def _missiles(world: World) -> dict | None:
         fac=np.asarray(e["faction"][ids], np.int64),
         kind=np.asarray(e["proj_kind"][ids], np.int64),
         target=np.asarray(e["target"][ids], np.int64),
+        # where an unlocked round is staring: its target's last known position,
+        # still walking at the target's last known velocity (`seeker.py`)
+        mem=np.asarray(e["tgt_mem"][ids], np.float64),
         rcs=RCS[wid],
         hit_r=HIT_R[wid],
         prox=PROX[wid],
@@ -295,7 +301,11 @@ def _threat(world: World, mis: dict, strength: float, eye, eid: int,
       the closest point of its straight-line approach.  A `t_cpa` gate would say
       nothing: the moment a round is first *seen* it is 1.1-2.6 s from its
       closest approach whatever it is doing, so any threshold either always
-      passes or throws away the genuinely dangerous ones.
+      passes or throws away the genuinely dangerous ones.  A guided round whose
+      lock has been cut has no id to ask, but it is not harmless - it is flying
+      at its memory, and that memory is a point near this hull or it is not
+      (`CPA_MEM`), so the crew keeps shooting at the screen it is coming
+      through instead of letting go the moment the smoke goes up.
     """
     r = mis["pos"] - np.asarray(eye, np.float64)
     vrel = mis["vel"] - ovel
@@ -309,8 +319,12 @@ def _threat(world: World, mis: dict, strength: float, eye, eid: int,
     tcpa = np.clip(-np.einsum("ij,ij->i", r, vrel) / w2, 0.0, None)
     cpa = np.linalg.norm(r + vrel * tcpa[:, None], axis=1)
     # top attack: it climbs 150 m over its victim and dives on the roof, so its
-    # straight line passes nowhere near him - the seeker's own lock is the truth
-    want &= np.where(mis["kind"] == 3, mis["target"] == eid, cpa < CPA_HIT)
+    # straight line passes nowhere near him - the seeker's own lock is the truth,
+    # and with the lock cut, the point it is still staring at is the other half
+    # of the same answer
+    mine = (mis["target"] == eid) | (
+        np.linalg.norm(mis["mem"] - np.asarray(eye, np.float64), axis=1) < CPA_MEM)
+    want &= np.where(mis["kind"] == 3, mine, cpa < CPA_HIT)
     if not want.any():
         return -1
     return int(np.argmin(np.where(want, d2, np.inf)))

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from .. import ballistics, components, defs, mathutil as mu
+from .. import ballistics, components, defs, mathutil as mu, seeker
 
 if TYPE_CHECKING:
     from ..world import World
@@ -256,6 +256,14 @@ def fire(world: World, eid: int, arm: int, wid: int, wd: dict, target: int = -1)
             e["hp"][pid] = hp
             e["hpmax"][pid] = hp
             e["armor"][pid] = (float(wd["aim_dp"]), float(wd["aim_de"]))
+            # the seeker leaves the launcher already knowing what it is looking
+            # at, and how fast that thing was going: from here on the round owns
+            # the lock (`seeker.py`), and its memory is what carries it through
+            # a lock cut before the first tick of flight.  Only the guided kind
+            # has a seeker; a beam rider and a rocket ride their own guidance.
+            if kind == 3 and target >= 0 and e.alive[target]:
+                e["tgt_mem"][pid] = seeker.roof(world, target)
+                e["tgt_vel"][pid] = e["vel"][target]
         else:
             pid = e.create(components.PROJ_COMPS)
         e["pos"][pid] = origin

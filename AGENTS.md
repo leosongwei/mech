@@ -40,6 +40,7 @@ backend/
     grid.py                # 128 m cell index over the units, refiled every tick (AI broadphase)
     ballistics.py          # fire control: sight setting elevation (player) / sight-point solve (AI)
     flight.py              # aerodynamics + guidance of a winged round (the top-attack missile)
+    seeker.py              # an IR round's lock: what it stares at, and what it re-locks on
     combat.py              # damage resolution: the only writer of `hp` (apply/hit/splash)
     netcode.py             # init payload, binary snapshots, JSON meta
     main.py                # FastAPI: websockets, static files, 30 Hz game loop
@@ -284,7 +285,9 @@ frontend/
   `weapons.fire` picks the archetype off `defs.is_interceptable(wid)`: a
   `kind` `rocket`/`saclos`/`top` round is spawned with `interceptable` + `hp` +
   `hpmax` + `armor` + `last_hit` (10 points, 1/1 of plate), a bullet keeps
-  `PROJ_COMPS` and pays nothing.  The tag is what puts a round in the
+  `PROJ_COMPS` and pays nothing.  A guided round also carries the seeker's
+  memory (`tgt_mem` / `tgt_vel`, `seeker.py`) - see the seeker bullet below.
+  The tag is what puts a round in the
   hit-sphere table and in the fuse's target set, so `combat.hit`/`splash`/
   `apply` work on it with no special case, and `systems/mortality.py::
   _kill_round` is the second death channel: a killed missile leaves **nothing** -
@@ -373,9 +376,12 @@ frontend/
   1 km, not the 0.14 rad a hull gets).  Only a fused arm fires (`PROX[wid] > 0`,
   today just the 30 mm), so a 12.7 mm carrier stays out of it - data driven, not
   a type switch.  "Coming for me" is `seeker target == me` for a top-attack (it
-  climbs 150 m and dives, so its straight line misses) and closest approach
-  < `CPA_HIT` (40 m) for everything else; a `t_cpa` gate would say nothing (a
-  round is 1.1-2.6 s from its closest approach the moment it is first seen).
+  climbs 150 m and dives, so its straight line misses) - or, once that lock is
+  cut, a stare point inside `CPA_MEM` (100 m) of the hull, because a blinded
+  round still flies at its memory and can take the hull back - and closest
+  approach < `CPA_HIT` (40 m) for everything else; a `t_cpa` gate would say
+  nothing (a round is 1.1-2.6 s from its closest approach the moment it is
+  first seen).
   `ai.intercept(world, dt)` is the same step as a standalone pass, for a mode
   whose hulls do not fight.
 * **The range has a missile-defence post** (`modes/range/interceptor.py`): one
@@ -399,13 +405,37 @@ frontend/
   so the round arrives at the attack angle instead of turning into it; inside
   `pn_r` and above `pn_v` it is true proportional navigation on the roof point.
   Horizontally it is a pure pursuit everywhere - a lead only in the last 300 m.
-  The airframe is a pure function of `(pos, vel, proj_age, proj_trav, target)` and
-  carries no state, so the round stays in `MISSILE_COMPS` with no new component
-  and no wire change.  Its `life` is a **battery**: at zero `projectiles` calls
+  The airframe is a pure function of `(pos, vel, proj_age, proj_trav, stare)`,
+  where `stare` is a *point and a velocity*, not a hull id - so a stale stare
+  point is guided exactly like a live one and the airframe still carries no
+  state.  It stays in `MISSILE_COMPS`; the two components that are state
+  (`tgt_mem` / `tgt_vel`) belong to the seeker and never change the wire.
+  Its `life` is a **battery**: at zero `projectiles` calls
   `impact` and the warhead goes off where the round happens to be, which is what
   puts the range ceiling at ~4.3 km, not the motor.  `tools/top_attack_trace.py`
   is the harness: it flies the same model headless, prints the envelope table and
   draws the plan view / profile / speed-AoA plot.
+* **The seeker remembers, and the guidance does not care** (`seeker.py`).  A
+  top-attack round's lock is not a hull id, it is a *point* (`tgt_mem`, the
+  deck at `defs.AIM_ROOF` = 92 % of the hull's height) and the velocity that
+  hull had the last time it was seen (`tgt_vel`).  While the sight line is
+  clear both are refreshed every tick off the live hull; when it is cut - smoke,
+  a ridge, a canopy, the hull dying - the point keeps walking at that last
+  velocity and `flight.step` is handed it as if nothing had happened (which is
+  why it is `step(p, v, age, trav, stare, stare_vel, wd, dt)` and no longer
+  takes a hull height).  Re-acquisition is then one question per tick:
+  `seeker.acquire` looks for an enemy `lockable` hull within
+  `defs.SEEKER_CONE` (3°) of the stare *line* - measured from the round's own
+  eye, on the deck it would be dived on, nearest to the line first - and takes
+  the first one with a clear sight line.  It does not care whether that is the
+  hull it was fired at, nor whether it is a mech or an APC: friend or foe is
+  the whole of the test.  `weapons.fire` writes the memory at the shot, so a
+  lock cut before the first tick of flight still leaves something to fly at; a
+  round with no memory at all (a lock weapon cannot be fired without one) is
+  still a rock.  Both events are logged (`mech.smoke`): the loss, which the
+  range's smoke test reads, and `re-locked on hull N`, which nothing but a
+  reader of the log sees - the pilot is not told that his round changed its
+  mind.  Numbered in `doc/top_attack_relock.md`.
 * **Damage** is two halves, never one number. `defs.pen_damage(ap, ad, dp)`:
   beating the target's `dp` outright delivers the full `ad`, beating only half
   of it shaves `ad/5`, anything duller does nothing. `defs.blast_damage(ed, de,

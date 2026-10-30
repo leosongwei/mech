@@ -12,7 +12,7 @@ Nothing here is state: the airframe is a pure function of (position, velocity,
 age, target, defs).  That is what keeps the round in the archetype it was born
 in (`components.MISSILE_COMPS`) - no `nose`, no `fuel`, no `cl` buffer.
 
-    v = flight.step(p, v, age, trav, tgt_pos, tgt_vel, tgt_h, wd, dt)
+    v = flight.step(p, v, age, trav, tgt_pos, tgt_vel, wd, dt)
 
 Guidance is three phases and one aim:
 
@@ -122,15 +122,21 @@ def pn_accel(p, v, roof, tgt_vel, n_law: float):
     return (a[0] * k, a[1] * k, a[2] * k)
 
 
-def step(p, v, age: float, trav: float, tgt_pos, tgt_vel, tgt_h: float,
+def step(p, v, age: float, trav: float, tgt_pos, tgt_vel,
          wd: dict, dt: float):
     """Fly one round for one tick.  Returns the new velocity.
 
     `p` is the round's position, `v` its velocity, `age` the seconds it has been
     in the air, `trav` the ground distance it has covered (both already tracked
-    by `projectiles`).  `tgt_pos` / `tgt_vel` are `None` once the seeker has
-    lost the lock or the target is gone: guidance stops and the round is a
-    rock with a warhead.
+    by `projectiles`).  `tgt_pos` is the *point* the seeker is staring at - the
+    deck of the hull, or where that deck should be now that the hull is not
+    visible - and `tgt_vel` the velocity it is drifting at.  Both are `None`
+    only for a round that never had a lock: guidance stops and it is a rock
+    with a warhead.
+
+    Nothing here knows whether the hull is still there.  A stale stare point is
+    a point like any other, which is what keeps the guidance (and the dive) the
+    same through a lost lock as through a held one.
     """
     speed = math.sqrt(_dot(v, v))
     vhat = _unit(v)
@@ -144,12 +150,11 @@ def step(p, v, age: float, trav: float, tgt_pos, tgt_vel, tgt_h: float,
         dx = tgt_pos[0] - p[0]
         dz = tgt_pos[2] - p[2]
         r = math.hypot(dx, dz)
-        roof_y = tgt_pos[1] + 0.92 * tgt_h
-        above = p[1] - roof_y
+        above = p[1] - tgt_pos[1]
         r0 = max(trav + r, 1.0)
         if r <= float(wd["pn_r"]) and speed >= float(wd["pn_v"]):
-            roof = (tgt_pos[0], roof_y, tgt_pos[2])
-            a = pn_accel(p, v, roof, tgt_vel, float(wd["pn_n"]))
+            a = pn_accel(p, v, (tgt_pos[0], tgt_pos[1], tgt_pos[2]), tgt_vel,
+                         float(wd["pn_n"]))
             # the fins can only pull square to the flight path
             a = (a[0] - vhat[0] * _dot(a, vhat), a[1] - vhat[1] * _dot(a, vhat),
                  a[2] - vhat[2] * _dot(a, vhat))

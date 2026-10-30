@@ -749,6 +749,12 @@ BUILD_TIME = 5.0
 # optics / IR seeker
 BASE_FOV = 1.05            # vertical field of view at 1x, radians
 LOCK_FRAC = 0.05           # lock circle diameter as a fraction of the view width
+AIM_ROOF = 0.92            # where a seeker looks at a hull: 92% of its height
+# A missile's own seeker does not need its target to survive the flight.  With
+# the lock gone it stares at where the hull should be, and takes the first
+# enemy hull it can see inside this cone around that stare line (`seeker.py`).
+# 3 deg is about the angular width of the round's own dispersion.
+SEEKER_CONE = math.radians(3.0)
 
 # ---------------------------------------------------------------- acoustics
 # Whether a bang is worth putting on the wire is decided here, not by the

@@ -361,13 +361,21 @@ Python 函数调用，每一次都在做"标量级"的活**（沿射线取一格
 | # | 位置 | 占比（30 分钟窗口） | 为什么贵 | 怎么改 |
 | --- | --- | ---: | --- | --- |
 | 1 | `terrain._march`（`height_at` / `tile_type` / `blocked` / `trunk_*`） | 22 %，被四家共用 | 每 tick 159 次射线走查，8 m 一步，每步几个纯 Python 标量函数；单次 62 µs | 高度场与墙高**本来就是 numpy 数组**：把一段射线按 tile 用向量化采样（`_spans` 已经算出格子序列，直接 fancy-index 取 `heights[z, x]` 并 `argmax` 找第一个挡住的格），把 8 m 采样与二分留在 numpy 里。这一处会让 ai / weapons / movement / projectiles **同时**变快 |
-| 2 | `ballistics.sight_point`（从 `weapons.fire → zero_pitch` 进） | 19 %（30.4 s；`solve_elevation` 只有 0.2 s） | 每发弹丸发射前都要对**所有单位的所有命中球**做一次射线-球求交（`_unit_hit` 17.3 s，双层 Python 循环），外加一条地形走查（~11 s）；12987 发/120 s | ① 复用本 tick 的命中球表（`world.sphere_table`）而不是逐炮 `unit_spheres`；② 射线-球求交向量化（一次 numpy 解全部候选）；③ 仰角解本身 `(wid, d, h)` 可缓存，但它只占 0.7 %，先别管 |
+| 2 | `ballistics.sight_point`（从 `weapons.fire → zero_pitch` 进） | 19 %（30.4 s；`solve_elevation` 只有 0.2 s） | 每发弹丸发射前都要对**射程内每台车体的每个命中球**做射线-球求交。10 分钟窗口拆开：`_unit_hit` 16.4 s，其中**逐台重建球 9.2 s**（`unit_spheres` → `sphere_world` 每次只算 1 行 + 造 Python tuple，`unit_spheres` 全库只有这一个调用点）、求交数学 5.7 s；`sight_point` 另外约 11 s 是地形走查 | ① 候选车体按机型**分批**用 `sphere_world` 一次算完（就是 `projectiles.sphere_table` 的写法），或复用那张表（见下注）；② 射线-球求交向量化（一次 numpy 解全部候选球）；③ 剩下 11 s 是地形走查，同第 1 条；④ 仰角解 `(wid, d, h)` 可缓存，但它只占 0.7 %，先别管 |
 | 3 | `ai._sees → sight.clear → terrain.los` | 14 %（22 s） | 每次选目标对每个候选做一次视线检查，每次一条 `_march` | 视线结果按 `(观察者格, 目标格)` 缓存 ~0.5–1 s；或把"谁看得见谁"降到每 2–3 tick 一次（不改变武器解算，只改变 AI 感知的刷新率） |
 | 4 | `ai._acquire`（`grid.box` + `_unique` + 距离排序） | 10 %（16.6 s） | 每 tick 每个 AI 单位筛一遍 1.5 km 内的所有目标，候选集随单位数涨 | 只对"换了格子/换了目标集"的单位重算；`grid.box` 的结果按 (格子, 半径) 缓存一 tick |
 | 5 | `projectiles.run` 主循环 + `sphere_table` | 35 %（54.7 s，其中自身 13 s） | 逐发弹丸一个 Python 循环：制导、地形碰撞、命中解算、写到 ECS 各一段；每 tick 还重建整张球表（`sphere_world` 5.5 s） | 球表按"只有移动过的单位"增量更新；弹丸的直线飞行可以整批向量化（同 tick 内位置是解析的），地形碰撞只对"可能撞地"的那几发做 |
 | 6 | ECS 视图税（`__getitem__` / `_gather` / `item()`） | 21 % | 每 tick 1113 万次视图取用、5317 万次 `ndarray.item()` | 系统内用 `groups()` 把 buffer 一次取出（已有范式）；`float(row[0])` 改成取 numpy 标量或用 `.tolist()`；`min/max` 内置调用（2600 万次）换成 `np.clip`/比较 |
 | 7 | `raids.run` 规划 | 1.7 % 均值，**单 tick 47 ms** | A* + 两级寻路一次做完 | 每 tick 推进一个 raider 的规划（限制每 tick 的规划预算） |
 | 8 | `netcode.snapshot_bytes` | 5.5 %（936 µs/tick） | 每 2 tick 打包 400+ 实体 × 72 B，靠 `.item()` 拼字节 | 不是瓶颈；要削可以整列 `tobytes()` 拼 |
+
+> **注：“复用本 tick 的命中球表”不是免费的。** `world.sphere_table` 是在
+> `movement` 之后建的（单位是"本 tick 结束时的位置"，导弹是"开始时的位置"，这是扫掠
+> 解算的前提），而 `weapons.run` 在 `movement` **之前**跑。直接在那儿拿表，会把 movement
+> 之前的位置喂给弹丸的扫掠。要复用就得把契约写清：瞄准射线用"tick 开始时"的表，`movement`
+> 之后显式作废（`world._sph = None`）让弹丸重建一次——多一次建表（约 0.5 次/tick → 1 次/tick），
+> 换来省掉那 9.2 s，划算，但要改 AGENTS.md 里"一 tick 一张表"的约定。更省事的是 ①：
+> 候选集本来就只有 ~143 台车体，把它们的位置/朝向凑成数组一次算完，不碰那张表的时序。
 
 **不建议动的**：`smoke` / `locking` / `blasts` / `debris` / `economy` / `rearm` /
 `gunnery` / `mortality` 全部 < 1 %，加起来不到 3 %；`grid.build` 0.5 %。盯着它们优化

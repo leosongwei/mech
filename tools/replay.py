@@ -324,7 +324,7 @@ def _intercept() -> None:
     world.interceptor.t = 1e9
     catch = Catch()
     logging.getLogger("mech.intercept").addHandler(catch)
-    logging.getLogger("mech.intercept").setLevel(logging.INFO)
+    logging.getLogger("mech.intercept").setLevel(logging.DEBUG)
 
     def missile(x: float, z: float) -> int:
         from server import components
@@ -363,6 +363,22 @@ def _intercept() -> None:
     assert not e.alive[mid], "the shot-down missile was still in the air"
     assert len(e.query("blast")) == n_blast, "a shot-down missile went up"
     assert len(e.query("wreck_t")) == 0, "a shot-down missile left a wreck"
+
+    # the cue is addressed: `pid` is the pilot the burst is credited to and
+    # `firer` the pilot whose round it was.  They are the only two clients that
+    # sound the shot-down tone (`frontend/src/game.js::_fx`) - without that the
+    # whole battle chimes once per AI interception on the map.
+    mid = missile(3000.0, 3000.0)
+    launcher = world.spawn_unit(defs.ETYPE_MECH, 1, 1000.0, 3000.0, owner=7)
+    e["proj_src"][mid] = launcher
+    world.events.clear()
+    combat.apply(world, mid, defs.MOD_CHASSIS, 999.0, 5)
+    world.update(DT)
+    cue = [q for q in world.events if q.get("k") == "intercept"]
+    assert cue, "a shot-down missile raised no intercept cue"
+    assert cue[-1]["pid"] == 5 and cue[-1]["firer"] == 7, \
+        f"the cue was addressed to pid={cue[-1]['pid']} firer={cue[-1]['firer']}"
+    world.events.clear()
     logging.getLogger("mech.intercept").removeHandler(catch)
     e.validate()
 
@@ -417,7 +433,7 @@ def _fuse_geometry() -> None:
 
     catch = Catch()
     logging.getLogger("mech.intercept").addHandler(catch)
-    logging.getLogger("mech.intercept").setLevel(logging.INFO)
+    logging.getLogger("mech.intercept").setLevel(logging.DEBUG)
     world.update(DT)
     logging.getLogger("mech.intercept").removeHandler(catch)
 

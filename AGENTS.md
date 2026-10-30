@@ -36,6 +36,7 @@ backend/
     world.py               # World: terrain, players, spawning, tick, queries
     terrain.py             # 1000x1000 tiles of 16 m -> 16 km square map
     mathutil.py            # angles, lead solving, terrain helpers
+    profiler.py            # white-box probes (MECH_PROBE=1), off and free by default
     grid.py                # 128 m cell index over the units, refiled every tick (AI broadphase)
     ballistics.py          # fire control: sight setting elevation (player) / sight-point solve (AI)
     combat.py              # damage resolution: the only writer of `hp` (apply/hit/splash)
@@ -64,6 +65,7 @@ tools/
   vehicle_trace.py         # range APC route trace: SVG path plot + per-tick CSV
   raid_trace.py            # a battle's raiders: force-gradient + driven traces as SVG
   intercept_check.py       # range: fire every missile at the defence post, read the log
+  profile_battle.py        # headless battle profiling: per-system + cProfile + per-minute timeline
 frontend/
   webpack.config.js        # entry src/main.js -> ../backend/assets/bundle.js
   icons.json               # single source of truth for every HUD icon glyph
@@ -294,7 +296,11 @@ frontend/
   `1 km` label is no longer a constant.  The client draws three states: seen
   (diamond at true bearing/range + a pre-aim box through the sight rule), heard
   closing (a 5 Hz red spoke from the dial's edge - bearing, no range) and shot
-  down (`intercept` fx: the hit tone and a few sparks).
+  down (`intercept` fx: a few sparks for everyone who can see it, and the hit
+  tone only for the two crews it concerns - `pid`, the one that fired the
+  burst, and `firer`, the one whose round it was; the battle's AI crews shoot
+  missiles down all over the map and a chime per round for everybody was the
+  busiest sound in the game).
 * **AI missile defence** (`systems/ai.py::_missile_step`) runs inline in
   `ai.run` before the ground fight and preempts it: a crew that has a round
   coming for it lays the sight on the lead point (`mu.solve_lead`, which honours
@@ -314,7 +320,8 @@ frontend/
   comes back 5 s after being destroyed.  `tools/intercept_check.py` fires every
   missile type at it and prints the outcome per round, read out of the server
   log (`missile N took X (prox Y m) - hp A -> B`, `intercept: ... round N shot
-  down at ...`).  Measured: 30 of 32 rounds fused and shot down.
+  down at ...` - both DEBUG, the tool raises those loggers itself).  Measured:
+  30 of 32 rounds fused and shot down.
 * **Damage** is two halves, never one number. `defs.pen_damage(ap, ad, dp)`:
   beating the target's `dp` outright delivers the full `ad`, beating only half
   of it shaves `ad/5`, anything duller does nothing. `defs.blast_damage(ed, de,
@@ -324,7 +331,11 @@ frontend/
   metres away cannot punch a plate). `combat.apply()` is the raw hp subtractor
   and is what debug knobs use. It is also **the only writer of `hp`** (plus
   `shop`'s repair, which restores it), and it decides nothing: no death, no
-  destruction, in the heat of a hit.
+  destruction, in the heat of a hit. It does record **who** is owed the last
+  point it took (`last_hit`, the killing blow included), because that is the
+  pilot `mortality` credits a hull's kill money to and addresses a missile's
+  shot-down cue to - a hit that kills is exactly the one that has to be written
+  down.
 * **Damage is not a system.** `combat.py` is a library next to `ballistics.py`
   and `shop.py`: a round writes hp where it lands, inside the system that fired
   it. There is deliberately no damage queue - a system owns state, and damage
@@ -756,6 +767,21 @@ cd frontend && npm install && npm run build      # -> backend/assets/
   ```bash
   .venv/bin/python tools/intercept_check.py              # every type, two ranges
   .venv/bin/python tools/intercept_check.py -v           # and every log line
+  ```
+* **`tools/profile_battle.py`** profiles the simulation instead of playing it:
+  it drops the 30 Hz sleep and runs a battle as fast as the CPU allows,
+  timing every entry of `world.systems` plus the grid build and the rest of
+  `World.update` (total, mean per tick, worst tick), the netcode the loop also
+  pays for (one snapshot every `SNAP_EVERY`, one meta per pilot every
+  `META_EVERY`), a per-minute timeline of the entity census, and an optional
+  cProfile breakdown.  Two scripted pilots fly it, so every duration replays
+  the same battle.  `backend/server/profiler.py` is the door for the *inside*
+  of a system - a stage calls `PROBE.start()` / `PROBE.end(name, t0)`, and
+  `MECH_PROBE=1` turns those into a per-name accumulator (unset they are two
+  no-ops).  No call site uses it yet; that is the next pass.
+  ```bash
+  .venv/bin/python tools/profile_battle.py --minutes 5
+  .venv/bin/python tools/profile_battle.py --minutes 5,10 --no-profile --out /tmp/p.json
   ```
 * **`tools/vehicle_trace.py`** drives one APC round a route on the range map
   (a 100 m square or the 3.7 km winding road) and writes an SVG - way points,

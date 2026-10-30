@@ -301,7 +301,15 @@ def sphere_table(world: World, dt: float) -> tuple:
         su.append(np.repeat(units[sel], n))
         sm.append(np.tile(module, sel.size))
         sf.append(np.repeat(fac[sel], n))
-        sd.append(mu.sphere_world(local, move[sel], yaw[sel]) - c)
+        # `sphere_world` takes *positions*, so the sphere's displacement is the
+        # end position minus the start one - passing the offset `move` alone
+        # would build the sphere at (move + R*local), i.e. a metre from the
+        # origin, and the displacement would come out as `move - pos`: the
+        # distance to the map origin, up to 16 km.  That is not a rounding
+        # detail: `prev` is the sweep's start point (so every hit against a
+        # moving hull was solved from the wrong place) and `reach` sizes the
+        # broad-phase box (so each round's leg covered the whole cull grid).
+        sd.append(mu.sphere_world(local, pos[sel] + move[sel], yaw[sel]) - c)
         s0.append(c - sd[-1])
     nu = int(su and sum(a.shape[0] for a in su) or 0)
 

@@ -301,10 +301,13 @@ export class Game {
           ? this.audio.explosion(vol, dist, pan, behind)
           : this.audio.boom(vol, big, dist, pan, behind)));
       } else if (ev.k === 'intercept') {
-        // a missile was shot down: confirmation is the hit tone and a few
-        // sparks where it broke up - no new widget, and no new sound for it
+        // a missile was shot down: a few sparks where it broke up for everyone
+        // who can see it, but the tone belongs to the two crews it concerns -
+        // the one that fired the burst (`pid`) and the one whose round it was
+        // (`firer`).  The battle's AI crews shoot missiles down all over the
+        // map; a chime per round for everybody was the busiest sound in it.
         this.particles.impact(ev.x, ev.y, ev.z, 1);
-        this.audio.hit();
+        if (ev.pid === this.init.pid || ev.firer === this.init.pid) this.audio.hit();
       } else if (ev.k === 'shot') {
         if (ev.eid !== undefined) this.flashes.set(ev.eid, { t: 0.07, arm: ev.arm });
         const wd = this.defs.weapons[ev.wid] || {};

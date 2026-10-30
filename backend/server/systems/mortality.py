@@ -96,9 +96,12 @@ def _kill_round(world: World, eid: int) -> None:
     No warhead, no wreck, no kill money, no bearing on the match.  That is
     deliberate: a SACLOS carries ED 80 over 6 m, so a round destroyed 300 m out
     that still went off would make shooting it down pointless - the point of the
-    intercept is that the *guidance* dies with the round.  What the pilot sees
-    is a small burst and an `intercept` cue (the client flashes the box), which
-    is the confirmation he shot something down rather than watched it miss.
+    intercept is that the *guidance* dies with the round.  Two pilots have an
+    interest in that and only two: the one who fired the burst (`pid`, the
+    confirmation he shot something down rather than watched it miss) and the one
+    whose missile it was (`firer`, who has to know his round is gone).  A battle
+    has AI crews shooting missiles down all over the map, and everybody else has
+    no business being told.
     """
     e = world.ecs
     if not e.alive[eid]:
@@ -106,12 +109,23 @@ def _kill_round(world: World, eid: int) -> None:
     wid = int(e["proj_wid"][eid])
     wd = defs.WEAPONS[wid] if 0 <= wid < len(defs.WEAPONS) else {}
     pos = e["pos"][eid].copy()
-    log.info("intercept: %s round %d shot down at (%.1f, %.1f, %.1f)",
-             wd.get("name", "?"), eid, pos[0], pos[1], pos[2])
+    # who killed it: `combat.apply` credited the round that took the last point
+    # off (`last_hit` is a missile's own column, -1 when an AI crew fired it)
+    pid = int(e["last_hit"][eid])
+    # who fired it: the hull behind `proj_src`.  A missile outlives the hull
+    # that launched it, so a dead launcher answers -1 and its pilot is told
+    # nothing - there is no ear to tell.
+    src = int(e["proj_src"][eid])
+    firer = int(e["owner"][src]) if src >= 0 and e.alive[src] else -1
+    # debug only: the flash and the cue below are what the pilot gets, and the
+    # interception itself is settled - `tools/intercept_check.py` is the one
+    # reader left and it raises the logger to DEBUG itself
+    log.debug("intercept: %s round %d shot down at (%.1f, %.1f, %.1f)",
+              wd.get("name", "?"), eid, pos[0], pos[1], pos[2])
     world.emit("boom", x=float(pos[0]), y=float(pos[1]), z=float(pos[2]), r=3.0,
                wid=int(wd.get("wid", 0)), proj=eid, small=1)
     world.emit("intercept", x=float(pos[0]), y=float(pos[1]), z=float(pos[2]),
-               proj=eid, wid=int(wd.get("wid", 0)),
+               proj=eid, wid=int(wd.get("wid", 0)), pid=pid, firer=firer,
                faction=int(e["faction"][eid]))
     e.destroy(eid)
 

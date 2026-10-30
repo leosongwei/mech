@@ -51,9 +51,10 @@ def apply(world: World, eid: int, module: int, amount: float, pid: int = -1,
             if pilot is not None and pilot.god:
                 return
     bufs, row = e.slot(eid)
-    # a round in the air is worth a line of its own: it starts with 10 hp, so
-    # the numbers say whether it was a graze or a kill (`tools/intercept_check`
-    # reads them straight out of the log)
+    # debug only: a round in the air is worth a line of its own - it starts
+    # with 10 hp, so the numbers say whether it was a graze or a kill - but
+    # interception is settled, so this is off unless a tool asks for it
+    # (`tools/intercept_check.py`, which raises this logger to DEBUG)
     watch = "interceptable" in bufs
     before = float(bufs["hp"][row]) if watch else 0.0
     if "arm_hp" in bufs:
@@ -61,14 +62,15 @@ def apply(world: World, eid: int, module: int, amount: float, pid: int = -1,
     else:
         bufs["hp"][row] = max(0.0, float(bufs["hp"][row]) - amount)
     if watch:
-        log.info("missile %d took %.1f (%s) - hp %.1f -> %.1f",
-                 eid, amount, src or "hit", before, float(bufs["hp"][row]))
-    if float(bufs["hp"][row]) > 0.0:
-        # credit only while the hull is still standing: the death is judged a
-        # stage later, and the pilot who put the *lethal* round in earns it
-        if pid >= 0 and "last_hit" in bufs:
-            bufs["last_hit"][row] = pid
-    else:
+        log.debug("missile %d took %.1f (%s) - hp %.1f -> %.1f",
+                  eid, amount, src or "hit", before, float(bufs["hp"][row]))
+    # who earns this: recorded for the killing blow as well, because that is the
+    # one that counts - the death itself is judged a stage later
+    # (`systems/mortality.py::_kill`), which reads this column to award the kill
+    # money and to address the shot-down cue of a missile (`_kill_round`)
+    if pid >= 0 and "last_hit" in bufs:
+        bufs["last_hit"][row] = pid
+    if float(bufs["hp"][row]) <= 0.0:
         _stop(bufs, row)
 
 

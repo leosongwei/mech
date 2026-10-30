@@ -146,8 +146,11 @@ g.net.send({ t: 'debug_spawn', etype: 3, dist: 300, angle: 0 });
   **$350**。
 * 观测窗口在 `/tmp/mech-range.log`：每次起爆一行 `prox fuse: ... off missile N`，
   每削掉一点血一行 `missile N took ... - hp ... -> ...`，真打下来一行
-  `intercept: ... round N shot down at (x, y, z)`。屏幕上则是弹在半路炸开：一声
-  命中提示音加一小簇火花。**告警圈的三态**（已探测 / 未探测但正在逼近 / 已击落）
+  `intercept: ... round N shot down at (x, y, z)`。后两行是 **DEBUG** 级别，常规日志
+  里没有（`tools/intercept_check.py` 自己打开它们）。屏幕上则是弹在半路炸开：一小簇
+  火花，提示音只给**打下来的人**和**这发弹的主人**——哨位是 AI，所以哨位打掉你的弹时，
+  这一声只有你（发射者）听得到。
+  **告警圈的三态**（已探测 / 未探测但正在逼近 / 已击落）
   报的是**来袭**的弹，所以单人时要看它得去战斗模式挨打；**开第二个浏览器**就能在
   靶场上直接看到（见 5 节最后一条），见 [screens.md 2.9](screens.md)。
 

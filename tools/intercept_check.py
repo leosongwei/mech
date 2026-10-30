@@ -51,7 +51,7 @@ class Catcher(logging.Handler):
     """Keeps every log line the damage and intercept paths write."""
 
     def __init__(self) -> None:
-        super().__init__(level=logging.INFO)
+        super().__init__(level=logging.DEBUG)
         self.lines: list[str] = []
 
     def emit(self, record: logging.LogRecord) -> None:
@@ -173,7 +173,7 @@ def main() -> int:
     for name in ("mech.intercept", "mech.prox"):
         lg = logging.getLogger(name)
         lg.addHandler(catch)
-        lg.setLevel(logging.INFO)
+        lg.setLevel(logging.DEBUG)
 
     wanted = [w for w in defs.WEAPONS if defs.is_interceptable(int(w["wid"]))]
     if args.weapon != "all":

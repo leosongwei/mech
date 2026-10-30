@@ -39,6 +39,7 @@ backend/
     profiler.py            # white-box probes (MECH_PROBE=1), off and free by default
     grid.py                # 128 m cell index over the units, refiled every tick (AI broadphase)
     ballistics.py          # fire control: sight setting elevation (player) / sight-point solve (AI)
+    flight.py              # aerodynamics + guidance of a winged round (the top-attack missile)
     combat.py              # damage resolution: the only writer of `hp` (apply/hit/splash)
     netcode.py             # init payload, binary snapshots, JSON meta
     main.py                # FastAPI: websockets, static files, 30 Hz game loop
@@ -359,6 +360,26 @@ frontend/
   log (`missile N took X (prox Y m) - hp A -> B`, `intercept: ... round N shot
   down at ...` - both DEBUG, the tool raises those loggers itself).  Measured:
   30 of 32 rounds fused and shot down.
+* **A guided round flies an airframe, it does not follow a curve** (`flight.py`).
+  The top-attack missile is a point mass with an angle of attack: guidance demands
+  a lateral acceleration, `CL = m·a/(qS)` capped at `cl_max` is what the airframe
+  can make of it, the nose leads the velocity by `α = CL/cl_α`, and the drag polar
+  `CD = cd0 + k·CL²` charges for it (squared and unsigned, so a pushover costs what
+  a pull-up costs). Thrust is along the nose, lift square to the velocity, drag
+  against it, gravity always - so the round climbs on the motor, glides for
+  nothing, and buys a hard pull with speed.  Guidance is three phases over one
+  reference: a parabola across the launch range whose climb equals the
+  `loft` quadrant (42°, the tube's own elevation) and whose far half *is* the dive,
+  so the round arrives at the attack angle instead of turning into it; inside
+  `pn_r` and above `pn_v` it is true proportional navigation on the roof point.
+  Horizontally it is a pure pursuit everywhere - a lead only in the last 300 m.
+  The airframe is a pure function of `(pos, vel, proj_age, proj_trav, target)` and
+  carries no state, so the round stays in `MISSILE_COMPS` with no new component
+  and no wire change.  Its `life` is a **battery**: at zero `projectiles` calls
+  `impact` and the warhead goes off where the round happens to be, which is what
+  puts the range ceiling at ~4.3 km, not the motor.  `tools/top_attack_trace.py`
+  is the harness: it flies the same model headless, prints the envelope table and
+  draws the plan view / profile / speed-AoA plot.
 * **Damage** is two halves, never one number. `defs.pen_damage(ap, ad, dp)`:
   beating the target's `dp` outright delivers the full `ad`, beating only half
   of it shaves `ad/5`, anything duller does nothing. `defs.blast_damage(ed, de,

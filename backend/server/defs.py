@@ -133,17 +133,31 @@ WEAPONS = [
          range=4000, cost=500, ammo_cost=30.0, lock=0, lock_time=0, salvo=0, semi=0,
          color=(0.35, 1.0, 0.55), cal=152, rcs=0.02,
          desc="Beam riding, keep the sight on target"),
-    # Javelin class: soft launch at 20 m/s, the motor lights off outside the
-    # tube and cruises at 190 m/s, climbing 150 m above the target before the
-    # dive; the seeker locks before the shot and needs the target in the circle.
-    # Fire and forget - AD 120 still takes any hull in one hit - and what it
-    # trades away is the lock and the long climb-and-dive flight the target can
-    # hide in
+    # Javelin class, flown as an aeroplane rather than as a curve: the tube is
+    # elevated to `loft`, a 20 m/s soft launch, then 3.4 s of motor (11.2 g)
+    # that burns out at 0.9 M - `flight.py` has the whole model.  From there it
+    # is an unpowered glide that trades the climb for range, arriving down a
+    # 35-42 deg attack line, with the last 300 m on proportional navigation.
+    # `mass`/`dia`/`cd0`/`k_cl`/`cl_alpha`/`cl_max` are the airframe, not
+    # tuning: a hard pull really costs the speed it costs (an induced CD of 3
+    # against a profile drag of 0.75 at the 17.9 deg stop).
+    #
+    # The range ceiling is the battery (`life`, 30 s), not the motor: a parked
+    # hull dies at 4.3 km, one running away at 3.5-4 km, and past that the
+    # warhead cooks off in the air (projectiles' battery branch).  Lock range is
+    # the seeker's own `range` - 4 km, which is what the shot can actually
+    # reach.  Fire and forget, AD 120 takes any hull in one hit; the price is
+    # the lock, the 5-27 s flight and the climb the target can hide behind -
+    # measured envelope in doc/top_attack_plan.md, tool tools/top_attack_trace.py
     dict(wid=WID_TOPATTACK, key="topattack", name="TOP-ATTACK IR ATGM", kind="top", ap=900, ad=120, ed=60,
-         er=7.0, rpm=32, mag=2, reserve=8, reload=4.6, vel=20, spread=0.002, bias=0.0, g=0.0, thrust=170,
-         maxvel=190, life=52.6, climb=150.0, cruise=0.35, dive=220.0, range=2500, cost=700, ammo_cost=45.0,
+         er=7.0, rpm=32, mag=2, reserve=8, reload=4.6, vel=20, spread=0.002, bias=0.0, g=9.81,
+         thrust=110.0,
+         maxvel=306.0, life=30.0, range=4000, cost=700, ammo_cost=45.0,
+         mass=20.0, dia=0.127, cd0=0.75, k_cl=0.12, cl_alpha=16.0, cl_max=5.0,
+         burn=3.4, ignite=0.15, loft=0.73299, apex=950.0, turn_r=700.0,
+         pn_n=4.0, pn_r=300.0, pn_v=120.0,
          lock=1, lock_time=1.1, salvo=0, semi=0, color=(1.0, 0.35, 0.9), cal=127, rcs=0.02,
-         desc="2.5 km lock-on, fire and forget"),
+         desc="4 km lock-on, fire and forget"),
     dict(wid=WID_RIFLE556, key="rifle556", name="5.56mm RIFLE", kind="bullet", ap=5, ad=4, ed=0, er=0,
          rpm=430, mag=30, reserve=900, reload=2.2, vel=900, spread=0.007, bias=0.0, g=9.81, thrust=0,
          maxvel=0, life=11.1, range=450, cost=-1, ammo_cost=0.05, lock=0, lock_time=0, salvo=0,

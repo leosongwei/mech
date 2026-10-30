@@ -203,9 +203,13 @@ def fire(world: World, eid: int, arm: int, wid: int, wd: dict, target: int = -1)
     n = max(1, int(wd["salvo"]))
     life = float(wd["life"])
 
-    if kind in (2, 3):
-        # guided rounds: launch upward, guidance takes over immediately
+    if kind == 2:
+        # SACLOS: launch upward, the beam takes over immediately
         pitch = max(pitch, 0.18)
+    elif kind == 3:
+        # the top-attack tube is elevated to its own quadrant: the loft is a
+        # property of the launcher, not of where the pilot happens to look
+        pitch = float(wd["loft"])
 
     # direct fire is zeroed: hold off for the drop so the round meets the sight
     # line at the pilot's setting.  A pilot's gun uses that fixed range, which

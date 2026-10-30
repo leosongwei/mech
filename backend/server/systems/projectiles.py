@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from .. import combat, defs, mathutil as mu
+from .. import combat, defs, flight, mathutil as mu
 from . import blasts, sight
 from .weapons import aim_of
 
@@ -94,6 +94,12 @@ def run(world: World, dt: float) -> None:
         age[pid] = float(age[pid]) + dt
         life[pid] = float(life[pid]) - dt
         if life[pid] <= 0.0:
+            if k == 3:
+                # a top-attack round's flight ends with its battery, and it
+                # ends it the way a warhead ends: the charge goes off where the
+                # round happens to be, no direct hit (a SACLOS running out of
+                # wire cooks off the same way, further down)
+                impact(world, tuple(float(c) for c in pos[pid]), wd, pid)
             e.destroy(pid)
             continue
 
@@ -155,11 +161,9 @@ def run(world: World, dt: float) -> None:
                 v = np.asarray(sp, np.float32) * speed
         elif k == 3:                                # top attack IR missile
             tid = int(target[pid])
-            speed = min(wd["maxvel"], speed + wd["thrust"] * dt)
             # the seeker needs to see the hull: anything that cuts a line of
             # sight (a smoke puff, a ridge, a tree canopy) blinds it, and the
             # round coasts on its last heading like it does when the target dies
-            why = ""
             spot = None
             if tid >= 0 and e.alive[tid]:
                 tp = pos[tid]
@@ -167,36 +171,35 @@ def run(world: World, dt: float) -> None:
                 # what the seeker looks at: the roof it is going to dive on
                 spot = (float(tp[0]), float(tp[1]) + th * 0.92, float(tp[2]))
                 why = sight.why(world, p0, spot)
-            if why:
-                # the seeker is blind: log it, the smoke test on the range is
-                # read straight out of the server log
-                log.info("seeker of missile %d lost the lock on mech %d: %s "
-                         "on the line of sight (%.0f m out, %.1f s in the air)",
-                         pid, tid, why, math.dist(p0, spot), float(age[pid]))
-                world.emit("seeker", x=float(p0[0]), y=float(p0[1]), z=float(p0[2]),
-                           faction=int(faction[pid]), tid=int(tid), proj=int(pid),
-                           why=why, dist=round(math.dist(p0, spot), 1))
-                target[pid] = -1
-                tid = -1
+                if why:
+                    # the seeker is blind: log it, the smoke test on the range
+                    # is read straight out of the server log
+                    log.info("seeker of missile %d lost the lock on mech %d: %s "
+                             "on the line of sight (%.0f m out, %.1f s in the air)",
+                             pid, tid, why, math.dist(p0, spot), float(age[pid]))
+                    world.emit("seeker", x=float(p0[0]), y=float(p0[1]), z=float(p0[2]),
+                               faction=int(faction[pid]), tid=int(tid), proj=int(pid),
+                               why=why, dist=round(math.dist(p0, spot), 1))
+                    target[pid] = -1
+                    tid = -1
+            # the airframe flies it (`flight.py`): thrust along the nose, lift
+            # square to the velocity, drag against it, gravity.  Blind or
+            # targetless it is handed no target and becomes a rock with a
+            # warhead - same rule the seeker has always had, now with an
+            # airframe behind it.
             if tid >= 0 and e.alive[tid]:
                 tp = pos[tid]
+                tv = vel[tid]
                 th = defs.UNIT_DEFS.get(int(etype[tid]), {}).get("height", 6.0)
-                horiz = math.hypot(float(tp[0]) - p0[0], float(tp[2]) - p0[2])
-                # pop up to `climb` above the target while there is still
-                # `dive` metres to run, then break over onto the roof: steering
-                # at a point `cruise` of the way out keeps the climb steep
-                if horiz < float(wd.get("dive", 520.0)):
-                    aim_pt = (float(tp[0]), float(tp[1]) + th * 0.92, float(tp[2]))
-                else:
-                    f = float(wd.get("cruise", 0.35))
-                    aim_pt = (p0[0] + (float(tp[0]) - p0[0]) * f,
-                              float(tp[1]) + float(wd.get("climb", 260.0)),
-                              p0[2] + (float(tp[2]) - p0[2]) * f)
-                desired = (aim_pt[0] - p0[0], aim_pt[1] - p0[1], aim_pt[2] - p0[2])
-                v = np.asarray(_steer(v, desired, speed, 1.9, dt), np.float32)
+                v = np.asarray(flight.step(
+                    p0, v, float(age[pid]) - dt, float(trav[pid]),
+                    (float(tp[0]), float(tp[1]), float(tp[2])),
+                    (float(tv[0]), float(tv[1]), float(tv[2])), float(th), wd, dt),
+                    np.float32)
             else:
-                v = np.asarray(sp, np.float32) * speed
-                v[1] -= 9.81 * dt
+                v = np.asarray(flight.step(
+                    p0, v, float(age[pid]) - dt, float(trav[pid]),
+                    None, None, 0.0, wd, dt), np.float32)
         vel[pid] = v
         p1 = p0 + v * dt
         pos[pid] = p1

@@ -550,15 +550,17 @@ export class HUD {
     ctx.restore();
   }
 
-  // Warning circle, in the top right corner: a bird's eye of everything
-  // closing on the hull, drawn in the hull's own frame - straight up is where
-  // the mech is looking.
+  // Warning circle, in the top right corner: a bird's eye of everything the
+  // threat receiver has a track on, drawn in the hull's own frame - straight up
+  // is where the mech is looking.
   // The green dot in the middle is the pilot, the red diamonds are the rounds
   // the self-defence radar has *seen*, the short red spokes are rounds it can
   // hear closing but has no range on (they blink, a bearing is not a track),
   // and the red arrows are laser designators (somebody's sight is on us), each
   // pointing at the hull from where the designator sits, with a dashed beam
   // running in along its line of sight.
+  // The rim turns red for an *incoming* round only (`warn`): the dial plots
+  // everything it hears, including a missile on its way to somebody else.
   _radar(s, w, h) {
     const ctx = this.ctx;
     const R = RADAR_PX;
@@ -581,7 +583,8 @@ export class HUD {
     ctx.fill();
     // dial
     ctx.globalAlpha = 0.5;
-    ctx.strokeStyle = threats.length ? 'rgba(255,90,80,0.85)' : 'rgba(150,190,175,0.5)';
+    ctx.strokeStyle = threats.some((t) => t.warn)
+      ? 'rgba(255,90,80,0.85)' : 'rgba(150,190,175,0.5)';
     ctx.lineWidth = 1.2;
     ctx.beginPath();
     ctx.arc(cx, cy, R, 0, 6.284);

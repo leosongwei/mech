@@ -317,14 +317,27 @@ frontend/
   SACLOS 1000 m, S-8 713 m, top-attack 563 m, RPG 398 m.  Both sides read the
   same numbers: `netcode.static_payload` sends a `radar` block (`v_ref`, the
   largest `rcs`) and the client derives the dial's outer ring from it - the
-  `1 km` label is no longer a constant.  The client draws three states: seen
+  `1 km` label is no longer a constant.  The receiver is **gated at 1 km**
+  (`RWR_RANGE`, or the machine's own ring when that is shorter) and **gated on
+  line of sight** (`map.sightBlocked`: terrain, canopies, smoke - the same door
+  the AI's lookout, the IR lock and the pre-aim box go through), because
+  without either of them every missile on a 16 km map that merely closed on the
+  hull rang the alarm: measured, 29 % of hull-frames were ringing at a median
+  threat range of 5.5 km, 0 % of them aimed at that hull.  The client draws
+  three states: seen
   (diamond at true bearing/range + a pre-aim box through the sight rule), heard
   closing (a 5 Hz red spoke from the dial's edge - bearing, no range) and shot
   down (`intercept` fx: a few sparks for everyone who can see it, and the hit
   tone only for the two crews it concerns - `pid`, the one that fired the
   burst, and `firer`, the one whose round it was; the battle's AI crews shoot
   missiles down all over the map and a chime per round for everybody was the
-  busiest sound in the game).
+  busiest sound in the game).  **Plotting is not warning**: a tracked round is
+  drawn whether or not it is coming for this hull, but only an *incoming* one
+  (`warn`) sings and turns the rim red - the course is solved on the **relative
+  velocity** (the round's against the hull's) for the nearest approach, inside
+  the blast's reach (`er + 20`), and a guided round (SACLOS, top attack) is
+  judged on its horizontal track because its profile is a climb and a dive, not
+  a line.
 * **AI missile defence** (`systems/ai.py::_missile_step`) runs inline in
   `ai.run` before the ground fight and preempts it: a crew that has a round
   coming for it lays the sight on the lead point (`mu.solve_lead`, which honours

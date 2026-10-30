@@ -14,6 +14,7 @@ import { emptyDraft, isEmpty, quickDraft, quote, toMessage } from './shop.js';
 const BASE_FOV = 1.05;              // 1x vertical field of view, radians
 const AIM_LINE = 60000;             // metres, "infinity" for an unzeroed reticle
 const LEAD_TARGETS = 4;             // nearest few only, the rest is clutter
+const RWR_RANGE = 1000;             // m, the threat receiver's own gate
 const LASER_RANGE = 3400;           // longest sight an enemy could shoot at
 const LASER_CONE = 0.05;            // rad, "his gun is pointed at me"
 const SMOKE_RGB = [0.58, 0.52, 0.44];   // dirt brown, like the charge it is
@@ -542,45 +543,65 @@ export class Game {
     // 1000 m for a mech and 500 m for an APC - read off the data, so the label
     // in the corner is never a number of its own
     this.radarRing = Math.pow(Math.max(0, strength * radar.rcs), 0.25);
+    // the receiver's own gate, a kilometre down the pipe and no further - or
+    // less if the machine's radar is shorter-ranged than that (an APC), so a
+    // mark never has to be clamped onto the rim of a dial it is outside of
+    const gate = this.radarRing > 0 ? Math.min(RWR_RANGE, this.radarRing) : 0;
     const eye = [own.x, own.y + 5, own.z];
     // the round is measured against *this* hull's velocity, not the world's:
     // running at a missile lights the receiver earlier, running from it later
     const ovx = own.vx || 0, ovz = own.vz || 0;
+    // the smoke the sight rule cares about: deployed puffs, not canisters
+    const puffs = this.net.smoke ? this.net.smoke.filter((s) => !s.canister) : null;
     for (const p of this.net.projectiles) {
       if (p.faction === own.faction) continue;
       if (p.kind === 0) continue;                      // shells do not count
       const dx = p.x - eye[0], dy = p.y - eye[1], dz = p.z - eye[2];
       const d = Math.hypot(dx, dy, dz);
-      if (d < 1) continue;
-      // guided rounds (SACLOS, top attack) fly a profile, not a line: a
-      // top-attack climbs 150 m over the target and only drops onto the roof at
-      // the end, so its straight path never crosses a missile-sized tube.
-      // They are tracked by closing course instead, everything else by miss
-      // distance.
-      const guided = p.kind === 2 || p.kind === 3;
+      if (d < 1 || d > gate) continue;                 // outside the receiver
       const wd = this.defs.weapons[p.wid] || {};
       const v = Math.hypot(p.vx, p.vy, p.vz);
       if (v < 1) continue;
-      // positive while the round still has to reach us, at whatever gait we are
-      // walking into it
-      const vc = -((dx * (p.vx - ovx) + dy * p.vy + dz * (p.vz - ovz)) / d);
+      // the relative vector: the round's velocity against the hull's.  Positive
+      // `vc` while it still has to cover the gap between us at that closing
+      // rate, and the collision course below is solved on the same vector.
+      const wx = p.vx - ovx, wy = p.vy, wz = p.vz - ovz;
+      const vc = -((dx * wx + dy * wy + dz * wz) / d);
       if (vc <= 0) continue;                           // opening out or crossing
-      if (!guided) {
-        // a round whose nearest approach stays outside the blast's own reach
-        // cannot hurt this hull (`er` out, `de` 20 of armour against it), so it
-        // is not a threat however loud its echo
-        const along = ((dx * p.vx + dy * p.vy + dz * p.vz) / v);
-        const mx = dx - (p.vx / v) * along;
-        const my = dy - (p.vy / v) * along;
-        const mz = dz - (p.vz / v) * along;
-        if (Math.hypot(mx, my, mz) > (wd.er || 0) + 20) continue;
-      }
       const k = Math.sqrt(Math.max(0, strength * (wd.rcs || 0))) / radar.v_ref;
       // seen: the echo clears the receiver's floor.  Not seen: the bearing is
       // still known and it is still closing - the dial shows it as such.
       const seen = d * d <= k * vc;
+      // A tracked round is not automatically an *incoming* one: the dial plots
+      // every echo the receiver has, the alarm sings only for the rounds whose
+      // course can actually reach this hull (`er` out, `de` 20 of armour
+      // against it).  Guided rounds (SACLOS, top attack) fly a profile, not a
+      // line - a top-attack climbs 150 m over its target and only drops onto
+      // the roof at the end - so the course that matters for them is the
+      // horizontal one, which is the ground they fly over.
+      const guided = p.kind === 2 || p.kind === 3;
+      let warn;
+      if (guided) {
+        const wh = Math.hypot(wx, wz);
+        if (wh < 1e-3) {
+          warn = Math.hypot(dx, dz) <= (wd.er || 0) + 20;   // hovering at me
+        } else {
+          const along = (dx * wx + dz * wz) / wh;
+          warn = Math.hypot(dx - wx / wh * along, dz - wz / wh * along)
+            <= (wd.er || 0) + 20;
+        }
+      } else {
+        const w = Math.hypot(wx, wy, wz);
+        const along = (dx * wx + dy * wy + dz * wz) / w;
+        warn = Math.hypot(dx - wx / w * along, dy - wy / w * along,
+          dz - wz / w * along) <= (wd.er || 0) + 20;
+      }
+      // one line of sight, the same door the AI's lookout, the IR lock and the
+      // pre-aim box go through: terrain, a canopy or a screen of smoke hides a
+      // round from the receiver exactly as it hides a hull
+      if (sightBlocked(this.map, eye[0], eye[1], eye[2], p.x, p.y, p.z, puffs)) continue;
       this.threats.push({ x: p.x, y: p.y, z: p.z, dist: d, kind: p.kind,
-                          seen, wid: p.wid, hit_r: wd.hit_r || 0,
+                          seen, warn, wid: p.wid, hit_r: wd.hit_r || 0,
                           vx: p.vx, vy: p.vy, vz: p.vz });
     }
     this.threats.sort((a, b) => a.dist - b.dist);
@@ -614,10 +635,12 @@ export class Game {
   // a missile inbound trills fast (0.083 s per tone), a sight settling on the
   // cockpit warbles four times slower.  Both just loop for as long as the
   // threat holds, so they are driven every frame with a hold in the audio side
-  // that keeps them from dropping out on a one-frame gap.
+  // that keeps them from dropping out on a one-frame gap.  The dial plots every
+  // round the receiver has a track on; only the ones on a course that reaches
+  // this hull (`warn`) are worth a tone.
   _alarms(own) {
     const t = (own && this.threats) || [];
-    this.audio.missileWarning(t.length > 0);
+    this.audio.missileWarning(t.some((x) => x.warn));
     const L = (own && this.lasers) || [];
     this.audio.laserWarning(L.length > 0);
   }

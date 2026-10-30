@@ -188,15 +188,19 @@ frontend/
   length wins first (`wd["reach"]`), then the rack's mouth, then the kind's
   figure in `MECH_ARM_REACH` — a racked weapon never needs an entry there.
   Ammunition is one round per tube: the rocket nest is 5 × 8 with 40 rockets in
-  it, the top-attack rack is 2 × 4 with `mag=8, reserve=0, reload=0` — it fires
-  its eight and goes quiet until the pilot buys a fresh one at the base, which
-  is why the two share one mechanism instead of two.  The cells are packed at
+  it, the top-attack rack is 2 × 4 with `mag=8` and the SACLOS rack 4 × 4 with
+  `mag=16`, both `reserve=0, reload=0` — an arm fires its tubes and goes quiet
+  until the pilot buys a fresh rack at the base, which is why all three share
+  one mechanism instead of three.  The cells are packed at
   about 1.15 tube widths (the nest's 0.155 on a 0.135 bore), which is what makes
   a face read as a bundle of tubes; the body is a 0.04 m sheet-metal edge round
   the lattice and nothing more.  `elev` is a launcher bolted at its own
   quadrant: the arm's slewing does not move it, and the server both draws and
-  *fires* from that angle — the top-attack rack is 42°, the nest follows the arm
-  (0).  `bore` is the tube's outside diameter in **both** halves of the file:
+  *fires* from that angle — the top-attack rack is 42° (the round's own loft),
+  the SACLOS pack stands at the 0.18 rad its soft launch needs and climbs with
+  the arm above that, the nest lies flat (0).  A launcher's elevation is
+  settled *before* the muzzle is solved, so the mouth drawn is the mouth fired
+  from.  `bore` is the tube's outside diameter in **both** halves of the file:
   the client's hexagon scales as a width, so passing half a bore draws a tube a
   quarter of its area and leaves a hole's worth of empty box around it.
 * **Grid** (`grid.py`) is a 128 m cell index over every unit that moves *or* can

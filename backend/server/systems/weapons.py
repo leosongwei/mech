@@ -185,23 +185,38 @@ def fire(world: World, eid: int, arm: int, wid: int, wd: dict, target: int = -1)
     # headings as well
     origin, _, _ = aim_of(world, eid)
     yaw, pitch = bore_of(world, eid)
+
+    kind = KIND_ID.get(wd["kind"], 0)
+    n = max(1, int(wd["salvo"]))
+    life = float(wd["life"])
+
+    # a launcher of tubes stands at least at its own elevation (`rack["elev"]`):
+    # the top attack is bolted at its 42 deg quadrant, a beam rider at the 10
+    # deg its soft launch needs, the rocket nest lies flat on the arm.  The
+    # tubes are drawn on this angle as well, so the mouth drawn is the mouth
+    # fired from - which is why the elevation is settled before the muzzle is.
+    rack = wd.get("rack")
+    elev = float(rack["elev"]) if rack else 0.0
+
+    if kind == 2:
+        # SACLOS: launch along the launcher, the beam takes over immediately
+        pitch = max(pitch, elev)
+    elif kind == 3:
+        # the top-attack tube is elevated to its own quadrant: the loft is a
+        # property of the launcher, not of where the pilot happens to look
+        pitch = float(wd["loft"])
+
     right = up = 0.0
     if etype == defs.ETYPE_MECH:
         # where the bore ends, in order of who knows best: the weapon itself
         # (the 105 mm's barrel runs 5 m past its receiver), then its rack (a
         # launcher of tubes ends at the mouth of the tubes), then the kind's
         # figure.
-        rack = wd.get("rack")
         reach = wd.get("reach")                     # the weapon's own bore
         if reach is None:
             # a launcher of tubes ends at the mouth of the tubes
             reach = rack["mouth"] if rack else defs.MECH_ARM_REACH.get(wd["kind"], 1.8)
         reach = float(reach)
-        # a launcher bolted at its own quadrant does not follow the arm: its
-        # mouth is up there whatever the pilot's cross is doing, which is the
-        # same angle the round leaves at (below).  The client draws the tubes
-        # on that angle, so the mouth drawn is the mouth fired from.
-        mount = float(rack["elev"]) if rack and rack.get("elev") else pitch
         if rack:
             # a launcher of tubes is one round per tube: the round leaves the
             # tube its slot in the rack belongs to, so a half-empty pod fires
@@ -209,19 +224,7 @@ def fire(world: World, eid: int, arm: int, wid: int, wd: dict, target: int = -1)
             # the loop takes the round off the top of this call.
             right, up = defs.rack_tube(int(wd["mag"]) - int(e["mag"][eid][arm]), rack)
         origin = mu.muzzle_point(pos[eid], yaw, defs.MOD_LEFT if arm == 0 else defs.MOD_RIGHT,
-                                 mount, reach, right, up)
-
-    kind = KIND_ID.get(wd["kind"], 0)
-    n = max(1, int(wd["salvo"]))
-    life = float(wd["life"])
-
-    if kind == 2:
-        # SACLOS: launch upward, the beam takes over immediately
-        pitch = max(pitch, 0.18)
-    elif kind == 3:
-        # the top-attack tube is elevated to its own quadrant: the loft is a
-        # property of the launcher, not of where the pilot happens to look
-        pitch = float(wd["loft"])
+                                 max(pitch, elev), reach, right, up)
 
     # direct fire is zeroed: hold off for the drop so the round meets the sight
     # line at the pilot's setting.  A pilot's gun uses that fixed range, which

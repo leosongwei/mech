@@ -397,12 +397,12 @@ function armModel(R, e, arm, wdefs, flashes, shoulderY, lateral) {
   const wid = e.weapon ? e.weapon[arm] : 0;
   const wd = wdefs[wid] || {};
   const kind = wd.kind || 'none';
-  // a launcher bolted at its own quadrant (`rack.elev`) stands at that angle
-  // and does not answer the cross: the tubes are the ones the round leaves
-  // from, so the arm is drawn where the barrel really is, not where the sight
-  // is looking.  Everything else elevates with the arm.
-  const mount = wd.rack && wd.rack.elev;
-  const p = alive ? (mount ? mount : e.pitch) : -0.5;
+  // a launcher of tubes never lies below its own elevation (`rack.elev`): the
+  // top attack is bolted at 42 deg, a beam rider at the 10 deg its soft launch
+  // needs, the nest lies flat.  The server fires from the same angle, so the
+  // arm is drawn where the barrel really is, not where the sight is looking.
+  const mount = (wd.rack && wd.rack.elev) || 0;
+  const p = alive ? Math.max(e.pitch, mount) : -0.5;
   const yaw = e.yaw;
   const fac = facColor(e);
   const fl = flashes && flashes.get(e.id);
@@ -479,11 +479,6 @@ function armModel(R, e, arm, wdefs, flashes, shoulderY, lateral) {
     // forty rounds) and the top-attack rack (2 x 2, four) are the same model
     // with different numbers in their `rack`.
     rack(put, p, wd.rack, alive ? fac : DEAD, tubeOf(wd, e, arm));
-  } else if (kind === 'saclos') {
-    put('box', p, 0.95, 1.40, 0.80, 0.76, alive ? fac : DEAD);
-    for (const q of [-1, 1]) {
-      put('hex', FORWARD + p, 1.76, 0.24, 0.30, 0.24, [0.08, 0.08, 0.09], q * 0.22);
-    }
   } else {
     put('cyl', FORWARD + p, 1.35, 0.18, 0.90, 0.18, [0.12, 0.12, 0.13]);
   }

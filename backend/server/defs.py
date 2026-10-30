@@ -178,6 +178,13 @@ RACK_ROCKET = rack(5, 8, 40, bore=0.135, pitch=0.155, length=2.15, centre=0.60,
 # eight dots in a big empty box.
 RACK_TOP = rack(2, 4, 8, bore=0.24, pitch=0.28, length=1.70, centre=0.0, end=0.25,
                 frame=0.025, elev=0.73299)
+# The SACLOS rack: the same tubes and the same packing, four across and four
+# high - sixteen rounds in one flat pack.  It is not bolted flat: a beam rider
+# has to clear the arm on a soft launch, so the launcher stands at 0.18 rad (10
+# deg) whatever the arm is doing below that, and climbs with the arm above it.
+# The round leaves along the tube, so the same angle biases both.
+RACK_SACLOS = rack(4, 4, 16, bore=0.24, pitch=0.28, length=1.70, centre=0.0,
+                   end=0.25, frame=0.025, elev=0.18)
 
 
 WEAPONS = [
@@ -234,11 +241,16 @@ WEAPONS = [
     # the game (mech/APC 100, arm 50), so one hit takes a machine apart without
     # doing the base's 4000 hp much of a favour - the price is that the operator
     # has to hold the sight on it
+    #
+    # Sixteen rounds in a flat 4 x 4 pack, the same tubes as the top attack and
+    # the same mechanism: one round per tube, no magazine, no reload, and 0.3 s
+    # between launches (`rpm` 200) - a beam rider's burst is a magazine's worth
+    # of commitments fired a sight-correction apart.
     dict(wid=WID_SACLOS, key="saclos", name="SACLOS ATGM", kind="saclos", ap=800, ad=120, ed=80, er=6.0,
-         rpm=40, mag=2, reserve=8, reload=4.2, vel=40, spread=0.003, bias=0.0, g=0.0, thrust=100,
+         rpm=200, mag=16, reserve=0, reload=0.0, vel=40, spread=0.003, bias=0.0, g=0.0, thrust=100,
          burn=5.6, drag=0.0002, maxvel=600, life=36.0, wob=30.0, wob_f=1.5, maxdist=4000.0,
          range=4000, cost=500, ammo_cost=30.0, lock=0, lock_time=0, salvo=0, semi=0,
-         color=(0.35, 1.0, 0.55), cal=152, rcs=0.02,
+         color=(0.35, 1.0, 0.55), cal=152, rcs=0.02, rack=RACK_SACLOS,
          desc="Beam riding, keep the sight on target"),
     # Javelin class, flown as an aeroplane rather than as a curve: the tube is
     # elevated to `loft`, a 20 m/s soft launch, then 3.4 s of motor (11.2 g)

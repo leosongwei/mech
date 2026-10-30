@@ -132,23 +132,25 @@ def front_town(world: World, faction: int, lane: int) -> dict | None:
 def respawn_town(world: World, faction: int, x: float, z: float) -> dict | None:
     """The town a pilot who died at (x, z) comes back at.
 
-    One step back down **its own lane** from where the hull died: never the
-    town you were killed at or ahead of it, and never a town on another lane.
-    Towns cut off from the base cannot be reached from it and are skipped as
-    well - in `red - red - red - blue - red - red` a death at the last town
-    comes back at the third one, the last still connected.  None means the
-    base itself.
+    Three steps: **A**, the faction's own town nearest the hull that died (any
+    lane - it only picks the lane); **B**, the town on A's lane nearest the
+    death that is still connected to the base *and* not being fought over (A
+    itself when it qualifies); **C**, one town back from B towards the base.
+    So a death at a town never comes back at that town, and a town cut off from
+    the base or under attack is skipped.  None means the base itself.
     """
-    if not world.towns:
+    own = [t for t in world.towns if t["owner"] == faction]
+    if not own:
         return None
-    lane, i = _lane_of(world, x, z)
-    step = 1 if faction == defs.FACTION_RED else -1
-    behind = None
-    for town in _chain(world, faction, lane):          # base end first
-        if step * (town["lane_i"] - i) >= 0:
-            break                                      # level with the death
-        behind = town
-    return behind
+    dead = (x, z)
+    a = min(own, key=lambda t: math.dist((t["x"], t["z"]), dead))
+    available = [t for t in _chain(world, faction, a["lane"]) if not t["contested"]]
+    if not available:
+        return None
+    b = min(available, key=lambda t: math.dist((t["x"], t["z"]), dead))
+    chain = _chain(world, faction, a["lane"])          # base end first
+    i = chain.index(b)
+    return chain[i - 1] if i > 0 else None
 
 
 def clear_near(world: World, x: float, z: float,

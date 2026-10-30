@@ -116,19 +116,30 @@ WEAPONS = [
          maxvel=610, life=16.4, range=3200, cost=350, ammo_cost=4.0, lock=0, lock_time=0, salvo=1,
          semi=0, color=(1.0, 0.45, 0.15), cal=80,
          desc="40 rounds, hold to fire, sighted to 1 km"),
-    # TOW class: 65 m/s out of the tube, the flight motor takes it to 278 m/s
-    # about 2 s later, 3.75 km of wire.  A tandem HEAT warhead: one hit takes a
-    # mech or an APC apart, but the operator has to keep the sight on it
-    dict(wid=WID_SACLOS, key="saclos", name="SACLOS ATGM", kind="saclos", ap=800, ad=60, ed=80, er=6.0,
-         rpm=40, mag=2, reserve=8, reload=4.2, vel=65, spread=0.003, bias=0.0, g=0.0, thrust=110,
-         maxvel=278, life=36.0, wob=30.0, wob_f=1.5, range=3750, cost=500, ammo_cost=30.0, lock=0,
-         lock_time=0, salvo=0, semi=0, color=(0.35, 1.0, 0.55), cal=152,
+    # TOW class: 40 m/s soft launch, then 100 m/s^2 of boost for 5.6 s takes it
+    # to its 600 m/s cruise - and that is where the motor burns out, 1.8 km down
+    # range.  After that it coasts on the airframe alone, and a missile is a
+    # blunt thing: quadratic drag (`drag` per metre) bleeds it back down, ~385
+    # m/s by the far end of the wire.  The wire itself is 4 km (`maxdist`): the
+    # round cooks off where it runs out, so the reach is the wire and not the
+    # motor.  Fast out, lazy in, and a long shot is a commitment rather than a
+    # sniper rifle.  A tandem HEAT warhead: AD 120 is past every hull pool in
+    # the game (mech/APC 100, arm 50), so one hit takes a machine apart without
+    # doing the base's 4000 hp much of a favour - the price is that the operator
+    # has to hold the sight on it
+    dict(wid=WID_SACLOS, key="saclos", name="SACLOS ATGM", kind="saclos", ap=800, ad=120, ed=80, er=6.0,
+         rpm=40, mag=2, reserve=8, reload=4.2, vel=40, spread=0.003, bias=0.0, g=0.0, thrust=100,
+         burn=5.6, drag=0.0002, maxvel=600, life=36.0, wob=30.0, wob_f=1.5, maxdist=4000.0,
+         range=4000, cost=500, ammo_cost=30.0, lock=0, lock_time=0, salvo=0, semi=0,
+         color=(0.35, 1.0, 0.55), cal=152,
          desc="Beam riding, keep the sight on target"),
     # Javelin class: soft launch at 20 m/s, the motor lights off outside the
     # tube and cruises at 190 m/s, climbing 150 m above the target before the
     # dive; the seeker locks before the shot and needs the target in the circle.
-    # Fire and forget, so it is the softer of the two missiles: two hits
-    dict(wid=WID_TOPATTACK, key="topattack", name="TOP-ATTACK IR ATGM", kind="top", ap=900, ad=50, ed=60,
+    # Fire and forget - AD 120 still takes any hull in one hit - and what it
+    # trades away is the lock and the long climb-and-dive flight the target can
+    # hide in
+    dict(wid=WID_TOPATTACK, key="topattack", name="TOP-ATTACK IR ATGM", kind="top", ap=900, ad=120, ed=60,
          er=7.0, rpm=32, mag=2, reserve=8, reload=4.6, vel=20, spread=0.002, bias=0.0, g=0.0, thrust=170,
          maxvel=190, life=52.6, climb=150.0, cruise=0.35, dive=220.0, range=2500, cost=700, ammo_cost=45.0,
          lock=1, lock_time=1.1, salvo=0, semi=0, color=(1.0, 0.35, 0.9), cal=127,
@@ -286,11 +297,11 @@ UNIT_DEFS = {
                      speed=50.0, radius=1.9, height=6.5,
                      weapons=(WID_AC30, WID_ROCKET), ai_range=2600, sight=3400, reward=350,
                      splat=DEATH_BLAST["er"], tags=("unit", "combat", "lockable", "moves")),
-    # the objective: a target, but it never moves and cannot be locked.  3000 hp
+    # the objective: a target, but it never moves and cannot be locked.  4000 hp
     # behind 80 of plate: neither 80 mm rockets (AP 40) nor 30 mm rounds (AP 15)
     # get through, so both only do their blast - which prices the base at
-    # exactly 200 rockets (15 each) or 1000 cannon rounds (3 each)
-    ETYPE_BASE: dict(name="COMMAND BASE", hp=(3000, 0, 0, 0), dp=80, de=20,
+    # exactly 267 rockets (15 each) or 1334 cannon rounds (3 each)
+    ETYPE_BASE: dict(name="COMMAND BASE", hp=(4000, 0, 0, 0), dp=80, de=20,
                      speed=0.0, radius=7.0, height=12.0,
                      weapons=(WID_NONE, WID_NONE), ai_range=0, sight=0, reward=2000, splat=8.0,
                      tags=("unit", "combat")),

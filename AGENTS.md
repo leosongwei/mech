@@ -207,14 +207,16 @@ frontend/
 * **A death is planned from where it happened.** `World.kill` records
   `Player.death_pos` and asks the mode for `respawn_delay`; the mode's
   `mech_spawn` later turns that position into a place. Battle's version
-  (`modes/battle/__init__.py`) puts the pilot **one town back down the lane it
-  died on** (`waves.respawn_town` - own lane only, owned *and connected to the
-  base*, never the town it was killed at), else in the base ring
-  (`World.base_spawn`), and its wait interpolates from the distance to the
-  enemy base: 40 s on your own doorstep, 3 s on theirs. The first deploy has no
-  `death_pos` and lands on the most advanced connected town instead
-  (`_lead_town`), because 5 km out of the gate is not a spawn point. `spawn_mech`
-  clears `death_pos` once it has been spent.
+  (`modes/battle/__init__.py`) picks the town with `waves.respawn_town`, which
+  is three steps: **A** the faction's own town nearest the death (it only picks
+  the lane, so a spawn may come from another lane), **B** the town on A's lane
+  nearest the death that is still connected to the base *and* not contested,
+  **C** one town back from B towards the base - C is the spawn, none means the
+  base ring (`World.base_spawn`). Its wait interpolates from the distance to
+  the enemy base: 40 s on your own doorstep, 3 s on theirs. The first deploy
+  has no `death_pos` and lands on the most advanced connected town instead
+  (`_lead_town`), because 5 km out of the gate is not a spawn point.
+  `spawn_mech` clears `death_pos` once it has been spent.
 * **A town being fought over supplies nothing.** `waves._capture` recomputes
   `town["contested"]` every tick - a unit of a faction other than the owner is
   inside `CAPTURE_RADIUS` (170 m) - and `waves.front_town` walks the connected

@@ -415,7 +415,7 @@ export class HUD {
       if (e.type !== 5) continue;
       const f = FACTION_COLORS[e.faction];
       const maxHp = ((s.units || {})[5] || {}).hp;
-      const ratio = Math.max(0, Math.min(1, e.hp[0] / ((maxHp && maxHp[0]) || 3000)));
+      const ratio = Math.max(0, Math.min(1, e.hp[0] / ((maxHp && maxHp[0]) || 4000)));
       const bw = 150;
       const bx = w / 2 - bw / 2;
       ctx.fillStyle = 'rgba(0,0,0,0.45)';
@@ -813,7 +813,7 @@ export class HUD {
     ctx.font = '12px "Courier New", monospace';
     ctx.fillStyle = 'rgba(220,200,200,0.75)';
     ctx.fillText(s.range ? 'RESPAWN ON THE RANGE FIRING LINE'
-      : 'RESPAWN ONE TOWN BACK DOWN YOUR LANE, OR AT THE BASE', w / 2, h / 2 + 44);
+      : 'RESPAWN ONE TOWN BACK FROM WHERE YOU FELL, OR AT THE BASE', w / 2, h / 2 + 44);
     ctx.restore();
   }
 

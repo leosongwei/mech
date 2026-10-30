@@ -61,6 +61,7 @@ def run(world: World, dt: float) -> None:
     seed = e["proj_seed"]
     prev = e["proj_prev"]
     target = e["target"]
+    trav = e["proj_trav"]
     etype = e["etype"]
     yaw = e["yaw"]
 
@@ -105,7 +106,14 @@ def run(world: World, dt: float) -> None:
                 lead = max(0.0, along) + max(90.0, speed * 1.2)
                 aim_pt = (origin[0] + d[0] * lead, origin[1] + d[1] * lead,
                           origin[2] + d[2] * lead)
-            speed = min(wd["maxvel"], speed + wd["thrust"] * dt)
+            # the motor has a burn time, then it is out and the airframe coasts:
+            # quadratic drag bleeds the cruise speed back down for the rest of
+            # the flight, so a long shot arrives slow (`burn` / `drag`)
+            burn = float(wd.get("burn", 0.0))
+            if burn <= 0.0 or float(age[pid]) < burn:
+                speed = min(wd["maxvel"], speed + wd["thrust"] * dt)
+            else:
+                speed = max(0.0, speed - float(wd.get("drag", 0.0)) * speed * speed * dt)
             if aim_pt is not None:
                 desired = (aim_pt[0] - p0[0], aim_pt[1] - p0[1], aim_pt[2] - p0[2])
                 v = np.asarray(_steer(v, desired, speed, 1.35, dt), np.float32)
@@ -174,6 +182,7 @@ def run(world: World, dt: float) -> None:
         vel[pid] = v
         p1 = p0 + v * dt
         pos[pid] = p1
+        trav[pid] = float(trav[pid]) + float(np.linalg.norm(v)) * dt
 
         # ---- terrain / building collision --------------------------------
         gh, gt, gp = terrain.ground_hit(p0, p1, 9.0)
@@ -212,6 +221,15 @@ def run(world: World, dt: float) -> None:
                     float(p0[1] + (p1[1] - p0[1]) * best_t),
                     float(p0[2] + (p1[2] - p0[2]) * best_t))
             _impact(world, hitp, wd, pid, best_unit, best_mod, sph)
+            e.destroy(pid)
+            continue
+        # ---- out of flight -------------------------------------------------
+        # a wire-guided round has a maximum flight distance and cooks off where
+        # it runs out: no direct hit, but the warhead still goes off there, so
+        # anything standing at the end of the wire catches the blast
+        maxdist = float(wd.get("maxdist", 0.0))
+        if maxdist > 0.0 and float(trav[pid]) >= maxdist:
+            _impact(world, (float(p1[0]), float(p1[1]), float(p1[2])), wd, pid, -1, 0, sph)
             e.destroy(pid)
 
 

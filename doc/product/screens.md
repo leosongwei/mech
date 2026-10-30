@@ -47,7 +47,7 @@ ENEMY BASE   ▇▇▇▇░░░░░░
 * `WAVE n`：当前波次；下一行为本局时长 `m:ss`。
 * 靶场模式下首行改为 `RANGE`，并在时长下方多一行 `TARGETS n`（当前存活的蓝方
   单位数，正常为 12 个 APC 靶）。
-* 两条 150×5 的指挥部完整度条，按 `当前HP / 3000` 填充，颜色为阵营色，
+* 两条 150×5 的指挥部完整度条，按 `当前HP / 4000` 填充，颜色为阵营色，
   上方标签为本方 `ALLIED BASE` / 敌方 `ENEMY BASE`。靶场没有指挥部，两条不显示。
 
 ### 2.3 资金与战绩（左侧，小地图下方）
@@ -318,7 +318,7 @@ ENEMY BASE   ▇▇▇▇░░░░░░
 ```
 MECH DESTROYED
 RE-DEPLOY IN 7.4s
-RESPAWN ONE TOWN BACK DOWN YOUR LANE, OR AT THE BASE
+RESPAWN ONE TOWN BACK FROM WHERE YOU FELL, OR AT THE BASE
 ```
 
 第三行是重生规则的一句话说明（靶场服务器为 `RESPAWN ON THE RANGE FIRING LINE`，

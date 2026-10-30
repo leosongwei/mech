@@ -139,6 +139,9 @@ def register(ecs: ECS) -> None:
     # flew (`proj_prev` -> `pos`), because at 36 m per tick a distance check at
     # the tick boundaries would step clean over a man
     ecs.register("proj_prev", np.float32, (3,), 0.0)
+    # metres flown since the muzzle: a wire-guided round has a maximum flight
+    # distance and cooks off where it runs out (`defs.WEAPONS[...]["maxdist"]`)
+    ecs.register("proj_trav", np.float32)
 
 
 UNIT_COMPS = ["pos", "vel", "drive", "veh", "yaw", "pitch", "leg_yaw", "turret_yaw",
@@ -153,7 +156,7 @@ DEBRIS_COMPS = ["pos", "vel", "yaw", "pitch", "leg_yaw", "turret_yaw", "etype", 
                 "owner", "hp", "hpmax", "flags", "wreck_t", "wreck_kind"]
 
 PROJ_COMPS = ["pos", "vel", "faction", "proj_kind", "proj_wid", "proj_life", "proj_src",
-              "proj_age", "proj_seed", "proj_prev", "target"]
+              "proj_age", "proj_seed", "proj_prev", "proj_trav", "target"]
 
 # A canister in flight and the cloud it bursts into are two different things, so
 # they are two archetypes: the flying charge carries a fuse and a velocity, the

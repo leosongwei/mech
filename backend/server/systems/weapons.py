@@ -240,5 +240,6 @@ def fire(world: World, eid: int, arm: int, wid: int, wd: dict, target: int = -1)
         e["proj_src"][pid] = eid
         e["proj_age"][pid] = 0.0
         e["proj_seed"][pid] = world.rng.random()
+        e["proj_trav"][pid] = 0.0
         e["target"][pid] = target
     world.emit("shot", x=origin[0], y=origin[1], z=origin[2], wid=int(wid), eid=int(eid), arm=int(arm))

@@ -305,6 +305,38 @@ class ECS:
         ids = np.asarray(ids)
         return self._row[ids], self._arch[ids]
 
+    def columns(self, ids: np.ndarray, names) -> dict[str, np.ndarray]:
+        """Several components of the same ids, in one resolution pass.
+
+        A :class:`View` read pays the archetype split - the id lookup, the
+        blank fill, the per-archetype mask and the fancy assignment - for
+        *every* component, and a snapshot reads twenty of them for the one id
+        list.  Here the split is resolved once, so each field after the first
+        costs a gather and nothing else.  The values are the ones a ``View``
+        returns: the registered default where an entity does not own the
+        component or is not alive."""
+        ids = np.asarray(ids)
+        out: dict[str, np.ndarray] = {}
+        for name in names:
+            spec = self._specs[name]
+            out[name] = np.full((ids.size, *spec.shape), spec.default, spec.dtype)
+        if ids.size == 0:
+            return out
+        where = _lookup(self, ids)
+        rows = self._row[np.clip(ids, 0, self._high - 1)]
+        luts = [(name, self.buffers(name)) for name in names]
+        for ai in np.unique(where):
+            ai = int(ai)
+            if ai < 0:
+                continue
+            sel = np.nonzero(where == ai)[0]
+            r = rows[sel]
+            for name, lut in luts:
+                buf = lut[ai]
+                if buf is not None:
+                    out[name][sel] = buf[r]
+        return out
+
     def groups(self, *names: str) -> list[Group]:
         """The non-empty archetypes owning all of ``names``, buffers hoisted.
 

@@ -76,8 +76,11 @@ class World:
         self.winner: int = -1
         self.end_timer: float = 0.0
         self.events: list[dict] = []
+        self.dt: float = 1.0 / 30.0         # last step, for a table built mid-tick
         self._sph: tuple | None = None      # this tick's hit-sphere table
         self._sph_tick: int = -1
+        self._aim_ok: np.ndarray | None = None     # rows of that table still aimed at
+        self._sph_premove: bool = False            # built before movement, not for the sweep
         self.towns: list[dict] = self.terrain.towns
         self.lanes: list[list[tuple[float, float]]] = self.terrain.lanes
         self.lanes_rev: list[list[tuple[float, float]]] = [
@@ -269,11 +272,43 @@ class World:
         into the ground it covered this tick - the sweep solves against a
         moving target (see `projectiles.sphere_table`).
         """
-        if self._sph is None or self._sph_tick != self.tick:
+        if self._sph is None or self._sph_tick != self.tick or self._sph_premove:
             from .systems.projectiles import sphere_table
             self._sph = sphere_table(self, dt)
             self._sph_tick = self.tick
+            self._sph_premove = False
+            self._aim_ok = None      # the aim mask belongs to the table it was built for
         return self._sph
+
+    def aim_spheres(self) -> tuple[tuple | None, np.ndarray | None]:
+        """The hit spheres as they stood at the *start* of this tick, and which
+        of those rows still describe a hull standing where they say.
+
+        `sphere_table` is built during `projectiles`, i.e. after `movement` has
+        moved everything, so the table it leaves behind is the end-of-tick
+        state - which is precisely the state the next tick's aim cast reads,
+        because `ai` and `weapons` run before `movement`.  Nothing is rebuilt
+        for it: the aim ray gets the rows the sweep already paid for, instead of
+        re-deriving every candidate hull's spheres per shot (a one-row
+        `sphere_world` and a list of tuples per hull, which is what it did).
+
+        The mask is answered once a tick, not once a cast: a row still counts
+        when its id is a live hull owning `unit` (not a missile, which the same
+        table carries for the sweep) and the hull is standing within ten metres
+        of where the row put it - an id freed by a death and handed out again to
+        something else must not be shot at.
+        """
+        if self._sph is None or self._sph_tick < self.tick - 1:
+            self.sphere_table(self.dt)
+            self._sph_premove = True     # built before movement: not the sweep's
+        if self._aim_ok is None:
+            e = self.ecs
+            ids = self._sph[2]
+            ok = e.has_arr(ids, "unit")          # alive, and a hull
+            if ok.any():
+                ok &= np.abs(e["pos"][ids] - self._sph[0]).max(axis=1) < 10.0
+            self._aim_ok = ok
+        return self._sph, self._aim_ok
 
     def emit(self, kind: str, **data: object) -> None:
         # json.dumps cannot handle numpy scalars, so every payload is
@@ -348,10 +383,14 @@ class World:
     def update(self, dt: float) -> None:
         self.time += dt
         self.tick += 1
+        self.dt = dt                 # `aim_spheres` builds a table of its own
         # per-tick scratch: a system that spawns the replacement of a dead slot
         # must not see last tick's deaths
         self.ecs.destroyed.clear()
-        self._sph = None
+        # the previous tick's hit-sphere table is *not* thrown away: it holds
+        # the end-of-tick state, which is exactly where every hull stands now,
+        # and `aim_spheres` hands it to the aim casts that run before movement
+        # (`sphere_table` stamps the tick it was built for)
         # refile every hull under the cell it stands in before anyone queries:
         # the build is one argsort, the systems below ask "who is near me"
         # hundreds of times a tick.  Movers *and* combatants: a command base
@@ -367,6 +406,9 @@ class World:
     def reset_match(self) -> None:
         """Wipe the battlefield and start a fresh round on the same map."""
         e = self.ecs
+        self._sph = None
+        self._sph_tick = -1
+        self._aim_ok = None
         for eid in list(e.query()):
             e.destroy(eid)
         self.events.clear()

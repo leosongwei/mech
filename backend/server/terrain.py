@@ -1152,6 +1152,133 @@ class Terrain:
                     break
         return best
 
+    # -- the same walk, for a whole tick's worth of rounds ----------------
+    def _heights_arr(self, xs: np.ndarray, zs: np.ndarray) -> np.ndarray:
+        """``height_at`` for an array of points: the same bilinear read, one
+        fancy index instead of four ``.item()`` calls per point."""
+        fx = np.clip(xs * INV_TILE, 0.0, self._wmax)
+        fz = np.clip(zs * INV_TILE, 0.0, self._dmax)
+        i = fx.astype(np.int64)
+        j = fz.astype(np.int64)
+        tx = fx - i
+        tz = fz - j
+        h = self.h
+        h00 = h[j, i].astype(np.float64)
+        h10 = h[j, i + 1].astype(np.float64)
+        h01 = h[j + 1, i].astype(np.float64)
+        h11 = h[j + 1, i + 1].astype(np.float64)
+        return (h00 * (1.0 - tx) + h10 * tx) * (1.0 - tz) + \
+               (h01 * (1.0 - tx) + h11 * tx) * tz
+
+    def _walls_arr(self, xs: np.ndarray, zs: np.ndarray) -> np.ndarray:
+        """``wall_at`` for an array: a building tile stops at its roof, off the
+        map at 1e6, everything else at nothing."""
+        i = np.where(xs >= 0.0, np.floor(xs * INV_TILE), -1.0).astype(np.int64)
+        j = np.where(zs >= 0.0, np.floor(zs * INV_TILE), -1.0).astype(np.int64)
+        inside = (i >= 0) & (j >= 0) & (i < self.w) & (j < self.d)
+        ic = np.clip(i, 0, self.w - 1)
+        jc = np.clip(j, 0, self.d - 1)
+        build = inside & (self.tiles[jc, ic] == TILE_BUILDING)
+        wall = self.walls[jc, ic].astype(np.float64)
+        wall = np.where(wall > 0.0, wall, BUILDING_H)
+        return np.where(inside, np.where(build, wall, 0.0), 1e6)
+
+    def sample_points(self, xs: np.ndarray, zs: np.ndarray) -> np.ndarray:
+        """``obstacle_at`` for an array of points."""
+        return self._heights_arr(xs, zs) + self._walls_arr(xs, zs)
+
+    def ground_hits_many(self, p0: np.ndarray, p1: np.ndarray, step: float = 9.0,
+                         ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """``ground_hit`` for a whole tick's rounds at once.
+
+        The rounds of one tick are a hundred legs of 10-36 m, and the per-leg
+        walk was one Python function call per sample for each of them.  Here the
+        samples of every leg go through one numpy pass - the coarse block cull,
+        the bilinear height and the wall lookup - and only the legs that
+        actually burst are walked again (six bisections each, vectorised over
+        the handful that hit).
+
+        Sampling is uniform along each leg at `step` (the same 9 m a round is
+        walked at, `n + 1` samples including both ends) rather than one sample
+        per tile: at that spacing a leg cannot cross a 16 m tile without a
+        sample landing in it, except at a corner it only clips, which is the one
+        case this is looser than `_march`.
+
+        A leg whose samples touch a tree tile is reported in ``walk`` and left
+        to the scalar walk: a trunk is a metre wide and is *solved*, not
+        sampled.  Both ends of the leg are sampled, so a leg that *starts* in a
+        tree tile is caught too - the reason the start is sample zero and not
+        one step in.
+        """
+        n_legs = p0.shape[0]
+        hit = np.zeros(n_legs, bool)
+        walk = np.zeros(n_legs, bool)
+        t_hit = np.ones(n_legs)
+        if n_legs == 0:
+            return hit, t_hit, walk
+        d = p1 - p0
+        dist = np.linalg.norm(d, axis=1)
+        # a leg that starts at or below the ground bursts where it starts, the
+        # same early out the scalar walk takes before it walks anything
+        start_hit = p0[:, 1] <= self.sample_points(p0[:, 0], p0[:, 2]) + 1.0
+        hit |= start_hit
+        t_hit[start_hit] = 0.0
+        n = np.maximum(1, np.ceil(dist / step).astype(np.int64))
+        cnt = n + 1                               # both ends, the start included
+        leg = np.repeat(np.arange(n_legs, dtype=np.int64), cnt)
+        off = np.repeat(np.cumsum(cnt) - cnt, cnt)
+        k = np.arange(leg.size, dtype=np.int64) - off
+        ts = k / n[leg]                           # fraction along the leg
+        xs = p0[leg, 0] + d[leg, 0] * ts
+        zs = p0[leg, 2] + d[leg, 2] * ts
+        ys = p0[leg, 1] + d[leg, 1] * ts
+        cull = self._cull_solid
+        cdi, cwi, cinv = self._cull_d, self._cull_w, self._cull_inv
+        ci = (xs * cinv).astype(np.int64)
+        cj = (zs * cinv).astype(np.int64)
+        inb = (ci >= 0) & (cj >= 0) & (ci < cwi) & (cj < cdi)
+        clear = np.zeros(ts.shape, bool)
+        clear[inb] = ys[inb] > cull[cj[inb], ci[inb]]
+        # a leg through a tree tile is the scalar walk's; so is one whose
+        # terrain sampling this cannot answer
+        ti = np.floor(xs * INV_TILE).astype(np.int64)
+        tj = np.floor(zs * INV_TILE).astype(np.int64)
+        tin = (ti >= 0) & (tj >= 0) & (ti < self.w) & (tj < self.d)
+        tt = np.zeros(ts.shape, np.int16)
+        tt[tin] = self.tiles[tj[tin], ti[tin]]
+        tree = (tt == TILE_TREE) | (tt == TILE_FOREST)
+        if tree.any():
+            walk[np.unique(leg[tree])] = True
+        blocked = ~clear & (ys <= self.sample_points(xs, zs))
+        if blocked.any():
+            idx = np.nonzero(blocked)[0]
+            first_leg, first_at = np.unique(leg[idx], return_index=True)
+            keep = ~walk[first_leg] & ~start_hit[first_leg]
+            legs = first_leg[keep]
+            at = idx[first_at][keep]
+            if legs.size:
+                # the bracket is the previous sample *of this leg*: sample 0 of
+                # a leg starts the bisection at the leg's own origin
+                kk = k[at]
+                lo = np.where(kk > 0, ts[np.maximum(at - 1, 0)], 0.0)
+                hi = ts[at]
+                lx = p0[legs, 0]
+                ly = p0[legs, 1]
+                lz = p0[legs, 2]
+                dx = d[legs, 0]
+                dy = d[legs, 1]
+                dz = d[legs, 2]
+                a = lo.copy()
+                b = hi.copy()
+                for _ in range(6):
+                    m = (a + b) * 0.5
+                    above = ly + dy * m > self.sample_points(lx + dx * m, lz + dz * m)
+                    a = np.where(above, m, a)
+                    b = np.where(above, b, m)
+                t_hit[legs] = (a + b) * 0.5
+                hit[legs] = True
+        return hit, t_hit, walk
+
     def _march(self, p0: np.ndarray, p1: np.ndarray, step: float, at,
                trunks: bool = False, canopies: bool = False,
                cull: np.ndarray | None = None,
@@ -1160,6 +1287,15 @@ class Terrain:
 
         ``trunks`` adds the solid cylinders a round bursts on, ``canopies`` the
         leaf volumes that only hide - the two are never asked for together.
+
+        This is the hottest loop in the server (87 % of its calls are a 36 m
+        round's leg, the rest are 1-3 km sight lines) so the tile walk lives
+        here instead of in a generator, and the sample height is read in one
+        call that keeps the tile it last looked at - half the samples of an 8 m
+        step land in the tile the previous one did.  `at` is `obstacle_at` /
+        `sight_at`, which are both "ground + the wall standing on it"; ``sample``
+        repeats that sum inline, and is what the bisection and the walk use, so
+        the numbers are the same ones the callable would return.
         """
         dx = float(p1[0] - p0[0])
         dy = float(p1[1] - p0[1])
@@ -1167,63 +1303,150 @@ class Terrain:
         dist = (dx * dx + dy * dy + dz * dz) ** 0.5
         if dist < 1e-4:
             return False, 0.0, p0
-        if p0[1] <= at(p0[0], p0[2]) + 1.0:
+        x0 = float(p0[0])
+        y0 = float(p0[1])
+        z0 = float(p0[2])
+        if y0 <= at(x0, z0) + 1.0:
             return True, 0.0, p0
+
+        # the ground under a point, with the tile it read held for the next one
+        h_item = self.h.item
+        t_item = self.tiles.item
+        w_item = self.walls.item
+        wmax = self._wmax
+        dmax = self._dmax
+        tw = self.w
+        td = self.d
+        cache = [-1, -1, 0.0, 0.0, 0.0, 0.0]
+
+        def sample(x: float, z: float) -> float:
+            fx = x * INV_TILE
+            fz = z * INV_TILE
+            fx = 0.0 if fx < 0.0 else (wmax if fx > wmax else fx)
+            fz = 0.0 if fz < 0.0 else (dmax if fz > dmax else fz)
+            i = int(fx)
+            j = int(fz)
+            if i != cache[0] or j != cache[1]:
+                cache[0] = i
+                cache[1] = j
+                cache[2] = h_item(j, i)
+                cache[3] = h_item(j, i + 1)
+                cache[4] = h_item(j + 1, i)
+                cache[5] = h_item(j + 1, i + 1)
+            tx = fx - i
+            tz = fz - j
+            y = (cache[2] * (1.0 - tx) + cache[3] * tx) * (1.0 - tz) + \
+                (cache[4] * (1.0 - tx) + cache[5] * tx) * tz
+            ti = int(x * INV_TILE) if x >= 0.0 else -1
+            tj = int(z * INV_TILE) if z >= 0.0 else -1
+            if ti < 0 or tj < 0 or ti >= tw or tj >= td:
+                return y + 1e6                 # off the map: nothing stands there
+            if t_item(tj, ti) == TILE_BUILDING:
+                wv = w_item(tj, ti)
+                return y + (wv if wv else BUILDING_H)
+            return y
+
         prev = 0.0
         # coarse cull: a sample above the maximum of its block is skipped
-        cull = self._cull_solid if cull is None else cull
+        cull_a = self._cull_solid if cull is None else cull
         cdi, cwi, cinv = self._cull_d, self._cull_w, self._cull_inv
-        for ta, tb, i, j in self._spans(p0, dx, dz):
+        trunk_of = self._trunk_hit if trunks else None
+        canopy_of = self._canopy_hit if canopies else None
+        t_tree = TILE_TREE
+        t_forest = TILE_FOREST
+
+        # ---- the tile walk (`_spans`, inlined) ----------------------------
+        x = x0
+        z = z0
+        i = int(x * INV_TILE) if x >= 0.0 else -1
+        j = int(z * INV_TILE) if z >= 0.0 else -1
+        sx = 1 if dx > 0 else -1
+        sz = 1 if dz > 0 else -1
+        tx_ = ((i + (1 if dx > 0 else 0)) * TILE - x) / dx if dx else 2.0
+        tz_ = ((j + (1 if dz > 0 else 0)) * TILE - z) / dz if dz else 2.0
+        ta = 0.0
+        inside = True
+        while True:
+            tb = tx_ if tx_ < tz_ else tz_
+            if tb > 1.0:
+                tb = 1.0
             tt = None
-            if 0 <= i < self.w and 0 <= j < self.d:
-                if trunks:
-                    tt = self._trunk_hit(p0, dx, dy, dz, i, j, ta, tb)
-                if canopies:
-                    tc = self._canopy_hit(p0, dx, dy, dz, i, j, ta, tb)
-                    if tc is not None and (tt is None or tc < tt):
-                        tt = tc
+            if 0 <= i < tw and 0 <= j < td:
+                inside = True
+                # trees are rare tiles, so the type is read once here instead
+                # of inside both solvers (which would each check it again)
+                if (trunks or canopies) and t_item(j, i) in (t_tree, t_forest):
+                    if trunks:
+                        tt = trunk_of(p0, dx, dy, dz, i, j, ta, tb)
+                    if canopies:
+                        tc = canopy_of(p0, dx, dy, dz, i, j, ta, tb)
+                        if tc is not None and (tt is None or tc < tt):
+                            tt = tc
+            else:
+                inside = False
             # a span that sits inside one block can be dismissed as a whole:
             # both ends in the same 128 m cell means the cell bounds it, so
             # `min(y)` above the cell maximum proves the whole span clear
-            if tt is None:
-                ax_ = int((p0[0] + dx * ta) * cinv)
-                az_ = int((p0[2] + dz * ta) * cinv)
-                bx_ = int((p0[0] + dx * tb) * cinv)
-                bz_ = int((p0[2] + dz * tb) * cinv)
+            if tt is None and inside:
+                ax_ = int((x0 + dx * ta) * cinv)
+                az_ = int((z0 + dz * ta) * cinv)
+                bx_ = int((x0 + dx * tb) * cinv)
+                bz_ = int((z0 + dz * tb) * cinv)
                 if ax_ == bx_ and az_ == bz_ and 0 <= ax_ < cwi and 0 <= az_ < cdi:
-                    ya = p0[1] + dy * ta
-                    yb = p0[1] + dy * tb
-                    if (ya if ya < yb else yb) > cull[az_, ax_]:
+                    ya = y0 + dy * ta
+                    yb = y0 + dy * tb
+                    if (ya if ya < yb else yb) > cull_a[az_, ax_]:
                         prev = tb
+                        ta = tb
+                        if ta >= 1.0:
+                            break
+                        x = x0 + dx * ta
+                        z = z0 + dz * ta
+                        if tx_ <= tz_:
+                            i += sx
+                            tx_ = ((i + (1 if dx > 0 else 0)) * TILE - x0) / dx if dx else 2.0
+                        else:
+                            j += sz
+                            tz_ = ((j + (1 if dz > 0 else 0)) * TILE - z0) / dz if dz else 2.0
                         continue
-            n = max(1, int((tb - ta) * dist / step + 0.5))
+            n = int((tb - ta) * dist / step + 0.5)
+            if n < 1:
+                n = 1
             for k in range(1, n + 1):
                 t = ta + (tb - ta) * k / n
-                tx = p0[0] + dx * t
-                tz = p0[2] + dz * t
-                ty = p0[1] + dy * t
-                ci = int(tx * cinv)
-                cj = int(tz * cinv)
-                if 0 <= ci < cwi and 0 <= cj < cdi and ty > cull[cj, ci]:
+                txp = x0 + dx * t
+                tzp = z0 + dz * t
+                typ = y0 + dy * t
+                ci = int(txp * cinv)
+                cj = int(tzp * cinv)
+                if 0 <= ci < cwi and 0 <= cj < cdi and typ > cull_a[cj, ci]:
                     prev = t
                     continue
-                if ty > at(tx, tz):
+                if typ > sample(txp, tzp):
                     prev = t
                     continue
                 if tt is not None and tt < t:
-                    return True, tt, (p0[0] + dx * tt, p0[1] + dy * tt,
-                                      p0[2] + dz * tt)
+                    return True, tt, (x0 + dx * tt, y0 + dy * tt, z0 + dz * tt)
                 a, b = prev, t
                 for _ in range(6):
                     m = (a + b) * 0.5
-                    if p0[1] + dy * m > at(p0[0] + dx * m, p0[2] + dz * m):
+                    if y0 + dy * m > sample(x0 + dx * m, z0 + dz * m):
                         a = m
                     else:
                         b = m
                 t = (a + b) * 0.5
-                return True, t, (p0[0] + dx * t, p0[1] + dy * t, p0[2] + dz * t)
+                return True, t, (x0 + dx * t, y0 + dy * t, z0 + dz * t)
             if tt is not None:
-                return True, tt, (p0[0] + dx * tt, p0[1] + dy * tt, p0[2] + dz * tt)
+                return True, tt, (x0 + dx * tt, y0 + dy * tt, z0 + dz * tt)
+            if tb >= 1.0:
+                break
+            ta = tb
+            if tx_ <= tz_:
+                i += sx
+                tx_ = ((i + (1 if dx > 0 else 0)) * TILE - x0) / dx if dx else 2.0
+            else:
+                j += sz
+                tz_ = ((j + (1 if dz > 0 else 0)) * TILE - z0) / dz if dz else 2.0
         return False, 1.0, p1
 
     def trunk_hit(self, p0: np.ndarray, p1: np.ndarray,

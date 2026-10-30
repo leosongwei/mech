@@ -144,16 +144,6 @@ def sphere_world(local: np.ndarray, pos: np.ndarray, yaw: np.ndarray) -> np.ndar
     return np.stack((x, y, z), axis=-1).reshape(-1, 3)
 
 
-def unit_spheres(etype: int, pos: np.ndarray,
-                 yaw: float) -> list[tuple[int, tuple[float, float, float], float]]:
-    """List of (module, center, radius) hit spheres for one unit."""
-    local, radius, module = sphere_geom(etype)
-    c = sphere_world(local, np.asarray(pos, np.float64)[None, :],
-                     np.asarray([yaw], np.float64))
-    return [(int(module[i]), (float(c[i, 0]), float(c[i, 1]), float(c[i, 2])),
-             float(radius[i])) for i in range(radius.shape[0])]
-
-
 def solve_lead(origin: np.ndarray, tpos: np.ndarray, tvel: np.ndarray | None,
                speed: float, gravity: float, iters: int = 3,
                ) -> tuple[float, float, float]:

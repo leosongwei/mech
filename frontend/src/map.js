@@ -719,7 +719,7 @@ export function zeroAt(wd, yaw, pitch, ox, oy, oz, distance, maxElev) {
   return solveElevation(wd, ox, oy, oz, yaw, pitch, target, maxElev);
 }
 
-// Hit spheres of a unit, mirroring mathutil.unit_spheres: the sight ray and
+// Hit spheres of a unit, mirroring mathutil.sphere_geom: the sight ray and
 // the impact prediction have to see the same bodies the server's rounds do,
 // otherwise the zeroing solution lands somewhere the reticle does not point
 const UNIT_SPHERES = {

@@ -16,6 +16,8 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING
 
+import numpy as np
+
 from . import defs, mathutil as mu
 
 if TYPE_CHECKING:
@@ -27,44 +29,48 @@ MIN_DIST = 25.0          # closer than this the sight point is the mech itself
 ITERS = 4
 
 
-def _ray_sphere(o: tuple[float, float, float], d: tuple[float, float, float],
-                c: tuple[float, float, float], r: float) -> float | None:
-    """Distance along the ray to the near intersection, or None."""
-    ox, oy, oz = o[0] - c[0], o[1] - c[1], o[2] - c[2]
-    b = ox * d[0] + oy * d[1] + oz * d[2]
-    disc = b * b - (ox * ox + oy * oy + oz * oz - r * r)
-    if disc < 0.0:
-        return None
-    t = -b - math.sqrt(disc)
-    return t if t >= 0.0 else None
-
-
 def _unit_hit(world: World, origin: tuple[float, float, float],
               direction: tuple[float, float, float], max_dist: float, ignore: int,
               faction: int = -1) -> tuple[tuple[float, float, float] | None, float]:
-    e = world.ecs
-    ids = world.units()
-    if ids.size == 0:
+    """Nearest hull the ray meets, solved against the tick's hit-sphere table.
+
+    `world.aim_spheres()` is the table the projectile sweep already built: every
+    hull's spheres, in id order, where they stood when this tick started - which
+    is where they still stand for a system that runs before `movement`.  Asking
+    for it instead of rebuilding the geometry per shot is most of what taking a
+    shot used to cost: it was one `sphere_world` per candidate hull, plus a list
+    of tuples built for it.
+    """
+    sph, row_ok = world.aim_spheres()
+    centres = sph[0]
+    if centres.shape[0] == 0:
         return None, max_dist
-    pos = e["pos"]
-    px = pos[ids, 0] - origin[0]
-    pz = pos[ids, 2] - origin[2]
-    near = ids[(px * px + pz * pz) < (max_dist + 12.0) ** 2]
-    best, best_t = None, max_dist
-    for uid in near:
-        uid = int(uid)
-        if uid == ignore:
-            continue
-        if faction >= 0 and int(e["faction"][uid]) == faction:
-            continue                    # own rounds pass through their own side
-        yaws = float(e["yaw"][uid])
-        for _mod, c, r in mu.unit_spheres(int(e["etype"][uid]), pos[uid], yaws):
-            t = _ray_sphere(origin, direction, c, r)
-            if t is not None and t < best_t:
-                best_t = t
-                best = (origin[0] + direction[0] * t, origin[1] + direction[1] * t,
-                        origin[2] + direction[2] * t)
-    return best, best_t
+    px = centres[:, 0] - origin[0]
+    pz = centres[:, 2] - origin[2]
+    reach = max_dist + 12.0
+    keep = (px * px + pz * pz) < reach * reach
+    keep &= row_ok                          # a hull, alive, still where it says
+    keep &= sph[2] != ignore
+    if faction >= 0:
+        keep &= sph[4] != faction           # own rounds pass through their own side
+    if not keep.any():
+        return None, max_dist
+    idx = np.nonzero(keep)[0]
+    c = centres[idx].astype(np.float64)
+    r = sph[1][idx].astype(np.float64)
+    o = np.asarray(origin, np.float64)
+    d = np.asarray(direction, np.float64)
+    rel = c - o
+    b = rel @ d
+    disc = b * b - (np.einsum("ij,ij->i", rel, rel) - r * r)
+    ok = disc >= 0.0
+    t = -b - np.sqrt(np.maximum(disc, 0.0))
+    ok &= (t >= 0.0) & (t < max_dist)
+    if not ok.any():
+        return None, max_dist
+    k = int(np.argmin(np.where(ok, t, np.inf)))
+    tt = float(t[k])
+    return (o[0] + d[0] * tt, o[1] + d[1] * tt, o[2] + d[2] * tt), tt
 
 
 def sight_point(world: World, origin: tuple[float, float, float],

@@ -109,23 +109,36 @@ def mech_hp_slots() -> list[int]:
     return slots
 
 
-def hp_columns(world: World, eids: np.ndarray) -> np.ndarray:
+def hp_columns(world: World, eids: np.ndarray,
+               cols: dict | None = None) -> np.ndarray:
     """``(n, 4)`` uint16 - the hull pool in column 0, the arm pools in 2 and 3.
 
     Column 1 (`MOD_TORSO`) is always zero: the torso is hit geometry, not a
     health bar.  The layout is the client's (`net.js` reads four u16 per unit),
-    so it is built here rather than stored per entity.
+    so it is built here rather than stored per entity.  ``cols`` is the block
+    :meth:`ECS.columns` already gathered for these ids (`hp`, `arm_hp`,
+    `armed`), so a snapshot does not resolve the archetypes twice.
     """
     e = world.ecs
     out = np.zeros((eids.size, 4), np.uint16)
     if eids.size == 0:
         return out
-    out[:, defs.MOD_CHASSIS] = np.clip(e["hp"][eids], 0, 65535).astype(np.uint16)
-    armed = e.has_arr(eids, "arm_hp")
+    if cols is None:
+        cols = e.columns(eids, ("hp", "arm_hp"))
+        cols["armed"] = e.has_arr(eids, "arm_hp")
+    out[:, defs.MOD_CHASSIS] = np.clip(cols["hp"], 0, 65535).astype(np.uint16)
+    armed = cols["armed"]
     if armed.any():
         out[armed, defs.MOD_LEFT:defs.MOD_RIGHT + 1] = np.clip(
-            e["arm_hp"][eids[armed]], 0, 65535).astype(np.uint16)
+            cols["arm_hp"][armed], 0, 65535).astype(np.uint16)
     return out
+
+
+# every component the unit block carries, gathered in one pass
+UNIT_COLUMNS = ("pos", "vel", "owner", "etype", "faction", "target", "hp",
+                "arm_hp", "ammo", "mag", "weapon", "yaw", "pitch", "turret_yaw",
+                "leg_yaw", "sight_yaw", "sight_pitch", "trigger", "reload_t",
+                "wreck_kind")
 
 
 def snapshot_bytes(world: World) -> bytes:
@@ -134,69 +147,73 @@ def snapshot_bytes(world: World) -> bytes:
     pids = world.projectiles()
     arr = np.zeros(len(uids), UNIT_DTYPE)
     if len(uids):
-        owner = e["owner"][uids]
-        hp = hp_columns(world, uids)
-        ammo = np.clip(e["ammo"][uids], 0, 65535).astype(np.uint16)
-        mag = np.clip(e["mag"][uids], 0, 65535).astype(np.uint16)
-        trig = e["trigger"][uids]
-        rel = e["reload_t"][uids] > 0.0
+        col = e.columns(uids, UNIT_COLUMNS)
+        col["armed"] = e.has_arr(uids, "arm_hp")
+        owner = col["owner"]
+        hp = hp_columns(world, uids, col)
+        ammo = np.clip(col["ammo"], 0, 65535).astype(np.uint16)
+        mag = np.clip(col["mag"], 0, 65535).astype(np.uint16)
+        trig = col["trigger"]
+        rel = col["reload_t"] > 0.0
         flags = np.zeros(len(uids), np.uint8)
         flags |= (trig & 1).astype(np.uint8)
         flags |= ((trig >> 1) & 1).astype(np.uint8) << 1
         flags |= rel[:, 0].astype(np.uint8) << 2
         flags |= rel[:, 1].astype(np.uint8) << 3
         # bits 4-5: what a wreck used to be (0 infantry, 1 apc, 2 mech)
-        flags |= (e["wreck_kind"][uids] & 3).astype(np.uint8) << 4
+        flags |= (col["wreck_kind"] & 3).astype(np.uint8) << 4
         arr["id"] = uids
-        arr["type"] = e["etype"][uids]
-        arr["faction"] = e["faction"][uids]
+        arr["type"] = col["etype"]
+        arr["faction"] = col["faction"]
         arr["owner"] = np.where(owner < 0, 255, np.minimum(owner, 254)).astype(np.uint8)
         arr["flags"] = flags
-        arr["target"] = np.where(e["target"][uids] < 0, 65535,
-                                 np.minimum(e["target"][uids], 65534)).astype(np.uint16)
-        arr["x"] = e["pos"][uids, 0]
-        arr["y"] = e["pos"][uids, 1]
-        arr["z"] = e["pos"][uids, 2]
-        arr["yaw"] = e["yaw"][uids]
-        arr["pitch"] = e["pitch"][uids]
-        arr["turret"] = e["turret_yaw"][uids]
-        arr["leg"] = e["leg_yaw"][uids]
-        arr["vx"] = e["vel"][uids, 0]
-        arr["vz"] = e["vel"][uids, 2]
+        arr["target"] = np.where(col["target"] < 0, 65535,
+                                 np.minimum(col["target"], 65534)).astype(np.uint16)
+        arr["x"] = col["pos"][:, 0]
+        arr["y"] = col["pos"][:, 1]
+        arr["z"] = col["pos"][:, 2]
+        arr["yaw"] = col["yaw"]
+        arr["pitch"] = col["pitch"]
+        arr["turret"] = col["turret_yaw"]
+        arr["leg"] = col["leg_yaw"]
+        arr["vx"] = col["vel"][:, 0]
+        arr["vz"] = col["vel"][:, 2]
         arr["hp"] = hp
         arr["ammo"] = ammo
         arr["mag"] = mag
-        arr["weapon"] = e["weapon"][uids].astype(np.uint16)
-        arr["syaw"] = e["sight_yaw"][uids]
-        arr["spitch"] = e["sight_pitch"][uids]
+        arr["weapon"] = col["weapon"].astype(np.uint16)
+        arr["syaw"] = col["sight_yaw"]
+        arr["spitch"] = col["sight_pitch"]
 
     parr = np.zeros(len(pids), PROJ_DTYPE)
     if len(pids):
+        pcol = e.columns(pids, ("proj_kind", "proj_wid", "faction", "pos", "vel"))
         parr["id"] = pids
-        parr["kind"] = e["proj_kind"][pids]
-        parr["wid"] = e["proj_wid"][pids]
-        parr["faction"] = e["faction"][pids]
-        parr["x"] = e["pos"][pids, 0]
-        parr["y"] = e["pos"][pids, 1]
-        parr["z"] = e["pos"][pids, 2]
-        parr["vx"] = e["vel"][pids, 0]
-        parr["vy"] = e["vel"][pids, 1]
-        parr["vz"] = e["vel"][pids, 2]
+        parr["kind"] = pcol["proj_kind"]
+        parr["wid"] = pcol["proj_wid"]
+        parr["faction"] = pcol["faction"]
+        parr["x"] = pcol["pos"][:, 0]
+        parr["y"] = pcol["pos"][:, 1]
+        parr["z"] = pcol["pos"][:, 2]
+        parr["vx"] = pcol["vel"][:, 0]
+        parr["vy"] = pcol["vel"][:, 1]
+        parr["vz"] = pcol["vel"][:, 2]
 
     sids = world.ecs.query("smoke_r")          # canisters and puffs alike
     sarr = np.zeros(len(sids), SMOKE_DTYPE)
     if len(sids):
+        scol = e.columns(sids, ("pos", "smoke_r", "smoke_t"))
         sarr["id"] = sids
         flags = np.zeros(len(sids), np.uint8)
         flags |= world.ecs.has_arr(sids, "canister").astype(np.uint8)
         sarr["flags"] = flags
-        sarr["x"] = e["pos"][sids, 0]
-        sarr["y"] = e["pos"][sids, 1]
-        sarr["z"] = e["pos"][sids, 2]
-        sarr["rx"] = e["smoke_r"][sids, 0]
-        sarr["ry"] = e["smoke_r"][sids, 1]
-        sarr["rz"] = e["smoke_r"][sids, 2]
-        sarr["t"] = e["smoke_t"][sids]
+        sarr["x"] = scol["pos"][:, 0]
+        sarr["y"] = scol["pos"][:, 1]
+        sarr["z"] = scol["pos"][:, 2]
+        sarr["rx"] = scol["smoke_r"][:, 0]
+        sarr["ry"] = scol["smoke_r"][:, 1]
+        sarr["rz"] = scol["smoke_r"][:, 2]
+        sarr["t"] = scol["smoke_t"]
 
     header = struct.pack("<IIHHH", MAGIC, world.tick, len(uids), len(pids), len(sids))
     return header + arr.tobytes() + parr.tobytes() + sarr.tobytes()

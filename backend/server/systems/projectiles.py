@@ -78,7 +78,15 @@ def run(world: World, dt: float) -> None:
     # thing on the field (a missile covers 20 m of ground a tick)
     reach = float(np.abs(sph[8]).max()) if sph[8].size else 0.0
 
-    for pid in pids:
+    # ---- pass one: fly every round, remember the leg it covered -------
+    # The collision half is solved for all the legs at once (Terrain.
+    # ground_hits_many), so the flight and the geometry are two passes:
+    # a hundred short legs make one numpy walk instead of a hundred.
+    n_round = pids.size
+    legs0 = np.zeros((n_round, 3))
+    legs1 = np.zeros((n_round, 3))
+    flying = np.zeros(n_round, bool)
+    for i, pid in enumerate(pids):
         if not e.alive[pid]:
             continue
         wd = defs.WEAPONS[int(wid[pid])]
@@ -194,8 +202,34 @@ def run(world: World, dt: float) -> None:
         pos[pid] = p1
         trav[pid] = float(trav[pid]) + float(np.linalg.norm(v)) * dt
 
-        # ---- terrain / building collision --------------------------------
-        gh, gt, gp = terrain.ground_hit(p0, p1, 9.0)
+        legs0[i] = p0
+        legs1[i] = p1
+        flying[i] = True                            # this leg has to be judged
+
+    # ---- the terrain of every leg at once ----------------------------
+    hit = np.zeros(n_round, bool)
+    hit_t = np.ones(n_round)
+    walk = np.zeros(n_round, bool)
+    if flying.any():
+        hit[flying], hit_t[flying], walk[flying] = terrain.ground_hits_many(
+            legs0[flying], legs1[flying], 9.0)
+
+    # ---- pass two: what each leg ran into, in ascending round order ---
+    # (the side effects - a burst entity per impact, a destroyed round -
+    # stay in the order the loop always had, so ids are handed out the
+    # way every other system expects)
+    for i, pid in enumerate(pids):
+        if not flying[i]:
+            continue
+        wd = defs.WEAPONS[int(wid[pid])]
+        k = int(kind[pid])
+        p0 = legs0[i]
+        p1 = legs1[i]
+        if walk[i]:
+            # a leg through a tree tile: a trunk is solved, not sampled
+            gh, gt, _ = terrain.ground_hit(p0, p1, 9.0)
+        else:
+            gh, gt = bool(hit[i]), float(hit_t[i])
         best_t = gt if gh else 2.0
         best_unit = -1
         best_mod = 0

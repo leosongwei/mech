@@ -112,7 +112,11 @@ frontend/
   `ecs.slot(eid)` is the same thing for a per-entity loop that touches many
   components — one lookup, then `bufs["pos"][row, 0]`; `"combat" in bufs` is the
   component test. `ecs.locate(ids)` gives `(rows, archetypes)` when the loop has
-  to stay in query order.
+  to stay in query order. `ecs.columns(ids, names)` is the batch door: it
+  resolves the archetype split **once** and returns a dict of arrays for many
+  components at once (`View` pays that split again for every component, which is
+  why `netcode.snapshot_bytes` reads its twenty columns through it — 5× on the
+  wire build). The values are the ones a `View` gives, defaults included.
 * **Iteration order is part of the simulation.** `weapons`, `ai` and the
   spread/acquire draws take numbers from `world.rng` inside a loop over
   entities, so visiting them in a different order produces a different battle.
@@ -272,6 +276,26 @@ frontend/
   so its `pos` is the start and `disp` is predicted from its velocity.  The
   broad-phase box grows by the fastest row's displacement (`reach`), or a
   missile crossing into a round's leg is never a candidate.
+  **One table per tick is the shape, but not the count.**  `world.update` used to
+  throw the table away every tick, so `weapons` (which fires before `movement`)
+  had to rebuild every hull's spheres *at its own stage* to solve an aim; now
+  `world.aim_spheres()` is the aiming door: it hands back the table it has plus
+  `row_ok` (those ids are still live hulls owning their ball, and their `pos` is
+  within 10 m of the centre in the table), and only builds one if there is none
+  for this tick — marking it `_sph_premove`, which forces `sphere_table` to
+  rebuild before the sweep.  A table built before `movement` is *not* the one the
+  sweep may use; that flag is the whole of the distinction.
+* **The geometry is batched, the bodies are not.**  `terrain.ground_hits_many`
+  takes a whole tick's worth of round legs at once and answers where each one
+  meets the ground, because a leg is 36 m of terrain sampling and there are
+  dozens of them — `projectiles.run` therefore flies every round first, asks once,
+  and only then resolves impacts in ascending `pid` order (entity creation order
+  is part of the simulation, not an implementation detail).  `walk` in its return
+  says "this leg crossed a tree tile", which is handed back to the scalar
+  `ground_hit`: a trunk is a cylinder solved analytically, not something to
+  sample.  What is *not* worth batching is the integration itself — a few
+  numpy calls over one or two rows cost more than the scalar arithmetic they
+  replace (measured, twice).
 * **The fuse settles the round it fused on.**  `systems/proximity.py` fuses on
   `person` ∪ `interceptable` and bursts at the round's position at `t*`; a
   missile found there takes `combat.splash` **immediately**, at the gap it was
@@ -453,6 +477,16 @@ frontend/
   which lands the burst on the outer face.  The client's `predictImpact`
   samples its 1/30 step every 8 m the same way - testing only the end point let
   fast rounds predict a hit behind the building.
+  `_march` is the one ray walker four systems share (AI sight, ballistic
+  elevation, hull collision, a round landing), and it is the hot loop of the
+  whole simulation: **87.6 % of its calls are ground legs of 50 m or less**, so
+  what pays off there is the cost of one sample, not the length of the ray.
+  Keep it scalar and inline (`_spans` unrolled into the loop, `sample()` caching
+  the previous tile's four corner heights, the tree test hoisted out of
+  `_trunk_hit`/`_canopy_hit`).  Vectorising a *single* ray is a trap: five
+  samples are cheaper in plain Python than in a dozen small numpy calls (tried,
+  measured 10× slower).  `ground_hits_many` is the other side of the same coin -
+  many rays, one batch.
 * **Trees are trunks for physics, canopies for sight.** A tree/forest tile
   holds 1-5 trees whose trunks are the only solid part of it: `_trunks(i, j)`
   (server) / `treeTrunks` in `map.js` lay them out from one hash both sides
@@ -740,6 +774,24 @@ cd frontend && npm install && npm run build      # -> backend/assets/
   ```bash
   .venv/bin/python tools/replay.py          # compare
   .venv/bin/python tools/replay.py --save   # re-baseline
+  ```
+* **`tools/profile_battle.py`** is where "what does a tick cost" is answered:
+  it drops the 30 Hz sleep and runs a scripted battle as fast as the CPU allows,
+  then prints wall time, ticks/s, every entry of `world.systems` (total, mean per
+  tick, worst tick), the netcode cost per tick and a per-minute timeline - and
+  with cProfile on, the function ranking too (inflated ~1.7-2.5×, so only read it
+  for the order).  `--no-profile` is the honest read; `--minutes 20` is the
+  meaningful window, because the field only matures after ~10 minutes and three
+  of the four optimisations in `doc/profiling_results.md` scale with it.
+  ```bash
+  .venv/bin/python tools/profile_battle.py --minutes 5 --no-profile
+  .venv/bin/python tools/profile_battle.py --minutes 5,10,20 --out /tmp/prof.json
+  # an A/B needs a clean checkout, not a stash of the work in progress.
+  # `backend/assets` is gitignored, so make it or `server.main` refuses to import;
+  # the worktree has no venv of its own, so name the main one.
+  git worktree add /tmp/mech-base HEAD && mkdir -p /tmp/mech-base/backend/assets
+  cd /tmp/mech-base && /path/to/mech/.venv/bin/python tools/profile_battle.py \
+      --minutes 20 --no-profile --out /tmp/prof_base.json
   ```
 * **`tools/raid_trace.py`** runs a whole battle headless and draws the raiders:
   the **force gradient** of both armies, every raider's planned route (dashed)

@@ -11,6 +11,30 @@
 
 ---
 
+## 2026-10-30 · 服务器 tick 提速 26 %（弹道/视线/快照，玩起来不变）
+
+- 纯性能改动，**不改任何数值**：1 分钟脚本化对战 `tools/replay.py` 逐项 0.0000 %，
+  3000 tick 的快照逐字节相同，`tools/gunnery_check.py` 全过，射程拦截仍是 32 发里击落 30 发。
+- 实测（20 分钟无头对战，同一台机器、优化前后各一遍）：整 tick **18.98 → 13.28 ms**，
+  墙钟 683 → 478 s，单 tick 最坏 100 → 63 ms；超 33.3 ms 预算的 tick 占比 **8.6 % → 0.3 %**。
+  `weapons`（瞄准解算）−47 %、`ai`（视线）−29 %、`projectiles`（地形碰撞）−27 %、
+  快照打包 −66 %。
+- 玩家能感觉到的是**卡顿变少**：单位越多、打得越热闹，"掉一拍"的 tick 越少。
+- **唯一一处行为细节**：`projectiles` 的地形碰撞改成批量采样（沿弹丸腿 9 m 一步，
+  两端都采），与原来的逐格走查相比**判定完全一致**（4000 条随机腿：0 处"命中/不命中"
+  分歧），只有爆点位置的分辨率粗了一点——最差差 0.2 m，即二分 6 次的精度。
+  两类腿仍走原来的逐格走查：采样点落在树格里的、起点落在树格里的（树干是解析求解的
+  圆柱，采样解不了）。
+  这一点点爆点偏移足以让 1 分钟的脚本化对战从第 ~110 tick 起分叉，所以
+  `tools/replay.py` 的基线重写了一次；把批量路径强行关掉再跑，900 tick 与**旧**基线
+  逐项相同——因此地形走查、瞄准解算、快照打包这三项改动**一个数都没动**。
+- 涉及文件：`backend/server/terrain.py`、`backend/server/ballistics.py`、
+  `backend/server/systems/projectiles.py`、`backend/server/world.py`、
+  `backend/server/ecs.py`、`backend/server/netcode.py`；
+  报告与工具：`doc/profiling_results.md`、`tools/profile_battle.py`。
+
+---
+
 ## 2026-10-30 · 修掉一个会让整个 tick 抛异常的爆炸判定 bug
 
 - **症状**：长时间对局里偶发 `KeyError: 'hp'`，整个 tick 的管线在 `blasts.run` 里被打断

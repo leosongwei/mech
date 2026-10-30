@@ -110,6 +110,9 @@ def run(world: World, dt: float) -> None:
     trigger = e["trigger"]
     trigger_prev = e["trigger_prev"]
     owner = e["owner"]
+    # the AI's own target (`systems/ai.py` writes it): what a lock weapon on a
+    # hull nobody is driving takes its lock from
+    ai_target = e["target"]
     rows, archs = e.locate(ids)
     arm_bufs = e.buffers("arm_hp")
     cool_bufs = e.buffers("cool")
@@ -164,14 +167,31 @@ def run(world: World, dt: float) -> None:
             target = -1
             if wd["lock"]:
                 pl = world.players.get(int(owner[eid]))
-                if pl is None or pl.lock_target < 0 or pl.lock_progress < 1.0:
-                    continue
-                if not e.alive[pl.lock_target]:
-                    continue
-                target = pl.lock_target
+                if pl is not None:
+                    if pl.lock_target < 0 or pl.lock_progress < 1.0:
+                        continue
+                    if not e.alive[pl.lock_target]:
+                        continue
+                    target = pl.lock_target
+                else:
+                    # an AI crew has no seeker display to watch: its sight is
+                    # already on the hull it is engaging (the trigger waits for
+                    # the bore), so the round leaves the rack holding that lock
+                    tid = int(ai_target[eid])
+                    if tid < 0 or not e.alive[tid]:
+                        continue
+                    target = tid
             fire(world, eid, arm, wid, wd, target)
             mag[row, arm] = int(mag[row, arm]) - 1
-            cool[row, arm] = 60.0 / max(wd["rpm"], 1.0)
+            cycle = 60.0 / max(wd["rpm"], 1.0)
+            if wd["lock"] and int(owner[eid]) < 0:
+                # an AI crew does not empty a rack of fire-and-forget rounds at
+                # the rack's own cycle: it launches one, watches it arrive, and
+                # only then thinks about the next.  Eight tubes at 0.5 s was the
+                # whole nest gone in four seconds; at `AI_LAUNCH_GAP` a top
+                # attack is something that keeps coming back instead
+                cycle = max(cycle, defs.AI_LAUNCH_GAP)
+            cool[row, arm] = cycle
         trigger_prev[eid] = trig
 
 

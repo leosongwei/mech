@@ -842,6 +842,7 @@ export class HUD {
     ctx.fillStyle = 'rgba(220,200,200,0.75)';
     ctx.fillText(s.range ? 'RESPAWN ON THE RANGE FIRING LINE'
       : 'RESPAWN ONE TOWN BACK FROM WHERE YOU FELL, OR AT THE BASE', w / 2, h / 2 + 44);
+    ctx.fillText('LOADOUT LOST - STANDARD ARMS ON RE-DEPLOY', w / 2, h / 2 + 64);
     ctx.restore();
   }
 

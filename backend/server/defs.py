@@ -448,8 +448,47 @@ WRECK_TIME = 10.0
 BUYABLE = [WID_AC30, WID_MG127, WID_ROCKET, WID_SACLOS, WID_TOPATTACK, WID_G105]
 
 # what a mech leaves the lobby with: the loadout is not a menu choice - it is
-# bought back at the wrench (shop) like any other piece of equipment
+# bought back at the wrench (shop) like any other piece of equipment - and it is
+# what a pilot comes back with after dying: the machine he was killed in is
+# gone, hardware and all
 DEFAULT_LOADOUT = [WID_AC30, WID_ROCKET]
+
+# ---- AI crews ------------------------------------------------------------
+# An AI crew has no economy to shop with, so a varied arsenal is bought with a
+# die roll instead: every mech hull fielded without an explicit loadout
+# (`World.spawn_unit`) draws one template off this table.  Weights are shares of
+# a single draw and have to add up to 1.
+AI_LOADOUTS = (
+    (0.30, (WID_AC30, WID_ROCKET)),        # the standard pair
+    (0.20, (WID_AC30, WID_AC30)),          # twin cannon: twice the rate, no rocket
+    (0.20, (WID_MG127, WID_ROCKET)),       # cheap gun, same rocket nest
+    (0.10, (WID_AC30, WID_SACLOS)),        # a beam rider in the right arm
+    (0.10, (WID_AC30, WID_G105)),          # 105 mm: one-round kills at 2.6 km
+    (0.10, (WID_AC30, WID_TOPATTACK)),     # fire and forget, over the roof
+)
+
+
+def ai_loadout(rng) -> tuple[int, int]:
+    """One template off `AI_LOADOUTS`, drawn with `rng.random()`.
+
+    The draw is part of the simulation (it comes off `world.rng`), so a list of
+    templates in a different order fields a different battle.
+    """
+    r = rng.random()
+    for share, loadout in AI_LOADOUTS:
+        r -= share
+        if r <= 0.0:
+            return loadout
+    return AI_LOADOUTS[-1][1]
+
+
+# seconds between two launches of a lock-on round by an AI crew.  A rack of
+# eight fire-and-forget rounds at the rack's own 0.5 s cycle is four seconds of
+# war and an empty arm for the rest of the battle, so the crew launches one,
+# watches it arrive and picks the next moment (`systems/weapons.py`).  A beam
+# rider is not on this clock: its price is holding the sight on the target, so
+# it fires at the rack's own rate.
+AI_LAUNCH_GAP = 15.0
 
 # ------------------------------------------------------------------- shop
 # A weapon is bought as "hardware + a full load of ammunition": the hardware

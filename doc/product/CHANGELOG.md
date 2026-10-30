@@ -11,6 +11,43 @@
 
 ---
 
+## 2026-10-31 · AI 机甲按模板抽装备（六种配置，含两种导弹）；攻顶 15 s 一发；阵亡装备不保留
+
+- **AI 机甲不再千篇一律一条 30mm + 火箭巢**：出生时按概率抽一套配置
+  （`defs.AI_LOADOUTS`）——**30%** 30mm + 火箭巢、**20%** 双 30mm、**20%** 12.7mm
+  机枪 + 火箭巢、**10%** 30mm + SACLOS、**10%** 30mm + 105mm、**10%** 30mm + 攻顶。
+  指挥部机甲、城镇增援、敌后破袭机甲、`debug_spawn` 出来的 AI 车全都抽这张表；
+  **玩家自己的机甲不受影响**（仍是标准配置 + 基地换装）。
+- **AI 打得中导弹**：火控的提前量改为按"够得着的最慢那发弹"算（`mathutil.mean_speed`）。
+  原来一律按主武器的炮口初速（30mm 1080 m/s）解交汇点，SACLOS 一类的导弹于是**稳定
+  落在移动目标身后**——实测 16 发只擦掉几辆车。靶场实测（1.1 km、静止靶）：同一台
+  机甲 SACLOS 十六发打出 3–4 个击杀、攻顶八发 3–4 个。APC 的 ATGM 也吃这条修正。
+- **AI 的攻顶弹 `15 s` 一发**（`defs.AI_LAUNCH_GAP`）：八根管子按发射架 0.5 s 的
+  循环连喷，四秒就清空、之后整局再无导弹。现在是打一发、等它落地、再挑下一个时机。
+  **SACLOS 不设这个限制**（发射架循环 0.3 s，十六发打完为至）。AI 也不需要玩家那条
+  1.1 s 的锁定进度条：炮口压上目标即带着锁定出管。
+- **阵亡不再保留装备**：机甲被打爆，装上去的武器一起没了，重生出来的是**标准机体**
+  （左臂 30mm 机炮 + 右臂无制导火箭巢）。花 $800 买的 105mm 打完那一局就没了，想再带
+  得回基地/城镇重新买。死亡界面第 4 行提示 `LOADOUT LOST - STANDARD ARMS ON RE-DEPLOY`。
+- **靶场可以放一台会开火的 AI 当活靶**：`debug_spawn` 放下来的 AI 车现在跑完整的
+  地面 AI（`modes/range/test_ai.py` + `ai.run(hulls=...)` 的过滤，那台车带
+  `range_drone` 标记），会索敌、开火、打导弹；**靶场的 APC 靶与防御哨位仍然不还手**
+  （它们没有这个标记）。靶场没有车道，所以 AI 车走直线，不走路点。
+- 涉及文件：`backend/server/defs.py`（`AI_LOADOUTS` / `ai_loadout` / `AI_LAUNCH_GAP`）、
+  `world.py`（`spawn_unit` 抽模板、`spawn_mech` 重置 `loadout`）、
+  `systems/weapons.py`（AI 的锁定武器取自身目标、`AI_LAUNCH_GAP` 冷却）、
+  `systems/ai.py`（`run(hulls=)` 过滤、右臂按自身射程开火、按最慢弹算提前量、
+  无车道时的直线推进）、`mathutil.py`（`mean_speed`）、`components.py`
+  （`range_drone` 标记）、`modes/base.py`（`console_spawn_extra`）、
+  `modes/range/__init__.py`、`modes/range/test_ai.py`（新）、
+  `main.py`（`debug_spawn` 打标记、`join` 里不再重复设 loadout）、
+  `frontend/src/hud.js`（死亡界面第 4 行）。产品页 `units.md`（模板表 + 行为两条）、
+  `weapons.md`（AI 用导弹一节）、`flow.md`（死亡不掉武器 → 装备随车损失）、
+  `screens.md`（死亡界面四行）、`range.md`（会还击的 AI 车）。
+  `tools/fixtures/replay_battle.json` 已按新规则重新基线。
+
+---
+
 ## 2026-10-31 · 攻顶导弹脱锁后不再变铁：按记忆继续飞，3° 内自动复锁
 
 - **烟幕/地形不再等于打空**：红外攻顶弹的导引头一被挡住，锁定照旧立刻断、客户端照旧

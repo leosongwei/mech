@@ -58,7 +58,8 @@ backend/
                            #   raids.py: the raiding parties - one mech per lane,
                            #   force-gradient + two-level (128 m / 16 m) pathfinding
       range/               #   targets.py: passive APC targets, bunkers.py: ridge blockhouses
-                           #   (nothing on the range shoots back)
+                           #   test_ai.py: the ground AI for hulls a pilot drops there
+                           #   (the range's own fixtures never shoot back)
   assets/                  # compiled client (webpack output, gitignored)
 tools/
   replay.py                # scripted battle replay: the simulation's sanity harness
@@ -177,7 +178,35 @@ frontend/
   pause in a fight — the mech can still look around. The job dies with the
   mech (and the money with it), and a second order is refused until it ends.
   Durations are `defs.REARM_*` (swap 2 s per arm, ammo 4 s per arm, repair 2 s
-  per 100 hp); `shop.quote` charges a swap both a fit and a reload.
+  per 100 hp); `shop.quote` charges a swap both a fit and a reload. What was
+  bought dies with the hull: `World.spawn_mech` resets `Player.loadout` to
+  `defs.DEFAULT_LOADOUT`, so every respawn is a fresh standard machine and a
+  105 mm is a thing to buy again.
+* **An AI crew has no shop, so it draws its loadout.** `World.spawn_unit` hands
+  a hull that declares `arms` (the mech — the one component test, not a type
+  switch) a template off `defs.AI_LOADOUTS` when no `weapons` were passed: six
+  configs at 30/20/20/10/10/10 %, the two old arms first so two thirds of the
+  field is unchanged. A pilot's mech always passes `player.loadout`, and the
+  range's defence post passes its own, so both are untouched by the table. The
+  draw comes off `world.rng`, which makes the order of the list part of the
+  simulation like every other draw.
+* **An AI crew fires the arms it has.** `ai._aim_and_fire` used to pull the
+  right trigger only for `kind in ("rocket", "saclos")`; it now fires any arm
+  whose own `range` covers the target (still 2.2 km for those two, `ai_range`
+  for everything else), and `weapons.run` gives a `lock` weapon on an
+  ownerless hull the lock the crew already holds — the AI's `target`
+  component — because there is no `pl.lock_target` to wait for. There is also a
+  floor under the cycle: `defs.AI_LAUNCH_GAP` (15 s) for a lock round, or eight
+  tubes are gone in four seconds and the machine is toothless for the rest of
+  the match. SACLOS is not on that clock — its price is holding the sight.
+* **The sight is one line, so the lead is solved for the slowest round.**
+  `ai._engage` picks the aim speed as the minimum `mathutil.mean_speed` over
+  the arms that reach the target, not the primary weapon's muzzle figure: a
+  beam rider averages ~340 m/s at 1 km against the cannon's 1080, and leading
+  it with the cannon's number put every missile tens of metres behind a moving
+  hull (measured: 16 launches, no kills on movers; after: 3–4 kills per 16).
+  `mean_speed` is the boost-and-coast profile off `vel` / `thrust` / `maxvel` /
+  `burn`, so a new missile needs no entry in `ai.py`.
 * **A launcher of tubes is described once, in `defs.rack`.** `rack(cols, rows,
   count, bore=, length=, centre=, ...)` hands back a plain dict — the lattice,
   the tube diameter and length, the pitch, the mouth (`centre + length/2`) and
@@ -246,7 +275,8 @@ frontend/
   shared code asks about (`fixed_faction`, `start_money`, `rearm_anywhere`,
   `restart_respawn`, `mech_spawn`, `respawn_delay`). Adding a mode means adding
   a folder, never another `if` in a shared system. Battle runs `ai` + `waves`
-  (capture and reinforcement waves); range runs `targets` and no AI at all.
+  (capture and reinforcement waves); range runs `targets`, the missile post, and
+  `ai` only over the hulls a pilot spawned there (`range/test_ai.py`).
 * **A death is planned from where it happened.** `World.kill` records
   `Player.death_pos` and asks the mode for `respawn_delay`; the mode's
   `mech_spawn` later turns that position into a place. Battle's version
@@ -391,7 +421,7 @@ frontend/
   missile type at it and prints the outcome per round, read out of the server
   log (`missile N took X (prox Y m) - hp A -> B`, `intercept: ... round N shot
   down at ...` - both DEBUG, the tool raises those loggers itself).  Measured:
-  30 of 32 rounds fused and shot down.
+  34 of 36 rounds fused and shot down (two got through).
 * **A guided round flies an airframe, it does not follow a curve** (`flight.py`).
   The top-attack missile is a point mass with an angle of attack: guidance demands
   a lateral acceleration, `CL = m·a/(qS)` capped at `cl_max` is what the airframe
@@ -969,9 +999,18 @@ once; pressing `ENTER` in game must not send another `join`.
 on <http://127.0.0.1:8011>: a 4 km test map, one 200 m hill NW, plains
 elsewhere, 12 blue APC targets (2 patrolling) that respawn 3 s after dying, one
 blue missile-defence post (`modes/range/interceptor.py`, 5 s respawn) and a
-ring of per-pilot spawn berths. **No AI on the range shoots at the ground** - the
-targets and the post never fire at a hull, so it is the place to test ballistics
-or look at a model up close. The side is the *lobby's* choice (`fixed_faction`
+ring of per-pilot spawn berths. **The range's own fixtures never shoot at the
+ground** - the targets and the post fire at nothing, so it is the place to test
+ballistics or look at a model up close. A hull a pilot drops there himself
+(`debug_spawn`) is the exception: it is tagged `range_drone`
+(`Mode.console_spawn_extra`) and `modes/range/test_ai.py` runs `ai.run(hulls=)`
+over exactly those hulls, so a spawned red mech picks its own fights with the
+blue targets - which is how an AI crew's missile arm gets watched without
+waiting for a battle.  The tag, not a fixture list, is the test: a tool's
+scripted shooter (`tools/intercept_check.py`) is spawned untagged and stays a
+puppet. The range has no lanes, so `ai._advance`
+and `ai._advance_route` fall back to walking at the enemy post. The side is the
+*lobby's* choice (`fixed_faction`
 is None here; `AUTO` balances, so a second browser lands opposite the first,
 which is how the radar and the intercept are checked from the receiving end -
 one pilot fires a missile, the other watches his RWR and shoots it down).

@@ -344,17 +344,19 @@ ENEMY BASE   ▇▇▇▇░░░░░░
 
 ## 3. 死亡界面
 
-半透明暗红覆盖 + 居中三行：
+半透明暗红覆盖 + 居中四行：
 
 ```
 MECH DESTROYED
 RE-DEPLOY IN 7.4s
 RESPAWN ONE TOWN BACK FROM WHERE YOU FELL, OR AT THE BASE
+LOADOUT LOST - STANDARD ARMS ON RE-DEPLOY
 ```
 
 第三行是重生规则的一句话说明（靶场服务器为 `RESPAWN ON THE RANGE FIRING LINE`，
-那里出生点固定）。倒计时按**阵亡地点**算：己方指挥部边上 40 s、敌方指挥部边上
-3 s，中间线性插值，见 [flow.md](flow.md#4-受伤死亡与重生)。
+那里出生点固定）。第四行提醒**装备随车损失**、重生是标准机体（见
+[flow.md](flow.md#4-受伤死亡与重生)）。倒计时按**阵亡地点**算：己方指挥部边上
+40 s、敌方指挥部边上 3 s，中间线性插值。
 
 相机切换为绕己方指挥部的缓慢环绕镜头，HUD 其余部分保留（可继续观察战况）。
 

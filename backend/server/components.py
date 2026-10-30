@@ -131,6 +131,12 @@ def register(ecs: ECS) -> None:
     ecs.register("raid_t", np.float32)               # seconds left of the HOLD phase
 
     # ---- misc -----------------------------------------------------------
+    # a hull a pilot dropped from the console (`debug_spawn`) on a mode whose own
+    # units stay passive.  The tag is what puts it under the range's ground AI
+    # (`modes/range/test_ai.py`) without ever catching the mode's passive targets
+    # or a tool's own scripted shooter - a mission marker, not a type, exactly
+    # like `raider`.
+    ecs.register("range_drone", np.uint8)
     ecs.register("flags", np.uint8)
     ecs.register("home_x", np.float32)               # wandering civilians
     ecs.register("home_z", np.float32)

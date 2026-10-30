@@ -170,6 +170,30 @@ def solve_lead(origin: np.ndarray, tpos: np.ndarray, tvel: np.ndarray | None,
     return ax, ay, az
 
 
+def mean_speed(wd: dict, dist: float) -> float:
+    """The speed a boost-and-coast round averages over `dist` metres.
+
+    A gun leaves at its muzzle speed and keeps it; a missile leaves at 40 m/s,
+    accelerates at `thrust` up to `maxvel` for the length of its `burn` and then
+    coasts.  Leading one with the launch speed puts the aim point seconds in
+    front of a running hull, and leading it with the cruise speed puts it
+    behind, so the gunnery solves against what the round will actually average
+    (a beam rider at 1 km: ~340 m/s, not the 40 it left the tube at).
+    """
+    v0 = float(wd.get("vel", 0.0))
+    a = float(wd.get("thrust", 0.0))
+    vmax = float(wd.get("maxvel", 0.0)) or v0
+    burn = float(wd.get("burn", 0.0))
+    if v0 <= 0.0 or a <= 0.0 or burn <= 0.0 or vmax <= v0:
+        return v0
+    tb = min(burn, (vmax - v0) / a)
+    db = v0 * tb + 0.5 * a * tb * tb      # metres covered under power
+    if dist <= db:
+        t = (-v0 + math.sqrt(max(v0 * v0 + 2.0 * a * dist, 0.0))) / a
+        return dist / max(t, 1e-3)
+    return dist / max(tb + (dist - db) / vmax, 1e-3)
+
+
 def ballistic_drop(gravity: float, flight: float) -> float:
     return 0.5 * gravity * flight * flight
 

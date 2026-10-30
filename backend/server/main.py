@@ -218,7 +218,7 @@ async def ws_endpoint(ws: WebSocket) -> None:
             elif t == "join":
                 # lobby: callsign and side.  The machine always comes out on the
                 # default pair - a loadout is bought at the wrench, not picked
-                # in a menu - and a redeploy on this connection is the first one
+                # in a menu, and `spawn_mech` hands out the standard one anyway
                 fac = int(msg.get("faction", -1))
                 if fac in (defs.FACTION_RED, defs.FACTION_BLUE):
                     pl.faction = fac
@@ -227,7 +227,6 @@ async def ws_endpoint(ws: WebSocket) -> None:
                 name = str(msg.get("name", pl.name)).strip()
                 if name:
                     pl.name = name[:16]
-                pl.loadout = list(defs.DEFAULT_LOADOUT)
                 if pl.mech >= 0 and world.ecs.alive[pl.mech]:
                     world.ecs.destroy(pl.mech)
                 pl.mech = -1
@@ -264,7 +263,8 @@ async def ws_endpoint(ws: WebSocket) -> None:
                     # stands where it was dropped
                     eid = world.spawn_unit(etype, faction, x, z,
                                            weapons=msg.get("weapons"),
-                                           lane=0 if world.lanes else -1)
+                                           lane=0 if world.lanes else -1,
+                                           extra=world.mode_mod.console_spawn_extra)
                     client.offer("t", json.dumps(dict(t="info", msg=f"DEBUG SPAWN {etype}"), default=_json_safe))
             elif t == "debug_trees" and os.environ.get("MECH_DEBUG") == "1":
                 # development helper: grow a tree stand in front of the player.

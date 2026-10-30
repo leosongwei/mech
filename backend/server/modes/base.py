@@ -26,6 +26,10 @@ class Mode:
     restart_respawn: float = 3.0         # seconds before players come back after a restart
     rearm_anywhere: bool = False
     smoke_cooldown: float | None = None  # None: defs.SMOKE_COOLDOWN
+    # components a hull spawned from the debug console carries.  A mode whose
+    # own units must stay passive uses the tag to tell "a hull the pilot dropped
+    # here on purpose" from everything else it owns (`modes/range/test_ai.py`).
+    console_spawn_extra: tuple[str, ...] = ()
 
     def terrain(self, seed: int) -> Terrain:
         raise NotImplementedError

@@ -42,9 +42,17 @@ CPA_HIT = 40.0                 # m: closer than this and the round is coming for
 CPA_MEM = 100.0
 
 
-def run(world: World, dt: float) -> None:
+def run(world: World, dt: float, hulls=None) -> None:
+    """Drive every AI crew of the world - or only the ones in `hulls`.
+
+    The filter is what a mode whose fixtures must stay passive uses: the range
+    runs the ground AI for the hulls a pilot dropped there and for nothing else
+    (`modes/range/test_ai.py`), while its targets and its defence post are
+    driven by their own systems.
+    """
     e = world.ecs
-    ids = world.movable()          # player and AI hulls alike, civilians included
+    # player and AI hulls alike, civilians included
+    ids = world.movable() if hulls is None else np.asarray(hulls, np.int64)
     if ids.size == 0:
         return
 
@@ -378,12 +386,25 @@ def _acquire(world: World, fac: int, combat_fac: np.ndarray,
 def _engage(world: World, eid: int, b: dict, row: int, tid: int,
             eye: tuple[float, float, float], d: dict, dist: float,
             tpos: np.ndarray, tvel: np.ndarray, dt: float) -> None:
-    # aim at the intercept point of the primary weapon.  no gravity lift here:
-    # the fire control zeroes the gun for the drop at shot time, so lifting the
+    # aim at the intercept point of the *slowest round that can reach*.  The
+    # sight is one line whatever the arms carry, and a guided round is aimed
+    # with it (a beam rider rides it), so leading for a 1080 m/s cannon shell
+    # while the right arm is a missile that takes seconds to arrive put the
+    # missile consistently short of a moving hull.  no gravity lift here: the
+    # fire control zeroes the gun for the drop at shot time, so lifting the
     # aim as well would double compensate
-    w0 = int(b["weapon"][row, 0]) or defs.WID_AC30
-    wd0 = defs.WEAPONS[w0]
-    speed = wd0["vel"]
+    speed = 0.0
+    for arm in (0, 1):
+        wid = int(b["weapon"][row, arm])
+        if not wid:
+            continue
+        wd = defs.WEAPONS[wid]
+        if dist > float(wd["range"]):
+            continue
+        v = mu.mean_speed(wd, dist)
+        speed = v if speed <= 0.0 else min(speed, v)
+    if speed <= 0.0:
+        speed = float(defs.WEAPONS[int(b["weapon"][row, 0]) or defs.WID_AC30]["vel"])
     aim = mu.solve_lead(eye, (float(tpos[0]), float(tpos[1]) + 2.0, float(tpos[2])),
                         tvel, speed, 0.0)
     _aim_and_fire(world, eid, b, row, eye, d, dist, aim, dt)
@@ -450,10 +471,17 @@ def _aim_and_fire(world: World, eid: int, b: dict, row: int,
         # only fires while that arm is still there (`combat.arm_alive`, but
         # the buffers are already in hand here, so no entity lookup)
         has_arm = arm_hp is not None and float(arm_hp[row, 1]) > 0.0
-        if has_arm and dist < 2200:
+        if has_arm and dist < d["ai_range"]:
+            # the right arm fires whatever it carries, as far as that round
+            # reaches: 2.2 km was the rocket nest's hand-off, but a racked
+            # launcher or a 105 mm barrel is no less ready at the crew's own
+            # engagement range (`ai_range`), so only the two old arms keep it
             w1 = int(weapon[row, 1])
-            if w1 and defs.WEAPONS[w1]["kind"] in ("rocket", "saclos") and dist < defs.WEAPONS[w1]["range"]:
-                t |= 2
+            if w1:
+                wd1 = defs.WEAPONS[w1]
+                reach = 2200.0 if wd1["kind"] in ("rocket", "saclos") else d["ai_range"]
+                if dist < min(reach, float(wd1["range"])):
+                    t |= 2
         if etype == defs.ETYPE_APC and dist < 3500:
             t |= 2
     # a semi automatic arm only fires on the rising edge of the trigger, so
@@ -470,26 +498,31 @@ def _advance(world: World, eid: int, b: dict, row: int, speed: float,
     terrain = world.terrain
     fac = int(b["faction"][row])
     lane_i = int(b["lane"][row])
-    pts = world.lanes[lane_i % len(world.lanes)]
-    if fac == defs.FACTION_BLUE:
-        pts = world.lanes_rev[lane_i % len(world.lanes)]
-    i = int(b["path_i"][row])
-    if i >= len(pts):
-        i = len(pts) - 1
-    wx, wz = pts[i]
     px, pz = float(pos[row, 0]), float(pos[row, 2])
-    dx = wx - px
-    dz = wz - pz
-    if dx * dx + dz * dz < 55.0 * 55.0:
-        if i < len(pts) - 1:
-            i += 1
-            b["path_i"][row] = i
-            wx, wz = pts[i]
-            dx = wx - px
-            dz = wz - pz
-        elif i >= len(pts) - 1:
-            bx, bz = terrain.bases[1 - fac]
-            dx, dz = bx - px, bz - pz
+    bx, bz = terrain.bases[1 - fac]
+    if not world.lanes:
+        # a map with no lanes at all (the range): there is nothing to follow,
+        # so the hull walks straight at the enemy post
+        dx, dz = bx - px, bz - pz
+    else:
+        pts = world.lanes[lane_i % len(world.lanes)]
+        if fac == defs.FACTION_BLUE:
+            pts = world.lanes_rev[lane_i % len(world.lanes)]
+        i = int(b["path_i"][row])
+        if i >= len(pts):
+            i = len(pts) - 1
+        wx, wz = pts[i]
+        dx = wx - px
+        dz = wz - pz
+        if dx * dx + dz * dz < 55.0 * 55.0:
+            if i < len(pts) - 1:
+                i += 1
+                b["path_i"][row] = i
+                wx, wz = pts[i]
+                dx = wx - px
+                dz = wz - pz
+            elif i >= len(pts) - 1:
+                dx, dz = bx - px, bz - pz
     d = math.hypot(dx, dz)
     if d < 1e-3:
         vel[row, 0] = vel[row, 2] = 0.0
@@ -616,19 +649,26 @@ def _advance_route(world: World, b: dict, row: int, speed: float) -> None:
     pos = b["pos"]
     vel = b["vel"]
     fac = int(b["faction"][row])
-    lane = int(b["lane"][row]) % len(world.lanes)
-    pts = world.lanes_rev[lane] if fac == defs.FACTION_BLUE else world.lanes[lane]
     px, pz = float(pos[row, 0]), float(pos[row, 2])
-    # `path_i` runs to len(pts), one past the end: that is the "lane finished"
-    # mark, and it has to be sticky - deciding per tick between the last way
-    # point and the base made a hull orbit the circle between them for ever
-    i = max(0, min(int(b["path_i"][row]), len(pts)))
-    radius = _arrive_radius(float(b["drive"][row, 0]))
-    while i < len(pts) - 1 and _passed(pts, i, px, pz, radius):
-        i += 1
-    if i == len(pts) - 1 and _passed(pts, i, px, pz, radius):
-        i = len(pts)
-    b["path_i"][row] = i
+    if world.lanes:
+        lane = int(b["lane"][row]) % len(world.lanes)
+        pts = world.lanes_rev[lane] if fac == defs.FACTION_BLUE else world.lanes[lane]
+        # `path_i` runs to len(pts), one past the end: that is the "lane
+        # finished" mark, and it has to be sticky - deciding per tick between
+        # the last way point and the base made a hull orbit the circle between
+        # them for ever
+        i = max(0, min(int(b["path_i"][row]), len(pts)))
+        radius = _arrive_radius(float(b["drive"][row, 0]))
+        while i < len(pts) - 1 and _passed(pts, i, px, pz, radius):
+            i += 1
+        if i == len(pts) - 1 and _passed(pts, i, px, pz, radius):
+            i = len(pts)
+        b["path_i"][row] = i
+    else:
+        # a map with no lanes (the range): the car heads straight for the
+        # enemy post, which is where a lane would have led it anyway
+        i = 0
+        pts = []
     if i >= len(pts):
         # the end of the lane is the enemy side of the map: the last stretch
         # runs at the command base, which is what a lane actually leads to

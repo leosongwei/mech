@@ -153,7 +153,12 @@ class World:
             e["arm_hp"][eid] = arms
             e["arm_hpmax"][eid] = arms
         e["armor"][eid] = (float(d.get("dp", 0.0)), float(d.get("de", 0.0)))
-        ws = weapons if weapons is not None else d["weapons"]
+        ws = weapons
+        if ws is None:
+            # a hull with arms is a mech, i.e. a crew: one that was not handed a
+            # loadout (a pilot's own machine always is) draws a template off
+            # `defs.AI_LOADOUTS` - the AI has no shop to visit
+            ws = defs.ai_loadout(self.rng) if d.get("arms") else d["weapons"]
         for arm in (0, 1):
             wid = int(ws[arm])
             wd = defs.WEAPONS[wid]
@@ -176,6 +181,10 @@ class World:
         player.smoke_cd = 0.0
         player.smoke_q = False
         player.end_work()
+        # the machine comes back as the standard pair whatever the last one
+        # carried: equipment is lost with the hull, so a bought 105 mm is a
+        # thing to spend again after every death (see `defs.DEFAULT_LOADOUT`)
+        player.loadout = list(defs.DEFAULT_LOADOUT)
         spawn = self.mode_mod.mech_spawn(self, player)
         if spawn is None:
             x, z = self.base_spawn(player.faction)

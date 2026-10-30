@@ -12,6 +12,7 @@ from ..base import Mode
 from . import bunkers as bunkers_mod
 from . import interceptor as interceptor_mod
 from . import targets as targets_mod
+from . import test_ai as test_ai_mod
 
 if TYPE_CHECKING:
     from ...world import Player, World
@@ -29,6 +30,10 @@ class Range(Mode):
     start_money = 99999
     restart_respawn = 1.0
     rearm_anywhere = True
+    # a hull from the console is the one thing here that fights: the tag is what
+    # `test_ai` drives (see the module), and the mode's own targets and post are
+    # never tagged, so they stay as passive as they were
+    console_spawn_extra = ("range_drone",)
     # no smoke_cooldown override: the battle cooldown is short enough to
     # practise a pull here
 
@@ -44,7 +49,7 @@ class Range(Mode):
         world.interceptor = interceptor_mod.Interceptor(world)
 
     def pre_systems(self) -> list[Callable[[World, float], None]]:
-        return [targets_mod.run, interceptor_mod.run]
+        return [targets_mod.run, interceptor_mod.run, test_ai_mod.run]
 
     def mech_spawn(self, world: World, player: Player) -> tuple[float, float, float]:
         x, z = terrain_mod.RANGE_SPAWN

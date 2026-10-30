@@ -57,6 +57,13 @@ def register(ecs: ECS) -> None:
     ecs.register("vehicle", np.uint8)                # a wheeled hull: steers, does not strafe
     ecs.register("person", np.uint8)                 # a man on foot: a prox fuse goes off on him
     ecs.register("invulnerable", np.uint8)           # rounds stop, damage does nothing
+    # a round in the air that can itself be fought: a missile carries a radar
+    # cross section, a collision sphere and ten hit points, so a proximity fuse
+    # goes off on it and a passing bullet can hole it (`systems/proximity.py`,
+    # `systems/mortality.py`).  A plain bullet does not carry the tag, which is
+    # what keeps the hit-sphere table (and the fuse, and the AI) costing exactly
+    # nothing on the ten thousand rounds of an ordinary firefight.
+    ecs.register("interceptable", np.uint8)
 
     # ---- health ---------------------------------------------------------
     # One hull, one pool: `hp` is *the* health of the entity and `hp <= 0` is
@@ -193,6 +200,14 @@ BLAST_COMPS = ["pos", "faction", "blast_power", "blast_t", "blast_friendly",
 
 PROJ_COMPS = ["pos", "vel", "faction", "proj_kind", "proj_wid", "proj_life", "proj_src",
               "proj_age", "proj_seed", "proj_prev", "proj_trav", "target"]
+
+# A missile is a *different archetype* from a bullet - the same rule the smoke
+# canister and the puff obey: the component set is the type, and it is decided
+# once at spawn.  It owns a pool of health and its own armour, so `combat.apply`
+# and `combat.hit`/`splash` work on it with no special case anywhere, and the
+# `interceptable` tag is what puts it in the hit-sphere table and the fuse's
+# target set.  A 5.56 mm round never pays for any of it.
+MISSILE_COMPS = PROJ_COMPS + ["interceptable", "hp", "hpmax", "armor", "last_hit"]
 
 # A canister in flight and the cloud it bursts into are two different things, so
 # they are two archetypes: the flying charge carries a fuse and a velocity, the

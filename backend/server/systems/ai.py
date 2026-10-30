@@ -18,8 +18,25 @@ from . import sight
 if TYPE_CHECKING:
     from ..world import World
 
+# weapon data as arrays, by `wid`: the radar cross-section, the collision sphere
+# and the fuse radius.  A round only ever gets a table row through
+# `world.interceptable()`, so a bullet's zeros are never read.
+RCS = np.asarray([w.get("rcs", 0.0) for w in defs.WEAPONS])
+HIT_R = np.asarray([w.get("hit_r", 0.0) for w in defs.WEAPONS])
+PROX = np.asarray([w.get("prox", 0.0) for w in defs.WEAPONS])
+
 ACQUIRE = 0.45
 SPOT_MEMORY = 4.0              # seconds an AI keeps firing at a lost target's spot
+
+# ---- missile defence ----------------------------------------------------
+# A hull with a radar (`defs.UNIT_DEFS[...]["radar_strength"]`) sees a missile
+# coming long before it is danger, and the crew's first reaction is to shoot at
+# it - but only with a weapon that can actually bring it down, i.e. one whose
+# fuse (`prox`) covers the miss distance a burst of cannon fire will have.  The
+# rule is data driven on purpose: a new fused weapon joins in with no change
+# here, and a 12.7 mm carrier (2.25 mrad of spread, no fuse) stays out of it.
+INTERCEPT_RANGE = 1500.0       # m: inside the gun's reach it is worth the ammo
+CPA_HIT = 40.0                 # m: closer than this and the round is coming for me
 
 
 def run(world: World, dt: float) -> None:
@@ -42,6 +59,10 @@ def run(world: World, dt: float) -> None:
     combat_fac = np.full(e.alive.size, -1, np.int8)
     for g in e.groups("combat", "faction"):
         combat_fac[g.ids] = g.bufs["faction"][:g.n]
+
+    # the rounds in the air, once: any crew with a radar looks this over before
+    # it goes back to its ground fight
+    mis = _missiles(world)
 
     # per entity: one `slot` lookup, then every component is `bufs["x"][row]`.
     # The order is the query order (ascending ids) because this loop draws the
@@ -79,9 +100,13 @@ def run(world: World, dt: float) -> None:
                 target[row] = -1
                 tid = -1
 
+        # a round that is going to hit this hull outranks whatever it was
+        # shooting at: the crew turns the gun on it and keeps driving
+        covering = mis is not None and _missile_step(world, eid, b, row, mis, dt)
+
         moving = True
         seen = False
-        if tid >= 0:
+        if not covering and tid >= 0:
             tpos = pos[tid]
             tvel = vel[tid]
             dist = math.dist((eye[0], eye[2]), (float(tpos[0]), float(tpos[2])))
@@ -95,7 +120,7 @@ def run(world: World, dt: float) -> None:
                 b["spot_z"][row] = float(tpos[2])
                 spot_t[row] = SPOT_MEMORY
                 _engage(world, eid, b, row, tid, eye, d, dist, tpos, tvel, dt)
-        if not seen and float(spot_t[row]) > 0.0:
+        if not covering and not seen and float(spot_t[row]) > 0.0:
             # lost it: hose the spot where it was last seen
             spot_t[row] = float(spot_t[row]) - dt
             dist = math.dist((eye[0], eye[2]),
@@ -105,7 +130,8 @@ def run(world: World, dt: float) -> None:
                 moving = False
 
         if moving:
-            b["trigger"][row] = 0
+            if not covering:                  # `_missile_step` owns the trigger
+                b["trigger"][row] = 0
             if "raider" in b:
                 # a raiding party has a route of its own, off the lanes: the
                 # mode's raid system (modes/battle/raids.py) writes its
@@ -121,6 +147,173 @@ def run(world: World, dt: float) -> None:
             # roll on at the last commanded speed the way a walking hull's
             # leftover velocity does
             b["vel"][row, 0] = b["vel"][row, 2] = 0.0
+
+
+def _missiles(world: World) -> dict | None:
+    """The rounds in the air that a radar can see, as flat arrays.
+
+    Built once a tick: nothing here is per-shooter, and at 30 Hz a battle has a
+    few dozen of them at most.  `rcs` and the fuse radius come off the weapon
+    table by `wid`, so a mission that fits a new missile needs no edit here.
+    """
+    ids = world.interceptable()
+    if ids.size == 0:
+        return None
+    e = world.ecs
+    wid = np.asarray(e["proj_wid"][ids], np.int64)
+    return dict(
+        ids=np.asarray(ids, np.int64),
+        pos=np.asarray(e["pos"][ids], np.float64),
+        vel=np.asarray(e["vel"][ids], np.float64),
+        fac=np.asarray(e["faction"][ids], np.int64),
+        kind=np.asarray(e["proj_kind"][ids], np.int64),
+        target=np.asarray(e["target"][ids], np.int64),
+        rcs=RCS[wid],
+        hit_r=HIT_R[wid],
+        prox=PROX[wid],
+    )
+
+
+def intercept(world: World, dt: float) -> None:
+    """Missile defence on its own, for a mode whose hulls do not fight.
+
+    `ai.run` calls the same step inline; this is the version a test range wants
+    - a single AI hull that shoots down what is fired at it and never picks a
+    ground fight.
+
+    The trigger is cleared here, because in a mode without `ai.run` nothing else
+    owns it - and it is cleared *before* the empty-sky test, not after: a round
+    shot down last tick leaves the gun laid on the patch of air it came apart
+    in, and a trigger that is never dropped would go on firing at it.
+    """
+    mis = _missiles(world)
+    e = world.ecs
+    for eid in world.movable():
+        b, row = e.slot(eid)
+        if b.get("owner") is None or int(b["owner"][row]) >= 0:
+            continue                                # player driven
+        if "combat" not in b:
+            continue
+        b["trigger"][row] = 0
+        if mis is not None:
+            _missile_step(world, eid, b, row, mis, dt)
+
+
+def _missile_step(world: World, eid: int, b: dict, row: int, mis: dict,
+                  dt: float) -> bool:
+    """Turn the gun on the round that is coming, if there is one.  True if the
+    crew took the shot - the caller then leaves its ground target alone."""
+    d = defs.UNIT_DEFS[int(b["etype"][row])]
+    strength = float(d.get("radar_strength", 0.0))
+    if strength <= 0.0:
+        return False
+    arm = _fused_arm(b, row)
+    if arm < 0:
+        return False                                # nothing aboard can down it
+    etype = int(b["etype"][row])
+    px, py, pz = (float(b["pos"][row, 0]), float(b["pos"][row, 1]),
+                  float(b["pos"][row, 2]))
+    if etype == defs.ETYPE_MECH:
+        eye = mu.sight_eye(b["pos"][row], float(b["yaw"][row]))
+    else:
+        eye = (px, py + d["height"] * 0.75, pz)
+    k = _threat(world, mis, strength, eye, eid,
+                np.asarray(b["vel"][row], np.float64), int(b["faction"][row]))
+    if k < 0:
+        return False
+    tpos = mis["pos"][k]
+    tvel = mis["vel"][k]
+    dist = float(math.dist(eye, tpos))
+    wd = defs.WEAPONS[int(b["weapon"][row, arm])]
+    # lead the intercept exactly as a hull is led: the same solver, the same
+    # "fire control zeroes the drop at shot time" (so no lift here)
+    aim = mu.solve_lead(eye, tpos, tvel, float(wd["vel"]), 0.0)
+    want_yaw, want_pitch = mu.angles_to(aim[0] - eye[0], aim[1] - eye[1],
+                                        aim[2] - eye[2])
+    trigger = b["trigger"]
+    if etype == defs.ETYPE_MECH:
+        want_pitch = max(defs.MECH_PITCH_MIN, min(defs.MECH_PITCH_MAX, want_pitch))
+        b["sight_yaw"][row] = want_yaw
+        b["sight_pitch"][row] = want_pitch
+        aim_yaw = float(b["yaw"][row])
+        laid = abs(want_pitch - float(b["pitch"][row])) < 0.02
+    elif etype == defs.ETYPE_APC:
+        b["turret_yaw"][row] = mu.turn_toward(float(b["turret_yaw"][row]),
+                                              want_yaw, 2.2 * dt)
+        b["pitch"][row] = want_pitch
+        aim_yaw = float(b["turret_yaw"][row])
+        laid = True
+    else:
+        b["yaw"][row] = mu.turn_toward(float(b["yaw"][row]), want_yaw, 3.2 * dt)
+        b["pitch"][row] = want_pitch
+        aim_yaw = float(b["yaw"][row])
+        laid = True
+    # a burst weapon is aimed at an *area*, not a point: the tolerance is the
+    # angle the fuse covers at this range, ~0.004 rad at 1 km, not the 0.14 rad
+    # a hull gets (a shell that misses a hull's 1.45 m body by a metre still
+    # counts, and a round that misses a missile by a metre is a miss)
+    tol = math.atan((float(wd["prox"]) + float(mis["hit_r"][k])) / max(dist, 1.0))
+    err = abs(mu.wrap_pi(want_yaw - aim_yaw))
+    if err < tol and laid:
+        trigger[row] = 1 << arm
+    else:
+        trigger[row] = 0
+    return True
+
+
+def _fused_arm(b: dict, row: int) -> int:
+    """Which arm can bring a missile down: the first that carries a fuse and
+    still has rounds and metal.  -1 if none can."""
+    weapon = b["weapon"]
+    mag = b["mag"]
+    arm_hp = b.get("arm_hp")
+    for arm in (0, 1):
+        wid = int(weapon[row, arm])
+        if not wid or PROX[wid] <= 0.0:
+            continue
+        if arm_hp is not None and float(arm_hp[row, arm]) <= 0.0:
+            continue
+        if int(mag[row, arm]) <= 0:
+            continue
+        return arm
+    return -1
+
+
+def _threat(world: World, mis: dict, strength: float, eye, eid: int,
+            ovel: np.ndarray, fac: int) -> int:
+    """Index of the round worth shooting at, or -1.
+
+    Two questions, both of them `plan.md`'s:
+
+    * **can I see it** - `d^2 <= K * v_closing` with `K = sqrt(S * rcs) / V_REF`
+      (`defs.radar_k`).  A round that is opening out or crossing gives a
+      non-positive closing speed, so the right-hand side is <= 0 and the test
+      fails by itself: no separate "is it getting closer" clause, and no
+      `RADAR_SPEED` threshold.
+    * **is it for me** - a top-attack round carries the id of the hull its seeker
+      locked, so it is asked directly; everything else is judged by geometry,
+      the closest point of its straight-line approach.  A `t_cpa` gate would say
+      nothing: the moment a round is first *seen* it is 1.1-2.6 s from its
+      closest approach whatever it is doing, so any threshold either always
+      passes or throws away the genuinely dangerous ones.
+    """
+    r = mis["pos"] - np.asarray(eye, np.float64)
+    vrel = mis["vel"] - ovel
+    d2 = np.einsum("ij,ij->i", r, r)
+    vc = -np.einsum("ij,ij->i", r, vrel) / np.sqrt(np.maximum(d2, 1e-9))
+    kk = np.sqrt(np.maximum(strength * mis["rcs"], 0.0)) / defs.RADAR_V_REF
+    want = (d2 <= kk * vc) & (mis["fac"] != fac) & (d2 <= INTERCEPT_RANGE ** 2)
+    if not want.any():
+        return -1
+    w2 = np.maximum(np.einsum("ij,ij->i", vrel, vrel), 1e-9)
+    tcpa = np.clip(-np.einsum("ij,ij->i", r, vrel) / w2, 0.0, None)
+    cpa = np.linalg.norm(r + vrel * tcpa[:, None], axis=1)
+    # top attack: it climbs 150 m over its victim and dives on the roof, so its
+    # straight line passes nowhere near him - the seeker's own lock is the truth
+    want &= np.where(mis["kind"] == 3, mis["target"] == eid, cpa < CPA_HIT)
+    if not want.any():
+        return -1
+    return int(np.argmin(np.where(want, d2, np.inf)))
 
 
 def _sees(world: World, eye: tuple[float, float, float],

@@ -157,16 +157,24 @@ def unit_spheres(etype: int, pos: np.ndarray,
 def solve_lead(origin: np.ndarray, tpos: np.ndarray, tvel: np.ndarray | None,
                speed: float, gravity: float, iters: int = 3,
                ) -> tuple[float, float, float]:
-    """Iteratively solve the intercept point for a ballistic projectile."""
+    """Iteratively solve the intercept point for a ballistic projectile.
+
+    All three components of the target's velocity are honoured: a hull drives
+    on the flat (its `vel[1]` is 0, so nothing changes for one), a missile in
+    the air climbs or dives and *that* is the component a gunner has to lead.
+    `gravity` is the drop of *our* round over the flight time, not the target's
+    - the fire control zeroes the barrel for it at shot time.
+    """
     ox, oy, oz = origin
     tx, ty, tz = tpos
-    vx, vz = (float(tvel[0]), float(tvel[2])) if tvel is not None else (0.0, 0.0)
+    vx, vy, vz = ((float(tvel[0]), float(tvel[1]), float(tvel[2]))
+                  if tvel is not None else (0.0, 0.0, 0.0))
     t = math.dist(origin, tpos) / max(speed, 1.0)
     ax, ay, az = tx, ty, tz
     for _ in range(iters):
         ax = tx + vx * t
         az = tz + vz * t
-        ay = ty + 0.5 * gravity * t * t
+        ay = ty + vy * t + 0.5 * gravity * t * t
         d = math.dist((ox, oy, oz), (ax, ay, az))
         t = d / max(speed, 1.0)
     return ax, ay, az

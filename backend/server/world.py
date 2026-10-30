@@ -84,6 +84,7 @@ class World:
             list(reversed(l)) for l in self.terrain.lanes]
         self.base_entity: dict[int, int] = {}
         self.targets: object | None = None      # range mode only
+        self.interceptor: object | None = None  # range mode only: the missile post
         self.mode_mod.setup(self)
         self._build_pipeline()
 
@@ -253,16 +254,24 @@ class World:
     def blasts(self) -> np.ndarray:
         return self.ecs.query("blast")
 
-    def sphere_table(self) -> tuple:
-        """Every unit's hit spheres, built once per tick and shared.
+    def interceptable(self) -> np.ndarray:
+        """Rounds in the air that can be fought: the missiles."""
+        return self.ecs.query("interceptable")
 
-        `systems/projectiles.py` sweeps it and `systems/blasts.py` measures
-        against it; the table is the same for both, and it is only asked for
-        before anything is destroyed (mortality runs last of the damage chain).
+    def sphere_table(self, dt: float = 1.0 / 30.0) -> tuple:
+        """Every hit sphere on the field, built once per tick and shared.
+
+        The unit blocks come first, then one sphere per missile in the air.
+        `systems/projectiles.py` sweeps it, `systems/blasts.py` measures against
+        it and `systems/proximity.py` fuses on it; the table is the same for all
+        three, and it is only asked for before anything is destroyed (mortality
+        runs last of the damage chain).  `dt` is what turns a hull's velocity
+        into the ground it covered this tick - the sweep solves against a
+        moving target (see `projectiles.sphere_table`).
         """
         if self._sph is None or self._sph_tick != self.tick:
             from .systems.projectiles import sphere_table
-            self._sph = sphere_table(self)
+            self._sph = sphere_table(self, dt)
             self._sph_tick = self.tick
         return self._sph
 

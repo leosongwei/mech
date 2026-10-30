@@ -45,7 +45,7 @@ backend/
                          #   gunnery.py: the sight leads, the hull and the arms slew after it
                          #   sight.py: the one line of sight (terrain + smoke), clear/why
                          #   smoke.py: hot smoke canisters, opaque puffs, blocks(a, b)
-                         #   proximity.py: 30mm airburst fuse, bursts on people only
+                         #   proximity.py: 30mm airburst fuse, people *and* missiles
                          #   blasts.py: an explosion is an entity; the only area damage
                          #   mortality.py: `hp <= 0` -> wreck, burst, kill money, victory
                          #   rearm.py: the bought job at the base, `work_remaining_time`
@@ -63,6 +63,7 @@ tools/
   smoke_lock_test.js       # browser-console driver: seeker A/B smoke test
   vehicle_trace.py         # range APC route trace: SVG path plot + per-tick CSV
   raid_trace.py            # a battle's raiders: force-gradient + driven traces as SVG
+  intercept_check.py       # range: fire every missile at the defence post, read the log
 frontend/
   webpack.config.js        # entry src/main.js -> ../backend/assets/bundle.js
   icons.json               # single source of truth for every HUD icon glyph
@@ -246,6 +247,74 @@ frontend/
   Airburst is blast only (it is not a direct hit), and the burst is logged
   (`mech.prox: prox fuse: ...`) so the range test can read the burst position
   straight out of the log.
+* **A missile is a target, and the ECS says so** (`components.MISSILE_COMPS`).
+  `weapons.fire` picks the archetype off `defs.is_interceptable(wid)`: a
+  `kind` `rocket`/`saclos`/`top` round is spawned with `interceptable` + `hp` +
+  `hpmax` + `armor` + `last_hit` (10 points, 1/1 of plate), a bullet keeps
+  `PROJ_COMPS` and pays nothing.  The tag is what puts a round in the
+  hit-sphere table and in the fuse's target set, so `combat.hit`/`splash`/
+  `apply` work on it with no special case, and `systems/mortality.py::
+  _kill_round` is the second death channel: a killed missile leaves **nothing** -
+  no warhead, no wreck, no credit (a SACLOS that still went off 300 m out would
+  make shooting it down pointless).
+* **The hit-sphere table carries motion** (`projectiles.sphere_table(world, dt)`).
+  Rows are `(centres, radii, ids, modules, factions, blocks, cull, prev, disp)`
+  and the sweep solves the *relative* leg: `rel = prev - p0`, `w = seg - disp`,
+  `t* = clamp(rel·w/|w|²)`, `d_min = |rel - w t*|`.  A missile covers 20 m a tick
+  against a 4 m fuse and a 0.08 m ball, so a solve against a standing target is
+  decided by the phase of the clock (measured: the head-on crossing case is 6 m
+  off at the end of the leg, i.e. a clean miss).  The two blocks are gathered at
+  different moments and each says so: a **unit** has already been moved by
+  `movement` (it runs earlier), so its `pos` is the end of its tick and
+  `prev = pos - vel*dt`; a **missile** has not moved yet (this system moves it),
+  so its `pos` is the start and `disp` is predicted from its velocity.  The
+  broad-phase box grows by the fastest row's displacement (`reach`), or a
+  missile crossing into a round's leg is never a candidate.
+* **The fuse settles the round it fused on.**  `systems/proximity.py` fuses on
+  `person` ∪ `interceptable` and bursts at the round's position at `t*`; a
+  missile found there takes `combat.splash` **immediately**, at the gap it was
+  at when the fuse fired, and is handed to the burst as `skip`.  `blasts` runs a
+  stage later against positions gathered for the whole tick, by which time a
+  600 m/s round is twenty metres out of a four metre radius - settling it
+  directly is what turns "did the blast catch it" into an exact answer.  The
+  numbers are unchanged: blast only, at the true gap (14 at contact, 10 at
+  2.67 m, 8 at the 4 m edge, against 10 hp) - so the fuse **triggers** at 4 m
+  and only **kills** inside 2.67 m.  That gap is deliberate.
+* **Radar is one equation, two implementations** (`defs.radar_k`): a doppler
+  receiver only sees what closes on it, so `radar_strength * rcs / d^4 *
+  (v_c / RADAR_V_REF)^2 >= 1`, i.e. `d² <= K·v_c` with `K = sqrt(S·rcs)/V_REF`.
+  `V_REF` (600 m/s, `defs.RADAR_V_REF`) only makes the speed term dimensionless;
+  `radar_strength` (m⁴, on the unit type: mech 5e13, APC 3.125e12, nobody else)
+  is the one knob, and `d ∝ S^¼` is why an APC sees half as far.  `v_c <= 0`
+  fails the test by itself, which is why there is no speed threshold any more
+  (the client's old `RADAR_SPEED` is gone).  Discovery distances against a mech:
+  SACLOS 1000 m, S-8 713 m, top-attack 563 m, RPG 398 m.  Both sides read the
+  same numbers: `netcode.static_payload` sends a `radar` block (`v_ref`, the
+  largest `rcs`) and the client derives the dial's outer ring from it - the
+  `1 km` label is no longer a constant.  The client draws three states: seen
+  (diamond at true bearing/range + a pre-aim box through the sight rule), heard
+  closing (a 5 Hz red spoke from the dial's edge - bearing, no range) and shot
+  down (`intercept` fx: the hit tone and a few sparks).
+* **AI missile defence** (`systems/ai.py::_missile_step`) runs inline in
+  `ai.run` before the ground fight and preempts it: a crew that has a round
+  coming for it lays the sight on the lead point (`mu.solve_lead`, which honours
+  the target's vertical velocity - a climbing ATGM is not a hull) and pulls the
+  trigger only when the *bore* is within `atan((prox + hit_r)/d)` (0.23° at
+  1 km, not the 0.14 rad a hull gets).  Only a fused arm fires (`PROX[wid] > 0`,
+  today just the 30 mm), so a 12.7 mm carrier stays out of it - data driven, not
+  a type switch.  "Coming for me" is `seeker target == me` for a top-attack (it
+  climbs 150 m and dives, so its straight line misses) and closest approach
+  < `CPA_HIT` (40 m) for everything else; a `t_cpa` gate would say nothing (a
+  round is 1.1-2.6 s from its closest approach the moment it is first seen).
+  `ai.intercept(world, dt)` is the same step as a standalone pass, for a mode
+  whose hulls do not fight.
+* **The range has a missile-defence post** (`modes/range/interceptor.py`): one
+  blue AI mech at `(1550, 2250)` with a 30 mm only, running `ai.intercept` and
+  none of the ground AI - it never shoots at the pilot and never drives, and it
+  comes back 5 s after being destroyed.  `tools/intercept_check.py` fires every
+  missile type at it and prints the outcome per round, read out of the server
+  log (`missile N took X (prox Y m) - hp A -> B`, `intercept: ... round N shot
+  down at ...`).  Measured: 30 of 32 rounds fused and shot down.
 * **Damage** is two halves, never one number. `defs.pen_damage(ap, ad, dp)`:
   beating the target's `dp` outright delivers the full `ad`, beating only half
   of it shaves `ad/5`, anything duller does nothing. `defs.blast_damage(ed, de,
@@ -679,6 +748,15 @@ cd frontend && npm install && npm run build      # -> backend/assets/
   google-chrome --headless --screenshot=/tmp/r.png --window-size=1180,1320 \
       --user-data-dir=/tmp/chrome-prof file:///tmp/raid_trace.svg
   ```
+* **`tools/intercept_check.py`** fires every missile type at the range's
+  defence post and reads the outcome out of the log: how much health the 30 mm
+  took off each round, at what fuse gap, and whether it came down.  It is the
+  measurement behind the interception numbers - run it after touching the fuse,
+  the radar constants or the AI's intercept branch.
+  ```bash
+  .venv/bin/python tools/intercept_check.py              # every type, two ranges
+  .venv/bin/python tools/intercept_check.py -v           # and every log line
+  ```
 * **`tools/vehicle_trace.py`** drives one APC round a route on the range map
   (a 100 m square or the 3.7 km winding road) and writes an SVG - way points,
   the rounded reference route, the driven trace coloured by speed, a velocity
@@ -713,10 +791,15 @@ once; pressing `ENTER` in game must not send another `join`.
 
 `./dev.sh range` starts a second world (`run.py --range`, i.e. `MECH_RANGE=1`)
 on <http://127.0.0.1:8011>: a 4 km test map, one 200 m hill NW, plains
-elsewhere, 12 blue APC targets (2 patrolling) that respawn 3 s after dying.
-**Nothing on the range shoots back** - there is no AI and no incoming fire, so
-it is the place to test ballistics or look at a model up close. The player is
-locked to RED with $99999, can rearm anywhere and the smoke cooldown is 2 s.
+elsewhere, 12 blue APC targets (2 patrolling) that respawn 3 s after dying, one
+blue missile-defence post (`modes/range/interceptor.py`, 5 s respawn) and a
+ring of per-pilot spawn berths. **No AI on the range shoots at the ground** - the
+targets and the post never fire at a hull, so it is the place to test ballistics
+or look at a model up close. The side is the *lobby's* choice (`fixed_faction`
+is None here; `AUTO` balances, so a second browser lands opposite the first,
+which is how the radar and the intercept are checked from the receiving end -
+one pilot fires a missile, the other watches his RWR and shoots it down).
+$99999, rearm anywhere, smoke cooldown 0.5 s.
 Seeker lock breaks are logged by `mech.smoke` (you have to be shot at for
 that - the battle mode AI does it); the browser script `tools/smoke_lock_test.js`
 drives a whole A/B smoke run from the console when such a missile is in the air.

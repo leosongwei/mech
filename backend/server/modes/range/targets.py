@@ -54,9 +54,17 @@ class Targets:
             slot["eid"] = _spawn(world, slot)
 
     def update(self, world: World, dt: float) -> None:
+        e = world.ecs
         for slot in self.slots:
             eid = int(slot["eid"])
-            if eid >= 0 and world.ecs.alive[eid]:
+            # `alive` is not enough.  Entity ids are handed out LIFO, so the id a
+            # dead target leaves behind is taken by the very next entity that
+            # spawns - and for a hull going up that is its own blast (a burst
+            # entity, no `vel`, no `moves`).  Driving that one raised KeyError
+            # once a tick, and because the exception aborts this loop the slot
+            # was never dropped: the whole range world froze.  Ask the tag the
+            # drive code actually needs instead.
+            if eid >= 0 and e.alive[eid] and e.has(eid, "moves"):
                 _drive(world, slot, eid, dt)
                 continue
             slot["eid"] = -1

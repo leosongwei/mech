@@ -23,6 +23,7 @@ Two rules hold this together:
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from . import defs
@@ -30,24 +31,38 @@ from . import defs
 if TYPE_CHECKING:
     from .world import World
 
+log = logging.getLogger("mech.intercept")
 
-def apply(world: World, eid: int, module: int, amount: float, pid: int = -1) -> None:
+
+def apply(world: World, eid: int, module: int, amount: float, pid: int = -1,
+          src: str = "") -> None:
     """Take `amount` off the armour `module` names.  The only writer of `hp`."""
     e = world.ecs
     if not e.alive[eid] or amount <= 0.0:
         return
     if e.has(eid, "invulnerable"):
         return                      # concrete: rounds stop, nothing breaks
-    owner = int(e["owner"][eid])
-    if owner >= 0:
-        pilot = world.players.get(owner)
-        if pilot is not None and pilot.god:
-            return
+    # a missile owns no pilot, so the god check has nothing to ask about; it is
+    # a round in the air and always takes what it is given
+    if e.has(eid, "owner"):
+        owner = int(e["owner"][eid])
+        if owner >= 0:
+            pilot = world.players.get(owner)
+            if pilot is not None and pilot.god:
+                return
     bufs, row = e.slot(eid)
+    # a round in the air is worth a line of its own: it starts with 10 hp, so
+    # the numbers say whether it was a graze or a kill (`tools/intercept_check`
+    # reads them straight out of the log)
+    watch = "interceptable" in bufs
+    before = float(bufs["hp"][row]) if watch else 0.0
     if "arm_hp" in bufs:
         _mech_hit(bufs, row, module, amount)
     else:
         bufs["hp"][row] = max(0.0, float(bufs["hp"][row]) - amount)
+    if watch:
+        log.info("missile %d took %.1f (%s) - hp %.1f -> %.1f",
+                 eid, amount, src or "hit", before, float(bufs["hp"][row]))
     if float(bufs["hp"][row]) > 0.0:
         # credit only while the hull is still standing: the death is judged a
         # stage later, and the pilot who put the *lethal* round in earns it
@@ -72,7 +87,7 @@ def _stop(bufs: dict, row: int) -> None:
 
 
 def hit(world: World, eid: int, module: int, wd: dict, dist: float = 0.0,
-        pid: int = -1) -> None:
+        pid: int = -1, src: str = "") -> None:
     """One round landing on a unit: penetration plus blast, both halves.
 
     `dist` is how far the target's nearest surface is from the burst - 0 for a
@@ -81,11 +96,11 @@ def hit(world: World, eid: int, module: int, wd: dict, dist: float = 0.0,
     if float(wd["ad"]) <= 0.0 and float(wd["ed"]) <= 0.0:
         return
     dp, de = _armor(world, eid)
-    apply(world, eid, module, defs.hit_damage(wd, dp, de, dist), pid)
+    apply(world, eid, module, defs.hit_damage(wd, dp, de, dist), pid, src)
 
 
 def splash(world: World, eid: int, module: int, wd: dict, dist: float,
-           pid: int = -1) -> None:
+           pid: int = -1, src: str = "") -> None:
     """Blast-only damage for a unit near (not under) a burst.
 
     A charge going off a few metres away cannot punch a plate, so the
@@ -95,7 +110,7 @@ def splash(world: World, eid: int, module: int, wd: dict, dist: float,
         return
     _, de = _armor(world, eid)
     apply(world, eid, module,
-          defs.blast_damage(float(wd["ed"]), de, float(wd["er"]), dist), pid)
+          defs.blast_damage(float(wd["ed"]), de, float(wd["er"]), dist), pid, src)
 
 
 def arm_alive(world: World, eid: int, arm: int) -> bool:

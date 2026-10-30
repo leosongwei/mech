@@ -17,6 +17,12 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("mech.smoke")
 
+# collision sphere of each weapon's rounds, by `wid`: the half-calibre of a
+# missile (`defs.WEAPONS[...]["hit_r"]`) and 0 for anything a bullet is - only
+# an `interceptable` round ever has a row in the table, so the zero never gets
+# read
+HIT_R = np.asarray([w.get("hit_r", 0.0) for w in defs.WEAPONS])
+
 
 def _norm(v: np.ndarray | tuple[float, float, float]) -> tuple[tuple[float, float, float], float]:
     n = math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2])
@@ -65,8 +71,12 @@ def run(world: World, dt: float) -> None:
     etype = e["etype"]
     yaw = e["yaw"]
 
-    # ---- hit spheres of every unit, gathered once per tick --------------
-    sph = world.sphere_table()
+    # ---- hit spheres of every unit and missile, gathered once a tick ----
+    sph = world.sphere_table(dt)
+    # a target that moves during the tick can walk into a leg it was never in
+    # at either end of: the broad-phase box of every round grows by the fastest
+    # thing on the field (a missile covers 20 m of ground a tick)
+    reach = float(np.abs(sph[8]).max()) if sph[8].size else 0.0
 
     for pid in pids:
         if not e.alive[pid]:
@@ -194,17 +204,25 @@ def run(world: World, dt: float) -> None:
             seg = p1 - p0
             l2 = float(seg @ seg)
             pr = 0.35 if k == 0 else 0.6
-            cand = _leg_spheres(sph, p0, p1, pr)
+            cand = _leg_spheres(sph, p0, p1, pr + reach)
             if l2 > 1e-6 and cand.size:
-                cc = sph[0][cand]
                 cr = sph[1][cand]
                 cu = sph[2][cand]
                 cm = sph[3][cand]
                 cf = sph[4][cand]
-                rel = cc - p0
-                tt = np.clip((rel @ seg) / l2, 0.0, 1.0)
-                closest = p0 + seg[None, :] * tt[:, None]
-                dd = np.linalg.norm(cc - closest, axis=1)
+                # relative motion, first order: both the round and the target
+                # are straight and constant-speed inside one 1/30 s tick, so the
+                # closest approach is a closed-form nearest point on the line
+                # `rel + w t` rather than a solve against a standing target.
+                # A missile crosses 20 m a tick and the leg of a 30 mm round is
+                # 36 m: measured against a *stationary* hull the answer is off
+                # by whole fuse radii, i.e. decided by the phase of the clock
+                rel = sph[7][cand] - p0
+                w = seg[None, :] - sph[8][cand]
+                w2 = np.einsum("ij,ij->i", w, w)
+                tt = np.clip(np.einsum("ij,ij->i", rel, w) / np.maximum(w2, 1e-9),
+                             0.0, 1.0)
+                dd = np.linalg.norm(rel - w * tt[:, None], axis=1)
                 m = dd < (cr + pr)
                 m &= cf != int(faction[pid])
                 if int(age[pid]) < 0.12:
@@ -233,46 +251,87 @@ def run(world: World, dt: float) -> None:
             e.destroy(pid)
 
 
-def sphere_table(world: World) -> tuple:
-    """``(centres, radii, units, modules, factions)`` for every unit this tick.
+def sphere_table(world: World, dt: float) -> tuple:
+    """``(centres, radii, ids, modules, factions, blocks, cull, prev, disp)``.
 
-    Built once per tick and shared: the sweep below and every burst
-    (systems/blasts.py) read the same table, so a rocket into a crowd does not
-    rebuild the battlefield per impact.  The geometries come off a per-type
-    cache (`mathutil.sphere_geom`), and each type's hulls are solved in one
-    numpy pass - no per-entity loop, which is what the table used to cost."""
+    Every hit sphere on the field this tick: the unit blocks first (ascending
+    unit id, sphere order within the hull) and then one sphere per missile in
+    the air, at its half-calibre radius.  Built once per tick and shared: the
+    sweep below and every burst (systems/blasts.py) read the same table, so a
+    rocket into a crowd does not rebuild the battlefield per impact.  The
+    geometries come off a per-type cache (`mathutil.sphere_geom`), and each
+    type's hulls are solved in one numpy pass - no per-entity loop, which is
+    what the table used to cost.
+
+    `prev` / `disp` are where each sphere *started* its own tick and how far it
+    moved during it, which is what the sweep needs to solve the hit against a
+    moving target instead of a standing one: a missile covers 20 m a tick and
+    the fuse arm is 4 m, so a stationary-target solve would fire or miss on
+    the phase of the clock.  The two blocks are gathered at different moments
+    and say so: a *unit* has already been moved by `movement` (it runs before
+    this), so its `pos` is the end of the tick and `prev = pos - vel * dt`;
+    a *missile* has not moved yet - this system moves it - so its `pos` is the
+    start of the tick and its displacement is predicted from its velocity.
+    """
     e = world.ecs
     units = world.units()
+    mis = world.interceptable()
     t = world.terrain
     cull = (t._cull_inv, t._cull_w, t._cull_d)
-    if units.size == 0:
-        return (np.zeros((0, 3), np.float32), np.zeros(0, np.float32),
-                np.zeros(0, np.int32), np.zeros(0, np.int32), np.zeros(0, np.int32),
-                (np.zeros(1, np.int32), np.zeros(0, np.int32)), cull)
+    blocks = (np.zeros(1, np.int32), np.zeros(0, np.int32))
+    if units.size == 0 and mis.size == 0:
+        empty = np.zeros((0, 3), np.float32)
+        zero = np.zeros(0, np.float32)
+        return (empty, zero, np.zeros(0, np.int32), np.zeros(0, np.int32),
+                np.zeros(0, np.int32), blocks, cull, empty, empty)
+
+    sc, sr, su, sm, sf, s0, sd = [], [], [], [], [], [], []
     pos = np.asarray(e["pos"][units], np.float64)
     yaw = np.asarray(e["yaw"][units], np.float64)
     kinds = np.asarray(e["etype"][units])
     fac = np.asarray(e["faction"][units])
-    sc, sr, su, sm, sf = [], [], [], [], []
+    move = np.asarray(e["vel"][units], np.float64) * float(dt)
     for et in np.unique(kinds):
         sel = np.nonzero(kinds == et)[0]
         local, radius, module = mu.sphere_geom(int(et))
         n = radius.shape[0]
-        sc.append(mu.sphere_world(local, pos[sel], yaw[sel]))
+        c = mu.sphere_world(local, pos[sel], yaw[sel])
+        sc.append(c)
         sr.append(np.tile(radius, sel.size))
         su.append(np.repeat(units[sel], n))
         sm.append(np.tile(module, sel.size))
         sf.append(np.repeat(fac[sel], n))
+        sd.append(mu.sphere_world(local, move[sel], yaw[sel]) - c)
+        s0.append(c - sd[-1])
+    nu = int(su and sum(a.shape[0] for a in su) or 0)
+
+    if mis.size:
+        wed = np.asarray(e["proj_wid"][mis], np.int64)
+        c = np.asarray(e["pos"][mis], np.float64)
+        sc.append(c)
+        sr.append(HIT_R[wed])
+        su.append(np.asarray(mis, np.int64))
+        sm.append(np.zeros(mis.size))
+        sf.append(np.asarray(e["faction"][mis], np.int64))
+        # a missile's `pos` was gathered before this system moved it: it starts
+        # the tick where it is and ends it one velocity-step further on
+        s0.append(c)
+        sd.append(np.asarray(e["vel"][mis], np.float64) * float(dt))
+
     c = np.concatenate(sc).astype(np.float32)
     r = np.concatenate(sr).astype(np.float32)
     u = np.concatenate(su).astype(np.int32)
     m = np.concatenate(sm).astype(np.int32)
     f = np.concatenate(sf).astype(np.int32)
-    # back into unit order (ascending id, sphere order within the hull): the
-    # sweep breaks distance ties by position in this table
-    order = np.argsort(u, kind="stable")
+    prev = np.concatenate(s0).astype(np.float32)
+    disp = np.concatenate(sd).astype(np.float32)
+    # back into unit order (ascending id, sphere order within the hull), then
+    # the missiles: the sweep breaks distance ties by position in this table
+    order = np.concatenate([np.argsort(u[:nu], kind="stable"),
+                            np.arange(nu, u.shape[0], dtype=np.int64)])
     c, r, u, m, f = c[order], r[order], u[order], m[order], f[order]
-    return (c, r, u, m, f, _block_index(world, c, r), cull)
+    prev, disp = prev[order], disp[order]
+    return (c, r, u, m, f, _block_index(world, c, r), cull, prev, disp)
 
 
 def _block_index(world: World, c: np.ndarray, r: np.ndarray) -> tuple:
@@ -331,12 +390,16 @@ def _leg_spheres(sph: tuple, p0: np.ndarray, p1: np.ndarray, pr: float) -> np.nd
 
 
 def impact(world: World, p: tuple[float, float, float], wd: dict, proj_id: int,
-            direct_unit: int = -1, direct_mod: int = 0) -> None:
+            direct_unit: int = -1, direct_mod: int = 0, skip: int = -1) -> None:
     """A round goes off at `p`: the hull it landed on, then a burst entity.
 
     The area half is not solved here any more - it becomes a `blast`, which
     `systems/blasts.py` judges a stage later (and, for a round that killed
-    something, is what makes a chain reaction a tick apart by construction)."""
+    something, is what makes a chain reaction a tick apart by construction).
+
+    `skip` spares a unit the burst: the proximity fuse has already settled the
+    target it fused on, at the moment it fused, and a missile that has flown on
+    twenty metres would otherwise be judged against a burst it has left."""
     e = world.ecs
     shooter = int(e["proj_src"][proj_id])
     shooter_ok = shooter >= 0 and e.alive[shooter]
@@ -346,8 +409,10 @@ def impact(world: World, p: tuple[float, float, float], wd: dict, proj_id: int,
     world.emit("boom", x=p[0], y=p[1], z=p[2], r=r, wid=int(wd["wid"]),
                big=1 if r >= 5.0 else 0, proj=int(proj_id))
     if direct_unit >= 0:
-        combat.hit(world, direct_unit, direct_mod, wd, 0.0, pid)
+        combat.hit(world, direct_unit, direct_mod, wd, 0.0, pid,
+                   src=f"{wd['key']} direct")
     if r <= 0.0 or float(wd["ed"]) <= 0.0:
         return
+    spared = direct_unit if direct_unit >= 0 else skip
     blasts.spawn(world, p, (float(wd["ed"]), r), friendly=False,
-                 skip=direct_unit, pid=pid, faction=faction)
+                 skip=spared, pid=pid, faction=faction)

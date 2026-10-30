@@ -60,7 +60,7 @@ def run(world: World, dt: float) -> None:
     if ids.size == 0:
         return
     t = e["blast_t"]
-    sph = world.sphere_table()
+    sph = world.sphere_table(dt)
     for bid in ids:
         bid = int(bid)
         _burst(world, bid, sph)
@@ -98,5 +98,6 @@ def _burst(world: World, bid: int, sph: tuple) -> None:
     first[1:] = units[order][1:] != units[order][:-1]
     pid = int(e["blast_pid"][bid])
     for k in order[first]:
-        combat.splash(world, int(units[k]), int(modules[k]), wd,
-                      max(float(d[k]), 0.0), pid)
+        dist = max(float(d[k]), 0.0)
+        combat.splash(world, int(units[k]), int(modules[k]), wd, dist, pid,
+                      src=f"blast {dist:.1f} m")

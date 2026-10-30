@@ -86,6 +86,12 @@ def static_payload(world: World) -> dict:
                    repair_s=defs.REARM_REPAIR_PER_100HP_S),
         debug=os.environ.get("MECH_DEBUG") == "1",
         mode=world.mode,
+        # the radar equation's constants (`defs.radar_k`): the client solves the
+        # very same `d^2 <= K * v_closing` for the RWR, so `V_REF` and the
+        # largest cross-section in the game (the outer ring of the dial) travel
+        # rather than being written twice
+        radar=dict(v_ref=defs.RADAR_V_REF,
+                   rcs=max(w.get("rcs", 0.0) for w in defs.WEAPONS)),
         lock=dict(frac=defs.LOCK_FRAC, fov=defs.BASE_FOV),
         zero=dict(range=defs.ZERO_RANGE, max_elev=defs.ZERO_MAX_ELEV,
                   steps=list(defs.ZERO_STEPS), default=defs.ZERO_DEFAULT),

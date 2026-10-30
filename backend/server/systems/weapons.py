@@ -229,7 +229,16 @@ def fire(world: World, eid: int, arm: int, wid: int, wd: dict, target: int = -1)
         # rocket pod is tilted up so its slow round meets the cannon at 1 km
         dp = (pitch + float(wd["bias"]) if zero is None else zero) + world.rng.gauss(0.0, sp)
         d = mu.dir_from(dy, dp)
-        pid = e.create(components.PROJ_COMPS)
+        # a missile is its own archetype: it carries a pool of health and its
+        # own armour, so it can be fused, holed and killed (components.MISSILE_COMPS)
+        if defs.is_interceptable(wid):
+            pid = e.create(components.MISSILE_COMPS)
+            hp = float(wd["aim_hp"])
+            e["hp"][pid] = hp
+            e["hpmax"][pid] = hp
+            e["armor"][pid] = (float(wd["aim_dp"]), float(wd["aim_de"]))
+        else:
+            pid = e.create(components.PROJ_COMPS)
         e["pos"][pid] = origin
         e["vel"][pid] = (d[0] * wd["vel"], d[1] * wd["vel"], d[2] * wd["vel"])
         e["faction"][pid] = e["faction"][eid]

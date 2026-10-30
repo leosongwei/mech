@@ -661,35 +661,41 @@ export function solveElevation(wd, ox, oy, oz, yaw, pitch, target, maxElev) {
 //    round flies to the hull, and the ring is then drawn along that bearing
 //    *from the eye* - which is what the pilot actually lays the cross on.
 export function leadPoint(wd, zeroRange, maxElev, mx, my, mz, ex, ey, ez,
-                          tx, ty, tz, vx, vz) {
-  // the bearing the bore has to take: from the muzzle to where the hull will
+                          tx, ty, tz, vx, vz, vy = 0) {
+  // the bearing the bore has to take: from the muzzle to where the target will
   // be.  Static targets keep the pilot's heading, movers need the lead folded
-  // in, so the bearing is solved twice.
-  let bx = tx, bz = tz;
+  // in, so the bearing is solved twice.  `vy` is the target's climb rate: a
+  // hull drives on the flat (0, and nothing changes for one), a missile in the
+  // air climbs or dives and *that* component is half of the lead.
+  let bx = tx, by = ty, bz = tz;
   let yaw = Math.atan2(bz - mz, bx - mx);
   let shot = null;
   let p = 0;
-  for (let pass = 0; pass < 2; pass++) {
+  // four passes, not two: a hull leads by a few metres and converges at once,
+  // but a missile closing at 600 m/s leads by hundreds and each pass moves the
+  // aim point that far again (~0.9 of the previous pass - it settles in three)
+  for (let pass = 0; pass < 4; pass++) {
     const dm = Math.hypot(bx - mx, bz - mz);
     yaw = Math.atan2(bz - mz, bx - mx);
-    p = Math.atan2(ty - my, dm);               // start on the hull
+    p = Math.atan2(by - my, dm);               // start on the target
     shot = null;
     for (let i = 0; i < 4; i++) {
       const theta = zeroAt(wd, yaw, p, mx, my, mz, zeroRange, maxElev);
       const s = flightTo(wd, 0, 0, 0, 0, theta === null ? p : theta, dm);
       if (s === null) return null;
       shot = s;
-      const err = ty - (my + s.y);
+      const err = by - (my + s.y);
       if (Math.abs(err) < 0.15) break;
       p += Math.atan2(err, dm);
     }
     if (shot === null) return null;
-    // where the hull has moved to by the time that round lands
+    // where the target has moved to by the time that round lands
     bx = tx + vx * shot.t;
+    by = ty + vy * shot.t;
     bz = tz + vz * shot.t;
   }
   // the ring sits on the sight line the pilot lays the cross along: the bore's
-  // bearing, drawn from the eye, so aiming at it puts the round on the hull
+  // bearing, drawn from the eye, so aiming at it puts the round on the target
   const de = Math.hypot(bx - ex, bz - ez);
   return {
     x: ex + Math.cos(yaw) * de,

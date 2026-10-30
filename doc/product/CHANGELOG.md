@@ -11,6 +11,85 @@
 
 ---
 
+## 2026-10-30 · 靶场放开阵营：两个浏览器可以互射，告警圈 / 预瞄框 / 拦截终于能从「挨打方」验证
+
+- 靶场不再固定 RED：大厅的 SIDE 照常生效，`RED` / `BLUE` / `AUTO` 都能部署。
+  `AUTO` 按人数平衡，所以**第二个浏览器默认落在对面**；靶子（12 台 APC）与导弹
+  防御哨位仍是**蓝方**，红军才是打靶的一侧，蓝军看到的它们是友军。
+- 出生点不再是一个点：按 pid 在南部蓝叉周围 18 m 分配站位，多开不会叠在一起。
+- 由此能在靶场上验完整条接收链路：一方打 SACLOS / 攻顶 / S-8 / RPG，另一方只看
+  自己的告警圈——**圈边到圆心的 5 Hz 红线**（未探测、只有方位）→ **红色菱形 + 世界
+  里的白色预瞄框**（已探测）→ 手动 30mm 用 4 m 引信把它打下来（**玩家机甲没有自动
+  拦截**，那是 AI 的规矩）。烟幕与树冠只让**预瞄框**消失，菱形不受影响（雷达是纯
+  多普勒公式，不判视线）。
+- 靶场「不会还手」的规则相应细化为「**没有 AI 的对地火力**」：靶子和哨位仍然不还手，
+  但**另一位玩家会打你**。
+- 顺手修掉两处文档欠账：`flow.md` 告警圈一节还写着旧的「≥100 m/s、100 m 内」判定，
+  `screens.md` 大厅一节还写着靶场忽略 SIDE。
+- 涉及文件：`backend/server/modes/range/__init__.py`（`fixed_faction = None`、
+  `mech_spawn` 分配站位）、`doc/product/range.md`（阵营、差异表、两开浏览器的用法）、
+  `doc/product/screens.md`、`doc/product/flow.md`。
+
+---
+
+## 2026-10-30 · 告警器 RWR：按多普勒回波报来袭导弹；导弹能被 30mm 引信击落；靶场加一台导弹防御哨位
+
+- **每台机甲和装甲车都有自卫雷达**，判据只有一条多普勒回波：
+  `echo = radar_strength · RCS / d⁴ · (v_closing / 600)² ≥ 1`。所以**只有正在接近**
+  的火箭 / 导弹有回波——飞过、飞走、绕开的那一发当帧从表盘上掉下去，SACLOS 被甩出
+  波束又压回来会重新出现。**子弹一律不可探测**；步兵 / 指挥部 / 碉堡没有雷达。
+- **发现距离（目标车体静止时）**：SACLOS 机甲 **1000 m / 1.67 s**、APC **500 m /
+  0.83 s**；攻顶 **563 m / 2.96 s**（APC 281 m / 1.48 s）；S-8 火箭 **713 m /
+  1.17 s**（APC 357 m / 0.59 s）；RPG **398 m / 1.33 s**（APC 199 m / 0.66 s）。
+  **迎着导弹开**把接近速度抬高：机甲冲向 SACLOS 1000 → **1041 m**。
+- **预瞄框带提前量圈**：雷达已探测的来袭弹，除了弹体上的白框，还会画出每只手该瞄
+  的那一点（`leadPoint` 新增竖直速度分量 `vy`，攻顶导弹爬升 / 俯冲的那一段也解得
+  准；车体的 `vy` 恒为 0，对地解算不变）。弹一个 tick 飞 20 m，瞄"它现在的位置"
+  打不中。
+- **HUD 告警圈三态**：**已探测**——真实方位、真实距离上一个红色菱形，外加世界里的
+  一个**预瞄框**（只在本机视线通畅时画，地形 / 树冠 / 烟幕挡住就没有，与红外锁定
+  同一套判据）；**未探测但正在逼近**——圈边到圆心一条红线，5 Hz 闪烁（只知道方位，
+  没有距离）；**已击落**——命中提示音 + 弹体解体处一小簇火花。
+- **外圈刻度改成数据驱动**：以前全场写死 `1 km`，现在按平台的 `radar_strength` 现算
+  ——机甲 `1.0 km`、APC `500 m`（`radar_strength` 机甲 5.0e13 m⁴、APC 3.125e12 m⁴、
+  其余 0；强度差 16 倍，四次方根正好让 APC 只有一半的发现距离）。
+- **导弹和火箭成了空中目标**：血量 **10**、装甲 DP / DE **1 / 1**、命中球是
+  **半个口径**（SACLOS 0.076 m、攻顶 0.064 m、RPG 0.043 m、S-8 0.040 m，**按实际正面
+  尺寸，不放大**），RCS 分别 0.02 / 0.02 / 0.002 / 0.005 m²。任何弹丸直击都能打掉，
+  但 4–8 cm 的球是狙击的活。
+- **30mm 的 4 m 近炸引信现在也对导弹起爆**（原来只认人员）：破片只算爆炸那一半，
+  贴住 **14** 点、2.67 m **10** 点、4 m 边缘 **8** 点——**4 m 触发、2.67 m 以内才真的
+  打下来**，擦着边炸只削掉 10 点血里的 8 点，弹照样飞过来。
+- **被击落的导弹不殉爆、不留残骸、不给赏金、不计 KILLS / SCORE**，就是从天上掉下来
+  ——制导跟着弹一起死，300 m 外打下来不会顺带犁一遍地面。
+- **AI 机甲用机炮拦截**：只有带引信的武器才拦（`prox > 0`，今天只有 30mm，所以
+  APC 有雷达也拦不住），只打冲**自己**来的那一发（攻顶问导引头的 `target` id，其余
+  按直线最近接近点 `CPA < 40 m`），**1.5 km 内**开火，扳机门限是引信张开的角
+  `atan((4 + hit_r) / d)`（1 km 上约 **0.23°**）。靶场实测，1.5 km 内朝 AI 机甲打出
+  去的导弹与火箭 **约 90–95%** 被接下来。
+- **靶场新增导弹防御哨位**：出生点西北 `(1550, 2250)`、约 870 m，一台只装 30mm 的
+  蓝方 AI 机甲，**从不打玩家、也不开走**，只拦下来的弹；被击毁 **5 s** 后原地重生；
+  不计入 `TARGETS n`（仍是 12）。日志给三行读数：`prox fuse: ... off missile N`、
+  `missile N took ...`、`intercept: ... round N shot down at (x, y, z)`。
+- 涉及文件：`backend/server/defs.py`（`rcs` / `hit_r` / `aim_hp` / `aim_dp` / `aim_de`、
+  `INTERCEPT_KINDS`、`RADAR_V_REF` / `radar_k` / `radar_range`、`UNIT_DEFS[...]
+  ["radar_strength"]`）、`backend/server/components.py`（导弹血量池）、
+  `backend/server/systems/proximity.py`（引信对导弹起爆）、
+  `backend/server/systems/mortality.py`（`_kill_round`）、
+  `backend/server/systems/ai.py`（`intercept` / `_missile_step` / `_threat`，
+  `INTERCEPT_RANGE` / `CPA_HIT`）、`backend/server/systems/projectiles.py`、
+  `backend/server/systems/weapons.py`、`backend/server/systems/blasts.py`、
+  `backend/server/netcode.py`、`backend/server/mathutil.py`、
+  `backend/server/modes/range/interceptor.py`（新文件）、
+  `backend/server/modes/range/__init__.py`、`frontend/src/game.js`（`_threats`、预瞄框、
+  `intercept` 事件）、`frontend/src/hud.js`（告警圈三态与数据驱动外圈）。
+- 文档：`screens.md`（2.8 导弹预瞄框一句、2.9 整节重写）、`weapons.md`（导弹作为目标 /
+  拦截 / 发现距离 / AI 拦截四节，近炸引信一节改为"对人员与导弹起爆"）、
+  `units.md`（自卫雷达强度表、AI 机炮拦截规则、`person` 与引信说明）、
+  `range.md`（3.4 导弹防御哨位、3.2 与第 6 节差异表）。
+- 工具：`tools/intercept_check.py`（新增，靶场链路自检）、`tools/replay.py` 的
+  fixture 随伤害链更新。
+
 ## 2026-10-29 · SACLOS 再改剖面：100 m/s² 推到 600 m/s，导线 4 km 末端自爆
 
 - **SACLOS ATGM** 推力 **150 → 100 m/s²**、最大速度 **400 → 600 m/s**

@@ -255,11 +255,232 @@ def _raid_plan() -> None:
                 f"way point ({x:.0f}, {z:.0f}) is inside a building"
 
 
+def _radar() -> None:
+    """Regression: the radar equation, against the table it was designed from.
+
+    `d^2 <= K * v_closing` with `K = sqrt(radar_strength * rcs) / RADAR_V_REF`.
+    The discovery distances are the ones the design was tuned to (398 / 713 /
+    1000 / 563 m for a mech, exactly half for a carrier), a round that is
+    opening out is never seen, and closing faster is seen further out.
+    """
+    import math
+    mech = defs.UNIT_DEFS[defs.ETYPE_MECH]["radar_strength"]
+    apc = defs.UNIT_DEFS[defs.ETYPE_APC]["radar_strength"]
+    assert mech == 5.0e13 and apc == 3.125e12, "the radar strengths moved"
+
+    def seen(strength: float, rcs: float, d: float, vc: float) -> bool:
+        k = math.sqrt(strength * rcs) / defs.RADAR_V_REF
+        return d * d <= k * vc
+
+    want = [(defs.WID_RPG, 300.0, 398.0), (defs.WID_ROCKET, 610.0, 713.0),
+            (defs.WID_SACLOS, 600.0, 1000.0), (defs.WID_TOPATTACK, 190.0, 563.0)]
+    for wid, v, dist in want:
+        rcs = defs.WEAPONS[wid]["rcs"]
+        for strength, scale in ((mech, 1.0), (apc, 0.5)):
+            got = defs.radar_range(strength, rcs) * math.sqrt(v / defs.RADAR_V_REF)
+            assert abs(got - dist * scale) < 1.0, \
+                f"{defs.WEAPONS[wid]['key']} at {got:.1f} m, want {dist * scale:.1f}"
+            assert seen(strength, rcs, got - 5.0, v), "not seen just inside the range"
+            assert not seen(strength, rcs, got + 5.0, v), "seen past the range"
+            # opening out or crossing: the right-hand side is <= 0, so no test
+            # clause is needed and none may creep in
+            assert not seen(strength, rcs, 10.0, -1.0), "a receding round was seen"
+            assert not seen(strength, rcs, 10.0, 0.0), "a crossing round was seen"
+    # head-on the hull's own speed is part of the closing speed
+    assert seen(mech, defs.WEAPONS[defs.WID_SACLOS]["rcs"], 1041.0 - 5.0, 650.0)
+    # the collision sphere is the half-calibre, never a playability knob
+    for w in defs.WEAPONS:
+        if defs.is_interceptable(int(w["wid"])):
+            assert abs(w["hit_r"] - w["cal"] / 2000.0) < 1e-9, "hit_r moved"
+            assert w["aim_hp"] == 10.0 and w["aim_dp"] == 1.0 and w["aim_de"] == 1.0
+        else:
+            assert "rcs" not in w, f"{w['key']} got a radar signature"
+
+
+def _intercept() -> None:
+    """Regression: a missile is a target with 10 hit points, not a trajectory.
+
+    A direct 30 mm round is worth 24 points against it (10 behind the plate plus
+    the burst) and kills; the *fuse* is what arm's-length interception is for,
+    and its blast is 14 at contact, 10 at 2.67 m and 8 at the 4 m edge - so a
+    burst at the edge of the fuse leaves it flying.  What is left behind is
+    nothing: no warhead, no wreck, no credit.
+    """
+    import logging
+
+    class Catch(logging.Handler):
+        def __init__(self) -> None:
+            super().__init__()
+            self.lines: list[str] = []
+
+        def emit(self, record: logging.LogRecord) -> None:
+            self.lines.append(record.getMessage())
+
+    world = World(seed=3, mode="range")
+    e = world.ecs
+    wd = defs.WEAPONS[defs.WID_AC30]
+    e.destroy(world.interceptor.eid)
+    world.interceptor.eid = -1
+    world.interceptor.t = 1e9
+    catch = Catch()
+    logging.getLogger("mech.intercept").addHandler(catch)
+    logging.getLogger("mech.intercept").setLevel(logging.INFO)
+
+    def missile(x: float, z: float) -> int:
+        from server import components
+        mid = e.create(components.MISSILE_COMPS)
+        wid = defs.WID_SACLOS
+        e["pos"][mid] = (x, float(world.terrain.height_at(x, z)) + 2.0, z)
+        e["vel"][mid] = (0.0, 0.0, 0.0)
+        e["faction"][mid] = 1
+        e["proj_kind"][mid] = 2
+        e["proj_wid"][mid] = wid
+        e["proj_life"][mid] = 30.0
+        e["proj_src"][mid] = -1
+        e["target"][mid] = -1
+        e["hp"][mid] = defs.WEAPONS[wid]["aim_hp"]
+        e["hpmax"][mid] = e["hp"][mid]
+        e["armor"][mid] = (defs.WEAPONS[wid]["aim_dp"], defs.WEAPONS[wid]["aim_de"])
+        return mid
+
+    # a direct hit takes it apart outright
+    mid = missile(3000.0, 3000.0)
+    combat.hit(world, mid, defs.MOD_CHASSIS, wd, 0.0, -1)
+    assert float(e["hp"][mid]) <= 0.0, "a direct 30 mm round did not kill a missile"
+    e.destroy(mid)
+
+    # the blast at the edge of the fuse: 8 points, it flies on; at 2.67 m: dead
+    mid = missile(3000.0, 3000.0)
+    combat.splash(world, mid, defs.MOD_CHASSIS, wd, 4.0, -1)
+    assert abs(float(e["hp"][mid]) - 2.0) < 1e-4, "the 4 m edge was not 8 points"
+    assert e.alive[mid], "a burst at the edge of the fuse killed it"
+    combat.splash(world, mid, defs.MOD_CHASSIS, wd, 2.67, -1)
+    assert float(e["hp"][mid]) <= 0.0, "2.67 m did not kill it"
+    # judged a stage later, and it leaves neither a burst nor a wreck behind it
+    e.query("unit")
+    n_blast = len(e.query("blast"))
+    world.update(DT)
+    assert not e.alive[mid], "the shot-down missile was still in the air"
+    assert len(e.query("blast")) == n_blast, "a shot-down missile went up"
+    assert len(e.query("wreck_t")) == 0, "a shot-down missile left a wreck"
+    logging.getLogger("mech.intercept").removeHandler(catch)
+    e.validate()
+
+
+def _fuse_geometry() -> None:
+    """Regression: the fuse solves relative motion, not a standing target.
+
+    A 600 m/s missile and a 1080 m/s round meeting head-on close 56 m in one
+    tick, and the round's fuse arm is 4 m.  Solving the leg against the target's
+    *end* position puts the two 6 m apart at the end of the tick and 50 m apart
+    at the start - neither is inside 4 m, so the old stationary rule misses the
+    crossing entirely; the relative solve finds the 2 m pass in the middle of it
+    and bursts there.
+    """
+    import logging
+    from server import components
+
+    class Catch(logging.Handler):
+        def __init__(self) -> None:
+            super().__init__()
+            self.lines: list[str] = []
+
+        def emit(self, record: logging.LogRecord) -> None:
+            self.lines.append(record.getMessage())
+
+    world = World(seed=3, mode="range")
+    e = world.ecs
+    if world.interceptor:
+        e.destroy(world.interceptor.eid)
+        world.interceptor.eid = -1
+        world.interceptor.t = 1e9              # keep the post out of this test
+    h = float(world.terrain.height_at(3000.0, 3000.0)) + 2.0
+    mid = e.create(components.MISSILE_COMPS)
+    e["pos"][mid] = (1000.0 + 50.0, h, 3000.0 + 2.0)
+    e["vel"][mid] = (-600.0, 0.0, 0.0)
+    e["faction"][mid] = 1
+    e["proj_kind"][mid] = 2
+    e["proj_wid"][mid] = defs.WID_SACLOS
+    e["proj_life"][mid] = 30.0
+    e["proj_src"][mid] = -1
+    e["hp"][mid] = 10.0
+    e["hpmax"][mid] = 10.0
+    e["armor"][mid] = (1.0, 1.0)
+    rid = e.create(components.PROJ_COMPS)
+    e["pos"][rid] = (1000.0, h, 3000.0)
+    e["vel"][rid] = (1080.0, 0.0, 0.0)
+    e["faction"][rid] = 0
+    e["proj_kind"][rid] = 0
+    e["proj_wid"][rid] = defs.WID_AC30
+    e["proj_life"][rid] = 9.0
+    e["proj_src"][rid] = -1
+
+    catch = Catch()
+    logging.getLogger("mech.intercept").addHandler(catch)
+    logging.getLogger("mech.intercept").setLevel(logging.INFO)
+    world.update(DT)
+    logging.getLogger("mech.intercept").removeHandler(catch)
+
+    # 36 m and 20 m of travel: they are 6 m apart at the end of the tick and
+    # 50 m apart at the start, which is the case the standing-target solve misses
+    took = [ln for ln in catch.lines if ln.startswith("missile ")]
+    assert took, ("the fuse never fired: a round and a missile crossing inside "
+                  "one tick were solved as if the target stood still")
+    gap = float(took[0].split("prox ", 1)[1].split(" m")[0])
+    assert gap <= 4.0, f"the fuse burst {gap:.2f} m off, past its own radius"
+    assert abs(gap - 2.0) < 0.5, f"the burst was {gap:.2f} m off, want ~2 m"
+    assert not e.alive[rid] or float(e["hp"][rid]) < 10.0, "the missile took nothing"
+    e.validate()
+
+
+def _range_slots() -> None:
+    """Regression: a range post survives its hull's id being handed out again.
+
+    Entity ids are reused LIFO, so the id a dead target leaves behind is taken by
+    the next thing that spawns - for a hull going up, its own blast entity.  The
+    range keeps raw ids in its slots (the 12 APC targets, the defence post) and
+    used to trust `alive`: driving a blast raised KeyError once a tick and, since
+    the exception aborts the slot loop, the whole world froze for good.  Kill a
+    target, tick past the wreck, and the slot has to be a live APC again.
+    """
+    world = World(seed=3, mode="range")
+    e = world.ecs
+    slot = world.targets.slots[0]
+    victim = int(slot["eid"])
+    combat.apply(world, victim, defs.MOD_CHASSIS, 9999.0)
+    world.update(DT)                       # mortality kills it, blast takes its id
+    world.update(DT)                       # the old code raised here, every tick
+    for _ in range(120):                   # 4 s: the slot's respawn delay is 3
+        world.update(DT)
+        world.events.clear()
+    back = int(slot["eid"])
+    assert back != victim or e.alive[back], "the slot never came back"
+    assert e.has(back, "moves") and int(e["etype"][back]) == defs.ETYPE_APC, \
+        "the slot is not pointing at a target any more"
+    live = [s for s in world.targets.slots
+            if e.alive[int(s["eid"])] and e.has(int(s["eid"]), "moves")]
+    assert len(live) == 12, f"{len(live)} targets alive, want 12"
+    # the defence post is respawned on the same rule
+    post = world.interceptor.eid
+    combat.apply(world, post, defs.MOD_CHASSIS, 9999.0)
+    for _ in range(240):                   # 8 s > the 5 s it waits
+        world.update(DT)
+        world.events.clear()
+    new_post = world.interceptor.eid
+    assert new_post >= 0 and e.alive[new_post] and e.has(new_post, "moves"), \
+        "the defence post did not come back"
+    e.validate()
+
+
 def run(ticks: int = TICKS, verbose: bool = False) -> list[dict[str, float]]:
     _cache_after_growth()
     _damage_model()
     _death_blast()
     _raid_plan()
+    _radar()
+    _intercept()
+    _fuse_geometry()
+    _range_slots()
     world = World(seed=11, mode="battle")
     pl = world.add_player("REPLAY")           # spawns the mech too
     # the first raiding party leaves on its own clock (60 s into the round, well

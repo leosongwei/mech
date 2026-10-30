@@ -14,9 +14,6 @@ import { emptyDraft, isEmpty, quickDraft, quote, toMessage } from './shop.js';
 const BASE_FOV = 1.05;              // 1x vertical field of view, radians
 const AIM_LINE = 60000;             // metres, "infinity" for an unzeroed reticle
 const LEAD_TARGETS = 4;             // nearest few only, the rest is clutter
-const RADAR_RANGE = 1000;           // metres, the self-defence radar
-const RADAR_MISS = 100;             // a round headed for this sphere is a threat
-const RADAR_SPEED = 100;            // m/s, slower than this is not a missile
 const LASER_RANGE = 3400;           // longest sight an enemy could shoot at
 const LASER_CONE = 0.05;            // rad, "his gun is pointed at me"
 const SMOKE_RGB = [0.58, 0.52, 0.44];   // dirt brown, like the charge it is
@@ -90,6 +87,9 @@ export class Game {
       this.defs.weapons = init.weapons;
       this.defs.units = init.units;
       this.defs.mech = init.mech;
+      // the radar equation's constants: the client solves the same
+      // `d^2 <= K * v_closing` the server's AI does
+      this.defs.radar = init.radar;
       this.buyable = init.buyable;
       this.rearm = init.rearm || null;
       this.playerFaction = init.faction;
@@ -282,20 +282,29 @@ export class Game {
     for (const ev of events) {
       if (ev.k === 'boom') {
         const wd = this.defs.weapons[ev.wid] || {};
+        // a round shot down (`small`) is the round breaking up, not its warhead
+        // going off: it keeps the little burst the server sized for it and
+        // loses the big-hit treatment the weapon's own `er` would have earned
+        const big = !ev.small && (!!ev.big || (wd.er || 0) >= 5);
         // the flash and the kick are light and physics: immediate, the bang
         // comes later
-        this.particles.impact(ev.x, ev.y, ev.z, ev.r || 1, !!ev.big || (wd.er || 0) >= 5, wd.kind);
+        this.particles.impact(ev.x, ev.y, ev.z, ev.r || 1, big, wd.kind);
         // a destroyed hull is not a big round hit: it gets a fireball of its
         // own on top, and it is felt from further out
         if (ev.blast) this.particles.explosion(ev.x, ev.y, ev.z, ev.r || 15);
         const d = own ? Math.hypot(ev.x - own.x, ev.z - own.z) : 3000;
         this.shake = Math.min(1.2, this.shake + clamp(1 - d / (ev.blast ? 500 : 300), 0, 1)
-          * (ev.big ? SHAKE_BOOM_BIG : SHAKE_BOOM_SMALL) * (ev.blast ? 1.5 : 1));
+          * (big ? SHAKE_BOOM_BIG : SHAKE_BOOM_SMALL) * (ev.blast ? 1.5 : 1));
         const level = ev.blast ? SOUND_LEVEL.blast
-                               : (ev.big ? SOUND_LEVEL.big : SOUND_LEVEL.boom);
+                               : (big ? SOUND_LEVEL.big : SOUND_LEVEL.boom);
         this._sound(ev.x, ev.y, ev.z, level, (vol, dist, pan, behind) => (ev.blast
           ? this.audio.explosion(vol, dist, pan, behind)
-          : this.audio.boom(vol, ev.big, dist, pan, behind)));
+          : this.audio.boom(vol, big, dist, pan, behind)));
+      } else if (ev.k === 'intercept') {
+        // a missile was shot down: confirmation is the hit tone and a few
+        // sparks where it broke up - no new widget, and no new sound for it
+        this.particles.impact(ev.x, ev.y, ev.z, 1);
+        this.audio.hit();
       } else if (ev.k === 'shot') {
         if (ev.eid !== undefined) this.flashes.set(ev.eid, { t: 0.07, arm: ev.arm });
         const wd = this.defs.weapons[ev.wid] || {};
@@ -408,9 +417,10 @@ export class Game {
     this.hud.resize();
     this.hud.vp = cam.viewProj;
     this._aim(own);
+    // the radar first: the pre-aim boxes are drawn on what it has seen
+    this._threats(own);
     this._leadMarkers(own);
     this._leadScreen(own);
-    this._threats(own);
     this._alarms(own);
     this._updateLockTone(own);
     drawUnits(this.renderer, this.net.entities, this.net.projectiles,
@@ -506,42 +516,69 @@ export class Game {
   }
 
   // Self-defence radar + laser warning: everything is already in the snapshot,
-  // so the pilot's own HUD works out the threats.  The radar is a "fast thing
-  // is closing on me" alarm, not a prediction of being hit.
+  // so the pilot's own HUD works out the threats.  The receiver answers the same
+  // question the server's AI asks (`defs.radar_k`): a doppler set only sees what
+  // is moving *towards* it, so a round gives an echo
+  //
+  //     strength * rcs / d^4 * (v_closing / v_ref)^2 >= 1   <=>   d^2 <= K * v_c
+  //
+  // with `K = sqrt(strength * rcs) / v_ref`.  A round opening out or crossing
+  // gives a non-positive closing speed and fails the test by itself - there is
+  // no speed threshold any more.  What it is *not*: a prediction of being hit,
+  // which is why an unseen round still gets a bearing on the dial.
   _threats(own) {
     this.threats = [];
     this.lasers = [];
     this.radarAlarm = 0;
+    this.radarRing = 0;
     if (!own) return;
+    const radar = this.defs.radar || { v_ref: 600, rcs: 0.02 };
+    const strength = (this.defs.units[own.type] || {}).radar_strength || 0;
+    // the dial's outer ring: the discovery range against the brightest
+    // cross-section in the game closing at v_ref (`defs.radar_range`), i.e.
+    // 1000 m for a mech and 500 m for an APC - read off the data, so the label
+    // in the corner is never a number of its own
+    this.radarRing = Math.pow(Math.max(0, strength * radar.rcs), 0.25);
     const eye = [own.x, own.y + 5, own.z];
+    // the round is measured against *this* hull's velocity, not the world's:
+    // running at a missile lights the receiver earlier, running from it later
+    const ovx = own.vx || 0, ovz = own.vz || 0;
     for (const p of this.net.projectiles) {
       if (p.faction === own.faction) continue;
       if (p.kind === 0) continue;                      // shells do not count
       const dx = p.x - eye[0], dy = p.y - eye[1], dz = p.z - eye[2];
       const d = Math.hypot(dx, dy, dz);
-      if (d > RADAR_RANGE) continue;
-      const v = Math.hypot(p.vx, p.vy, p.vz);
+      if (d < 1) continue;
       // guided rounds (SACLOS, top attack) fly a profile, not a line: a
       // top-attack climbs 150 m over the target and only drops onto the roof at
       // the end, so its straight path never crosses a missile-sized tube.
       // They are tracked by closing course instead, everything else by miss
       // distance.
       const guided = p.kind === 2 || p.kind === 3;
-      if (!guided && v < RADAR_SPEED) continue;
+      const wd = this.defs.weapons[p.wid] || {};
+      const v = Math.hypot(p.vx, p.vy, p.vz);
       if (v < 1) continue;
-      // closing rate: positive while the round still has to reach us.  The
-      // old test looked at the projection of the offset on the *flight* line,
-      // which flips sign the moment a round passes, so a diving top-attack
-      // only lit up after it was already going away
-      if (-(dx * p.vx + dy * p.vy + dz * p.vz) / d <= 0) continue;
+      // positive while the round still has to reach us, at whatever gait we are
+      // walking into it
+      const vc = -((dx * (p.vx - ovx) + dy * p.vy + dz * (p.vz - ovz)) / d);
+      if (vc <= 0) continue;                           // opening out or crossing
       if (!guided) {
-        const along = (dx * p.vx + dy * p.vy + dz * p.vz) / v;
+        // a round whose nearest approach stays outside the blast's own reach
+        // cannot hurt this hull (`er` out, `de` 20 of armour against it), so it
+        // is not a threat however loud its echo
+        const along = ((dx * p.vx + dy * p.vy + dz * p.vz) / v);
         const mx = dx - (p.vx / v) * along;
         const my = dy - (p.vy / v) * along;
         const mz = dz - (p.vz / v) * along;
-        if (Math.hypot(mx, my, mz) > RADAR_MISS) continue;
+        if (Math.hypot(mx, my, mz) > (wd.er || 0) + 20) continue;
       }
-      this.threats.push({ x: p.x, y: p.y, z: p.z, dist: d, kind: p.kind });
+      const k = Math.sqrt(Math.max(0, strength * (wd.rcs || 0))) / radar.v_ref;
+      // seen: the echo clears the receiver's floor.  Not seen: the bearing is
+      // still known and it is still closing - the dial shows it as such.
+      const seen = d * d <= k * vc;
+      this.threats.push({ x: p.x, y: p.y, z: p.z, dist: d, kind: p.kind,
+                          seen, wid: p.wid, hit_r: wd.hit_r || 0,
+                          vx: p.vx, vy: p.vy, vz: p.vz });
     }
     this.threats.sort((a, b) => a.dist - b.dist);
 
@@ -759,6 +796,12 @@ export class Game {
     const fov = clamp(BASE_FOV / this.zoom, 0.02, BASE_FOV);
     const tanHalf = Math.tan(fov * 0.5);
     const zero = this.init.zero || { range: 4000, max_elev: 1.05 };
+    // the smoke that is actually up: a canister still in the air is a charge,
+    // not a screen (the server only ever tests deployed puffs)
+    const puffs = this.net.smoke.filter((s) => !s.canister);
+    // the eye both the bearing and the line of sight are taken from: the
+    // camera, because that is where the pilot's cross actually sits
+    const eye = this._sightEye(own);
 
     const arms = [];
     for (let arm = 0; arm < 2; arm++) {
@@ -769,6 +812,26 @@ export class Game {
       if (!wd || (wd.kind !== 'bullet' && wd.kind !== 'rocket')) continue;
       arms.push({ arm, wd, m: this._muzzle(own, arm) });
     }
+    // A missile the radar has *seen* (`_threats`) gets the same treatment as a
+    // hull: a box on the ball it is, and one ring per arm at the point the
+    // round has to be aimed at.  It is the one target that cannot be hit by
+    // aiming where it *is* - a round crosses 20 m in a tick and the fuse arm is
+    // 4 m - so the lead matters more here than anywhere.  Same line of sight
+    // rule as the hulls below: a round behind a ridge or a screen of smoke is
+    // not boxed.
+    for (const t of this.threats || []) {
+      if (!t.seen || !(t.hit_r > 0)) continue;
+      if (sightBlocked(this.map, eye[0], eye[1], eye[2], t.x, t.y, t.z, puffs)) continue;
+      const m = { ball: true, x: t.x, y: t.y, z: t.z,
+                  rx: t.hit_r, ry: t.hit_r, marks: [] };
+      for (const a of arms) {
+        const p = leadPoint(a.wd, this.zeroRange, zero.max_elev,
+          a.m[0], a.m[1], a.m[2], eye[0], eye[1], eye[2], t.x, t.y, t.z,
+          t.vx || 0, t.vz || 0, t.vy || 0);
+        if (p) m.marks.push({ arm: a.arm, x: p.x, y: p.y, z: p.z, tof: p.tof });
+      }
+      this.leadWorld.push(m);
+    }
     if (!arms.length) return;
 
     // Enemy hulls on screen, nearest first: the four closest get a box, the
@@ -776,9 +839,6 @@ export class Game {
     // fixed zero the ring no longer means "lead the target" but "put the
     // centre cross here", and a standing hull 2 km out needs just as much of a
     // lift as a driving one needs lead.
-    // the smoke that is actually up: a canister still in the air is a charge,
-    // not a screen (the server only ever tests deployed puffs)
-    const puffs = this.net.smoke.filter((s) => !s.canister);
     const cand = [];
     for (const e of this.net.entities.values()) {
       if (e.type !== 3 && e.type !== 4) continue;           // APC / MECH only
@@ -792,9 +852,6 @@ export class Game {
     if (!cand.length) return;
     cand.sort((a, b) => a.d - b.d);
 
-    // the eye the ring's bearing is drawn from: the camera, because that is
-    // where the pilot's cross actually sits
-    const eye = this._sightEye(own);
     for (const c of cand.slice(0, LEAD_TARGETS)) {
       const e = c.e;
       const half = (c.ud.height || 3) * 0.5;               // hull centre above the ground
@@ -835,11 +892,15 @@ export class Game {
       if (!box) continue;
       const dist = Math.hypot(t.x - own.x, t.y - eyeY, t.z - own.z);
       const pxm = this.hud.h / (2 * Math.max(dist, 1) * tanHalf);   // pixels per metre
+      // a missile's box is sized by its own ball (`hit_r`, carried in `rx`) and
+      // has a floor of its own: a 0.08 m round is well under a pixel at a
+      // kilometre, and a mark too small to see is not a pre-aim box
+      const hw = clamp(t.rx * pxm, t.ball ? 8 : 6, 70);
       const out = {
         id: t.id,
         x: box[0], y: box[1],
-        hw: clamp(t.rx * pxm, 6, 70),
-        hh: clamp(t.ry * pxm, 5, 70),
+        hw,
+        hh: t.ball ? hw : clamp(t.ry * pxm, 5, 70),
         marks: [],
       };
       for (const m of t.marks) {
@@ -1097,6 +1158,9 @@ export class Game {
       // mech actually did (and it ramps up over three seconds)
       speed: own ? Math.hypot(own.mvx || 0, own.mvz || 0) * 3.6 : 0,
       threats: this.threats || [],
+      // metres at the edge of the threat dial, off `defs.radar` and the hull's
+      // own `radar_strength` - the corner label reads it back
+      radarRing: this.radarRing || 0,
       lasers: this.lasers || [],
       smoke: m.smoke === undefined ? null : m.smoke,
       smokeCd: m.smoke_cd || 0,

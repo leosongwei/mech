@@ -554,12 +554,18 @@ export class HUD {
   // closing on the hull, drawn in the hull's own frame - straight up is where
   // the mech is looking.
   // The green dot in the middle is the pilot, the red diamonds are the rounds
-  // the self-defence radar flagged, the red arrows are laser designators
-  // (somebody's sight is on us), each pointing at the hull from where the
-  // designator sits, with a dashed beam running in along its line of sight.
+  // the self-defence radar has *seen*, the short red spokes are rounds it can
+  // hear closing but has no range on (they blink, a bearing is not a track),
+  // and the red arrows are laser designators (somebody's sight is on us), each
+  // pointing at the hull from where the designator sits, with a dashed beam
+  // running in along its line of sight.
   _radar(s, w, h) {
     const ctx = this.ctx;
     const R = RADAR_PX;
+    // metres at the edge of the dial: the radar's own discovery range, so the
+    // scale under the marks is the machine's and not a constant (1000 m for a
+    // mech, 500 m for an APC)
+    const ring = s.radarRing > 0 ? s.radarRing : 1000;
     const cx = w - R - RADAR_MARGIN;
     const cy = R + RADAR_MARGIN + 10;   // up in the corner, the gear sits beside it
     const own = s.own;
@@ -591,28 +597,31 @@ export class HUD {
     ctx.stroke();
     ctx.font = '9px "Courier New", monospace';
     ctx.fillStyle = 'rgba(160,200,185,0.7)';
-    ctx.fillText('1 km', cx - 11, cy - R - 8);
+    // the scale under the heading tick, in the short form the corner has room
+    // for - 1000 m reads as "1.0 km"
+    ctx.fillText(ring >= 1000 ? `${(ring / 1000).toFixed(1)} km` : `${Math.round(ring)} m`,
+      cx - 11, cy - R - 8);
     // laser designators: bearing 0 is straight ahead (screen up), positive to
     // the right.  The sight line is a thin dashed spoke inwards - a beam, not
     // a track - and the source itself gets a solid arrow pointing at the hull,
     // so it reads at a glance which of the marks is the laser.
     for (const l of lasers) {
       const a = Math.atan2(l.z - own.z, l.x - own.x) - own.yaw;
-      const ring = Math.min(R, (l.dist / 1000) * R);
+      const lr = Math.min(R, (l.dist / ring) * R);
       const sx = Math.sin(a), sy = -Math.cos(a);
       ctx.globalAlpha = 0.75;
       ctx.strokeStyle = FAR_COLOR;
       ctx.lineWidth = 1.2;
       ctx.setLineDash([3, 3]);
       ctx.beginPath();
-      ctx.moveTo(cx + sx * (ring - 16), cy + sy * (ring - 16));
+      ctx.moveTo(cx + sx * (lr - 16), cy + sy * (lr - 16));
       ctx.lineTo(cx + sx * (R * 0.18), cy + sy * (R * 0.18));
       ctx.stroke();
       ctx.setLineDash([]);
       // the arrow: tip inward at the source's range, base just outside it
       const px = sy, py = -sx;                    // perpendicular, in dial space
-      const tipX = cx + sx * (ring - 13), tipY = cy + sy * (ring - 13);
-      const baseX = cx + sx * (ring + 2), baseY = cy + sy * (ring + 2);
+      const tipX = cx + sx * (lr - 13), tipY = cy + sy * (lr - 13);
+      const baseX = cx + sx * (lr + 2), baseY = cy + sy * (lr + 2);
       ctx.globalAlpha = 0.95;
       ctx.beginPath();
       ctx.moveTo(tipX, tipY);
@@ -625,12 +634,28 @@ export class HUD {
       ctx.lineWidth = 1;
       ctx.stroke();
     }
-    // missile diamonds
+    // missiles.  A round the radar has seen gets a diamond at its true bearing
+    // and true range; one it can only hear closing gets a spoke from the edge
+    // of the dial to the pilot, because the bearing is all the receiver has -
+    // it blinks so it never reads as a track.
+    const blink = (performance.now() / 1000 * 5) % 1 < 0.5;
     for (const t of threats) {
       const a = Math.atan2(t.z - own.z, t.x - own.x) - own.yaw;
-      const r = Math.min(R, (t.dist / 1000) * R);
-      const x = cx + Math.sin(a) * r;
-      const y = cy - Math.cos(a) * r;
+      const sa = Math.sin(a), ca = -Math.cos(a);   // dial space: up is forward
+      if (!t.seen) {
+        if (!blink) continue;
+        ctx.globalAlpha = 0.9;
+        ctx.strokeStyle = FAR_COLOR;
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        ctx.moveTo(cx + sa * R, cy + ca * R);
+        ctx.lineTo(cx, cy);
+        ctx.stroke();
+        continue;
+      }
+      const r = Math.min(R, (t.dist / ring) * R);
+      const x = cx + sa * r;
+      const y = cy + ca * r;
       ctx.globalAlpha = 0.95;
       ctx.fillStyle = FAR_COLOR;
       ctx.save();

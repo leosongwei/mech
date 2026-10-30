@@ -114,7 +114,7 @@ WEAPONS = [
     dict(wid=WID_ROCKET, key="rocket", name="UNGUIDED ROCKET POD", kind="rocket", ap=40, ad=20, ed=35, er=10.0,
          rpm=600, mag=40, reserve=0, reload=0.0, vel=55, spread=0.003, bias=0.0429, g=9.81, thrust=560,
          maxvel=610, life=16.4, range=3200, cost=350, ammo_cost=4.0, lock=0, lock_time=0, salvo=1,
-         semi=0, color=(1.0, 0.45, 0.15), cal=80,
+         semi=0, color=(1.0, 0.45, 0.15), cal=80, rcs=0.005,
          desc="40 rounds, hold to fire, sighted to 1 km"),
     # TOW class: 40 m/s soft launch, then 100 m/s^2 of boost for 5.6 s takes it
     # to its 600 m/s cruise - and that is where the motor burns out, 1.8 km down
@@ -131,7 +131,7 @@ WEAPONS = [
          rpm=40, mag=2, reserve=8, reload=4.2, vel=40, spread=0.003, bias=0.0, g=0.0, thrust=100,
          burn=5.6, drag=0.0002, maxvel=600, life=36.0, wob=30.0, wob_f=1.5, maxdist=4000.0,
          range=4000, cost=500, ammo_cost=30.0, lock=0, lock_time=0, salvo=0, semi=0,
-         color=(0.35, 1.0, 0.55), cal=152,
+         color=(0.35, 1.0, 0.55), cal=152, rcs=0.02,
          desc="Beam riding, keep the sight on target"),
     # Javelin class: soft launch at 20 m/s, the motor lights off outside the
     # tube and cruises at 190 m/s, climbing 150 m above the target before the
@@ -142,7 +142,7 @@ WEAPONS = [
     dict(wid=WID_TOPATTACK, key="topattack", name="TOP-ATTACK IR ATGM", kind="top", ap=900, ad=120, ed=60,
          er=7.0, rpm=32, mag=2, reserve=8, reload=4.6, vel=20, spread=0.002, bias=0.0, g=0.0, thrust=170,
          maxvel=190, life=52.6, climb=150.0, cruise=0.35, dive=220.0, range=2500, cost=700, ammo_cost=45.0,
-         lock=1, lock_time=1.1, salvo=0, semi=0, color=(1.0, 0.35, 0.9), cal=127,
+         lock=1, lock_time=1.1, salvo=0, semi=0, color=(1.0, 0.35, 0.9), cal=127, rcs=0.02,
          desc="2.5 km lock-on, fire and forget"),
     dict(wid=WID_RIFLE556, key="rifle556", name="5.56mm RIFLE", kind="bullet", ap=5, ad=4, ed=0, er=0,
          rpm=430, mag=30, reserve=900, reload=2.2, vel=900, spread=0.007, bias=0.0, g=9.81, thrust=0,
@@ -151,7 +151,7 @@ WEAPONS = [
     dict(wid=WID_RPG, key="rpg", name="RPG LAUNCHER", kind="rocket", ap=100, ad=40, ed=20, er=3.0,
          rpm=25, mag=1, reserve=900, reload=6.5, vel=50, spread=0.008, bias=0.0, g=9.81, thrust=380,
          maxvel=300, life=33.3, range=500, cost=-1, ammo_cost=8.0, lock=0, lock_time=0, salvo=0,
-         semi=0, color=(1.0, 0.5, 0.2), cal=85, desc="500 m anti-tank rocket"),
+         semi=0, color=(1.0, 0.5, 0.2), cal=85, rcs=0.002, desc="500 m anti-tank rocket"),
     # 105 mm smoothbore: a tank gun hung on a mech arm, not an autocannon.  One
     # round in the breech, five seconds of autoloader between shots, ten rounds
     # in the rack - so the whole arm is ten trigger pulls a battle, and the
@@ -169,6 +169,64 @@ WEAPONS = [
          salvo=0, semi=0, color=(1.0, 0.90, 0.55), cal=105, heavy=True, reach=6.45,
          desc="APFSDS, 5 s autoloader"),
 ]
+
+
+# ------------------------------------------------------- missiles as targets
+# A guided or rocket round is a *thing in the air*, not just a trajectory: it
+# carries a radar cross-section (`rcs`, m^2, what the RWR and an AI's radar see
+# it by), a collision sphere and a small pool of health, so it can be shot
+# down.  `hit_r` is the half-calibre, i.e. the round's actual frontal size - not
+# a playability knob; the 30 mm's 4 m proximity fuse is the intended way to
+# bring one down, and a direct hit on a 0.08 m ball is a sniper's shot.
+#
+# `aim_hp` 10 against the 30 mm burst (ED 15 / ER 10): a fuse at 4 m takes 8
+# points off (it survives), 2.67 m kills it.  Deliberate - the fuse starts the
+# burst, the fragments are what bring the round down.
+INTERCEPT_KINDS = ("rocket", "saclos", "top")
+
+for _w in WEAPONS:
+    if _w["kind"] in INTERCEPT_KINDS:
+        _w.setdefault("rcs", 0.0)
+        _w.setdefault("aim_hp", 10.0)
+        _w.setdefault("aim_dp", 1.0)
+        _w.setdefault("aim_de", 1.0)
+        _w["hit_r"] = _w["cal"] / 2000.0
+
+
+def is_interceptable(wid: int) -> bool:
+    """May this weapon's rounds be locked, fused and shot down?"""
+    return WEAPONS[wid]["kind"] in INTERCEPT_KINDS
+
+
+# ------------------------------------------------------------------- radar
+# What a platform sees a missile by.  `plan.md` gave the half of the equation
+# that answers "how bright is it at this range"; the other half is that a
+# doppler receiver only sees what is *moving towards it*, so the echo is scaled
+# by (closing speed / V_REF)^2 and the test is `echo >= 1`, i.e.
+#
+#     radar_strength * rcs / d^4 * (v_closing / RADAR_V_REF)^2 >= 1
+#
+# which is solved for distance as `d^2 <= K * v_closing` with
+#
+#     K = sqrt(radar_strength * rcs) / RADAR_V_REF
+#
+# so nothing on the hot path needs a square root and nothing needs a threshold
+# constant.  `RADAR_V_REF` is not a physical quantity and not a tuning knob: it
+# is the closing speed for which the discovery range is exactly
+# (strength * rcs)^(1/4) - it only makes the speed term dimensionless, so
+# changing it is the same as rescaling every `radar_strength` at once.
+# 600 m/s is the game's fastest sustained round (SACLOS cruise, S-8 peak).
+RADAR_V_REF = 600.0
+
+
+def radar_k(strength: float, rcs: float) -> float:
+    """The constant of `d^2 <= K * v_closing` for one (platform, round) pair."""
+    return math.sqrt(max(strength, 0.0) * max(rcs, 0.0)) / RADAR_V_REF
+
+
+def radar_range(strength: float, rcs: float) -> float:
+    """Discovery distance against a round closing at RADAR_V_REF, metres."""
+    return (max(strength, 0.0) * max(rcs, 0.0)) ** 0.25
 
 
 # ------------------------------------------------------------------ damage
@@ -290,6 +348,10 @@ ZERO_DEFAULT = 1000.0    # metres the sight is set to at spawn
 # `person` is what a proximity fuse may go off on (systems/proximity.py): a man
 # is a man whether he carries a rifle, an RPG or a shopping bag.  Armour is not
 # tagged, so an APC 4 m off the path leaves the fuse cold.
+#
+# `radar_strength` (m^4) is the platform's self-defence radar; absent = none, so
+# a rifleman, a base or a blockhouse never sees a missile coming and never
+# shoots at one (see the radar block below).
 MECH_HITSPHERES = [
     # (module, x right offset, y height, z forward offset, radius)
     (MOD_CHASSIS, 0.0, 1.45, 0.0, 1.45),
@@ -324,6 +386,10 @@ UNIT_DEFS = {
     # but it takes its time getting there (see APC_THRUST)
     ETYPE_APC: dict(name="APC", hp=100, dp=10, de=20,
                     speed=100.0 / 3.6, radius=2.2, height=2.8,
+                    # self-defence radar: half the mech's discovery range, i.e.
+                    # a sixteenth of its `radar_strength` (d^4), so the warning
+                    # time is halved as well
+                    radar_strength=3.125e12,
                     weapons=(WID_MG127, WID_SACLOS), ai_range=1800, sight=2600, reward=180,
                     splat=DEATH_BLAST["er"],
                     spheres=((MOD_CHASSIS, 0.0, 1.1, 0.0, 1.7),
@@ -334,6 +400,10 @@ UNIT_DEFS = {
     # hull pool 100 (chassis + torso), one arm 50 each; armour of a light tank
     ETYPE_MECH: dict(name="MECH", hp=100, arms=(50, 50), dp=10, de=20,
                      speed=50.0, radius=1.9, height=6.5,
+                     # 398 / 713 / 1000 / 563 m against the RPG / S-8 / SACLOS /
+                     # top-attack round (`defs.radar_range`); see the radar
+                     # block below for why it is this number
+                     radar_strength=5.0e13,
                      weapons=(WID_AC30, WID_ROCKET), ai_range=2600, sight=3400, reward=350,
                      splat=DEATH_BLAST["er"], spheres=tuple(MECH_HITSPHERES),
                      death=dict(blast=(DEATH_BLAST["ed"], DEATH_BLAST["er"]), loud="blast",

@@ -250,29 +250,6 @@ async def ws_endpoint(ws: WebSocket) -> None:
                     if ok:
                         client.offer("t", json.dumps(dict(t="shop", loadout=pl.loadout),
                                                      default=_json_safe))
-            elif t == "buy":
-                # hotbar shortcut: the same trade as the panel, one arm at a time
-                arm = int(msg.get("arm", 0)) & 1
-                wid = int(msg.get("weapon", 0))
-                req = shop.empty_request()
-                req["arms"][arm] = wid
-                if not _at_base(world, pl):
-                    client.offer("t", json.dumps(dict(t="info", msg="PURCHASE DENIED - BE AT BASE"),
-                                                 default=_json_safe))
-                else:
-                    ok, note, _q = shop.deal(world, pl, req)
-                    client.offer("t", json.dumps(dict(t="info", msg=note if ok else
-                                                      f"PURCHASE DENIED - {note}"), default=_json_safe))
-            elif t == "buy_smoke":
-                req = shop.empty_request()
-                req["smoke"] = True
-                if not _at_base(world, pl):
-                    client.offer("t", json.dumps(dict(t="info", msg="PURCHASE DENIED - BE AT BASE"),
-                                                 default=_json_safe))
-                else:
-                    ok, note, _q = shop.deal(world, pl, req)
-                    client.offer("t", json.dumps(dict(t="info", msg=note if ok else
-                                                      f"PURCHASE DENIED - {note}"), default=_json_safe))
             elif t == "debug_spawn" and os.environ.get("MECH_DEBUG") == "1":
                 # development helper: drop a target in front of the player
                 if pl.mech >= 0 and world.ecs.alive[pl.mech]:

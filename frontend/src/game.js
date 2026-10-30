@@ -116,11 +116,9 @@ export class Game {
           this._message(`DEPLOYED AS ${msg.name}`, '#a9f0c0');
         }
       };
-      this.input.onBuy = (idx, right) => {
-        // buying goes through the panel: the digits only move the draft, and
-        // CONFIRM is what spends the money (a number pressed with the panel
-        // shut does nothing - a quick-fit key would be a purchase nobody asked
-        // for)
+      this.input.onPick = (idx, right) => {
+        // the digits only move the draft: CONFIRM is the one thing that spends
+        // money, and a number pressed with the panel shut picks nothing
         if (!this.shopOpen) return;
         const wid = this.buyable[idx];
         if (wid !== undefined) this.shopDraft.arms[right ? 1 : 0] = wid;

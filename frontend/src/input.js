@@ -30,7 +30,7 @@ export class Input {
     this.zeroSteps = ZERO_STEPS.slice();
     this.zeroIdx = 1;                 // 1000 m
     this.wheelAcc = 0;
-    this.onBuy = null;
+    this.onPick = null;
     this.onToggleHelp = null;
     this.onSettings = null;         // ESC while the settings panel is up
     this.onHudClick = null;         // click on a HUD button, pointer not locked
@@ -92,14 +92,14 @@ export class Input {
         }
         return;
       }
-      // ENTER buys, ESC drops the rearm panel
+      // ENTER confirms the draft, ESC drops the rearm panel
       if (down && code === 'Enter' && this.onShopConfirm) { this.onShopConfirm(); e.preventDefault(); return; }
       if (down && (code === 'Escape' || code === 'KeyB') && this.onShopCancel) {
         this.onShopCancel(); e.preventDefault(); return;
       }
-      if (down && /^Digit[1-6]$/.test(code) && this.onBuy) {
+      if (down && /^Digit[1-6]$/.test(code) && this.onPick) {
         // number keys pick the weapon for an arm while the panel is up
-        this.onBuy(parseInt(code.slice(5), 10) - 1, e.shiftKey);
+        this.onPick(parseInt(code.slice(5), 10) - 1, e.shiftKey);
         e.preventDefault();
         return;
       }

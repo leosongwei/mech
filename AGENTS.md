@@ -84,7 +84,7 @@ frontend/
     meshes.js              # primitive meshes (box, sphere, cone, cylinder, rock)
     particles.js           # smoke, trails, impacts
     math.js                # mat4, lookAt, compose, dirFrom, angles
-    input.js               # pointer lock, keys, wheel, buy hotkeys
+    input.js               # pointer lock, keys, wheel, panel keys
     audio.js               # WebAudio cues, master gain + volume setting, SOUND_SPEED + attenuation()
 ```
 

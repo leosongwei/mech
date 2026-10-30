@@ -52,6 +52,9 @@ WID_TOPATTACK = 5
 WID_RIFLE556 = 6
 WID_RPG = 7
 WID_G105 = 8
+# the APC's own defence missile: the same round as the mech's SACLOS, fired out
+# of its turret one round every 5 s (see the entry in WEAPONS)
+WID_APC_ATGM = 9
 
 # kind: bullet (ballistic), rocket (unguided thrust), saclos (beam riding),
 #       top (infrared lock-on, top attack)
@@ -251,8 +254,7 @@ WEAPONS = [
          burn=5.6, drag=0.0002, maxvel=600, life=36.0, wob=30.0, wob_f=1.5, maxdist=4000.0,
          range=4000, cost=500, ammo_cost=30.0, lock=0, lock_time=0, salvo=0, semi=0,
          color=(0.35, 1.0, 0.55), cal=152, rcs=0.02, rack=RACK_SACLOS,
-         desc="Beam riding, keep the sight on target"),
-    # Javelin class, flown as an aeroplane rather than as a curve: the tube is
+         desc="Beam riding, keep the sight on target"),    # Javelin class, flown as an aeroplane rather than as a curve: the tube is
     # elevated to `loft`, a 20 m/s soft launch, then 3.4 s of motor (11.2 g)
     # that burns out at 0.9 M - `flight.py` has the whole model.  From there it
     # is an unpowered glide that trades the climb for range, arriving down a
@@ -310,6 +312,23 @@ WEAPONS = [
          thrust=0, maxvel=0, life=6.3, range=4000, cost=800, ammo_cost=60.0, lock=0, lock_time=0,
          salvo=0, semi=0, color=(1.0, 0.90, 0.55), cal=105, heavy=True, reach=6.45,
          desc="APFSDS, 5 s autoloader"),
+    # The APC's own anti-tank missile: the same airframe, warhead and beam as
+    # the mech's SACLOS, forked so the armoured car is not handed a mech's
+    # launcher.  Everything is that round; the one difference is the cycle -
+    # 12 rpm, one round every 5 s, because a two-tube turret reloads by hand and
+    # an APC that could put sixteen beam riders into the air a sight-correction
+    # apart out-trades the machine that is supposed to kill it.  The `rack` is
+    # only here for `elev`: it holds the tube at the 10 deg a soft launch needs.
+    #
+    # Last in the list on purpose: `WEAPONS` is indexed by `wid` (`MAG_OF`, the
+    # client's `defs.weapons[wid]`), so the order *is* the id space.
+    dict(wid=WID_APC_ATGM, key="apc_atgm", name="APC ATGM", kind="saclos",
+         ap=800, ad=120, ed=80, er=6.0,
+         rpm=12, mag=16, reserve=0, reload=0.0, vel=40, spread=0.003, bias=0.0, g=0.0,
+         thrust=100, burn=5.6, drag=0.0002, maxvel=600, life=36.0, wob=30.0, wob_f=1.5,
+         maxdist=4000.0, range=4000, cost=-1, ammo_cost=0.0, lock=0, lock_time=0,
+         salvo=0, semi=0, color=(0.35, 1.0, 0.55), cal=152, rcs=0.02, rack=RACK_SACLOS,
+         desc="Beam riding, one round every five seconds"),
 ]
 
 
@@ -532,7 +551,7 @@ UNIT_DEFS = {
                     # a sixteenth of its `radar_strength` (d^4), so the warning
                     # time is halved as well
                     radar_strength=3.125e12,
-                    weapons=(WID_MG127, WID_SACLOS), ai_range=1800, sight=2600, reward=180,
+                    weapons=(WID_MG127, WID_APC_ATGM), ai_range=1800, sight=2600, reward=180,
                     splat=DEATH_BLAST["er"],
                     spheres=((MOD_CHASSIS, 0.0, 1.1, 0.0, 1.7),
                              (MOD_CHASSIS, 0.0, 2.4, 0.0, 1.2)),

@@ -57,6 +57,11 @@ def register(ecs: ECS) -> None:
     ecs.register("vehicle", np.uint8)                # a wheeled hull: steers, does not strafe
     ecs.register("person", np.uint8)                 # a man on foot: a prox fuse goes off on him
     ecs.register("invulnerable", np.uint8)           # rounds stop, damage does nothing
+    # what it is *called*: an index into `World.names`, 0 for a hull with no
+    # name at all (a car, a man, a base - they answer to their type).  An AI
+    # crew draws one off `defs.AI_NAMES`, a pilot's hull carries his callsign,
+    # and the kill feed is the only reader (systems/mortality.py).
+    ecs.register("name_id", np.uint16)
     # a round in the air that can itself be fought: a missile carries a radar
     # cross section, a collision sphere and ten hit points, so a proximity fuse
     # goes off on it and a passing bullet can hole it (`systems/proximity.py`,
@@ -84,6 +89,15 @@ def register(ecs: ECS) -> None:
     # who put the last *lethal* hit in - the credit for a kill.  A component,
     # not a dict on the world, so it dies with the entity that owns it.
     ecs.register("last_hit", np.int32, (), -1)
+    # ...and what killed it, frozen at the hit rather than looked up at the
+    # death: the shooter may be a wreck by the time the death is judged
+    # (systems/mortality.py), and its id may already belong to something else.
+    # A crew is named (`name_id`, an index into `World.names`), a hull without
+    # one answers to its type - "APC", "INFANTRY".
+    ecs.register("last_name", np.uint16)             # the killer's name id, 0 = none
+    ecs.register("last_fac", np.uint8)               # the killer's side, 255 = unknown
+    ecs.register("last_etype", np.uint8)             # the killer's type, for a nameless one
+    ecs.register("last_wid", np.uint8)               # the weapon that took the point
 
     # ---- weapons --------------------------------------------------------
     ecs.register("weapon", np.uint8, (2,), 0)        # 0 = left arm, 1 = right arm
@@ -156,6 +170,13 @@ def register(ecs: ECS) -> None:
     ecs.register("blast_friendly", np.uint8)         # 0 = enemies only, 1 = no sides
     ecs.register("blast_skip", np.int32, (), -1)     # already hit directly
     ecs.register("blast_pid", np.int32, (), -1)      # credit, resolved at creation
+    # ...and who is *named* on it, frozen like the credit: a burst is judged a
+    # stage after the round that left it, by which time that hull can be gone
+    # and its id belong to the wreck it left (`blast_pid`'s reason, one column
+    # wider - the kill feed names the killer, `systems/mortality.py`)
+    ecs.register("blast_name", np.uint16)            # the shooter's name id, 0 = none
+    ecs.register("blast_etype", np.uint8)            # ...and its type, if nameless
+    ecs.register("blast_wid", np.uint8)              # the weapon that left it
 
     # ---- smoke ----------------------------------------------------------
     # A pull throws `canister` entities out of the hull; each one flies, then
@@ -199,8 +220,9 @@ def register(ecs: ECS) -> None:
 
 
 UNIT_COMPS = ["pos", "vel", "drive", "veh", "yaw", "pitch", "leg_yaw", "turret_yaw",
-              "sight_yaw", "sight_pitch", "etype", "faction",
+              "sight_yaw", "sight_pitch", "etype", "faction", "name_id",
               "owner", "hp", "hpmax", "armor", "last_hit",
+              "last_name", "last_fac", "last_etype", "last_wid",
               "weapon", "ammo", "mag", "cool", "reload_t",
               "trigger", "trigger_prev", "work_remaining_time", "target", "ai_state", "ai_timer",
               "path_i", "lane", "spot_x", "spot_y", "spot_z", "spot_t", "flags"]
@@ -215,7 +237,8 @@ DEBRIS_COMPS = ["pos", "vel", "yaw", "pitch", "leg_yaw", "turret_yaw", "etype", 
                 "owner", "hp", "hpmax", "flags", "wreck_t", "wreck_kind"]
 
 BLAST_COMPS = ["pos", "faction", "blast_power", "blast_t", "blast_friendly",
-               "blast_skip", "blast_pid", "blast"]
+               "blast_skip", "blast_pid", "blast_name", "blast_etype", "blast_wid",
+               "blast"]
 
 PROJ_COMPS = ["pos", "vel", "faction", "proj_kind", "proj_wid", "proj_life", "proj_src",
               "proj_age", "proj_seed", "proj_prev", "proj_trav", "target"]

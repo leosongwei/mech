@@ -324,11 +324,31 @@ ENEMY BASE   ▇▇▇▇░░░░░░
 ### 2.13 消息（右上，逐条向下）
 
 最多同屏 8 条，每条存活 6 s 后淡出，例如：
-`+$180 KILL`（绿）、`TOWN SECURED`（绿）/ `TOWN LOST`（红）、`RE-DEPLOYED`（绿）、
+`TOWN SECURED`（绿）/ `TOWN LOST`（红）、`RE-DEPLOYED`（绿）、
 `GOD MODE ON/OFF`、`MATCH RESTARTED`、`DEPLOYED AS <名字>`、`DEBUG SPAWN <类型>`、
 换装成交 `DEAL DONE -$304`（无耗时的一单，如烟幕）、
 开工 `REARM STARTED -$143 / 5.4s`、完工 `REARM + REPAIR COMPLETE`、
 拒绝 `SHOP DENIED - NOT ENOUGH MONEY` / `SHOP DENIED - ALREADY REARMING`。
+
+**击杀消息**（kill feed）是这一列里唯一带底板的一条，一行写完一场击杀：
+
+```
+jack killed APC with 30mm autocannon +$180
+Char Aznable[bot] killed jack with SACLOS ATGM
+```
+
+* 结构：`<击杀者> killed <被击杀者> with <武器>`，结尾 ` +$赏金` **只在自己击杀时**
+  出现（那是自己拿到的钱，别人拿多少与自己无关）。
+* 颜色：击杀者与被击杀者用**各自阵营色**（红/蓝），`killed` / `with` 灰，**武器名加粗**，
+  赏金绿。整行画在一块半透明黑底板上（`rgba(8,14,10,0.62)`，四周各 6 px 留边），
+  因为这一行要在天空背景上读。
+* 名字：玩家用大厅呼号；AI 机甲从名字池随机取一个驾驶员名（高达系列里真正开过机甲
+  作战的人，如 Amuro Ray、Char Aznable、Ramba Ral），带 **`[bot]`** 后缀；
+  没有名字的单位用类型名——`APC`、`COMMAND BASE`。
+* **只有和自己有关**的击杀才广播：**自己击杀的**、**自己被打死的**。步兵（步枪兵 /
+  反坦克兵 / 平民）的死亡一律不广播，AI 打 AI 也不广播——16 km 战场上那些每秒都在
+  发生，会把这一列刷满。
+* 打掉步兵仍然正常加钱，只是没有消息行，改为一条孤零零的绿色 `+$45`。
 
 ### 2.14 右下角状态
 

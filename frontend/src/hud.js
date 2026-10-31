@@ -4,6 +4,30 @@ import { FACTION_COLORS } from './scene.js';
 import { ZOOM_LEVELS } from './input.js';
 import { drawIcon } from './icons.js';
 
+const MESSAGE_FONT = '12px "Courier New", monospace';
+const MESSAGE_BOLD = `bold ${MESSAGE_FONT}`;
+const MESSAGE_COLOR = '#cfe6d6';
+// the kill line's plate: a little wider than the text and tall enough to hold a
+// 12px line with its descenders (`KILL_TOP` is from the baseline)
+const KILL_PAD = 6;
+const KILL_TOP = 13;
+const KILL_H = 17;
+
+function messageFont(g) {
+  return g.bold ? MESSAGE_BOLD : MESSAGE_FONT;
+}
+
+// a segment is coloured by name (`color`) or by side (`fac`, a `FACTION_COLORS`
+// index - which is how the kill feed says "red killed blue" without the server
+// having to know what the client paints with)
+function messageColor(g) {
+  const f = FACTION_COLORS[g.fac];
+  if (f) {
+    return `rgb(${Math.round(f[0] * 255)},${Math.round(f[1] * 255)},${Math.round(f[2] * 255)})`;
+  }
+  return g.color || MESSAGE_COLOR;
+}
+
 const ARM_COLORS = ['#5fe6ff', '#ffb04a'];
 const ARM_NAMES = ['L', 'R'];
 const FAR_COLOR = '#ff4a4a';        // distance past the fire control's reach
@@ -771,19 +795,43 @@ export class HUD {
     ctx.restore();
   }
 
+  // One line of the message list.  A message is either plain (`text` + `color`)
+  // or a list of segments - the kill feed paints the killer and the victim in
+  // their own side's colour and the weapon bold, so the line cannot be a single
+  // `fillText`.  Right aligned, so the width is measured before anything is
+  // drawn: the segments are drawn left to right from `w - RADAR_COL - width`.
   _messages(s, w) {
     const ctx = this.ctx;
     ctx.save();
-    ctx.textAlign = 'right';
-    ctx.font = '12px "Courier New", monospace';
+    ctx.textAlign = 'left';
     // clear of the gear button, and of the warning circle beyond it
     let y = 62;
     for (let i = s.messages.length - 1; i >= 0 && i > s.messages.length - 8; i--) {
       const m = s.messages[i];
       const a = Math.max(0, Math.min(1, m.life));
       ctx.globalAlpha = a * 0.9;
-      ctx.fillStyle = m.color || '#cfe6d6';
-      ctx.fillText(m.text, w - RADAR_COL, y);
+      const segs = m.segs || [{ text: m.text, color: m.color }];
+      let width = 0;
+      for (const g of segs) {
+        ctx.font = messageFont(g);
+        width += ctx.measureText(g.text).width;
+      }
+      let x = w - RADAR_COL - width;
+      // a kill line gets a dark plate behind it - it is the one message that is
+      // read while the sky moves under it, and three colours of 12px monospace
+      // are not readable straight off a bright cloud.  The plate is laid under
+      // the text only, so the plain messages of the same list keep their old
+      // unobtrusive look.
+      if (m.segs) {
+        ctx.fillStyle = 'rgba(8,14,10,0.62)';
+        ctx.fillRect(x - KILL_PAD, y - KILL_TOP, width + KILL_PAD * 2, KILL_H);
+      }
+      for (const g of segs) {
+        ctx.font = messageFont(g);
+        ctx.fillStyle = messageColor(g);
+        ctx.fillText(g.text, x, y);
+        x += ctx.measureText(g.text).width;
+      }
       y += 17;
     }
     ctx.restore();

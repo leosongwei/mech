@@ -76,6 +76,12 @@ class World:
         self.winner: int = -1
         self.end_timer: float = 0.0
         self.events: list[dict] = []
+        # the names the kill feed says out loud: index 0 is "nameless" (a car, a
+        # man, a base - they answer to their type), everything else is a crew
+        # drawn off `defs.AI_NAMES` or a pilot's callsign.  Deduplicated, so the
+        # table is bounded by the pool however long the server runs.
+        self.names: list[str] = [""]
+        self._name_ids: dict[str, int] = {"": 0}
         self.dt: float = 1.0 / 30.0         # last step, for a table built mid-tick
         self._sph: tuple | None = None      # this tick's hit-sphere table
         self._sph_tick: int = -1
@@ -153,6 +159,14 @@ class World:
             e["arm_hp"][eid] = arms
             e["arm_hpmax"][eid] = arms
         e["armor"][eid] = (float(d.get("dp", 0.0)), float(d.get("de", 0.0)))
+        # what the kill feed calls it.  A hull with `arms` is a crew - a pilot's
+        # machine carries his callsign, an AI crew draws one off the pool; a car
+        # or a man has no name and answers to its type ("APC", "INFANTRY").
+        if d.get("arms"):
+            if owner >= 0 and owner in self.players:
+                e["name_id"][eid] = self.name_id(self.players[owner].name)
+            elif owner < 0:
+                e["name_id"][eid] = self.name_id(defs.ai_name(self.rng))
         ws = weapons
         if ws is None:
             # a hull with arms is a mech, i.e. a crew: one that was not handed a
@@ -318,6 +332,21 @@ class World:
                 ok &= np.abs(e["pos"][ids] - self._sph[0]).max(axis=1) < 10.0
             self._aim_ok = ok
         return self._sph, self._aim_ok
+
+    def name_id(self, name: str) -> int:
+        """The index of `name` in `self.names`, adding it the first time."""
+        i = self._name_ids.get(name)
+        if i is None:
+            i = len(self.names)
+            self.names.append(name)
+            self._name_ids[name] = i
+        return i
+
+    def name_of(self, name_id: int) -> str:
+        """The string behind a `name_id` component, or "" for a nameless hull."""
+        if 0 <= name_id < len(self.names):
+            return self.names[name_id]
+        return ""
 
     def emit(self, kind: str, **data: object) -> None:
         # json.dumps cannot handle numpy scalars, so every payload is

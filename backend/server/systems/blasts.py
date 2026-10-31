@@ -25,19 +25,24 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from .. import combat, components
+from .. import combat, components, defs
 
 if TYPE_CHECKING:
     from ..world import World
 
 
 def spawn(world: World, pos, power, friendly: bool = False, skip: int = -1,
-          pid: int = -1, faction: int = -1, life: float = 0.0) -> int:
+          pid: int = -1, faction: int = -1, life: float = 0.0,
+          by: tuple[int, int, int] | None = None, wid: int = -1) -> int:
     """Create a burst at `pos`.  `power` is `(ed, er)`; `skip` is spared.
 
     `friendly` False means "enemies only" (a weapon burst), True means "no sides"
     (a wreck going up).  `life` is how many seconds it keeps burning - 0 is a
     single tick, which is every explosion in the game today.
+
+    `by` / `wid` are who the kill feed names and with what: frozen here for the
+    same reason the credit is (`blast_pid`) - the burst is judged a stage later,
+    and the hull that left it may be gone by then.
     """
     ed = float(power[0])
     if ed <= 0.0:
@@ -51,6 +56,10 @@ def spawn(world: World, pos, power, friendly: bool = False, skip: int = -1,
     e["blast_friendly"][bid] = 1 if friendly else 0
     e["blast_skip"][bid] = int(skip)
     e["blast_pid"][bid] = int(pid)
+    if by is not None:
+        e["blast_name"][bid] = max(0, int(by[0]))
+        e["blast_etype"][bid] = max(0, int(by[2]))
+    e["blast_wid"][bid] = max(0, int(wid))
     return bid
 
 
@@ -79,7 +88,8 @@ def _burst(world: World, bid: int, sph: tuple) -> None:
     if centres.shape[0] == 0:
         return
     p = np.asarray(e["pos"][bid], np.float64)
-    wd = {"ed": ed, "er": er, "ad": 0.0}
+    name_id = int(e["blast_name"][bid])
+    wd = {"ed": ed, "er": er, "ad": 0.0, "wid": int(e["blast_wid"][bid])}
     skip = int(e["blast_skip"][bid])
     fac = int(e["faction"][bid])
     d = np.sqrt(((centres - p) ** 2).sum(axis=1)) - radii
@@ -97,6 +107,10 @@ def _burst(world: World, bid: int, sph: tuple) -> None:
     first = np.ones(order.size, bool)
     first[1:] = units[order][1:] != units[order][:-1]
     pid = int(e["blast_pid"][bid])
+    # who is named on it: the shooter, frozen at creation.  An unnamed, unowned
+    # burst (a wreck going up) names nobody - it is not a kill anyone made
+    by = ((name_id, fac, int(e["blast_etype"][bid]))
+          if name_id > 0 and fac in (defs.FACTION_RED, defs.FACTION_BLUE) else None)
     # the table was built earlier in this tick: an id it holds can have been
     # freed by a round landing since and handed out again (LIFO) to something
     # else - a burst, a puff.  `ecs.destroyed` is what this tick reaped, so it
@@ -109,4 +123,4 @@ def _burst(world: World, bid: int, sph: tuple) -> None:
             continue
         dist = max(float(d[k]), 0.0)
         combat.splash(world, uid, int(modules[k]), wd, dist, pid,
-                      src=f"blast {dist:.1f} m")
+                      src=f"blast {dist:.1f} m", by=by)

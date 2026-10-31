@@ -486,6 +486,48 @@ def ai_loadout(rng) -> tuple[int, int]:
     return AI_LOADOUTS[-1][1]
 
 
+# ---- AI crews have names ----------------------------------------------
+# An AI mech is a crew, not a hull with a type, so the kill feed can say who
+# did what instead of "MECH killed MECH".  Every mech spawned without a pilot
+# (`World.spawn_unit`) draws one off this pool; a pilot's hull carries his own
+# callsign instead.  Names repeat freely - it is a roll of honour, not a roster.
+#
+# Only pilots here: the ones who actually fought in a mobile suit or armour,
+# not the officers, engineers, ship's crew and civilians around them.  Sub-lists
+# are by service so a later pass can tell what was chosen from where.
+AI_NAMES = (
+    # Earth Federation - White Base's mobile suit pilots
+    "Amuro Ray",              # RX-78-2
+    "Sayla Mass",             # the same Gundam, and the Core Booster
+    "Hayato Kobayashi",       # Guntank, then the Gundam
+    "Kai Shiden",             # Guncannon
+    "Ryu Jose",               # Guncannon
+    "Bright Noa",             # a civilian machine, in the one raid he led himself
+    "Marker Clan",            # Guncannon
+    # Zeon - the aces, and the machines they are known for
+    "Char Aznable",           # Zaku II, Gelgoog, Zeong
+    "Dozle Zabi",             # Big Zam
+    "Lalah Sune",             # Elmeth
+    "Challia Bull",           # Braw Bro
+    "Cucuruz Doan",           # Zaku II, a deserter
+    # ...and the mobile suit teams
+    "Ramba Ral", "Clamp", "Acous", "Cozun Graham", "Tachi", "Zeygan", "Stetch",
+    "Denim", "Slender", "Gene", "Crown", "J.Q.", "Kohm",
+    "Gadem", "Darota",
+    "Akahana", "Ivanov", "Callahan", "Lasa", "Marcy", "Boraskyniv",
+    "Asakura", "Cuaran", "Giyal", "Sol", "Ross", "Magu",
+)
+
+
+def ai_name(rng) -> str:
+    """One crew name off `AI_NAMES`.
+
+    Drawn like the loadout (`ai_loadout`), off `world.rng`, so the order of the
+    pool is part of the simulation.
+    """
+    return AI_NAMES[int(rng.random() * len(AI_NAMES)) % len(AI_NAMES)]
+
+
 # seconds between two launches of a lock-on round by an AI crew.  A rack of
 # eight fire-and-forget rounds at the rack's own 0.5 s cycle is four seconds of
 # war and an empty arm for the rest of the battle, so the crew launches one,

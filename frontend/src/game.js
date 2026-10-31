@@ -17,6 +17,7 @@ const LEAD_TARGETS = 4;             // nearest few only, the rest is clutter
 const RWR_RANGE = 1000;             // m, the threat receiver's own gate
 const LASER_RANGE = 3400;           // longest sight an enemy could shoot at
 const LASER_CONE = 0.05;            // rad, "his gun is pointed at me"
+const NAME_KEY = 'mech.name';      // the callsign, remembered across reloads
 const SMOKE_RGB = [0.58, 0.52, 0.44];   // dirt brown, like the charge it is
 const SMOKE_END_SHRINK = 0.35;      // s, last moments of a puff (it is opaque)
 // A bang may stay in the air this long: the loudest thing a pilot can hear is a
@@ -33,6 +34,22 @@ const SHAKE_HEAVY = 2.1;            // own 105 mm round: five times a gun's kick
                                     // it is fired once every 5 s, so it can be huge
 const SHAKE_MAX = 2.4;              // ceiling on the accumulator, set so a 105 mm
                                     // round is felt in full instead of being cut off
+
+// The lobby's callsign is the one setting that is not the audio bus's business
+// (`audio.js` keeps the two volumes), so it is stored here, under the same
+// `mech.` prefix and behind the same try/catch: private mode has no storage and
+// the lobby simply comes up on `PILOT-<pid>`.
+function savedName() {
+  try {
+    return (localStorage.getItem(NAME_KEY) || '').trim().slice(0, 16);
+  } catch (e) {
+    return '';
+  }
+}
+
+function rememberName(name) {
+  try { localStorage.setItem(NAME_KEY, name); } catch (e) { }
+}
 
 export class Game {
   constructor() {
@@ -162,7 +179,7 @@ export class Game {
     // no loadout here: every mech leaves the lobby on the default pair and
     // weapons are a rearm-panel purchase (`B`) like everything else
     this.nameEl = document.getElementById('pname');
-    this.nameEl.value = `PILOT-${init.pid}`;
+    this.nameEl.value = savedName() || `PILOT-${init.pid}`;
 
     this.factionChoice = -1;
     document.querySelectorAll('.fac').forEach((btn) => {
@@ -185,11 +202,9 @@ export class Game {
     this.started = true;
     const btn = document.getElementById('startBtn');
     if (btn && btn.blur) btn.blur();
-    this.net.send({
-      t: 'join',
-      name: (this.nameEl && this.nameEl.value.trim()) || `PILOT-${this.init.pid}`,
-      faction: this.factionChoice,
-    });
+    const name = (this.nameEl && this.nameEl.value.trim()) || `PILOT-${this.init.pid}`;
+    rememberName(name);
+    this.net.send({ t: 'join', name, faction: this.factionChoice });
     this.input.enabled = true;
     this.audio.ensure();
     this.audio.resume();
@@ -217,6 +232,26 @@ export class Game {
 
   _message(text, color) {
     this.messages.push({ text, color, life: 6 });
+    if (this.messages.length > 40) this.messages.shift();
+  }
+
+  // A kill line, the way every shooter writes one: `killer killed victim with
+  // weapon`, the two hulls in their own side's colour, the weapon bold.  The
+  // money only appears on the pilot's own kills - it is what he was paid, not
+  // what the field was paid.  The server composes the words (it is the only
+  // side that knows who a nameless hull was), the client only paints them.
+  _killfeed(ev) {
+    const segs = [
+      { text: ev.killer, fac: ev.kfac, bold: true },
+      { text: ' killed ', color: '#93a89c' },
+      { text: ev.victim, fac: ev.vfac, bold: true },
+    ];
+    if (ev.w) segs.push({ text: ' with ', color: '#93a89c' },
+                        { text: ev.w.toLowerCase(), color: '#e8f4ee', bold: true });
+    if (ev.pid === this.init.pid && ev.reward > 0) {
+      segs.push({ text: ` +$${ev.reward}`, color: '#a9f0c0', bold: true });
+    }
+    this.messages.push({ segs, life: 6 });
     if (this.messages.length > 40) this.messages.shift();
   }
 
@@ -323,9 +358,13 @@ export class Game {
         this._sound(ev.x, ev.y, ev.z, SOUND_LEVEL.shot,
           (vol, dist, pan, behind) =>
             this.audio.shot(ev.wid, kind, vol, dist, pan, behind, !!wd.heavy));
+      } else if (ev.k === 'killfeed') {
+        this._killfeed(ev);
       } else if (ev.k === 'kill') {
         if (ev.pid === this.init.pid) {
-          this._message(`+$${ev.reward} KILL`, '#a9f0c0');
+          // the kill feed already said the words: it only owes the pilot a bare
+          // number when the line was suppressed (an infantryman is not announced)
+          if (!ev.feed) this._message(`+$${ev.reward}`, '#a9f0c0');
           this.audio.hit();
         }
       } else if (ev.k === 'seeker') {

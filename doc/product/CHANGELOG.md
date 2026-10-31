@@ -11,6 +11,40 @@
 
 ---
 
+## 2026-10-31 · 击杀消息（kill feed）：谁杀了谁、用什么、赚了多少；呼号记进浏览器
+
+- **击杀有消息行**了，位置就是原来那条加钱提示的位置（右上消息区，逐条向下），
+  格式 `<击杀者> killed <被击杀者> with <武器> +$赏金`，例如
+  `jack killed APC with 30mm autocannon +$180`、
+  `Char Aznable[bot] killed jack with SACLOS ATGM`。
+  - 击杀者与被击杀者用**各自阵营色**（红/蓝），`killed` / `with` 灰，**武器名加粗**；
+  - 结尾的 `+$赏金` **只在自己击杀时**出现（原 `+$180 KILL` 那条）；
+  - 整行底下垫一块半透明黑板（四周 6 px 留边），否则红蓝小字在天空背景上读不清；
+  - 仍然不做计分板（左侧 `KILLS / DEATHS / SCORE` 与玩家列表不变）。
+- **只广播和自己有关的击杀**：自己击杀的、自己被打死的。**步兵**（步枪兵 / 反坦克兵 /
+  平民）的死亡不广播——一局里太多，会把消息区刷满；**AI 打 AI 也不广播**（16 km 战场上
+  每一秒都在发生）。打掉步兵照旧加钱，只是没有消息行，退回一条绿色 `+$45`。
+- **AI 机甲有名字了**：每台没有驾驶员的机甲在出生时从名字池里随机抽一个名字
+  （高达系列里**真正开过机甲作战**的人：Amuro Ray、Sayla Mass、Kai Shiden、
+  Char Aznable、Ramba Ral、Lalah Sune、Cucuruz Doan 等 39 个），消息里带
+  `[bot]` 后缀。APC 没有名字，就显示 `APC`；指挥部显示 `COMMAND BASE`。
+  名字存在**组件** `name_id`（`World.names` 的下标）上，随单位一起生灭。
+- **击杀归属在命中时就冻结**：`combat.apply` 除了记 `last_hit`（玩家 pid），还记下击杀者
+  的名字/阵营/类型/武器（`last_name` / `last_fac` / `last_etype` / `last_wid`），爆炸
+  （`blasts.spawn`）同样在创建时冻结 `blast_name` / `blast_etype` / `blast_wid`——因为
+  开火的那台机甲可能在死亡被判定之前就已经是残骸，它的实体 id 也可能已经换了主人。
+- **大厅呼号存进浏览器**（`localStorage: mech.name`）：部署时写入，重开页面自动预填
+  上次用的呼号，不用每次重敲。
+- 名字抽取用的是 `world.rng`（与 AI 装备模板同一个约定），所以整场战斗的随机流变了：
+  `tools/replay.py` 因此重新基线，数值容差不变。
+- 涉及文件：`backend/server/defs.py`（`AI_NAMES` / `ai_name`）、
+  `backend/server/components.py`（`name_id` / `last_*` / `blast_name` 等）、
+  `backend/server/world.py`（`names` 名字表、`spawn_unit` 抽名）、
+  `backend/server/combat.py`、`backend/server/systems/projectiles.py`、
+  `backend/server/systems/blasts.py`、`backend/server/systems/mortality.py`（`_feed`）、
+  `frontend/src/game.js`（呼号存储、`_killfeed`）、`frontend/src/hud.js`（分段消息 +
+  底板）、`doc/product/screens.md`、`doc/product/flow.md`
+
 ## 2026-10-31 · 修 bug：平装发射架（火箭巢）压低不了，近处目标时手臂不低头
 
 - **现象**：瞄紧贴着的目标时右臂的火箭巢**卡在水平线**上，怎么往下看都不低头

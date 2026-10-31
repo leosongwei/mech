@@ -504,6 +504,26 @@ frontend/
   match rules live there too (cross-faction kill money, the respawn plan from
   where it died, victory) - they are rules, not unit properties. `kill()` is
   gone; so is `DEATH_BLAST_ETYPES` and the four-way `_leave_debris`.
+* **A kill is announced, but only to somebody who has a stake in it.**
+  `mortality._feed` writes the one line the HUD's message list shows -
+  `killer killed victim with weapon`, the money appended for the pilot who
+  earned it. It stays silent for infantry (a battle kills them by the dozen)
+  and for AI fighting AI (most of the war, none of a pilot's business), so a
+  line only ever appears when a *pilot* is on one end of it. Names come from a
+  component, never a type switch: `name_id` is an index into `World.names`
+  (index 0 = nameless, and a car or a man answers to its `etype` name), an AI
+  mech draws one off `defs.AI_NAMES` at spawn (a draw off `world.rng`, so the
+  pool's order is part of the simulation) and a pilot's hull carries his
+  callsign; `[bot]` is appended to the ones no pilot owns. **Who killed it is
+  frozen at the hit, not looked up at the death** - `combat.apply` records
+  `last_name` / `last_fac` / `last_etype` / `last_wid` next to `last_hit`, and
+  `blasts.spawn` freezes the same three onto the burst (`blast_name` /
+  `blast_etype` / `blast_wid`), because the shooter can be a wreck with its id
+  handed out again by the time `mortality` judges the kill. The client only
+  paints the words: `game._killfeed` builds segments (`{text, fac, bold}`) and
+  `hud._messages` resolves `fac` through `FACTION_COLORS` and draws a dark
+  plate under the line, since 12px monospace in three colours is unreadable
+  straight off a bright cloud.
 * **An explosion is an entity** (`systems/blasts.py`). Whoever wants one - a
   round landing, a proximity fuse, a wreck - only calls `blasts.spawn`, and the
   one implementation of area damage reads it a stage later: `blast_power` =
@@ -725,6 +745,10 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
 
 ### Client
 
+* The lobby's callsign is the one setting that is not the audio bus's
+  (`audio.js` keeps `mech.volume` / `mech.alarmvolume`); `game.js` keeps
+  `mech.name` and writes it at `DEPLOY`, so a reload prefills the last callsign
+  instead of `PILOT-<pid>`.
 * `game.js` sends input at 30 Hz (`{t:"in",yaw,pitch,mx,mz,fl,fr}`) and drives
   the frame: interpolate snapshots, aim, build the draw list, draw, HUD.  The
   `yaw` / `pitch` on the wire are the *sight* (where the pilot looks), never the

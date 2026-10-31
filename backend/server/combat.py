@@ -35,8 +35,15 @@ log = logging.getLogger("mech.intercept")
 
 
 def apply(world: World, eid: int, module: int, amount: float, pid: int = -1,
-          src: str = "") -> None:
-    """Take `amount` off the armour `module` names.  The only writer of `hp`."""
+          src: str = "", by: tuple[int, int, int] | None = None,
+          wid: int = -1) -> None:
+    """Take `amount` off the armour `module` names.  The only writer of `hp`.
+
+    `by` is the hull that landed it as `(name_id, faction, etype)`, frozen here
+    rather than looked up when the death is judged - a shooter can be a wreck by
+    then, and its id can already belong to the wreck it left.  `wid` is the
+    weapon it fired, for the kill feed's "with ..." (`systems/mortality.py`).
+    """
     e = world.ecs
     if not e.alive[eid] or amount <= 0.0:
         return
@@ -78,6 +85,15 @@ def apply(world: World, eid: int, module: int, amount: float, pid: int = -1,
     # money and to address the shot-down cue of a missile (`_kill_round`)
     if pid >= 0 and "last_hit" in bufs:
         bufs["last_hit"][row] = pid
+    # ...and who to *name*, which is not the same question: an AI crew's round
+    # carries no pilot (`pid` is -1 for every one of them) but the crew, or the
+    # car, still has to be called something on the feed
+    if by is not None and "last_name" in bufs:
+        name_id, fac, etype = by
+        bufs["last_name"][row] = max(0, int(name_id))
+        bufs["last_fac"][row] = 255 if fac < 0 else int(fac)
+        bufs["last_etype"][row] = max(0, int(etype))
+        bufs["last_wid"][row] = max(0, int(wid))
     if float(bufs["hp"][row]) <= 0.0:
         _stop(bufs, row)
 
@@ -97,7 +113,7 @@ def _stop(bufs: dict, row: int) -> None:
 
 
 def hit(world: World, eid: int, module: int, wd: dict, dist: float = 0.0,
-        pid: int = -1, src: str = "") -> None:
+        pid: int = -1, src: str = "", by: tuple[int, int, int] | None = None) -> None:
     """One round landing on a unit: penetration plus blast, both halves.
 
     `dist` is how far the target's nearest surface is from the burst - 0 for a
@@ -106,11 +122,13 @@ def hit(world: World, eid: int, module: int, wd: dict, dist: float = 0.0,
     if float(wd["ad"]) <= 0.0 and float(wd["ed"]) <= 0.0:
         return
     dp, de = _armor(world, eid)
-    apply(world, eid, module, defs.hit_damage(wd, dp, de, dist), pid, src)
+    apply(world, eid, module, defs.hit_damage(wd, dp, de, dist), pid, src, by,
+          int(wd.get("wid", -1)))
 
 
 def splash(world: World, eid: int, module: int, wd: dict, dist: float,
-           pid: int = -1, src: str = "") -> None:
+           pid: int = -1, src: str = "",
+           by: tuple[int, int, int] | None = None) -> None:
     """Blast-only damage for a unit near (not under) a burst.
 
     A charge going off a few metres away cannot punch a plate, so the
@@ -120,7 +138,8 @@ def splash(world: World, eid: int, module: int, wd: dict, dist: float,
         return
     _, de = _armor(world, eid)
     apply(world, eid, module,
-          defs.blast_damage(float(wd["ed"]), de, float(wd["er"]), dist), pid, src)
+          defs.blast_damage(float(wd["ed"]), de, float(wd["er"]), dist), pid, src, by,
+          int(wd.get("wid", -1)))
 
 
 def arm_alive(world: World, eid: int, arm: int) -> bool:

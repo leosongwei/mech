@@ -74,7 +74,8 @@ def _kill(world: World, eid: int) -> None:
                faction=faction)
 
     credit = int(e["last_hit"][eid]) if e.has(eid, "last_hit") else -1
-    _award(world, eid, credit, faction, d)
+    feed = _feed(world, eid, d, credit)
+    _award(world, eid, credit, faction, d, feed)
     _plan_respawn(world, eid, pos)
     if dd.get("ends_match"):
         winner = 1 - faction if faction in (defs.FACTION_RED, defs.FACTION_BLUE) else -1
@@ -130,7 +131,8 @@ def _kill_round(world: World, eid: int) -> None:
     e.destroy(eid)
 
 
-def _award(world: World, eid: int, pid: int, faction: int, d: dict) -> None:
+def _award(world: World, eid: int, pid: int, faction: int, d: dict,
+           feed: bool) -> None:
     """Kill money, for a pilot on the other side - a hull is worth its `reward`."""
     if pid < 0 or pid not in world.players:
         return
@@ -142,8 +144,53 @@ def _award(world: World, eid: int, pid: int, faction: int, d: dict) -> None:
     killer.kills += 1
     killer.score += reward
     owner = int(world.ecs["owner"][eid])
+    # `feed` says whether the kill line already carries the money (`_feed`); when
+    # it does not - the pilot shot an infantryman, which is not announced - the
+    # client still owes him the sound of the till
     world.emit("kill", pid=pid, victim=owner if owner >= 0 else -1,
-               reward=reward, etype=int(world.ecs["etype"][eid]))
+               reward=reward, etype=int(world.ecs["etype"][eid]), feed=1 if feed else 0)
+
+
+def _named(world: World, name_id: int, etype: int, bot: bool) -> str:
+    """How the kill feed calls a hull: its name, or its type if it has none."""
+    name = world.name_of(int(name_id))
+    if name:
+        return f"{name}[bot]" if bot else name
+    return str((defs.UNIT_DEFS.get(int(etype)) or {}).get("name", "?"))
+
+
+def _feed(world: World, eid: int, d: dict, credit: int) -> bool:
+    """Announce a kill on the wire: who killed whom, with what.
+
+    A line is for what a pilot has a stake in, and nothing else.  Infantry stay
+    off it - a battle kills them by the dozen and the line would bury everything
+    else - and so does AI fighting AI, which is most of the war and none of a
+    pilot's business.  All that is left is a kill with a pilot on one end of it:
+    his own, or the one that took his hull away from him.
+
+    Returns whether a line went out, which is what tells `_award` the money is
+    already on it.
+    """
+    e = world.ecs
+    if e.has(eid, "person") or not e.has(eid, "last_name"):
+        return False
+    owner = int(e["owner"][eid]) if e.has(eid, "owner") else -1
+    if credit < 0 and owner < 0:
+        return False            # two crews, no pilot anywhere in it
+    faction = int(e["faction"][eid])
+    kfac = int(e["last_fac"][eid])
+    if kfac not in (defs.FACTION_RED, defs.FACTION_BLUE) or kfac == faction:
+        return False            # uncrewed burst, or an accident inside the family
+    killer = _named(world, int(e["last_name"][eid]), int(e["last_etype"][eid]),
+                    bot=credit < 0)
+    wid = int(e["last_wid"][eid])
+    wd = defs.WEAPONS[wid] if 0 <= wid < len(defs.WEAPONS) else {}
+    world.emit("killfeed", killer=killer, kfac=kfac,
+               victim=_named(world, int(e["name_id"][eid]), int(e["etype"][eid]),
+                             bot=owner < 0),
+               vfac=faction, w=str(wd.get("name", "")), pid=int(credit),
+               reward=int(d.get("reward", 0)))
+    return True
 
 
 def _plan_respawn(world: World, eid: int, pos: np.ndarray) -> None:

@@ -210,21 +210,17 @@ def fire(world: World, eid: int, arm: int, wid: int, wd: dict, target: int = -1)
     n = max(1, int(wd["salvo"]))
     life = float(wd["life"])
 
-    # a launcher of tubes stands at least at its own elevation (`rack["elev"]`):
-    # the top attack is bolted at its 42 deg quadrant, a beam rider at the 10
-    # deg its soft launch needs, the rocket nest lies flat on the arm.  The
-    # tubes are drawn on this angle as well, so the mouth drawn is the mouth
-    # fired from - which is why the elevation is settled before the muzzle is.
+    # where the tubes point, which is the one thing that decides the mouth the
+    # round leaves and the heading it leaves on: a launcher bolted at its own
+    # quadrant stands there whatever the arm does (the top attack's 42 deg is
+    # the round's own loft), one carried on the arm adds its elevation bias to
+    # the arm's aim, and one mounted flat (`elev` 0, the rocket nest) is simply
+    # the arm - depression included, or a nest could never bear on anything
+    # closer than its own range setting.  Everything is drawn on this angle as
+    # well, so the mouth drawn is the mouth fired from.
     rack = wd.get("rack")
     elev = float(rack["elev"]) if rack else 0.0
-
-    if kind == 2:
-        # SACLOS: launch along the launcher, the beam takes over immediately
-        pitch = max(pitch, elev)
-    elif kind == 3:
-        # the top-attack tube is elevated to its own quadrant: the loft is a
-        # property of the launcher, not of where the pilot happens to look
-        pitch = float(wd["loft"])
+    pitch = elev if rack and rack.get("bolted") else pitch + elev
 
     right = up = 0.0
     if etype == defs.ETYPE_MECH:
@@ -244,7 +240,7 @@ def fire(world: World, eid: int, arm: int, wid: int, wd: dict, target: int = -1)
             # the loop takes the round off the top of this call.
             right, up = defs.rack_tube(int(wd["mag"]) - int(e["mag"][eid][arm]), rack)
         origin = mu.muzzle_point(pos[eid], yaw, defs.MOD_LEFT if arm == 0 else defs.MOD_RIGHT,
-                                 max(pitch, elev), reach, right, up)
+                                 pitch, reach, right, up)
 
     # direct fire is zeroed: hold off for the drop so the round meets the sight
     # line at the pilot's setting.  A pilot's gun uses that fixed range, which

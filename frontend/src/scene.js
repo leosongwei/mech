@@ -397,12 +397,15 @@ function armModel(R, e, arm, wdefs, flashes, shoulderY, lateral) {
   const wid = e.weapon ? e.weapon[arm] : 0;
   const wd = wdefs[wid] || {};
   const kind = wd.kind || 'none';
-  // a launcher of tubes never lies below its own elevation (`rack.elev`): the
-  // top attack is bolted at 42 deg, a beam rider at the 10 deg its soft launch
-  // needs, the nest lies flat.  The server fires from the same angle, so the
-  // arm is drawn where the barrel really is, not where the sight is looking.
-  const mount = (wd.rack && wd.rack.elev) || 0;
-  const p = alive ? Math.max(e.pitch, mount) : -0.5;
+  // how the launcher is hung (`defs.rack`, the same spec the server fires
+  // from): bolted at its own quadrant, so it stands at 42 deg whatever the arm
+  // does (the top attack), or carried on the arm, where its elevation is a
+  // bias above the arm's aim (a beam rider's 10 deg soft launch) - and a rack
+  // mounted flat follows the arm exactly, which is what lets the rocket nest
+  // depress onto something close.
+  const spec = wd.rack || null;
+  const mount = spec ? spec.elev || 0 : 0;
+  const p = alive ? (spec && spec.bolted ? mount : e.pitch + mount) : -0.5;
   const yaw = e.yaw;
   const fac = facColor(e);
   const fl = flashes && flashes.get(e.id);

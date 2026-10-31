@@ -64,8 +64,55 @@ export const SOUND_LEVEL = { shot: 0.6, boom: 0.7, big: 0.8, blast: 1.0 };
 // The 105 mm's report is four times the gains a gun cue spends (see `shot`):
 // it is the loudest weapon on the field short of a hull going up, and the
 // master bus is limited, not clamped, so a cue is scaled up rather than
-// clamped flat.
+// clamped flat.  Played against a quiet room the cue as it stands is already
+// near the top of what an ear wants - a first pass at 1.5x this (2.04) was
+// too loud - so this is the ceiling, not a starting point.
 const HEAVY_GAIN = 1.36;
+
+// A 105 mm report is five sounds in a row, and every number in this table came
+// off a real one: `plan_imgs/m1fire.mkv`, four rounds at 1:30-1:55, analysed
+// per window (the comment above `shot` carries the measured figures).  A report
+// is not one louder gunshot - the ear hears the crack, then the bore, and *the
+// gap between them* is most of what reads as heavy.
+//
+// Each row is [dur, f0, f1, q, type, gain, delay, [[t, gain] ...]]: a filtered
+// noise burst whose filter sweeps f0 -> f1 over `dur`, `gain` its peak level,
+// `delay` when it starts relative to the crack, and the breakpoints its
+// envelope follows from there.
+//
+// Two things this table had wrong, both caught by measuring the result instead
+// of trusting the design:
+//
+//   * it was twice too long.  The recording is still audible at 2.5 s, but a
+//     cockpit is not a range: at distance `_verbSend` stretches the tail for us
+//     anyway, and the 3.0/4.0 s layers here left the shot hanging over the next
+//     two seconds of the fight.  Everything is now inside 2 s.
+//   * its two "low" layers were the bright ones.  A bandpass keeps a wide top,
+//     so the 900 -> 380 Hz rumble was the loudest thing left after half a
+//     second, and the 240 -> 45 Hz tail still passes a couple of kHz.  Both are
+//     lowpasses now, and the tail sits *below* the boom instead of beside it.
+const HEAVY_REPORT = [
+  // the crack off the muzzle brake: a broad snarl at 2.8 kHz, 20 dB down in
+  // 100 ms (a highpass here instead left 8-16 kHz ringing for the whole shot)
+  [0.45, 2800, 900, 0.6, 'bandpass', 0.34, 0,
+   [[0, 1], [0.02, 1], [0.09, 0.4], [0.25, 0.08], [0.45, 0.02]]],
+  // the brake's own cough, filling the octaves under the crack
+  [0.45, 1200, 420, 0.6, 'bandpass', 0.34, 0,
+   [[0, 0.9], [0.04, 1], [0.15, 0.45], [0.35, 0.12], [0.45, 0.02]]],
+  // the pressure front: the bore's boom, 110-250 Hz.  It swells in over
+  // 120 ms rather than starting at full, which is what keeps the first
+  // 50 ms crack-first instead of thud-first
+  [2.0, 400, 110, 0.5, 'lowpass', 3.0, 0.03,
+   [[0, 0.25], [0.06, 0.9], [0.12, 1], [0.3, 0.78], [0.7, 0.5], [1.1, 0.28],
+    [1.6, 0.1], [2.0, 0.02]]],
+  // the rumble under it, rolling out slowly
+  [1.8, 600, 180, 0.5, 'lowpass', 1.5, 0.02,
+   [[0, 0.2], [0.08, 0.9], [0.16, 1], [0.4, 0.7], [0.8, 0.4], [1.2, 0.2],
+    [1.8, 0.02]]],
+  // and the ground answering back, an octave under everything else
+  [2.0, 160, 38, 0.4, 'lowpass', 2.7, 0.05,
+   [[0, 0.1], [0.1, 0.8], [0.2, 1], [0.6, 0.5], [1.1, 0.22], [2.0, 0.02]]],
+];
 
 export function attenuation(dist) {
   return Math.pow(SOUND_REF_DIST / Math.max(SOUND_REF_DIST, dist), SOUND_ROLLOFF);
@@ -247,22 +294,40 @@ export class GameAudio {
   }
 
   // `wet` overrides the distance-driven reverb send: a burst that is meant to be
-  // heard as a rumble gets its room even from close up.
+  // heard as a rumble gets its room even from close up.  `delay` starts the
+  // whole voice later - the layers of a report are not simultaneous (see
+  // `shot`), and one buffer source cannot be offset from another's clock.
   _noiseBurst(dur, freq, q, gain, type, sweepTo, dist = 0, wet = null,
-              pan = 0, behind = 0) {
+              pan = 0, behind = 0, opts = null) {
     if (!this.ctx) return;
-    const t = this.ctx.currentTime;
+    const t = this.ctx.currentTime + (opts && opts.delay ? opts.delay : 0);
     const src = this.ctx.createBufferSource();
     src.buffer = this.noise;
     src.playbackRate.value = 0.8 + Math.random() * 0.5;
+    // the shared noise buffer is 1.2 s long: anything wound out past it (the
+    // rumble tail of a report, a hull's burn) has to loop or it stops dead
+    src.loop = dur > 1.0;
     const f = this.ctx.createBiquadFilter();
     f.type = type || 'bandpass';
     f.frequency.value = freq;
     f.Q.value = q;
     if (sweepTo) f.frequency.exponentialRampToValueAtTime(sweepTo, t + dur);
     const g = this.ctx.createGain();
-    g.gain.setValueAtTime(gain, t);
-    g.gain.exponentialRampToValueAtTime(0.0008, t + dur);
+    if (opts && opts.env) {
+      // a measured decay instead of one exponential ramp: [[t, gain], ...].
+      // The breakpoints are *shape*, so the layer's own `gain` still has to be
+      // folded in here - dropping it (as this did at first) leaves every layer
+      // of the report at unity and the mix exactly the wrong way round: the
+      // bright 0.7x crack arriving 12 dB over the 3.4x boom.
+      opts.env.forEach(([at, v], i) => {
+        const to = Math.max(v * gain, 0.0001);
+        if (i === 0) g.gain.setValueAtTime(to, t + at);
+        else g.gain.exponentialRampToValueAtTime(to, t + at);
+      });
+    } else {
+      g.gain.setValueAtTime(gain, t);
+      g.gain.exponentialRampToValueAtTime(0.0008, t + dur);
+    }
     src.connect(f); f.connect(g);
     this._bus(g, pan, behind, dist);
     this._verbSend(g, wet === null ? reverberation(dist) : wet, dist);
@@ -270,20 +335,35 @@ export class GameAudio {
     src.stop(t + dur + 0.05);
   }
 
-  _thump(freq, dur, gain, dist = 0, pan = 0, behind = 0) {
+  // A sine falling from `freq` to `freq * 0.35` (or to `opts.sweepTo`) for the
+  // weight under a bang.  `opts` is the heavy report's shape: `delay` for a
+  // thump that arrives behind the crack, `attack` for one that swells rather
+  // than slams, `wet` for a boom that is all room.
+  _thump(freq, dur, gain, dist = 0, pan = 0, behind = 0, opts = null) {
     if (!this.ctx) return;
-    const t = this.ctx.currentTime;
+    const delay = opts && opts.delay ? opts.delay : 0;
+    const attack = opts && opts.attack ? opts.attack : 0;
+    const t = this.ctx.currentTime + delay;
     const o = this.ctx.createOscillator();
     o.type = 'sine';
     o.frequency.setValueAtTime(freq, t);
-    o.frequency.exponentialRampToValueAtTime(freq * 0.35, t + dur);
+    o.frequency.exponentialRampToValueAtTime(
+      opts && opts.sweepTo ? opts.sweepTo : freq * 0.35, t + dur);
     const g = this.ctx.createGain();
-    g.gain.setValueAtTime(gain, t);
-    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    if (attack > 0) {
+      // scheduled from zero, or the node's default gain of 1 is already open
+      // when the oscillator starts
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(gain, t + attack);
+    } else {
+      g.gain.setValueAtTime(gain, t);
+    }
+    g.gain.exponentialRampToValueAtTime(0.001, t + attack + dur);
     o.connect(g);
     this._bus(g, pan, behind, dist);
-    this._verbSend(g, reverberation(dist) * 0.6, dist);
-    o.start(t); o.stop(t + dur + 0.02);
+    this._verbSend(g, opts && opts.wet !== undefined ? opts.wet
+      : reverberation(dist) * 0.6, dist);
+    o.start(t); o.stop(t + attack + dur + 0.02);
   }
 
   // `vol` is the source level (`SOUND_LEVEL`) already multiplied by the
@@ -295,15 +375,34 @@ export class GameAudio {
     this.ensure();
     if (!this.ctx) return;
     if (heavy) {
-      // a 105 mm gun is not a louder autocannon round, it is a different
-      // event: a hard crack on top of a long low boom, and the whole report
-      // three times as long as the 30 mm's.  One round per five seconds, so it
-      // never has to stack up the way a burst does - and it is meant to be the
-      // loudest thing on the field short of a hull going up, so its gains sit
-      // four times where a gun's would (the master bus is limited, not clamped).
-      this._noiseBurst(0.34, 900 + Math.random() * 350, 1.0, HEAVY_GAIN * vol, 'bandpass', 180,
-                       dist, null, pan, behind);
-      this._thump(68, 0.34, HEAVY_GAIN * vol, dist, pan, behind);
+      // Measured off a recorded M1 (plan_imgs/m1fire.mkv, four rounds, analysed
+      // per window - the table is `HEAVY_REPORT` above):
+      //
+      //   crack   peaks ~2.5 kHz, 20 ms in, -20 dB inside 100 ms
+      //   boom    110-250 Hz, peaks 50-100 ms in, -20 dB only at ~1 s
+      //   sub     25-60 Hz, peak ~100 ms in, under the floor
+      //   tail    the recording still 10 dB over the silence at 2.5 s
+      //
+      // The old cue was two layers (a 900 Hz bandpass and a 68 Hz sine) that
+      // both slammed at t=0 and were both over in 340 ms: no crack, and the
+      // boom in front of the sound it belongs behind.  The gap between crack
+      // and bore is most of what reads as heavy, so each layer starts where the
+      // recording puts it.  It stops at 2 s rather than the recording's 2.5:
+      // at range `_verbSend` adds the room on top, and a cockpit is not a
+      // range.  One round per five seconds, so it never has to stack up the way
+      // a burst does - and it is meant to be the loudest thing on the field
+      // short of a hull going up, hence the gains four times a gun cue's (the
+      // master bus is limited, not clamped).
+      const wet = reverberation(dist);
+      for (const [dur, f0, f1, q, type, gain, delay, env] of HEAVY_REPORT) {
+        this._noiseBurst(dur, f0, q, HEAVY_GAIN * vol * gain, type, f1, dist,
+                         0.12 + 0.55 * wet, pan, behind, { delay, env });
+      }
+      // the weight under the floor: 120 Hz falling to 42, swelling in rather
+      // than slamming, which is what the recording does at ~100 ms
+      this._thump(120, 0.9, HEAVY_GAIN * vol * 0.75, dist, pan, behind,
+                  { delay: 0.03, sweepTo: 42, attack: 0.02,
+                    wet: 0.25 + 0.55 * wet });
     } else if (kind === 'bullet') {
       this._noiseBurst(0.11, 1400 + Math.random() * 500, 1.2, 0.28 * vol, 'bandpass', 400,
                        dist, null, pan, behind);

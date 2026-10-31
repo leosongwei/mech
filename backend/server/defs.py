@@ -91,7 +91,7 @@ WID_APC_ATGM = 9
 def rack(cols: int, rows: int, count: int | None = None, *, bore: float = 0.19,
          length: float = 1.30, centre: float = 0.75, wall: float = 0.04,
          pitch: float | None = None, end: float = 0.10, frame: float = 0.10,
-         elev: float = 0.0,
+         elev: float = 0.0, bolted: bool = False,
          box: tuple[float, float, float] | None = None) -> dict:
     """Describe a tube launcher: the lattice, the tubes and the body round them.
 
@@ -104,9 +104,12 @@ def rack(cols: int, rows: int, count: int | None = None, *, bore: float = 0.19,
     centre       how far the launcher sits along the bore, m
     end          how far the tubes poke out of each end face, m
     frame        how much wider the body is than the lattice, per side, m
-    elev         the launcher's own elevation, rad: a bolted quadrant the tubes
-                 are fixed at, which the arm's slewing does not move (0 = the
-                 launcher follows the arm)
+    elev         the launcher's own elevation, rad: what it adds to the angle
+                 of the arm it is hung on (0 = mounted flat, the tubes follow
+                 the arm exactly - depression included)
+    bolted       the tubes are fixed at `elev` and the arm's slewing does not
+                 move them at all: the top attack's 42 deg loft is a property
+                 of the launcher, not of where the pilot is looking
     box          explicit (length, width, height) when the drawn body is not
                  the one the lattice derives
 
@@ -127,7 +130,7 @@ def rack(cols: int, rows: int, count: int | None = None, *, bore: float = 0.19,
     return dict(cols=int(cols), rows=int(rows), count=n, bore=float(bore),
                 length=float(length), pitch=p, centre=float(centre),
                 mouth=float(centre) + float(length) * 0.5, elev=float(elev),
-                box_len=bl, box_w=bw, box_h=bh)
+                bolted=bool(bolted), box_len=bl, box_w=bw, box_h=bh)
 
 
 def rack_tube(fired: int, spec: dict) -> tuple[float, float]:
@@ -180,12 +183,13 @@ RACK_ROCKET = rack(5, 8, 40, bore=0.135, pitch=0.155, length=2.15, centre=0.60,
 # that came out 1.48 m wide and sat 0.17 m *inside* the hull, and it read as
 # eight dots in a big empty box.
 RACK_TOP = rack(2, 4, 8, bore=0.24, pitch=0.28, length=1.70, centre=0.0, end=0.25,
-                frame=0.025, elev=0.73299)
+                frame=0.025, elev=0.73299, bolted=True)
 # The SACLOS rack: the same tubes and the same packing, four across and four
-# high - sixteen rounds in one flat pack.  It is not bolted flat: a beam rider
-# has to clear the arm on a soft launch, so the launcher stands at 0.18 rad (10
-# deg) whatever the arm is doing below that, and climbs with the arm above it.
-# The round leaves along the tube, so the same angle biases both.
+# high - sixteen rounds in one flat pack.  It is not bolted: a beam rider has
+# to clear the arm on a soft launch, so the launcher sits 0.18 rad (10 deg)
+# above whatever the arm is aimed at - and the arm still depresses, the tube a
+# tenth of the way down with it.  The round leaves along the tube, so the same
+# bias applies to both, and the guidance absorbs it the moment it is out.
 RACK_SACLOS = rack(4, 4, 16, bore=0.24, pitch=0.28, length=1.70, centre=0.0,
                    end=0.25, frame=0.025, elev=0.18)
 
@@ -286,7 +290,7 @@ WEAPONS = [
          mass=20.0, dia=0.127, cd0=0.75, k_cl=0.12, cl_alpha=16.0, cl_max=5.0,
          burn=3.4, ignite=0.15, loft=RACK_TOP["elev"], apex=950.0, turn_r=700.0,
          pn_n=4.0, pn_r=300.0, pn_v=120.0, rack=RACK_TOP, body=(0.18, 1.30),
-         lock=1, lock_time=1.1, salvo=0, semi=0, color=(1.0, 0.35, 0.9), cal=127, rcs=0.02,
+         lock=1, lock_time=0.6, salvo=0, semi=0, color=(1.0, 0.35, 0.9), cal=127, rcs=0.02,
          desc="4 km lock-on, fire and forget"),
     dict(wid=WID_RIFLE556, key="rifle556", name="5.56mm RIFLE", kind="bullet", ap=5, ad=4, ed=0, er=0,
          rpm=430, mag=30, reserve=900, reload=2.2, vel=900, spread=0.007, bias=0.0, g=9.81, thrust=0,
@@ -297,10 +301,10 @@ WEAPONS = [
          maxvel=300, life=33.3, range=500, cost=-1, ammo_cost=8.0, lock=0, lock_time=0, salvo=0,
          semi=0, color=(1.0, 0.5, 0.2), cal=85, rcs=0.002, desc="500 m anti-tank rocket"),
     # 105 mm smoothbore: a tank gun hung on a mech arm, not an autocannon.  One
-    # round in the breech, five seconds of autoloader between shots, ten rounds
-    # in the rack - so the whole arm is ten trigger pulls a battle, and the
-    # magazine is 1 on purpose (`mag` 1 / `reserve` 9 is what makes the reload
-    # the cycle: a shot, then the countdown, then another).  1600 m/s of
+    # round in the breech, three seconds of autoloader between shots, twelve
+    # rounds in the rack - so the whole arm is twelve trigger pulls a battle,
+    # and the magazine is 1 on purpose (`mag` 1 / `reserve` 11 is what makes the
+    # reload the cycle: a shot, then the countdown, then another).  1600 m/s of
     # APFSDS: 30 m of drop at 4 km is the fire control's problem, not the
     # pilot's, and 0.3 mrad of spread is a coin across 3 km.  AD 200 is past
     # every hull pool in the game and AP 120 past the base's 80 of plate, so it
@@ -308,10 +312,10 @@ WEAPONS = [
     # apart with a single round - which is what a $800 barrel and $600 of
     # ammunition buys.
     dict(wid=WID_G105, key="g105", name="105mm SMOOTHBORE", kind="bullet", ap=120, ad=200, ed=15, er=3.0,
-         rpm=12, mag=1, reserve=9, reload=5.0, vel=1600, spread=0.0003, bias=0.0, g=9.81,
+         rpm=20, mag=1, reserve=11, reload=3.0, vel=1600, spread=0.0003, bias=0.0, g=9.81,
          thrust=0, maxvel=0, life=6.3, range=4000, cost=800, ammo_cost=60.0, lock=0, lock_time=0,
          salvo=0, semi=0, color=(1.0, 0.90, 0.55), cal=105, heavy=True, reach=6.45,
-         desc="APFSDS, 5 s autoloader"),
+         desc="APFSDS, 3 s autoloader"),
     # The APC's own anti-tank missile: the same airframe, warhead and beam as
     # the mech's SACLOS, forked so the armoured car is not handed a mech's
     # launcher.  Everything is that round; the one difference is the cycle -

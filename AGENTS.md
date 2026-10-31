@@ -224,13 +224,20 @@ frontend/
   one mechanism instead of three.  The cells are packed at
   about 1.15 tube widths (the nest's 0.155 on a 0.135 bore), which is what makes
   a face read as a bundle of tubes; the body is a 0.04 m sheet-metal edge round
-  the lattice and nothing more.  `elev` is a launcher bolted at its own
-  quadrant: the arm's slewing does not move it, and the server both draws and
-  *fires* from that angle — the top-attack rack is 42° (the round's own loft),
-  the SACLOS pack stands at the 0.18 rad its soft launch needs and climbs with
-  the arm above that, the nest lies flat (0).  A launcher's elevation is
-  settled *before* the muzzle is solved, so the mouth drawn is the mouth fired
-  from.  `bore` is the tube's outside diameter in **both** halves of the file:
+  the lattice and nothing more.  How a rack is *hung* is two fields, and the
+  server, `scene.js` and the client's muzzle all read the same two: `elev` is
+  what the tubes add to the angle of the arm they are on, and `bolted` means
+  the arm's slewing does not move them at all.  So the top-attack rack is
+  `bolted` at its 42° (the round's own loft, whatever the pilot's cross does),
+  the SACLOS pack is carried at 0.18 rad *above* the arm's aim — a soft launch
+  angle that rides the arm down as well as up — and the nest is mounted flat
+  (`elev` 0), i.e. it simply is the arm.  Never clamp an elevation as a floor
+  (`max(pitch, elev)`): a flat rack whose `elev` is 0 is then pinned to the
+  horizon and can never bear on anything close, while its rounds — which leave
+  along the arm — still hit, so the bug reads as "the pod won't depress" and
+  nothing else.  A launcher's elevation is settled *before* the muzzle is
+  solved, so the mouth drawn is the mouth fired from.  `bore` is the tube's
+  outside diameter in **both** halves of the file:
   the client's hexagon scales as a width, so passing half a bore draws a tube a
   quarter of its area and leaves a hole's worth of empty box around it.
 * **Grid** (`grid.py`) is a 128 m cell index over every unit that moves *or* can
@@ -970,6 +977,18 @@ cd frontend && npm install && npm run build      # -> backend/assets/
   ```bash
   .venv/bin/python tools/intercept_check.py              # every type, two ranges
   .venv/bin/python tools/intercept_check.py -v           # and every log line
+  ```
+* **`tools/gun_report.py`** is where the 105 mm cue's numbers come from: point it
+  at a recording (a video is fine, ffmpeg pulls the audio out) and give it the
+  shots' times, and it prints each one's third-octave spectrum per window, its
+  total envelope out to 2.5 s and, per band, when it peaks and when it is 6 and
+  20 dB down.  `--synth` renders the same table for the cue as `HEAVY_REPORT`
+  describes it, so the two are comparable without a browser.  Tuning a weapon
+  sound by ear is guessing: a real report is five events (crack, cough, boom,
+  rumble, tail) tens of milliseconds apart, and the gaps are the weight.
+  ```bash
+  .venv/bin/python tools/gun_report.py plan_imgs/m1fire.mkv --at 90.43,114.90
+  .venv/bin/python tools/gun_report.py plan_imgs/m1fire.mkv --at 114.90 --synth
   ```
 * **`tools/profile_battle.py`** profiles the simulation instead of playing it:
   it drops the 30 Hz sleep and runs a battle as fast as the CPU allows,

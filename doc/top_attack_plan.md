@@ -274,6 +274,11 @@ elif kind == 2:
 于是「动力段按稳定角度爬升」不需要任何飞行控制去争取：管子就是那个角度，
 飞行员压不压枪都不影响弹的起射姿态（already fire-and-forget）。
 
+> 后来这一步收敛进了发射架本身的描述（`defs.rack` 的 `elev` / `bolted`）：
+> 攻顶架 `bolted` 恒在 42°，SACLOS 架在手臂瞄准方向之上加 0.18 rad，
+> 平装的火箭巢完全跟随手臂。`weapons.fire` 现在只问发射架怎么挂，不再按
+> `kind` 分支——见 `AGENTS.md` 的 "a launcher of tubes is described once"。
+
 ### 5.4 电池：30 s 到期立刻引爆
 
 - `defs.life = 30.0`（现在 52.6）；

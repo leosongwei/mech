@@ -695,9 +695,14 @@ export class Game {
     const reach = wd.reach !== undefined ? wd.reach
       : wd.rack ? wd.rack.mouth
         : reachTbl[wd.kind] === undefined ? off[2] : reachTbl[wd.kind];
-    // a launcher bolted at its own quadrant stands there whatever the arm is
-    // doing - the same angle the server solves the launch point from
-    const pitch = wd.rack && wd.rack.elev ? wd.rack.elev : own.pitch;
+    // the mouth is on the tube, and where the tube points is `defs.rack`'s
+    // decision, not the arm's: bolted at its own quadrant (the top attack's
+    // 42 deg), or carried on the arm with its elevation added to the aim -
+    // flat, it is the arm itself.  The server solves the launch point from the
+    // same spec.
+    const spec = wd.rack || null;
+    const elev = spec ? spec.elev || 0 : 0;
+    const pitch = spec && spec.bolted ? elev : own.pitch + elev;
     const yaw = own.yaw;
     const c = Math.cos(yaw), s = Math.sin(yaw);
     const rx = -s, rz = c;

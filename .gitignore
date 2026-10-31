@@ -16,3 +16,4 @@ backend/assets/
 # reference recordings (plan_imgs/*.mkv are hundreds of MB; the analysis they
 # feed is checked in as tools/gun_report.py numbers and audio.js HEAVY_REPORT)
 *.mkv
+*.mp4

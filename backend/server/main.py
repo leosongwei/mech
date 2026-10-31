@@ -99,6 +99,14 @@ STATIC = netcode.static_payload(world)
 TICK_DT = 1.0 / 30.0
 SNAP_EVERY = 2          # 15 Hz snapshots
 META_EVERY = 3          # 10 Hz meta
+IDLE_SLEEP = 0.1        # how often an empty server looks for a connection
+
+# An empty server is a paused server: with nobody on the wire there is nothing
+# to simulate and no one to simulate it for, so the tick simply stops and the
+# whole world (economy, waves, raiders, battles) is frozen until somebody
+# connects.  `MECH_DEBUG=1` keeps the loop running with no connections, because
+# that is the run a script or a console session inspects from the outside.
+PAUSE_WHEN_EMPTY = os.environ.get("MECH_DEBUG") != "1"
 
 
 def _ear(world: World, pl: Player | None) -> tuple[float, float, float] | None:
@@ -141,6 +149,13 @@ async def game_loop() -> None:
     await asyncio.sleep(0.2)
     next_t = time.perf_counter()
     while True:
+        if PAUSE_WHEN_EMPTY and not CONNECTIONS:
+            # nobody is connected: no tick, no snapshot, no wall clock to keep.
+            # `next_t` is re-based on the way out, so the world resumes on a
+            # clean tick instead of catching up on the time it stood still.
+            await asyncio.sleep(IDLE_SLEEP)
+            next_t = time.perf_counter()
+            continue
         try:
             tick = world.tick + 1
             world.update(TICK_DT)
@@ -299,6 +314,9 @@ async def ws_endpoint(ws: WebSocket) -> None:
                     world.ecs["pos"][pl.mech, 0] = x
                     world.ecs["pos"][pl.mech, 2] = z
                     world.ecs["pos"][pl.mech, 1] = world.terrain.height_at(x, z)
+                    # a teleport is not motion: a hull that arrived with its old
+                    # velocity would carry a phantom stride into the sweep
+                    world.ecs["vel"][pl.mech] = (0.0, 0.0, 0.0)
             elif t == "debug_hurt" and os.environ.get("MECH_DEBUG") == "1":
                 # development helper: wound the player or the enemy base
                 if pl.mech >= 0 and world.ecs.alive[pl.mech]:

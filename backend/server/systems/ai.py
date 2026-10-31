@@ -157,7 +157,7 @@ def run(world: World, dt: float, hulls=None) -> None:
             # close enough to shoot: a carrier brakes for that, it does not
             # roll on at the last commanded speed the way a walking hull's
             # leftover velocity does
-            b["vel"][row, 0] = b["vel"][row, 2] = 0.0
+            b["vel_cmd"][row, 0] = b["vel_cmd"][row, 2] = 0.0
 
 
 def _missiles(world: World) -> dict | None:
@@ -494,7 +494,7 @@ def _aim_and_fire(world: World, eid: int, b: dict, row: int,
 def _advance(world: World, eid: int, b: dict, row: int, speed: float,
              dt: float) -> None:
     pos = b["pos"]
-    vel = b["vel"]
+    vel = b["vel_cmd"]
     terrain = world.terrain
     fac = int(b["faction"][row])
     lane_i = int(b["lane"][row])
@@ -647,7 +647,7 @@ def _passed(pts: list, i: int, px: float, pz: float, radius: float) -> bool:
 def _advance_route(world: World, b: dict, row: int, speed: float) -> None:
     """Aim a wheeled hull at its next way point - the direction, not the throttle."""
     pos = b["pos"]
-    vel = b["vel"]
+    vel = b["vel_cmd"]
     fac = int(b["faction"][row])
     px, pz = float(pos[row, 0]), float(pos[row, 2])
     if world.lanes:
@@ -658,7 +658,8 @@ def _advance_route(world: World, b: dict, row: int, speed: float) -> None:
         # the last way point and the base made a hull orbit the circle between
         # them for ever
         i = max(0, min(int(b["path_i"][row]), len(pts)))
-        radius = _arrive_radius(float(b["drive"][row, 0]))
+        radius = _arrive_radius(math.hypot(float(b["vel"][row, 0]),
+                                          float(b["vel"][row, 2])))
         while i < len(pts) - 1 and _passed(pts, i, px, pz, radius):
             i += 1
         if i == len(pts) - 1 and _passed(pts, i, px, pz, radius):
@@ -688,7 +689,7 @@ def _advance_route(world: World, b: dict, row: int, speed: float) -> None:
 
 def _civ(world: World, eid: int, b: dict, row: int, dt: float) -> None:
     pos = b["pos"]
-    vel = b["vel"]
+    vel = b["vel_cmd"]
     timer = b["ai_timer"]
     timer[row] -= dt
     if timer[row] > 0.0:

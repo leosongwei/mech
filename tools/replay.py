@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import pathlib
 import sys
 
@@ -38,7 +39,10 @@ FIXTURE = ROOT / "tools" / "fixtures" / "replay_battle.json"
 TICKS = 900                       # 30 s of battle at 30 Hz
 DT = 1.0 / 30.0
 
-# series compared as floats, with a tolerance
+# series compared as floats, with a tolerance.  `vel_*` is the sum of every
+# entity's real velocity (`vel`, not `vel_cmd`): the aggregate of what the whole
+# field is actually doing, which is what a refactor of the velocity components
+# moves first
 FLOAT_SERIES = ("hp_total", "pos_x", "pos_z", "vel_x", "vel_z")
 # series compared as counts, at most one off
 COUNT_SERIES = ("n_units", "n_combat", "n_proj", "n_smoke", "n_canister",
@@ -383,6 +387,77 @@ def _intercept() -> None:
     e.validate()
 
 
+def _speed_invariant() -> None:
+    """Regression: one position and one velocity, on everything that moves.
+
+    The component set *is* the entity's type, so a new mine, drone or shell that
+    forgets one of the pair stays invisible until something asks for the velocity
+    it does not have - which is how the top attack spent months leading a hull's
+    *command* instead of its motion.  The rules (`components.py`):
+
+        has(vel)      => has(pos), and both are 3-wide
+        has(moves)    => has(pos) and has(vel) and has(vel_cmd)
+        has(proj_kind) or has(canister) => has(pos) and has(vel)
+
+    Checked on the declared component lists (the factory's own input) and then
+    on a live world, so both a new list and a new spawn path are caught.
+    """
+    from server import components as C
+
+    def check(name: str, comps) -> None:
+        comps = set(comps)
+        if "vel" in comps:
+            assert "pos" in comps, f"{name} carries a velocity with no place"
+        if "moves" in comps:
+            assert {"pos", "vel", "vel_cmd"} <= comps, f"{name} is a mover without pos/vel/vel_cmd"
+        if "proj_kind" in comps or "canister" in comps:
+            assert {"pos", "vel"} <= comps, f"{name} is a round/canister without pos+vel"
+
+    for name in ("UNIT_COMPS", "CIV_COMPS", "DEBRIS_COMPS", "BLAST_COMPS",
+                 "PROJ_COMPS", "MISSILE_COMPS", "CANISTER_COMPS", "PUFF_COMPS"):
+        check(name, getattr(C, name))
+    assert "pos" in C.UNIT_COMPS and "vel" in C.UNIT_COMPS
+    assert "moves" in defs.UNIT_DEFS[defs.ETYPE_MECH]["tags"]
+
+    world = World(seed=5, mode="battle")
+    e = world.ecs
+    for _ in range(90):                    # let a few rounds and puffs exist
+        world.update(DT)
+        world.events.clear()
+
+    for arch in e.archetypes:
+        if arch.n == 0:
+            continue
+        bufs = arch.bufs
+        check(f"archetype {sorted(k for k in bufs if k in ('moves', 'proj_kind', 'canister', 'vel'))}",
+              bufs)
+        if "vel" in bufs:
+            assert bufs["vel"].shape[1] == 3, "vel is not 3-wide"
+        if "pos" in bufs:
+            assert bufs["pos"].shape[1] == 3, "pos is not 3-wide"
+
+    # ...and the velocity is the motion, not the order: a mech told to run flat
+    # out crawls off the mark at `MECH_ACCEL`, so `vel` may not equal `vel_cmd`
+    # on the first ticks even though the command is already at top speed.  The
+    # range is the world for it: its fixtures never drive a hull the test owns.
+    world = World(seed=5, mode="range")
+    e = world.ecs
+    mech = world.spawn_unit(defs.ETYPE_MECH, defs.FACTION_RED, 900.0, 2400.0)
+    top = float(defs.UNIT_DEFS[defs.ETYPE_MECH]["speed"])
+    e["vel_cmd"][mech] = (top, 0.0, 0.0)
+    world.update(DT)
+    v = e["vel"][mech]
+    got = math.hypot(float(v[0]), float(v[2]))
+    assert got <= defs.MECH_ACCEL * DT * 1.5, \
+        f"vel jumped to {got:.1f} m/s on the first tick; it is the command again"
+    for _ in range(60):
+        world.update(DT)
+    got = math.hypot(float(e["vel"][mech, 0]), float(e["vel"][mech, 2]))
+    assert 0.3 * top < got < 1.1 * top, f"the hull never got going: {got:.1f} m/s"
+    world.events.clear()
+    e.validate()
+
+
 def _fuse_geometry() -> None:
     """Regression: the fuse solves relative motion, not a standing target.
 
@@ -497,6 +572,7 @@ def run(ticks: int = TICKS, verbose: bool = False) -> list[dict[str, float]]:
     _intercept()
     _fuse_geometry()
     _range_slots()
+    _speed_invariant()
     world = World(seed=11, mode="battle")
     pl = world.add_player("REPLAY")           # spawns the mech too
     # the first raiding party leaves on its own clock (60 s into the round, well

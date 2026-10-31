@@ -6,7 +6,9 @@ RED vs BLUE.
 
 ## Read `doc/product` first
 
-`doc/product/` is the Chinese product documentation and the source of truth for
+Everything under `doc/` is written in Chinese (the code, the comments and every
+string a player sees are English - see [Conventions](#conventions)).
+`doc/product/` is the product documentation and the source of truth for
 everything a player can see: interaction flow, every screen, and the full unit
 and weapon parameter tables (mirrors of `defs.py` and the mode systems).
 
@@ -25,7 +27,10 @@ and weapon parameter tables (mirrors of `defs.py` and the mode systems).
 
 ```
 dev.sh                     # build / start / attach / stop helper (byobu or tmux)
-doc/product/               # Chinese product docs: flow, screens, units, weapons, changelog
+doc/                       # Chinese: every document in the repo lives here
+  product/                 #   player-facing rules: flow, screens, units, weapons, changelog
+  plans/                   #   refactor and feature plans (e.g. speed_component.md)
+  top_attack_plan.md       #   design notes next to the code they describe
 backend/
   run.py                   # dev entry point: uvicorn server.main:app
   pyproject.toml           # fastapi, uvicorn[standard], numpy
@@ -108,6 +113,27 @@ frontend/
   `add_component`/`remove_component` — allowing one would make the archetype key
   space explode, invalidate row indices mid-tick, and turn the mask back into a
   mutable soup.
+* **One position, one velocity, on everything that moves.** `pos` and `vel` are
+  `float32[3]` on every mover - a hull, a round, a smoke canister - and `vel` is
+  **what the entity is actually doing**: `pos` is advanced by it, every collision
+  is solved against it, a seeker leads on it. The order a hull was given lives in
+  its own component, `vel_cmd`, and only a hull has one: the gap between the two
+  *is* the machine (the mech's ramp, a car's steering, a wall). `movement` is the
+  one writer of a hull's `vel` (including `vel[1]`, the slope it just drove
+  over), `projectiles` of a round's, `smoke` of a canister's. A scripted mover or
+  a teleport writes `pos` **and** zeroes `vel`; a controller writes `vel_cmd`.
+  The invariant is checked - `World.spawn_unit` asserts it at every spawn and
+  `tools/replay.py::_speed_invariant` over the archetypes - and it is worth
+  keeping because the alternative was five subsystems each quietly rebuilding a
+  velocity of their own: `seeker.track` handed proportional navigation a hull's
+  *command* (50 m/s the instant a pilot nudged the stick) and the top attack
+  missed a stationary hull by 8-36 m (`doc/plans/speed_component.md`,
+  `tools/top_attack_dive.py`).
+* **Wheeled locomotion state is three scalars, not a component.** `wheel_speed`
+  (m/s along the hull, negative in reverse), `backout_t`, `blocked_t` belong to
+  `movement._vehicle` alone: not on the wire, never written by a mode or an AI.
+  They used to be one `veh` vec3, and `veh[1]` told nobody it was the back-out
+  clock.
 * **Write systems against buffers, not through `View`.** `ecs.groups(...)`
   hands out an archetype with its buffers hoisted and rows `0..n-1`: reach for
   it whenever the system integrates entities independently (movement, countdown
@@ -150,6 +176,18 @@ frontend/
   damage source, before `waves` counts hulls to take a town.
   `World.update(dt)` is the only entry point; the loop in `main.py` calls it at
   a fixed 30 Hz (`TICK_DT = 1/30`).
+* **An empty server is a paused server.**  With `CONNECTIONS` empty the tick
+  loop in `main.py` skips `world.update` and `broadcast` altogether and just
+  sleeps (`IDLE_SLEEP` = 0.1 s, re-basing `next_t` on the way out so the world
+  resumes on a clean tick instead of catching up).  Nothing is simulated and
+  nothing is sent while nobody is connected - the battle, the economy, the
+  waves and the raiders all stand exactly where the last pilot left them, which
+  is the point: a server that had been idle for an hour used to hand a joining
+  pilot a mid-war map.  `MECH_DEBUG=1` disables the pause (`PAUSE_WHEN_EMPTY`),
+  because that is the run a script, a replay or a console session inspects from
+  the outside with no browser attached.  A tool that drives `world` directly
+  (`tools/replay.py`, `tools/raid_trace.py`, ...) never goes through the loop
+  and is unaffected either way.
 * **The sight leads, the machine follows** (`systems/gunnery.py`, `defs.MECH_
   SIGHT_Z`).  A mech's aim is a free turret on the roof, mounted *on the hull*
   `MECH_SIGHT_Z` (0.62 m) behind the hull's own rotation axis.  Two component
@@ -457,7 +495,9 @@ frontend/
 * **The seeker remembers, and the guidance does not care** (`seeker.py`).  A
   top-attack round's lock is not a hull id, it is a *point* (`tgt_mem`, the
   deck at `defs.AIM_ROOF` = 92 % of the hull's height) and the velocity that
-  hull had the last time it was seen (`tgt_vel`).  While the sight line is
+  hull had the last time it was seen (`tgt_vel`, copied from the hull's `vel` -
+  the velocity it is really moving at, never the command, or a pilot's nudge
+  would drag the round after a 50 m/s phantom).  While the sight line is
   clear both are refreshed every tick off the live hull; when it is cut - smoke,
   a ridge, a canopy, the hull dying - the point keeps walking at that last
   velocity and `flight.step` is handed it as if nothing had happened (which is
@@ -495,8 +535,8 @@ frontend/
   it. There is deliberately no damage queue - a system owns state, and damage
   owns none. The consequence to remember: **hp a system reads is the hp at its
   own stage**, and a hull at 0 is still in the record until `mortality` runs
-  (last of the damage chain), which is why `combat.apply` also zeroes `vel` /
-  `drive` - a hull at 0 stops where it is instead of driving on for a stage.
+  (last of the damage chain), which is why `combat.apply` also zeroes `vel` and
+  `vel_cmd` - a hull at 0 stops where it is instead of driving on for a stage.
 * **Death has one judge.** `systems/mortality.py` asks one question for every
   unit, `hp <= 0`, and then follows the type's own recipe from
   `defs.UNIT_DEFS[...]["death"]`: `blast=(ed, er)` burst, `loud` for the cue,
@@ -575,8 +615,9 @@ frontend/
 * **Wheeled hulls** — an APC carries the `vehicle` tag, and that tag changes
   both halves of its movement. Locomotion (`movement._vehicle`) is a rear-axle
   bicycle model: `leg_yaw` *is* the hull state (mirrored into `yaw` for the
-  client), `drive[0]` the signed speed rolling along it, `veh[]` the back-out
-  and blocked timers. The hull rolls only along its own axis and turns at
+  client), `wheel_speed` the signed speed rolling along it, `backout_t` /
+  `blocked_t` the crew's own timers - three scalars, not a packed vector, because
+  `veh[1]` never told anybody it was the back-out clock. The hull rolls only along its own axis and turns at
   `speed / APC_TURN_R`, but never harder than `APC_LAT_ACCEL` of side load
   (`yaw rate = min(u / R, lat / u)`) — that cap is what keeps it from swinging
   lock-to-lock at speed, and it matches the speed the planner takes a bend at,
@@ -592,7 +633,8 @@ frontend/
   brisk low end and a lazy top end: 0-25 km/h in 3.5 s, 0-100 in 20 s. Reverse
   is `APC_REVERSE` of top speed and only ever used to back off a wall.
   The command interface is unchanged — the AI still writes a direction and a
-  speed into `vel` — but the AI *drives the way points* (`ai._advance_route`):
+  speed into `vel_cmd`, and `movement` turns it into `vel` — but the AI *drives
+  the way points* (`ai._advance_route`):
   a way point inside the acceptance radius counts as reached and is dropped, so
   the hull is already aiming at the next one while still short of the last — the
   standard acceptance radius of a way point tracker, and what lets a car take a
@@ -707,8 +749,10 @@ frontend/
 * **Netcode** — one init payload with the map and all definitions, then binary
   snapshots at 15 Hz (`SNAP_EVERY`) and JSON meta at 10 Hz (`META_EVERY`).
   Entity state is authoritative on the server; the client only interpolates.
-  A unit row is 72 bytes (`UNIT_DTYPE`): `yaw` / `pitch` are the *laid gun*
-  (hull and arms), `syaw` / `spitch` where the crew is looking.  The client's
+  A unit row is 80 bytes (`UNIT_DTYPE`): `yaw` / `pitch` are the *laid gun*
+  (hull and arms), `syaw` / `spitch` where the crew is looking, and `vx` / `vy` /
+  `vz` the velocity the hull is **actually** moving at (`vel`, not `vel_cmd`),
+  which is what the client's lead boxes and speed readout use.  The client's
   own machine reads its pose from the snapshot like any other - overriding it
   with the view is exactly the teleporting hull this split removed - while the
   *camera* is the local view (an instant sight) sitting on the server-side
@@ -957,7 +1001,10 @@ cd frontend && npm install && npm run build      # -> backend/assets/
   `_damage_model` is the hp layout - one pool per hull, `hp <= 0` kills, the mech
   is the only hull with `arm_hp` and losing an arm costs its ammunition - and
   `_death_blast` is the wreck going up, which needs two `world.update` calls
-  because the kill and the burst it leaves are deliberately a tick apart.
+  because the kill and the burst it leaves are deliberately a tick apart, and
+  `_speed_invariant` is the one-velocity rule: every mover owns `pos` + `vel`,
+  every hull owns `vel_cmd` too, and `vel` is the motion rather than the order
+  (a mech told to run flat out still leaves the mark at `MECH_ACCEL`).
   ```bash
   .venv/bin/python tools/replay.py          # compare
   .venv/bin/python tools/replay.py --save   # re-baseline
@@ -1034,6 +1081,21 @@ cd frontend && npm install && npm run build      # -> backend/assets/
   .venv/bin/python tools/profile_battle.py --minutes 5
   .venv/bin/python tools/profile_battle.py --minutes 5,10 --no-profile --out /tmp/p.json
   ```
+* **`tools/top_attack_dive.py`** is the tuning harness for the missile's dive:
+  it reads a range trace (`MECH_RECORD`, `modes/range/record.py`), re-flies
+  every recorded shot through `flight.step` off the state the real round had,
+  and reports the miss distance per shot under a candidate `pn_n` / `pn_r` /
+  `pn_v`.  Two inputs are worth comparing, and they are the whole argument for
+  the velocity refactor: `--vel recorded` is what the *old* engine handed
+  proportional navigation (a hull's velocity *command*, up to 50 m/s the instant
+  a pilot nudged the stick) and `--vel truth` the velocity it was really moving
+  at.  Measured on five dives at a hull that mostly stood still: 8-36 m misses
+  fed the command, 0.7-2.8 m fed the truth, and no `pn_n`/`pn_r` can out-vote a
+  50 m/s phantom.  `--sweep` prints the grid for both.
+  ```bash
+  .venv/bin/python tools/top_attack_dive.py --sweep
+  .venv/bin/python tools/top_attack_dive.py --pn-n 2 --pn-r 800 -v
+  ```
 * **`tools/vehicle_trace.py`** drives one APC round a route on the range map
   (a 100 m square or the 3.7 km winding road) and writes an SVG - way points,
   the rounded reference route, the driven trace coloured by speed, a velocity
@@ -1094,8 +1156,26 @@ such a missile is in the air and reads the event stream, not the log.
 Log: `/tmp/mech-range.log`, overrides `MECH_RANGE_PORT` (8011), `MECH_RANGE_LOG`.
 Product notes: `doc/product/range.md`.
 
+**The range records the top attack** (`modes/range/record.py`, the range's post
+system, on by default there): one JSONL line a tick to `MECH_RECORD_PATH`
+(`/tmp/mech-range-trace.jsonl`, `MECH_RECORD=0` turns it off), carrying each
+`top` round's state under the component names it lives in - `pos`, `vel`,
+`proj_age`, `proj_trav`, `target` (the hull it holds; `-1` = blinded), `tgt_mem`
+(the stare *point*, deck height) and `tgt_vel` (the velocity that memory drifts
+at) - plus the true state of every hull a seeker could hold, and the tick's
+`boom` / `seeker` / `intercept` events, so an impact point and a lost lock are
+read out of the file instead of out of a DEBUG log that a normal run does not
+write. **A tick with no top-attack round on it is not written**: the dive is the
+only thing the numbers are for, so a 30 mm burst or a SACLOS fired at the
+defence post leaves no line behind. The one line with an empty `missiles` is a
+round's last: it goes off inside `projectiles` and is destroyed before the
+recorder runs, so the tick that carries its burst is the tick that carries the
+impact point. A re-flight through `flight.step` off a recorded state is how a
+change to the PN law gets compared against what the real one did.
+
 Environment overrides: `MECH_SESSION` (default `mech`), `MECH_PORT` (8010),
-`MECH_LOG` (`/tmp/mech-server.log`), `MECH_LOG_LEVEL` (`INFO`).
+`MECH_LOG` (`/tmp/mech-server.log`), `MECH_LOG_LEVEL` (`INFO`),
+`MECH_RECORD` / `MECH_RECORD_PATH` (see the range section above).
 `dev.sh` always sets `MECH_DEBUG=1`, which unlocks the debug websocket messages
 and the DEBUG block of the settings menu (gear, top right: RESPAWN / RESTART /
 GOD). Without it the menu keeps the volume slider only.  **`MECH_DEBUG` does not
@@ -1252,8 +1332,17 @@ for (let k = 0; k < 6; k++) {
 
 ## Conventions
 
-* Game text, comments, commit messages and docs are in English — except
-  `doc/product/`, which is written in Chinese (UI strings quoted verbatim).
+* **Code is English, documentation is Chinese.** Source, comments, commit
+  messages, identifiers, log lines and everything a player reads - HUD copy,
+  menu labels, feed messages, error text - are written in English. Everything
+  under `doc/` (`doc/product/`, `doc/plans/` and the design notes next to them)
+  is written in Chinese; a Chinese document quotes UI strings and identifiers
+  verbatim in English rather than translating them.
+* The rule is about the *language of the file*, never about its name: a
+  `README.md` under `doc/` is Chinese, a `docstring` in `defs.py` is English,
+  and the header comment of a tool in `tools/` is English like the code it
+  documents. `AGENTS.md` itself stays English - it is the agent's working
+  notes, not a document.
 * Minimal, scoped edits: match the surrounding style (numpy vectorised
   systems, short helper functions, comment density of the file you touch).
 * Units are metres and seconds; the map is 16 km square, the clock is 30 Hz.

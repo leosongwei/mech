@@ -96,26 +96,34 @@ def _leg_yaw(slot: dict) -> float:
 
 
 def _drive(world: World, slot: dict, eid: int, dt: float) -> None:
+    """Ask a patrolling hull for its speed - the hull drives itself.
+
+    A target is a fixture, not a crew, but it is still a car: it is *told* a
+    velocity per tick (`vel_cmd`, the same component a pilot's stick writes) and
+    `movement` gets it there.  Writing `pos` here instead would put the hull's
+    position out of step with its velocity, and every reader of the pair - the
+    hit-sphere sweep, an IR seeker's lead, the wire - would be told it was
+    standing still while it crawled past.
+    """
     e = world.ecs
-    e["vel"][eid, 0] = 0.0
-    e["vel"][eid, 2] = 0.0
+    cmd = e["vel_cmd"]
+    cmd[eid, 0] = cmd[eid, 2] = 0.0
     if slot["role"] != "moving":
         return
     lo, hi = float(slot["lo"]), float(slot["hi"])
     d = float(slot["dir"])
     axis = slot.get("axis", "x")
     k = 0 if axis == "x" else 2
-    v = float(e["pos"][eid, k]) + d * PATROL_SPEED * dt
+    v = float(e["pos"][eid, k])
     if v > hi:
         v, d = hi, -1.0
     elif v < lo:
         v, d = lo, 1.0
     slot["dir"] = d
-    e["pos"][eid, k] = v
-    yaw = _leg_yaw(slot)
-    e["yaw"][eid] = yaw
-    e["leg_yaw"][eid] = yaw
-    e["turret_yaw"][eid] = yaw
+    # the hull is told a speed down the patrol axis and drives itself there: at
+    # the end of a leg that is a direction reversal, which the wheeled model
+    # takes as a U-turn at its own radius (the steering is its state, not ours)
+    cmd[eid, k] = d * PATROL_SPEED
 
 
 def _place(world: World, slot: dict) -> None:

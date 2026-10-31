@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 def run(world: World, dt: float) -> None:
     e = world.ecs
     pos = e["pos"]
-    vel = e["vel"]
+    cmd = e["vel_cmd"]
     sight_yaw = e["sight_yaw"]
     sight_pitch = e["sight_pitch"]
     trigger = e["trigger"]
@@ -50,11 +50,11 @@ def run(world: World, dt: float) -> None:
         mag = math.hypot(mx, mz) if not busy else 0.0
         if mag > 0.001 and hp[eid] > 0.0:
             k = speed / max(mag, 1.0)
-            vel[eid, 0] = mx * k
-            vel[eid, 2] = mz * k
+            cmd[eid, 0] = mx * k
+            cmd[eid, 2] = mz * k
         else:
-            vel[eid, 0] = 0.0
-            vel[eid, 2] = 0.0
+            cmd[eid, 0] = 0.0
+            cmd[eid, 2] = 0.0
 
         t = 0
         if not busy and pl.fire[0] and combat.arm_alive(world, eid, 0):

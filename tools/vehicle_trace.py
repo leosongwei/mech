@@ -116,12 +116,15 @@ def run(ticks: int, route: list[tuple[float, float]]
         px, pz = float(e["pos"][eid, 0]), float(e["pos"][eid, 2])
         travelled += math.dist(prev, (px, pz))
         prev = (px, pz)
-        u = float(e["drive"][eid, 0])
+        u = float(e["wheel_speed"][eid])
+        # `vel` is the velocity the hull really has, `vel_cmd` the one the
+        # follower asked for: the gap between them is the steering lag
         log.append(dict(
             tick=tick, t=tick * DT,
             x=px, y=float(e["pos"][eid, 1]), z=pz,
             yaw=float(e["leg_yaw"][eid]),
-            u=u, cmd=math.hypot(float(e["vel"][eid, 0]), float(e["vel"][eid, 2])),
+            u=math.hypot(float(e["vel"][eid, 0]), float(e["vel"][eid, 2])),
+            cmd=math.hypot(float(e["vel_cmd"][eid, 0]), float(e["vel_cmd"][eid, 2])),
             lat=lateral(pts, px, pz),
             travelled=travelled,
         ))
@@ -261,8 +264,10 @@ def svg(log: list[dict], pts: list[tuple[float, float]],
         if speed < 0.05:
             continue
         u, v = P(r["x"], r["z"])
-        dx = math.cos(r["yaw"]) * (1.0 if r["u"] >= 0.0 else -1.0)
-        dz = math.sin(r["yaw"]) * (1.0 if r["u"] >= 0.0 else -1.0)
+        # the hull only ever moves along its own axis, so the driven direction
+        # is the heading - the arrow length carries the speed
+        dx = math.cos(r["yaw"])
+        dz = math.sin(r["yaw"])
         out.extend(_arrow(u, v, dx, dz, speed * VEC_SCALE * scale, "#7dffb0", 2.0))
 
     # start / end

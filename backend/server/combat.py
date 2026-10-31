@@ -104,12 +104,13 @@ def _stop(bufs: dict, row: int) -> None:
     The kill itself is judged a stage later (`systems/mortality.py`), so for the
     rest of this tick the entity is still in the record - and without this it
     would go on driving, because movement and the AI run before the damage that
-    finished it.  `movement` reads `vel`, the wheeled model reads `drive`.
+    finished it.  Both halves are zeroed: the truth (`vel`) so nothing leads on a
+    dead hull, and the intent (`vel_cmd`) so nothing re-drives it next tick.
     """
     if "vel" in bufs:
         bufs["vel"][row] = 0.0
-    if "drive" in bufs:
-        bufs["drive"][row] = 0.0
+    if "vel_cmd" in bufs:
+        bufs["vel_cmd"][row] = 0.0
 
 
 def hit(world: World, eid: int, module: int, wd: dict, dist: float = 0.0,

@@ -372,7 +372,8 @@ def _one(world: World, eid: int, path: list, dt: float) -> None:
     e = world.ecs
     b, row = e.slot(eid)
     pos = b["pos"]
-    vel = b["vel"]
+    # what the hull is *told* to do; `movement` turns it into `vel`
+    vel = b["vel_cmd"]
     px, pz = float(pos[row, 0]), float(pos[row, 2])
     goal = int(b["raid_goal"][row])
     town = _town(world, goal)
@@ -429,16 +430,16 @@ def _watch_stuck(b: dict, row: int, dt: float) -> None:
     """Count the seconds a hull spends pushing at something it cannot pass.
 
     A mech asks for a velocity, `movement` integrates what the ground allows, and
-    the two are in `vel` and `drive` - so a commanded hull whose real speed is a
+    the two are in `vel_cmd` and `vel` - so a commanded hull whose real speed is a
     quarter of the command is against a wall, a trunk or a house.  After
     `STUCK_SKIP` seconds of that the way point it is heading for is abandoned (the
     grid put it somewhere a 1.9 m mech does not fit), and `_needs_plan` replans
     the whole route after `STUCK_REPLAN`, which is the honest fix for a hull that
     has driven into a court with one way out.
     """
-    vel, drive = b["vel"], b["drive"]
-    want = math.hypot(float(vel[row, 0]), float(vel[row, 2]))
-    real = math.hypot(float(drive[row, 0]), float(drive[row, 1]))
+    cmd, vel = b["vel_cmd"], b["vel"]
+    want = math.hypot(float(cmd[row, 0]), float(cmd[row, 2]))
+    real = math.hypot(float(vel[row, 0]), float(vel[row, 2]))
     stuck = b["raid_stuck"]
     # `STUCK_FAST` keeps the launch out of it: a mech off the mark is under a
     # quarter of the speed it asked for for the first second or so, and pulling

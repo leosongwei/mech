@@ -587,8 +587,9 @@ export class Game {
     const gate = this.radarRing > 0 ? Math.min(RWR_RANGE, this.radarRing) : 0;
     const eye = [own.x, own.y + 5, own.z];
     // the round is measured against *this* hull's velocity, not the world's:
-    // running at a missile lights the receiver earlier, running from it later
-    const ovx = own.vx || 0, ovz = own.vz || 0;
+    // running at a missile lights the receiver earlier, running from it later.
+    // All three axes - a hull following a slope has a real vy.
+    const ovx = own.vx || 0, ovy = own.vy || 0, ovz = own.vz || 0;
     // the smoke the sight rule cares about: deployed puffs, not canisters
     const puffs = this.net.smoke ? this.net.smoke.filter((s) => !s.canister) : null;
     for (const p of this.net.projectiles) {
@@ -603,7 +604,7 @@ export class Game {
       // the relative vector: the round's velocity against the hull's.  Positive
       // `vc` while it still has to cover the gap between us at that closing
       // rate, and the collision course below is solved on the same vector.
-      const wx = p.vx - ovx, wy = p.vy, wz = p.vz - ovz;
+      const wx = p.vx - ovx, wy = p.vy - ovy, wz = p.vz - ovz;
       const vc = -((dx * wx + dy * wy + dz * wz) / d);
       if (vc <= 0) continue;                           // opening out or crossing
       const k = Math.sqrt(Math.max(0, strength * (wd.rcs || 0))) / radar.v_ref;
@@ -940,8 +941,8 @@ export class Game {
         marks: [],
       };
       for (const a of arms) {
-        // the lead has to be solved against the *measured* speed: a mech that
-        // fights its legs moves slower than the velocity it was given
+        // the lead is solved against the hull's real velocity, which is what
+        // the wire carries (`vel`); `mv*` is the same number smoothed
         const p = leadPoint(a.wd, this.zeroRange, zero.max_elev,
           a.m[0], a.m[1], a.m[2], eye[0], eye[1], eye[2], t.x, t.y, t.z,
           e.mvx === undefined ? e.vx : e.mvx, e.mvz === undefined ? e.vz : e.mvz);
@@ -1226,9 +1227,8 @@ export class Game {
       leads: this.leads,
       lock: this.lockInfo,
       lockFrac: this.lockFrac,
-      // the hull's measured ground speed: the snapshot velocity is what the
-      // pilot *asked* for, the displacement between snapshots is what the
-      // mech actually did (and it ramps up over three seconds)
+      // the hull's ground speed: the snapshot velocity is the one it is really
+      // moving at (it ramps up over three seconds), `mv*` its smoothed copy
       speed: own ? Math.hypot(own.mvx || 0, own.mvz || 0) * 3.6 : 0,
       threats: this.threats || [],
       // metres at the edge of the threat dial, off `defs.radar` and the hull's

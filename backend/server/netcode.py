@@ -25,13 +25,17 @@ UNIT_DTYPE = np.dtype([
     ("target", "<u2"),
     ("x", "<f4"), ("y", "<f4"), ("z", "<f4"),
     ("yaw", "<f4"), ("pitch", "<f4"), ("turret", "<f4"), ("leg", "<f4"),
-    ("vx", "<f4"), ("vz", "<f4"),
+    # the velocity the hull is *actually* moving at (`vel`, not `vel_cmd`), all
+    # three axes: a hull following a slope has a vy, and the lead the client
+    # solves is the same one the server's AI solves
+    ("vx", "<f4"), ("vy", "<f4"), ("vz", "<f4"),
     ("hp", "<u2", 4),
     ("ammo", "<u2", 2), ("mag", "<u2", 2), ("weapon", "<u2", 2),
     # the sight: where the crew is looking, which is where the hull and the arms
     # are slewing to.  `yaw` / `pitch` above are the laid gun; a mech's head is
     # drawn on these (the client's own head is its camera, so it uses its view)
     ("syaw", "<f4"), ("spitch", "<f4"),
+    ("pad3", "<u4"),                # keeps the row 80 B, 4-byte aligned
 ])
 PROJ_DTYPE = np.dtype([
     ("id", "<u2"), ("kind", "u1"), ("wid", "u1"), ("faction", "u1"), ("pad", "u1"),
@@ -47,7 +51,7 @@ SMOKE_DTYPE = np.dtype([
     ("rx", "<f4"), ("ry", "<f4"), ("rz", "<f4"),
     ("t", "<f4"),
 ])
-assert UNIT_DTYPE.itemsize == 72, UNIT_DTYPE.itemsize
+assert UNIT_DTYPE.itemsize == 80, UNIT_DTYPE.itemsize
 assert PROJ_DTYPE.itemsize == 32, PROJ_DTYPE.itemsize
 assert SMOKE_DTYPE.itemsize == 32, SMOKE_DTYPE.itemsize
 
@@ -177,6 +181,7 @@ def snapshot_bytes(world: World) -> bytes:
         arr["turret"] = col["turret_yaw"]
         arr["leg"] = col["leg_yaw"]
         arr["vx"] = col["vel"][:, 0]
+        arr["vy"] = col["vel"][:, 1]
         arr["vz"] = col["vel"][:, 2]
         arr["hp"] = hp
         arr["ammo"] = ammo

@@ -1,7 +1,7 @@
 // WebSocket protocol client: compressed init, binary snapshots, JSON meta/fx.
 
 const HEADER = 14;
-const UNIT_STRIDE = 72;
+const UNIT_STRIDE = 80;
 const PROJ_STRIDE = 32;
 const SMOKE_STRIDE = 32;
 const TICK_HZ = 30;
@@ -84,40 +84,41 @@ export class Net {
       e.tpitch = dv.getFloat32(off + 24, true);
       e.tturret = dv.getFloat32(off + 28, true);
       e.tleg = dv.getFloat32(off + 32, true);
+      // the velocity the hull is actually moving at (the server sends `vel`,
+      // not the command) - the same number its own AI leads on
       e.vx = dv.getFloat32(off + 36, true);
-      e.vz = dv.getFloat32(off + 40, true);
-      for (let i = 0; i < 4; i++) e.hp[i] = dv.getUint16(off + 44 + i * 2, true);
-      e.ammo[0] = dv.getUint16(off + 52, true);
-      e.ammo[1] = dv.getUint16(off + 54, true);
-      e.mag[0] = dv.getUint16(off + 56, true);
-      e.mag[1] = dv.getUint16(off + 58, true);
-      e.weapon[0] = dv.getUint16(off + 60, true);
-      e.weapon[1] = dv.getUint16(off + 62, true);
+      e.vy = dv.getFloat32(off + 40, true);
+      e.vz = dv.getFloat32(off + 44, true);
+      for (let i = 0; i < 4; i++) e.hp[i] = dv.getUint16(off + 48 + i * 2, true);
+      e.ammo[0] = dv.getUint16(off + 56, true);
+      e.ammo[1] = dv.getUint16(off + 58, true);
+      e.mag[0] = dv.getUint16(off + 60, true);
+      e.mag[1] = dv.getUint16(off + 62, true);
+      e.weapon[0] = dv.getUint16(off + 64, true);
+      e.weapon[1] = dv.getUint16(off + 66, true);
       // where the crew is looking (the hull and the arms are slewing to it);
       // `yaw` / `pitch` above are the laid gun
-      e.tsyaw = dv.getFloat32(off + 64, true);
-      e.tspitch = dv.getFloat32(off + 68, true);
+      e.tsyaw = dv.getFloat32(off + 68, true);
+      e.tspitch = dv.getFloat32(off + 72, true);
       if (!e.init) {
         e.x = e.tx; e.y = e.ty; e.z = e.tz;
         e.yaw = e.tyaw; e.pitch = e.tpitch; e.turret = e.tturret; e.leg = e.tleg;
         e.syaw = e.tsyaw; e.spitch = e.tspitch;
         e.init = true;
-        e.px = e.tx; e.pz = e.tz; e.ptick = tick;
-      } else if (tick > e.ptick) {
-        // the snapshot carries the *commanded* velocity; a mech that fights
-        // its legs strafes slower than that, so measure what the hull really
-        // covered between two snapshots.  A respawn or a debug teleport is a
-        // jump, not motion: restart the sample instead of averaging it in
-        const dt = (tick - e.ptick) / TICK_HZ;
-        const step = Math.hypot(e.tx - e.px, e.tz - e.pz);
-        if (step > 10) {
-          e.mvx = 0; e.mvz = 0;
-        } else {
-          const mvx = (e.tx - e.px) / dt, mvz = (e.tz - e.pz) / dt;
-          e.mvx = e.mvx === undefined ? mvx : e.mvx + (mvx - e.mvx) * 0.5;
-          e.mvz = e.mvz === undefined ? mvz : e.mvz + (mvz - e.mvz) * 0.5;
-        }
-        e.px = e.tx; e.pz = e.tz; e.ptick = tick;
+      }
+      // the authoritative position this snapshot carries, kept next to the
+      // smoothed one: automation and the debug teleport loop read `px/pz` when
+      // they want where the server says the hull is, not where it is drawn
+      e.px = e.tx; e.py = e.ty; e.pz = e.tz;
+      // a smoothed copy of the hull's own velocity, for the lead rings and the
+      // speed readout: the wire is a 15 Hz sample and the marker does not need
+      // to twitch with it
+      if (e.mvx === undefined) {
+        e.mvx = e.vx; e.mvy = e.vy; e.mvz = e.vz;
+      } else {
+        e.mvx += (e.vx - e.mvx) * 0.5;
+        e.mvy += (e.vy - e.mvy) * 0.5;
+        e.mvz += (e.vz - e.mvz) * 0.5;
       }
       seen.add(id);
       off += UNIT_STRIDE;

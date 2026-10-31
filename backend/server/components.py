@@ -20,13 +20,26 @@ if TYPE_CHECKING:
 
 def register(ecs: ECS) -> None:
     # ---- transform ------------------------------------------------------
+    # Two velocities, and the split is the whole point:
+    #   `vel`     the velocity the entity is *actually* moving at - `pos` is
+    #             advanced by it, every collision is solved against it, and a
+    #             seeker may lead on it.  Every mover owns one: a hull, a round,
+    #             a smoke canister.  Nothing that moves may lack it.
+    #   `vel_cmd` the velocity it was *told* to make - a pilot's stick, a crew's
+    #             intent, a mode's patrol.  Intent, not physics: the gap between
+    #             the two is the machine (the mech's ramp, a car's steering, a
+    #             wall).  Only a hull carries it.
+    # `movement` is the only writer of a hull's `vel`; `projectiles` of a
+    # round's; `smoke` of a canister's.
     ecs.register("pos", np.float32, (3,), 0.0)
-    ecs.register("vel", np.float32, (3,), 0.0)       # commanded velocity
-    ecs.register("drive", np.float32, (2,), 0.0)     # mech hull: the speed it is really rolling
-    # wheeled hull locomotion state: 0 the speed it rolls along its own axis
-    # (negative while backing up), 1 seconds of back-out left, 2 how long the
-    # nose has been against something (see systems/movement.py)
-    ecs.register("veh", np.float32, (3,), 0.0)
+    ecs.register("vel", np.float32, (3,), 0.0)       # the velocity it really has
+    ecs.register("vel_cmd", np.float32, (3,), 0.0)   # the velocity it was told to make
+    # Wheeled locomotion state - a car has a throttle, not a velocity, and these
+    # three are what `movement._vehicle` integrates between ticks.  Not a
+    # velocity and not on the wire: no mode and no AI touches them.
+    ecs.register("wheel_speed", np.float32)          # m/s along the hull, negative in reverse
+    ecs.register("backout_t", np.float32)            # s of reverse left, nose against something
+    ecs.register("blocked_t", np.float32)            # s the nose has been against something
     ecs.register("yaw", np.float32)
     ecs.register("pitch", np.float32)
     ecs.register("leg_yaw", np.float32)
@@ -225,7 +238,8 @@ def register(ecs: ECS) -> None:
     ecs.register("tgt_vel", np.float32, (3,), 0.0)
 
 
-UNIT_COMPS = ["pos", "vel", "drive", "veh", "yaw", "pitch", "leg_yaw", "turret_yaw",
+UNIT_COMPS = ["pos", "vel", "vel_cmd", "wheel_speed", "backout_t", "blocked_t",
+              "yaw", "pitch", "leg_yaw", "turret_yaw",
               "sight_yaw", "sight_pitch", "etype", "faction", "name_id",
               "owner", "hp", "hpmax", "armor", "last_hit",
               "last_name", "last_fac", "last_etype", "last_wid",
@@ -239,7 +253,8 @@ ARM_COMPS = ("arm_hp", "arm_hpmax")
 
 CIV_COMPS = UNIT_COMPS + ["home_x", "home_z"]
 
-DEBRIS_COMPS = ["pos", "vel", "yaw", "pitch", "leg_yaw", "turret_yaw", "etype", "faction",
+# a wreck is scenery: it has a place and no velocity (nothing ever moved one)
+DEBRIS_COMPS = ["pos", "yaw", "pitch", "leg_yaw", "turret_yaw", "etype", "faction",
                 "owner", "hp", "hpmax", "flags", "wreck_t", "wreck_kind"]
 
 BLAST_COMPS = ["pos", "faction", "blast_power", "blast_t", "blast_friendly",

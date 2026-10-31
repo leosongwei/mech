@@ -134,10 +134,19 @@ class World:
         comps = components.CIV_COMPS if etype == defs.ETYPE_CIV else components.UNIT_COMPS
         if d.get("arms"):
             comps = (*comps, *components.ARM_COMPS)
+        # the invariant a system may rely on (components.py): everything that
+        # moves owns a place and a velocity, and a hull owns the intent too.
+        # Asserted at the factory so a new entity type that forgets one dies at
+        # its first spawn, not in a missile seeker three weeks later.
+        assert "pos" in comps, comps
+        assert "vel" in comps, comps
+        if "moves" in d["tags"]:
+            assert "vel_cmd" in comps, comps
         eid = e.create((*comps, *d["tags"], *extra))
         yaw = self.rng.random() * math.tau
         e["pos"][eid] = (x, self.terrain.height_at(x, z), z)
         e["vel"][eid] = (0.0, 0.0, 0.0)
+        e["vel_cmd"][eid] = (0.0, 0.0, 0.0)
         e["yaw"][eid] = yaw
         e["turret_yaw"][eid] = yaw
         e["leg_yaw"][eid] = yaw

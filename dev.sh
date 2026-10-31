@@ -60,16 +60,22 @@ cmd_range() {
   local session="${SESSION}-range"
   local port="${MECH_RANGE_PORT:-8011}"
   local log="${MECH_RANGE_LOG:-/tmp/mech-range.log}"
+  # the range records its guided rounds by default (one JSONL line a tick: every
+  # top-attack missile and the hulls it chases) - `MECH_RECORD=0` turns it off,
+  # `MECH_RECORD_PATH` moves the file
+  local record="${MECH_RECORD:-1}"
+  local trace="${MECH_RECORD_PATH:-/tmp/mech-range-trace.jsonl}"
   command -v "$PY" >/dev/null 2>&1 || { echo "missing venv: run  uv venv && uv pip install -r backend/pyproject.toml"; exit 1; }
   if mux has-session -t "=$session" 2>/dev/null; then
     echo "session '$session' already running - tmux attach -t '$session'"
     return 0
   fi
   mux new-session -A -d -s "$session" \
-    bash -ic "cd '$ROOT/backend' && MECH_DEBUG=1 MECH_LOG_LEVEL='$LOGLEVEL' exec '$PY' run.py --range --port '$port' 2>&1 | tee '$log'"
+    bash -ic "cd '$ROOT/backend' && MECH_DEBUG=1 MECH_LOG_LEVEL='$LOGLEVEL' MECH_RECORD='$record' MECH_RECORD_PATH='$trace' exec '$PY' run.py --range --port '$port' 2>&1 | tee '$log'"
   sleep 2
   echo "MECH range server starting in session '$session' on http://127.0.0.1:$port"
   echo "  attach: tmux attach -t '$session'      logs: tail -f $log"
+  [ "$record" = "0" ] || echo "  trace:  $trace"
 }
 
 cmd_stop() {

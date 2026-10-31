@@ -11,6 +11,7 @@ from ... import terrain as terrain_mod
 from ..base import Mode
 from . import bunkers as bunkers_mod
 from . import interceptor as interceptor_mod
+from . import record as record_mod
 from . import targets as targets_mod
 from . import test_ai as test_ai_mod
 
@@ -47,9 +48,18 @@ class Range(Mode):
         # one AI hull that does nothing but shoot missiles down: the range's
         # place to measure the radar and the fuse against a real approach
         world.interceptor = interceptor_mod.Interceptor(world)
+        # a trace of every guided round and the hulls it chases, when asked for
+        # (`MECH_RECORD`); a restart keeps writing to the same file
+        if getattr(world, "record", None) is None:
+            world.record = record_mod.start(world)
 
     def pre_systems(self) -> list[Callable[[World, float], None]]:
         return [targets_mod.run, interceptor_mod.run, test_ai_mod.run]
+
+    def post_systems(self) -> list[Callable[[World, float], None]]:
+        # last: the rounds have flown and the dead have been judged, so a line
+        # carries the end state of the tick
+        return [record_mod.run]
 
     def mech_spawn(self, world: World, player: Player) -> tuple[float, float, float]:
         x, z = terrain_mod.RANGE_SPAWN

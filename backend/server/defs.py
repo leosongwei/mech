@@ -834,7 +834,15 @@ BUILD_TIME = 5.0
 # optics / IR seeker
 BASE_FOV = 1.05            # vertical field of view at 1x, radians
 LOCK_FRAC = 0.05           # lock circle diameter as a fraction of the view width
-AIM_ROOF = 0.92            # where a seeker looks at a hull: 92% of its height
+# Where a seeker looks at a hull - the deck it dives on, as a fraction of the
+# type's `height`.  It has to stay *inside* the hull's own hit spheres or a round
+# that flies the aim point perfectly still misses the body: 0.92 of a mech's
+# 6.5 m is 5.98 m while the top of its torso sphere is 5.45 m, so every
+# well-guided round passed half a metre over the machine and burst in the dirt
+# behind it (measured on the range: 5 dives, 2 of them that way, and the ones
+# that killed did it by arriving a hair low).  0.78 puts the aim point 0.38 m
+# inside that sphere - still the deck, and now a dive that flies it is a hit.
+AIM_ROOF = 0.78
 # A missile's own seeker does not need its target to survive the flight.  With
 # the lock gone it stares at where the hull should be, and takes the first
 # enemy hull it can see inside this cone around that stare line (`seeker.py`).

@@ -128,9 +128,11 @@ def _pop(world: World, cid: int) -> None:
     scale = float(e["smoke_s"][cid])
     x = float(e["pos"][cid, 0])
     z = float(e["pos"][cid, 2])
-    # a low canister would bury half its puff in the terrain, so the centre
-    # sits half a radius up: what is left underground does not matter
-    y = max(float(e["pos"][cid, 1]), defs.SMOKE_FLAT[1] * 0.5 * scale)
+    # the burst stays where the canister ran out of fuse, underground included:
+    # what is under the terrain is hidden anyway, and the puff grows into it, so
+    # the screen of a low row is a dome standing on the deck rather than a ball
+    # hanging over it with a gap underneath
+    y = float(e["pos"][cid, 1])
     e.destroy(cid)
     pid = e.create(components.PUFF_COMPS)
     e["pos"][pid] = (x, y, z)

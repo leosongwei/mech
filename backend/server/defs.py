@@ -797,8 +797,8 @@ SMOKE_LIFE = 5.0              # seconds the smoke stays up
 SMOKE_FLAT = (45.0, 45.0)     # deployed puff: semiaxes h/v, metres (a sphere)
 SMOKE_START = 0.35            # fraction of SMOKE_FLAT the burst starts at
 SMOKE_BURST = 2.2             # 1/s; how fast the burst eases out
-SMOKE_TIME_JITTER = 0.10      # +-fraction of the flight time, per canister
-SMOKE_SIZE_JITTER = 0.10      # +-fraction of the puff size, per canister
+SMOKE_TIME_JITTER = 0.20      # +-fraction of the flight time, per canister
+SMOKE_SIZE_JITTER = 0.20      # +-fraction of the puff size, per canister
 SMOKE_CHARGES = 10            # pulls per life (a full rack, same as a reload)
 SMOKE_COOLDOWN = 0.5          # seconds between pulls
 SMOKE_REFILL_COST = 250       # $ for a fresh rack at the base
@@ -810,10 +810,13 @@ def _smoke_fan() -> tuple[tuple[float, float], ...]:
 
     Three rows of elevation plus one puff over the roof.  Every puff is a
     sphere of ``SMOKE_FLAT`` radius seen from 50 m, which is ~50 deg wide on
-    its own, so a handful of them overlap into a solid wall.
+    its own, so a handful of them overlap into a solid wall.  The bottom row
+    is fired flat on purpose: a canister's fuse times out where the hull's own
+    height has taken the hop, so the row of it that has to close the gap under
+    the screen lands on the deck instead of hanging in the air.
     """
     fan = []
-    for el in (12.0, 40.0, 68.0):
+    for el in (3.0, 40.0, 68.0):
         n = max(1, int(round(6 * math.cos(math.radians(el)))))
         for i in range(n):
             fan.append((-90.0 + (i + 0.5) * 180.0 / n, el))

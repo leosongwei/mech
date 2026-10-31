@@ -412,14 +412,13 @@ def impact(world: World, p: tuple[float, float, float], wd: dict, proj_id: int,
     target it fused on, at the moment it fused, and a missile that has flown on
     twenty metres would otherwise be judged against a burst it has left."""
     e = world.ecs
-    shooter = int(e["proj_src"][proj_id])
-    shooter_ok = shooter >= 0 and e.alive[shooter]
-    pid = int(e["owner"][shooter]) if shooter_ok else -1
-    faction = int(e["faction"][shooter]) if shooter_ok else -1
-    # who to *name* on the kill feed: frozen into every hit and onto the burst,
-    # because this hull can be a wreck before the death it caused is judged
-    by = ((int(e["name_id"][shooter]), faction, int(e["etype"][shooter]))
-          if shooter_ok else None)
+    # the credit was frozen at the muzzle (`proj_pid` / `proj_name`), because
+    # the hull that fired this round can be a wreck by the time it lands - and
+    # its id can already belong to the wreck it left.  A kill it lands is still
+    # the pilot's, and the kill feed still knows whose name to put on it.
+    pid = int(e["proj_pid"][proj_id])
+    faction = int(e["faction"][proj_id])
+    by = (int(e["proj_name"][proj_id]), faction, int(e["proj_etype"][proj_id]))
     r = float(wd["er"])
     world.emit("boom", x=p[0], y=p[1], z=p[2], r=r, wid=int(wd["wid"]),
                big=1 if r >= 5.0 else 0, proj=int(proj_id))

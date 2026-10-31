@@ -119,13 +119,13 @@ def run(world: World, dt: float) -> None:
         # a missile that has already left the burst by the time `blasts` runs is
         # settled here, at the gap it was at when the fuse fired; a man stands
         # still and is left to the burst like he always was
-        pl = -1
         if not human:
-            shooter = int(e["proj_src"][pid])
-            if shooter >= 0 and e.alive[shooter]:
-                pl = int(e["owner"][shooter])
+            # the credit is the round's own (`proj_pid`, frozen at the muzzle),
+            # not a lookup on the hull that fired it: that hull may be gone
+            pl = int(e["proj_pid"][pid])
+            by = (int(e["proj_name"][pid]), int(faction[pid]), int(e["proj_etype"][pid]))
             combat.splash(world, tid, defs.MOD_CHASSIS, wd, float(gap[k]), pl,
-                          src=f"prox {float(gap[k]):.1f} m")
+                          src=f"prox {float(gap[k]):.1f} m", by=by)
         # the round goes off where it fused: one entry point for "a round
         # detonates", so the flash, the burst entity and the credit all come
         # out the same way a direct hit's do

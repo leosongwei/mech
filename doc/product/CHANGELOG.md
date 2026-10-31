@@ -33,14 +33,22 @@
   的名字/阵营/类型/武器（`last_name` / `last_fac` / `last_etype` / `last_wid`），爆炸
   （`blasts.spawn`）同样在创建时冻结 `blast_name` / `blast_etype` / `blast_wid`——因为
   开火的那台机甲可能在死亡被判定之前就已经是残骸，它的实体 id 也可能已经换了主人。
+- **先死的人的弹也算他的**：击杀归属在**出膛那一刻**就冻在弹丸上（`proj_pid` /
+  `proj_name` / `proj_etype`，与爆炸的 `blast_pid` 同一条规矩），所以"开完炮被打死、
+  炮弹随后落地命毙"仍然算自己击毙——消息行和赏金都照给。之前这种情况两边都拿不到
+  （归属是落地时去查开火者的实体，而它可能已经是残骸、id 甚至已被别的实体重用）。
+- **广播范围的准确口径**：只要一局里**有玩家**在击杀的任意一端，这条消息就发给
+  **所有玩家**（自己击杀 bot、bot 击杀别人、别人击杀自己都看得见）；步兵的死亡、以及
+  AI 与 AI 之间的击杀都不发。
 - **大厅呼号存进浏览器**（`localStorage: mech.name`）：部署时写入，重开页面自动预填
   上次用的呼号，不用每次重敲。
 - 名字抽取用的是 `world.rng`（与 AI 装备模板同一个约定），所以整场战斗的随机流变了：
   `tools/replay.py` 因此重新基线，数值容差不变。
 - 涉及文件：`backend/server/defs.py`（`AI_NAMES` / `ai_name`）、
-  `backend/server/components.py`（`name_id` / `last_*` / `blast_name` 等）、
+  `backend/server/components.py`（`name_id` / `last_*` / `blast_*` / `proj_pid` 等）、
   `backend/server/world.py`（`names` 名字表、`spawn_unit` 抽名）、
-  `backend/server/combat.py`、`backend/server/systems/projectiles.py`、
+  `backend/server/combat.py`、`backend/server/systems/weapons.py`（出膛时冻结归属）、
+  `backend/server/systems/projectiles.py`、`backend/server/systems/proximity.py`、
   `backend/server/systems/blasts.py`、`backend/server/systems/mortality.py`（`_feed`）、
   `frontend/src/game.js`（呼号存储、`_killfeed`）、`frontend/src/hud.js`（分段消息 +
   底板）、`doc/product/screens.md`、`doc/product/flow.md`

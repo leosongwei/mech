@@ -289,6 +289,12 @@ def fire(world: World, eid: int, arm: int, wid: int, wd: dict, target: int = -1)
         e["proj_wid"][pid] = wid
         e["proj_life"][pid] = life
         e["proj_src"][pid] = eid
+        # the credit travels with the round, not with the hull that fired it:
+        # a cannon round can outlive the machine by a second and a rocket by
+        # several, and a kill it lands is still the pilot's
+        e["proj_pid"][pid] = int(e["owner"][eid])
+        e["proj_name"][pid] = e["name_id"][eid]
+        e["proj_etype"][pid] = e["etype"][eid]
         e["proj_age"][pid] = 0.0
         e["proj_seed"][pid] = world.rng.random()
         e["proj_trav"][pid] = 0.0

@@ -195,6 +195,12 @@ def register(ecs: ECS) -> None:
     ecs.register("proj_wid", np.uint8)
     ecs.register("proj_life", np.float32)
     ecs.register("proj_src", np.int32, (), -1)
+    # who is *owed* the round, frozen at the muzzle: `proj_src` is only an entity
+    # id, and the hull behind it can be a wreck - with its id handed out again -
+    # by the time the round lands.  Same rule the burst obeys (`blast_pid`).
+    ecs.register("proj_pid", np.int32, (), -1)       # the pilot who fired it
+    ecs.register("proj_name", np.uint16)             # ...the crew it belongs to
+    ecs.register("proj_etype", np.uint8)             # ...or its type, if nameless
     ecs.register("proj_age", np.float32)
     ecs.register("proj_seed", np.float32)            # per round, drives the thrust jitter
     # where the round started this tick: the prox fuse solves the leg it just
@@ -241,6 +247,7 @@ BLAST_COMPS = ["pos", "faction", "blast_power", "blast_t", "blast_friendly",
                "blast"]
 
 PROJ_COMPS = ["pos", "vel", "faction", "proj_kind", "proj_wid", "proj_life", "proj_src",
+              "proj_pid", "proj_name", "proj_etype",
               "proj_age", "proj_seed", "proj_prev", "proj_trav", "target"]
 
 # A missile is a *different archetype* from a bullet - the same rule the smoke

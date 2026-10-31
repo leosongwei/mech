@@ -509,7 +509,12 @@ frontend/
   `killer killed victim with weapon`, the money appended for the pilot who
   earned it. It stays silent for infantry (a battle kills them by the dozen)
   and for AI fighting AI (most of the war, none of a pilot's business), so a
-  line only ever appears when a *pilot* is on one end of it. Names come from a
+  line only ever appears when a *pilot* is on one end of it - his kill, or his
+  death; every player sees every line. "The pilot is credited" is decided at
+  the **muzzle**, not at the impact: `proj_pid` / `proj_name` / `proj_etype`
+  are frozen onto the round when it leaves (`weapons.fire`), the same rule as
+  `blast_pid`, because a round outlives the hull that fired it by a second to
+  several and by then its id can belong to the wreck it left. Names come from a
   component, never a type switch: `name_id` is an index into `World.names`
   (index 0 = nameless, and a car or a man answers to its `etype` name), an AI
   mech draws one off `defs.AI_NAMES` at spawn (a draw off `world.rng`, so the

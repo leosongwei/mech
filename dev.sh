@@ -20,6 +20,12 @@ SESSION="${MECH_SESSION:-mech}"
 PORT="${MECH_PORT:-8010}"
 PY="$ROOT/.venv/bin/python"
 LOG="${MECH_LOG:-/tmp/mech-server.log}"
+# the server never starts at DEBUG: per-weapon lines (a round bursting, a seeker
+# losing its lock, a missile taking a hit) are all DEBUG and would drown the log
+# in a live battle.  Ask for them with `MECH_LOG_LEVEL=DEBUG ./dev.sh start`.
+# `MECH_DEBUG` below is a different thing - it unlocks the console's debug
+# messages (debug_spawn, god, trees), not logging.
+LOGLEVEL="${MECH_LOG_LEVEL:-INFO}"
 
 # byobu is a tmux wrapper; fall back to plain tmux when the byobu config dir is
 # not writable (e.g. inside a sandbox) so the helper always works.
@@ -39,7 +45,7 @@ cmd_start() {
     return 0
   fi
   mux new-session -A -d -s "$SESSION" \
-    bash -ic "cd '$ROOT/backend' && MECH_DEBUG=1 exec '$PY' run.py --port '$PORT' 2>&1 | tee '$LOG'"
+    bash -ic "cd '$ROOT/backend' && MECH_DEBUG=1 MECH_LOG_LEVEL='$LOGLEVEL' exec '$PY' run.py --port '$PORT' 2>&1 | tee '$LOG'"
   sleep 2
   echo "MECH server starting in byobu session '$SESSION' on http://127.0.0.1:$PORT"
   echo "  attach: ./dev.sh attach      logs: tail -f $LOG"
@@ -60,7 +66,7 @@ cmd_range() {
     return 0
   fi
   mux new-session -A -d -s "$session" \
-    bash -ic "cd '$ROOT/backend' && MECH_DEBUG=1 exec '$PY' run.py --range --port '$port' 2>&1 | tee '$log'"
+    bash -ic "cd '$ROOT/backend' && MECH_DEBUG=1 MECH_LOG_LEVEL='$LOGLEVEL' exec '$PY' run.py --range --port '$port' 2>&1 | tee '$log'"
   sleep 2
   echo "MECH range server starting in session '$session' on http://127.0.0.1:$port"
   echo "  attach: tmux attach -t '$session'      logs: tail -f $log"

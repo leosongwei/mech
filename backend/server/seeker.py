@@ -84,8 +84,9 @@ def track(world: World, pid: int, p0, dt: float):
         why = sight.why(world, p0, spot)
         if why:
             # the seeker is blind: log it (the smoke test on the range is read
-            # straight out of the server log) and fall through to the memory
-            log.info("seeker of missile %d lost the lock on hull %d: %s on the "
+            # straight out of the server log, at DEBUG) and fall through to the
+            # memory
+            log.debug("seeker of missile %d lost the lock on hull %d: %s on the "
                      "line of sight (%.0f m out, %.1f s in the air)",
                      pid, tid, why, math.dist(p0, spot), float(e["proj_age"][pid]))
             world.emit("seeker", x=float(p0[0]), y=float(p0[1]), z=float(p0[2]),
@@ -114,7 +115,7 @@ def track(world: World, pid: int, p0, dt: float):
     target[pid] = tid
     mem[pid] = spot
     memv[pid] = vel[tid]
-    log.info("seeker of missile %d re-locked on hull %d (%.0f m out, %.1f s in "
+    log.debug("seeker of missile %d re-locked on hull %d (%.0f m out, %.1f s in "
              "the air)", pid, tid, math.dist(p0, spot), float(e["proj_age"][pid]))
     return spot
 

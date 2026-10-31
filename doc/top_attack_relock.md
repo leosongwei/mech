@@ -45,7 +45,7 @@ fire(...) → 拦截型弹药原型创建后，若 kind == 3 且 target 有效:
 有 target 且存活且敌对:
     spot = roof(target)
     if sight.why(弹位置, spot):        # 烟幕 / 地形 / 建筑 / 树冠
-        写日志 + emit("seeker")        # 客户端 SEEKER BLINDED，靶场测试读日志
+        写日志 + emit("seeker")        # 只进 __game.seekerLog，HUD 不提示
         target = -1
     else:
         tgt_mem = spot; tgt_vel = vel[target]      # 刷新记忆，返回 spot
@@ -97,6 +97,7 @@ fire(...) → 拦截型弹药原型创建后，若 kind == 3 且 target 有效:
 - **不改玩家锁定**（`systems/locking.py`）：圆圈、`lock_time`、离圈即脱锁全部不动。
   导弹在弹上自己复锁，与发射者的锁定无关（发射后不管）。
 - **不在客户端加提示**：复锁只有服务器日志一行（`seeker of missile N re-locked on hull M`），
-  脱锁仍是原来的 `seeker` 事件 + `SEEKER BLINDED`。发射者本来就不该知道他那一发的
-  导引头在烟里换了目标，直到它炸。
+  脱锁也只写服务器日志、发一个 `seeker` 事件（记进 `__game.seekerLog`）——**HUD 上
+  什么也不弹**。导引头瞎没瞎，车上本来就无从知道（瞎了的弹按同一套剖面飞），
+  驾驶员能看到的只有告警圈：弹不再压向自己时 `warn` 的红指针和告警音自己停。
 - **不给步兵开门**：候选集是 `lockable`（APC / 机甲）。

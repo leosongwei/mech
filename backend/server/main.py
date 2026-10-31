@@ -21,9 +21,13 @@ import numpy as np
 from . import combat, defs, netcode, shop
 from .world import Player, World
 
-# uvicorn only configures its own loggers; ours ("mech.*": smoke lock breaks,
-# range threats) need a handler of their own to land in the server log
-logging.basicConfig(level=logging.INFO,
+# uvicorn only configures its own loggers; ours ("mech.*") need a handler of
+# their own to land in the server log.  The default is INFO, i.e. no per-weapon
+# line: a round bursting, a seeker losing its lock and a missile taking a hit
+# are all DEBUG (see AGENTS.md, "Logging"), and `MECH_LOG_LEVEL` is the one knob
+# that turns them on.  `MECH_DEBUG` is unrelated - it unlocks the websocket
+# development messages.
+logging.basicConfig(level=os.environ.get("MECH_LOG_LEVEL", "INFO").upper(),
                     format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 

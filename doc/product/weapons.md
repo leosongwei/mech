@@ -318,9 +318,11 @@
   导弹对推算位置照样俯冲，落点就是它算错了的地方。目标被打死也一样：
   那一发会炸在「它本该在的地方」的地面上，除非锥内出现了别的敌车。
 * 断锁时服务器日志写一行
-  `... lost the lock ...: smoke|terrain on the line of sight`，客户端提示 `SEEKER BLINDED`；
-  复锁写一行 `seeker of missile N re-locked on hull M (...)`，客户端**不提示**
-  （发射后不管，导引头在烟里换了谁，发射者不该知道）。
+  `... lost the lock ...: smoke|terrain on the line of sight`；复锁写一行
+  `seeker of missile N re-locked on hull M (...)`（两行都是 **DEBUG**，默认不写进
+  日志，需要 `MECH_LOG_LEVEL=DEBUG` 启动服务器）。**两条客户端都不提示**：
+  导引头在烟里瞎了、又换了谁，车上都无从知道（瞎了的弹仍然按同一套剖面俯冲），
+  驾驶员能看到的只有告警圈——弹不再压向自己时红指针和告警音自己停。
 
 ### 命中与溅射
 

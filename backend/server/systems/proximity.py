@@ -107,7 +107,9 @@ def run(world: World, dt: float) -> None:
         # the round goes off where it fused, so the blast, the splash and the
         # flash all belong to that point rather than to the end of the tick
         pos[pid] = burst
-        log.info("prox fuse: %s round %d burst at (%.1f, %.1f, %.1f), %.2f m "
+        # DEBUG, like every weapon-level line: a burst is an ordinary event and
+        # this geometry dump only earns its place when the fuse is being hunted
+        log.debug("prox fuse: %s round %d burst at (%.1f, %.1f, %.1f), %.2f m "
                  "off %s %d - %.1f m into a %.1f m leg from "
                  "(%.1f, %.1f, %.1f), round flew on to (%.1f, %.1f, %.1f)",
                  wd["name"], pid, burst[0], burst[1], burst[2], gap[k],

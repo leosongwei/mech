@@ -71,7 +71,7 @@ export class Game {
     this.range = false;         // weapon range mode (server started with --range)
     this.lockFrac = 0.05;       // IR lock circle, as a fraction of the view width
     this.wreckPuffs = new Map();    // per-hulk smoke timer
-    this.seekerLog = [];            // every IR lock the smoke broke, oldest first
+    this.seekerLog = [];            // every IR lock smoke or terrain broke, oldest first
     this.shopOpen = false;          // rearm panel (B) is up: the mouse is a cursor
     this.sounds = [];               // acoustic events in the air, oldest first
     this.settingsOpen = false;      // options panel (gear): volume + debug knobs
@@ -329,15 +329,16 @@ export class Game {
           this.audio.hit();
         }
       } else if (ev.k === 'seeker') {
-        // an IR missile went dumb: its line of sight is full of smoke or a
-        // ridge.  Kept on the game object so a console script can read the
-        // whole run back
+        // an IR missile lost its lock: its line of sight is full of smoke or a
+        // ridge.  The pilot is told nothing - a blind seeker is not something
+        // the hull can observe (a blinded round flies the same profile a guided
+        // one does, `seeker.py`), and the battle's AI crews lose locks all over
+        // the map.  Kept on the game object so a console script can read the
+        // run back; the range's tests read the server log (`mech.smoke`).
         const rec = { t: Math.round(performance.now()), dist: ev.dist, mech: ev.tid,
                       why: ev.why, x: ev.x, y: ev.y, z: ev.z };
         this.seekerLog.push(rec);
         if (this.seekerLog.length > 64) this.seekerLog.shift();
-        this._message(`SEEKER BLINDED ${ev.dist ? `(${Math.round(ev.dist)} m)` : ''}`, '#a9f0c0');
-        this.audio.laserPing();
       } else if (ev.k === 'capture') {
         const mine = ev.faction === this.playerFaction;
         this._message(mine ? 'TOWN SECURED' : 'TOWN LOST', mine ? '#7ce0a0' : '#ff9a9a');

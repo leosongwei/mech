@@ -11,6 +11,47 @@
 
 ---
 
+## 2026-10-31 · 服务器日志分级：逐发弹的武器日志一律 DEBUG，`dev.sh` 默认不输出
+
+- **玩家不可见的运维改动**（游戏里没有任何变化），登记是因为它改变了靶场测试的
+  读数方式：`prox fuse`（每发 30mm 近炸起爆，含整条 tick 航迹）、`mech.smoke`（导引头
+  脱锁 / 复锁）、`mech.intercept`（导弹挨炮 / 被击落）现在**全是 DEBUG**，`INFO`
+  只在真正的罕见事件上出现。
+- **原因**：20 分钟脚本战斗实测 693 行 / 148 KB，**95%** 是 `prox fuse`；30mm 190 rpm、
+  `prox=4 m` 扫一个步兵班就是 ~3 行/秒，而这些行没有任何自动消费者（工具是在进程内
+  抓 logger 记录，不解析这一行）。
+- **开关**：`MECH_LOG_LEVEL`（默认 `INFO`，`main.py` 读取）。`./dev.sh start` /
+  `./dev.sh range` 显式以 `INFO` 启动，**不会**因为 `MECH_DEBUG=1` 而输出这些行；
+  要看武器日志就 `MECH_LOG_LEVEL=DEBUG ./dev.sh start`。
+- **`MECH_DEBUG` 与日志无关**：它只解锁控制台调试消息（`debug_spawn` / `god` /
+  `trees` …）和设置菜单里的 DEBUG 区块。
+- 涉及文件：`backend/server/{main.py,seeker.py,systems/proximity.py}`、`dev.sh`、
+  `AGENTS.md`（新增 "Logging" 约定：逐武器 / 逐发弹的日志必须是 DEBUG，
+  `dev.sh` 默认不开 debug 日志且需手动设开关）、`doc/product/{range,weapons}.md`
+  （读数说明补上开关）。
+
+---
+
+## 2026-10-31 · 客户端不再提示 `SEEKER BLINDED`：导引头瞎没瞎，车上无从知道
+
+- **删掉这条提示**（连同它那一声激光短音）：来袭导弹的导引头被烟幕/地形致盲时，
+  HUD 不再弹任何字、也不响音。理由是这条信息**概念上没人能观测到**——瞎了的弹按
+  `seeker.py` 的记忆点照常爬升、滑翔、俯冲，飞起来和还在跟踪的那一发一模一样；
+  而且它是**全图广播**的，一局里 AI 机组互相打掉的锁也全落在玩家屏幕上（实测
+  10 分钟战斗 3.2 次/分钟，**0 次**与收到提示的玩家有关、全部距离 >1 km）。
+- **驾驶员能看到的仍然只有告警圈**：弹一旦不再压向自己（最近接近点落到爆炸半径
+  之外），红色指针与导弹告警音自己就停了——那才是"烟起作用了"的可观测形式。
+- **靶场/测试改读服务器日志**：脱锁那一行照旧
+  （logger `mech.smoke`：`seeker of missile <id> lost the lock ...: smoke|terrain on the line of sight`），
+  `tools/smoke_lock_test.js` 与 `__game.seekerLog` 不受影响（它们读的是 `seeker`
+  事件本身，不是这条 HUD 提示）。
+- 涉及文件：`frontend/src/game.js`（`seeker` 分支只记账，不再 `_message` / 提示音）、
+  `frontend/src/audio.js`（删掉只给它用的 `laserPing`）、`doc/product/range.md`
+  （3.2 一节改写为读日志）、`doc/product/weapons.md`（攻顶一节）、
+  `doc/top_attack_relock.md`（"不在客户端加提示"一条）。
+
+---
+
 ## 2026-10-31 · AI 机甲按模板抽装备（六种配置，含两种导弹）；攻顶 15 s 一发；阵亡装备不保留
 
 - **AI 机甲不再千篇一律一条 30mm + 火箭巢**：出生时按概率抽一套配置

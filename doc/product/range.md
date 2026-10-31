@@ -100,10 +100,15 @@ cd backend && MECH_DEBUG=1 ../.venv/bin/python run.py --range --port 8011
   APC 锁住它，然后按 `Q` 拉烟隔断视线，锁定应当立刻脱锁、预瞄白框消失，
   烟散（5 s）后再扫过去又能锁上。
 * 验证烟幕/地形对**飞行中导弹**的遮挡，去战斗模式（蓝方会打攻顶弹），或被 AI
-  锁定时抛烟；服务器仍会把每次脱锁写进日志（logger `mech.smoke`）：
+  锁定时抛烟；服务器会把每次脱锁写进日志（logger `mech.smoke`）——**这些是
+  DEBUG 级日志，默认不输出**，要看就先带开关启动：
+  `MECH_LOG_LEVEL=DEBUG ./dev.sh start`（或 `./dev.sh range`）。**靶场测试就读
+  这一行**（客户端不给任何提示，见下条）：
   `seeker of missile <id> lost the lock on mech <id>: smoke|terrain on the line of sight (<d> m out, <t> s in the air)`。
-  客户端收到 `seeker` 事件时提示 `SEEKER BLINDED (n m)`，并记在
-  `__game.seekerLog` 里（最多 64 条）。
+* **客户端不提示脱锁**：导引头瞎没瞎，车上本来就没法知道（瞎了的弹照样按记忆
+  俯冲，飞起来和还在跟踪的一模一样），所以 HUD 不弹字、不响音。驾驶员的真实
+  反馈只有告警圈：弹不再往自己身上压时，`warn` 的红指针与告警音自己就停了。
+  事件仍记进 `__game.seekerLog`（最多 64 条），供控制台脚本读回整轮测试。
 
 ## 3.3 现场种树 / 放静止靶（调试）
 

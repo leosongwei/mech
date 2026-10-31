@@ -461,14 +461,6 @@ export class GameAudio {
     this._warbleSet(v, !!active, UPLINK_VOL, 0.45);
   }
 
-  // one-shot acknowledgement on the uplink voice (an IR seeker went dumb)
-  laserPing() {
-    this.ensure();
-    if (!this.ctx) return;
-    const v = this._warble('uplink', WARBLE_SLOW);
-    this._warbleSet(v, true, UPLINK_VOL, 0.5);
-  }
-
   setLock(state, dt) {
     this.ensure();
     if (!this.ctx) return;

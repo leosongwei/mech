@@ -308,9 +308,11 @@ frontend/
   approach to an enemy man and, if that is inside the radius, moves the round
   there and calls `projectiles._impact` at that point. Never sample the tick
   boundaries instead: that steps clean over a man standing 4 m off the path.
-  Airburst is blast only (it is not a direct hit), and the burst is logged
-  (`mech.prox: prox fuse: ...`) so the range test can read the burst position
-  straight out of the log.
+  Airburst is blast only (it is not a direct hit), and the burst is logged at
+  DEBUG (`mech.prox: prox fuse: ...`, with the leg it flew and the closest
+  approach) so a fuse hunt can read the burst position out of the log —
+  `MECH_LOG_LEVEL=DEBUG`, see "Logging" under Build.  It fires once per round
+  that fuses, so it is never an INFO line.
 * **A missile is a target, and the ECS says so** (`components.MISSILE_COMPS`).
   `weapons.fire` picks the archetype off `defs.is_interceptable(wid)`: a
   `kind` `rocket`/`saclos`/`top` round is spawned with `interceptable` + `hp` +
@@ -462,10 +464,11 @@ frontend/
   the whole of the test.  `weapons.fire` writes the memory at the shot, so a
   lock cut before the first tick of flight still leaves something to fly at; a
   round with no memory at all (a lock weapon cannot be fired without one) is
-  still a rock.  Both events are logged (`mech.smoke`): the loss, which the
-  range's smoke test reads, and `re-locked on hull N`, which nothing but a
-  reader of the log sees - the pilot is not told that his round changed its
-  mind.  Numbered in `doc/top_attack_relock.md`.
+  still a rock.  Both events are logged (`mech.smoke`, at DEBUG): the loss,
+  which the range's smoke test reads (`MECH_LOG_LEVEL=DEBUG`), and
+  `re-locked on hull N`, which nothing but a reader of the log sees - the
+  pilot is not told that his round changed its mind, and the client shows no
+  cue at all.  Numbered in `doc/top_attack_relock.md`.
 * **Damage** is two halves, never one number. `defs.pen_damage(ap, ad, dp)`:
   beating the target's `dp` outright delivers the full `ad`, beating only half
   of it shaves `ad/5`, anything duller does nothing. `defs.blast_damage(ed, de,
@@ -682,7 +685,8 @@ frontend/
 * **Debug messages** are accepted only when `MECH_DEBUG=1` (see `main.py`),
   except `respawn`, which is always allowed. All of them are sent from the
   console as `g.net.send({t: '...', ...})`; the payloads are in
-  [Debug knobs](#debug-knobs) below.
+  [Debug knobs](#debug-knobs) below.  This flag gates the *console*, not the
+  log: log verbosity is `MECH_LOG_LEVEL` (see "Logging" under Build).
 
 ### Debug knobs
 
@@ -871,6 +875,25 @@ cd frontend && npm install && npm run build      # -> backend/assets/
   (`uv venv && uv pip install -r backend/pyproject.toml`).
 * No test suite, no linter, no type checker. Verify by running the game and
   watching `/tmp/mech-server.log` plus the browser console.
+* **Logging: a weapon-level line is DEBUG, never INFO.** A round bursting
+  (`mech.prox: prox fuse: ...`), a seeker losing or retaking its lock
+  (`mech.smoke`), a missile taking a hit and being shot down
+  (`mech.intercept`) all happen hundreds of times a minute in a live battle —
+  measured, one 20 minute scripted round wrote 693 lines / 148 KB, 95 % of it
+  the fuse line — so they are `log.debug` and a normal run writes none of it.
+  INFO is for the rare, once-a-session events; DEBUG is where anything that
+  fires per round, per hit, per lock or per tick belongs.  `main.py` sets the
+  level from `MECH_LOG_LEVEL` (default `INFO`) and uvicorn stays at `info`.
+* **`dev.sh` does not start the server with debug logging**: it passes
+  `MECH_LOG_LEVEL="${MECH_LOG_LEVEL:-INFO}"`, so the per-weapon lines are off.
+  Turn them on deliberately, for the run that needs them:
+  `MECH_LOG_LEVEL=DEBUG ./dev.sh start` (or `./dev.sh range`), and then
+  `tail -f /tmp/mech-server.log`.
+* **`MECH_DEBUG` is not a log level.** It is the websocket gate for the
+  development messages (`debug_spawn`, `debug_god`, `debug_tp`, `debug_hurt`,
+  `debug_trees`, `debug_restart`) and for the DEBUG block of the settings menu;
+  `dev.sh` sets it to 1 and that has nothing to do with what is written to the
+  log.
 * **`tools/gunnery_check.py`** is the sight/hull/arm check: headless on the
   range map it flicks the view 90 degrees and measures the hull rate, the arm
   rate, the stop at the elevation limit, the eye's place on the pivot (turning
@@ -1016,16 +1039,21 @@ which is how the radar and the intercept are checked from the receiving end -
 one pilot fires a missile, the other watches his RWR and shoots it down).
 $99999, rearm anywhere, smoke cooldown 0.5 s.
 Seeker lock breaks are logged by `mech.smoke` (you have to be shot at for
-that - the battle mode AI does it); the browser script `tools/smoke_lock_test.js`
-drives a whole A/B smoke run from the console when such a missile is in the air.
+that - the battle mode AI does it) at DEBUG, so the run that wants to read them
+is started with `MECH_LOG_LEVEL=DEBUG ./dev.sh range`; the browser script
+`tools/smoke_lock_test.js` drives a whole A/B smoke run from the console when
+such a missile is in the air and reads the event stream, not the log.
 Log: `/tmp/mech-range.log`, overrides `MECH_RANGE_PORT` (8011), `MECH_RANGE_LOG`.
 Product notes: `doc/product/range.md`.
 
 Environment overrides: `MECH_SESSION` (default `mech`), `MECH_PORT` (8010),
-`MECH_LOG` (`/tmp/mech-server.log`). `dev.sh` always sets `MECH_DEBUG=1`,
-which unlocks the debug websocket messages and the DEBUG block of the settings
-menu (gear, top right: RESPAWN / RESTART / GOD). Without it the menu keeps the
-volume slider only.
+`MECH_LOG` (`/tmp/mech-server.log`), `MECH_LOG_LEVEL` (`INFO`).
+`dev.sh` always sets `MECH_DEBUG=1`, which unlocks the debug websocket messages
+and the DEBUG block of the settings menu (gear, top right: RESPAWN / RESTART /
+GOD). Without it the menu keeps the volume slider only.  **`MECH_DEBUG` does not
+turn on debug logging**: `dev.sh` starts every server at `MECH_LOG_LEVEL=INFO`,
+so the per-weapon lines stay out of the log until a run asks for them
+(`MECH_LOG_LEVEL=DEBUG ./dev.sh start`).
 
 Equivalent raw tmux invocation:
 
@@ -1034,7 +1062,7 @@ tmux new-session -A -d -s mech \
   "cd $PWD/backend && MECH_DEBUG=1 .venv/bin/python run.py --port 8010 2>&1 | tee /tmp/mech-server.log"
 ```
 
-Manual run without tmux:
+Manual run without tmux (add `MECH_LOG_LEVEL=DEBUG` for the per-weapon lines):
 
 ```bash
 cd backend && MECH_DEBUG=1 ../.venv/bin/python run.py --port 8010

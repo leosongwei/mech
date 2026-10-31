@@ -304,16 +304,16 @@ WEAPONS = [
     # round in the breech, three seconds of autoloader between shots, twelve
     # rounds in the rack - so the whole arm is twelve trigger pulls a battle,
     # and the magazine is 1 on purpose (`mag` 1 / `reserve` 11 is what makes the
-    # reload the cycle: a shot, then the countdown, then another).  1600 m/s of
-    # APFSDS: 30 m of drop at 4 km is the fire control's problem, not the
+    # reload the cycle: a shot, then the countdown, then another).  1800 m/s of
+    # APFSDS: 24 m of drop at 4 km is the fire control's problem, not the
     # pilot's, and 0.3 mrad of spread is a coin across 3 km.  AD 200 is past
     # every hull pool in the game and AP 120 past the base's 80 of plate, so it
     # is the one gun that takes a mech, an APC or a chunk of the enemy base
     # apart with a single round - which is what a $800 barrel and $600 of
     # ammunition buys.
     dict(wid=WID_G105, key="g105", name="105mm SMOOTHBORE", kind="bullet", ap=120, ad=200, ed=15, er=3.0,
-         rpm=20, mag=1, reserve=11, reload=3.0, vel=1600, spread=0.0003, bias=0.0, g=9.81,
-         thrust=0, maxvel=0, life=6.3, range=4000, cost=800, ammo_cost=60.0, lock=0, lock_time=0,
+         rpm=20, mag=1, reserve=11, reload=3.0, vel=1800, spread=0.0003, bias=0.0, g=9.81,
+         thrust=0, maxvel=0, life=5.6, range=4000, cost=800, ammo_cost=60.0, lock=0, lock_time=0,
          salvo=0, semi=0, color=(1.0, 0.90, 0.55), cal=105, heavy=True, reach=6.45,
          desc="APFSDS, 3 s autoloader"),
     # The APC's own anti-tank missile: the same airframe, warhead and beam as

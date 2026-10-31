@@ -31,6 +31,16 @@
   `frontend/src/scene.js`（`armModel`）、`frontend/src/game.js`（`_muzzle`）、
   `doc/product/weapons.md`、`doc/product/units.md`
 
+## 2026-10-31 · 105mm 初速 1600 → 1800 m/s
+
+- 弹速提到 **1800 m/s**（每 tick 飞 **60 m**），弹道更平：1 km 下坠 **1.9 → 1.5 m**、
+  4 km 下坠 **31 → 24 m**，仍全部由火控调零吸收，准星即落点不变。
+- 飞行时间同步缩短（1 km 0.63 → 0.56 s，4 km 2.5 → 2.2 s），打移动目标的提前量
+  也随之变小；弹丸寿命按 10 km ÷ 速度重算为 **5.6 s**（原 6.3 s），射程 4 km 不变。
+- 散布、伤害、装填、弹药数一律不动。
+- 涉及文件：`backend/server/defs.py`（`WID_G105` 的 `vel` / `life`）、
+  `doc/product/weapons.md`（武器表与 APFSDS 说明）
+
 ## 2026-10-31 · 105mm 滑膛炮：弹药 10 → 12 发，装填 5 s → 3 s
 
 - 整车带弹从 **10 发**（弹匣 1 + 备弹 9）加到 **12 发**（1 + 11），两发之间的装填

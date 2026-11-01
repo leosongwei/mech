@@ -1,0 +1,33 @@
+# git / editor
+.git
+.gitignore
+.github
+.DS_Store
+
+# python
+.venv
+__pycache__
+*.py[cod]
+
+# node
+node_modules
+frontend/node_modules
+
+# build output: the client stage produces this from source
+backend/assets
+
+# not needed inside the image
+deploy
+doc
+plan_imgs
+tools
+dev.sh
+play.sh
+README.md
+AGENTS.md
+plan.md
+LICENSE
+
+# recordings / logs
+*.mkv
+*.log

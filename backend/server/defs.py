@@ -464,11 +464,11 @@ DEFAULT_LOADOUT = [WID_AC30, WID_ROCKET]
 # a single draw and have to add up to 1.
 AI_LOADOUTS = (
     (0.30, (WID_AC30, WID_ROCKET)),        # the standard pair
-    (0.20, (WID_AC30, WID_AC30)),          # twin cannon: twice the rate, no rocket
-    (0.20, (WID_MG127, WID_ROCKET)),       # cheap gun, same rocket nest
+    (0.10, (WID_AC30, WID_AC30)),          # twin cannon: twice the rate, no rocket
     (0.10, (WID_AC30, WID_SACLOS)),        # a beam rider in the right arm
-    (0.10, (WID_AC30, WID_G105)),          # 105 mm: one-round kills at 2.6 km
-    (0.10, (WID_AC30, WID_TOPATTACK)),     # fire and forget, over the roof
+    (0.25, (WID_AC30, WID_TOPATTACK)),     # fire and forget, over the roof
+    (0.15, (WID_AC30, WID_G105)),          # 105 mm: one-round kills at 2.6 km
+    (0.10, (WID_AC30, WID_MG127)),         # cannon left, cheap gun right
 )
 
 

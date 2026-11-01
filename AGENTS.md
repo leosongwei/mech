@@ -223,8 +223,8 @@ frontend/
 * **An AI crew has no shop, so it draws its loadout.** `World.spawn_unit` hands
   a hull that declares `arms` (the mech — the one component test, not a type
   switch) a template off `defs.AI_LOADOUTS` when no `weapons` were passed: six
-  configs at 30/20/20/10/10/10 %, the two old arms first so two thirds of the
-  field is unchanged. A pilot's mech always passes `player.loadout`, and the
+  configs at 30/10/10/25/15/10 %, the left arm always the 30 mm and the right
+  arm the variable. A pilot's mech always passes `player.loadout`, and the
   range's defence post passes its own, so both are untouched by the table. The
   draw comes off `world.rng`, which makes the order of the list part of the
   simulation like every other draw.
@@ -452,7 +452,11 @@ frontend/
   trigger only when the *bore* is within `atan((prox + hit_r)/d)` (0.23° at
   1 km, not the 0.14 rad a hull gets).  Only a fused arm fires (`PROX[wid] > 0`,
   today just the 30 mm), so a 12.7 mm carrier stays out of it - data driven, not
-  a type switch.  "Coming for me" is `seeker target == me` for a top-attack (it
+  a type switch.  That gate is the *AI's* rule only: a missile is a 10 hp / 1
+  armour target like any other, so **any** round landing on one kills it
+  (one 12.7 mm bullet is `AD 10`), which is why a pilot in an APC can and does
+  shoot an incoming round down with the gatling while the AI crew ignores it -
+  the fuse buys margin (4 m trigger, 2.67 m kill), not the ability.  "Coming for me" is `seeker target == me` for a top-attack (it
   climbs 150 m and dives, so its straight line misses) - or, once that lock is
   cut, a stare point inside `CPA_MEM` (100 m) of the hull, because a blinded
   round still flies at its memory and can take the hull back - and closest

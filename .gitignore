@@ -17,3 +17,4 @@ backend/assets/
 # feed is checked in as tools/gun_report.py numbers and audio.js HEAVY_REPORT)
 *.mkv
 *.mp4
+.direnv

@@ -884,20 +884,37 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
   actually caught up with it - never cache the distance at emit time. Flashes,
   impacts, screen shake and the electronic cues (lock tone, RWR alarms,
   kill/denied chimes) stay immediate.
-* **Distance is three effects, not one curve.** `audio.attenuation` is inverse
+* **Distance is four effects, not one curve.** `audio.attenuation` is inverse
   square *compressed* (`SOUND_ROLLOFF` 0.6, reference `SOUND_REF_DIST` 25 m):
   true 1/r over 16 km is 84 dB of dynamic range, i.e. silence, so the shape of
   the near field is kept (a gun at 100 m is 7 dB below one at 20 m) and the far
   field stays audible (-32 dB at 12 km). `audio.airCutoff` is the second: air
   absorbs the top end far faster than the bottom (0.4 dB/km at 125 Hz, 30 dB/km
-  at 4 kHz), 18 kHz inside 300 m down to 600 Hz past 8 km - a distant cannon is
-  a dull thud, and *that*, not the level, is what the ear reads as distance. It
-  shares one filter with the "behind you" lowpass in `audio._bus(g, pan, behind,
-  dist)`. Third is the direct/reverberant split: the wet send is lifted by
-  `reverbLift(dist)` so the diffuse field decays slower than the direct sound
-  (wet is ~13 dB above dry at 8 km) - far away is "echo", not "turned down".
-  `SOUND_LEVEL` (shot .6 / boom .7 / big .8 / blast 1) is how loud a cue is at
-  the reference distance.
+  at 4 kHz), 18 kHz inside 300 m down to a 1.4 kHz floor past ~6.5 km - a
+  distant cannon is a dull thud, and *that*, not the level, is what the ear
+  reads as distance. It shares one filter with the "behind you" lowpass in
+  `audio._bus(g, pan, behind, dist)`. Third is the direct/reverberant split: the
+  wet send is lifted by `reverbLift(dist)` so the diffuse field decays slower
+  than the direct sound (wet is ~13 dB above dry at 8 km) - far away is "echo",
+  not "turned down". `SOUND_LEVEL` (shot .6 / boom .7 / big .8 / blast 1) is how
+  loud a cue is at the reference distance.
+* **A level curve cannot re-arrange a spectrum, so the far field is its own
+  voice.** `audio._farBoom` is the fourth effect and the reason a fight 10 km
+  off is still audible: a slow 95->42 Hz sine plus a 340->120 Hz lowpassed edge,
+  mixed on `(25/d)^0.25` (`FAR_ROLLOFF`, 11 dB across the whole map instead of
+  34) and faded in from `FAR_NEAR` 700 m to `FAR_FULL` 2.6 km. It is played at
+  `dist` 0 *on purpose* - it is the already-through-the-atmosphere sample, so
+  the air lowpass and the bass shelf of `_bus` must not touch it again. Weight
+  per source: 105 mm 1.6, 30 mm 1.0, guided launch 0.4 (a whoosh, not a thud),
+  round impact 1.0-1.3, hull going up 1.2 with a longer tail. The near cues are
+  untouched inside 700 m.
+* **The air's loss has to come back under it.** `audio.bassLift` is the makeup
+  for what `airCutoff` just took off the top: a 180 Hz lowshelf in `_bus`, 0
+  inside 120 m and up to +18 dB past ~10 km. Without it a far shot is not dull,
+  it is gone - the 1.4 kHz floor keeps the body, the shelf keeps the weight, and
+  the far layer keeps the event. Note that the shelf and the far layer both
+  boost the same octave: if distant autocannon fire reads as a continuous drone,
+  `FAR_LEVEL` is the knob, not `SOUND_ROLLOFF`.
 * **The server decides what a pilot's ear gets.** `defs.SOUND_*` mirror the
   client's curve (`attenuation`, `SOUND_LEVEL`, same numbers), and
   `netcode.hearable(events, ear)` drops every `shot`/`boom` whose arriving gain

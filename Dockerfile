@@ -8,6 +8,7 @@ WORKDIR /src/frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY frontend/ ./
+COPY backend/pyproject.toml ./backend/pyproject.toml
 # webpack output.path is ../backend/assets, i.e. /src/backend/assets here
 RUN npm run build
 

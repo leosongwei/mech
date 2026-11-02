@@ -676,10 +676,18 @@ UNIT_DEFS = {
     # an arm is 50, so it is 42 % of the hull now rather than half
     ETYPE_MECH: dict(name="MECH", hp=120, arms=(50, 50), dp=10, de=20,
                      speed=50.0, radius=1.9, height=6.5,
-                     # 398 / 713 / 1000 / 563 m against the RPG / S-8 / SACLOS /
-                     # top-attack round (`defs.radar_range`); see the radar
-                     # block below for why it is this number
-                     radar_strength=5.0e13,
+                     # A doppler receiver answers `d^2 <= K * v_closing`, so where
+                     # a round is picked up is set by how fast it is *closing*:
+                     # 544 / 975 / 1368 / 977 m against the RPG / the S-8 / the
+                     # SACLOS / the top attack, each at the speed it actually
+                     # arrives at (`defs.radar_range`).  The top attack is the one
+                     # this is tuned to: on a 2.2 km launch the round is 778 m out
+                     # and closing at 195 m/s exactly 4 s before the warhead goes
+                     # off, so K >= 778^2 / 195 = 3100, i.e. strength >= 1.73e14
+                     # (1.75e14 is the round figure).  Four seconds is the window
+                     # a pilot needs: at 780 m the fuse's own trigger is a 0.26 deg
+                     # cone, so the burst has to be laid, not sprayed
+                     radar_strength=1.75e14,
                      weapons=(WID_AC30, WID_ROCKET), ai_range=2600, sight=3400, reward=350,
                      splat=DEATH_BLAST["er"], spheres=tuple(MECH_HITSPHERES),
                      death=dict(blast=(DEATH_BLAST["ed"], DEATH_BLAST["er"]), loud="blast",

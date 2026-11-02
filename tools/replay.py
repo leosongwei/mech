@@ -265,27 +265,34 @@ def _radar() -> None:
     """Regression: the radar equation, against the table it was designed from.
 
     `d^2 <= K * v_closing` with `K = sqrt(radar_strength * rcs) / RADAR_V_REF`.
-    The discovery distances are the ones the design was tuned to (398 / 713 /
-    1000 / 563 m for a mech, exactly half for a carrier), a round that is
-    opening out is never seen, and closing faster is seen further out.
+    The discovery distances are the ones the design was tuned to - 544 / 975 /
+    1368 / 770 m for a mech against the RPG / S-8 / SACLOS / top attack, each at
+    the closing speed it arrives at, and 199 / 357 / 500 / 281 m for a carrier,
+    which is 2.7x shorter on every one of them.  A round that is opening out is
+    never seen, and closing faster is seen further out.
     """
     import math
     mech = defs.UNIT_DEFS[defs.ETYPE_MECH]["radar_strength"]
     apc = defs.UNIT_DEFS[defs.ETYPE_APC]["radar_strength"]
-    assert mech == 5.0e13 and apc == 3.125e12, "the radar strengths moved"
+    assert mech == 1.75e14 and apc == 3.125e12, "the radar strengths moved"
 
     def seen(strength: float, rcs: float, d: float, vc: float) -> bool:
         k = math.sqrt(strength * rcs) / defs.RADAR_V_REF
         return d * d <= k * vc
 
-    want = [(defs.WID_RPG, 300.0, 398.0), (defs.WID_ROCKET, 610.0, 713.0),
-            (defs.WID_SACLOS, 600.0, 1000.0), (defs.WID_TOPATTACK, 190.0, 563.0)]
-    for wid, v, dist in want:
+    # (weapon, closing speed, mech discovery, carrier discovery).  The top
+    # attack's 770 m is the shot the mech's strength is tuned to: a 2.2 km
+    # launch is 778 m out and closing at 195 m/s four seconds before it lands.
+    want = [(defs.WID_RPG, 300.0, 544.0, 199.0),
+            (defs.WID_ROCKET, 610.0, 975.0, 357.0),
+            (defs.WID_SACLOS, 600.0, 1368.0, 500.0),
+            (defs.WID_TOPATTACK, 190.0, 770.0, 281.0)]
+    for wid, v, mech_d, apc_d in want:
         rcs = defs.WEAPONS[wid]["rcs"]
-        for strength, scale in ((mech, 1.0), (apc, 0.5)):
+        for strength, dist in ((mech, mech_d), (apc, apc_d)):
             got = defs.radar_range(strength, rcs) * math.sqrt(v / defs.RADAR_V_REF)
-            assert abs(got - dist * scale) < 1.0, \
-                f"{defs.WEAPONS[wid]['key']} at {got:.1f} m, want {dist * scale:.1f}"
+            assert abs(got - dist) < 1.0, \
+                f"{defs.WEAPONS[wid]['key']} at {got:.1f} m, want {dist:.1f}"
             assert seen(strength, rcs, got - 5.0, v), "not seen just inside the range"
             assert not seen(strength, rcs, got + 5.0, v), "seen past the range"
             # opening out or crossing: the right-hand side is <= 0, so no test
@@ -293,7 +300,7 @@ def _radar() -> None:
             assert not seen(strength, rcs, 10.0, -1.0), "a receding round was seen"
             assert not seen(strength, rcs, 10.0, 0.0), "a crossing round was seen"
     # head-on the hull's own speed is part of the closing speed
-    assert seen(mech, defs.WEAPONS[defs.WID_SACLOS]["rcs"], 1041.0 - 5.0, 650.0)
+    assert seen(mech, defs.WEAPONS[defs.WID_SACLOS]["rcs"], 1423.0 - 5.0, 650.0)
     # the collision sphere is the half-calibre, never a playability knob
     for w in defs.WEAPONS:
         if defs.is_interceptable(int(w["wid"])):

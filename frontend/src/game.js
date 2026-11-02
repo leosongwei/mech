@@ -14,7 +14,16 @@ import { emptyDraft, isEmpty, quickDraft, quote, toMessage } from './shop.js';
 const BASE_FOV = 1.05;              // 1x vertical field of view, radians
 const AIM_LINE = 60000;             // metres, "infinity" for an unzeroed reticle
 const LEAD_TARGETS = 4;             // nearest few only, the rest is clutter
-const RWR_RANGE = 1000;             // m, the threat receiver's own gate
+const RWR_RANGE = 2000;             // m, the threat receiver's own gate
+// the missile alarm's threshold: how near the closest point of the round's
+// course may come and still count as "this one is for me", metres *on top of*
+// the round's own blast radius - a hull is 2 m wide, a round covers 10-20 m a
+// tick, and a fuze is worth a metre or two, so a CPA of 20 m in one frame can
+// still be a hit in the next.  This number is the whole of what the tone
+// answers, and it is answered from the relative velocity vector, so it does not
+// care whether the receiver can place the round: a bearing-only contact on a
+// collision course sings exactly like a tracked one
+const WARN_MARGIN = 20;             // m of slack over the round's own `er`
 const LASER_RANGE = 3400;           // longest sight an enemy could shoot at
 const LASER_CONE = 0.05;            // rad, "his gun is pointed at me"
 const NAME_KEY = 'mech.name';      // the callsign, remembered across reloads
@@ -575,15 +584,16 @@ export class Game {
     if (!own) return;
     const radar = this.defs.radar || { v_ref: 600, rcs: 0.02 };
     const strength = (this.defs.units[own.type] || {}).radar_strength || 0;
-    // the dial's outer ring: the discovery range against the brightest
-    // cross-section in the game closing at v_ref (`defs.radar_range`), i.e.
-    // 1000 m for a mech and 500 m for an APC - read off the data, so the label
-    // in the corner is never a number of its own
+    // `radarRing` is the discovery range against the brightest cross-section in
+    // the game closing at v_ref (`defs.radar_range`) - 1368 m for a mech, 500 m
+    // for an APC.  It is *not* the dial's scale any more: the face is a fixed
+    // 2 km (`RWR_RANGE`) and what this number decides is whether a contact has a
+    // position (`seen`) or only a bearing
     this.radarRing = Math.pow(Math.max(0, strength * radar.rcs), 0.25);
-    // the receiver's own gate, a kilometre down the pipe and no further - or
-    // less if the machine's radar is shorter-ranged than that (an APC), so a
-    // mark never has to be clamped onto the rim of a dial it is outside of
-    const gate = this.radarRing > 0 ? Math.min(RWR_RANGE, this.radarRing) : 0;
+    // the receiver's own gate: everything inside 2 km that is closing, whatever
+    // this hull's own echo floor is - a machine that cannot *resolve* a round
+    // still hears it coming, and the dial says exactly that much
+    const gate = RWR_RANGE;
     const eye = [own.x, own.y + 5, own.z];
     // the round is measured against *this* hull's velocity, not the world's:
     // running at a missile lights the receiver earlier, running from it later.
@@ -610,29 +620,31 @@ export class Game {
       // seen: the echo clears the receiver's floor.  Not seen: the bearing is
       // still known and it is still closing - the dial shows it as such.
       const seen = d * d <= k * vc;
-      // A tracked round is not automatically an *incoming* one: the dial plots
-      // every echo the receiver has, the alarm sings only for the rounds whose
-      // course can actually reach this hull (`er` out, `de` 20 of armour
-      // against it).  Guided rounds (SACLOS, top attack) fly a profile, not a
-      // line - a top-attack climbs 150 m over its target and only drops onto
-      // the roof at the end - so the course that matters for them is the
-      // horizontal one, which is the ground they fly over.
+      // A tracked round is not automatically an *incoming* one, and an
+      // *untracked* one is not automatically harmless: `warn` is solved from
+      // the relative velocity vector alone - the closest approach of the round's
+      // course to this hull, against `er + WARN_MARGIN` - and it is what the
+      // alarm and the dial's bearing line both answer to.  `seen` never enters
+      // it.  Guided rounds (SACLOS, top attack) fly a profile, not a line - a
+      // top-attack climbs 150 m over its target and only drops onto the roof at
+      // the end - so the course that matters for them is the horizontal one,
+      // which is the ground they fly over.
       const guided = p.kind === 2 || p.kind === 3;
       let warn;
       if (guided) {
         const wh = Math.hypot(wx, wz);
         if (wh < 1e-3) {
-          warn = Math.hypot(dx, dz) <= (wd.er || 0) + 20;   // hovering at me
+          warn = Math.hypot(dx, dz) <= (wd.er || 0) + WARN_MARGIN;  // hovering
         } else {
           const along = (dx * wx + dz * wz) / wh;
           warn = Math.hypot(dx - wx / wh * along, dz - wz / wh * along)
-            <= (wd.er || 0) + 20;
+            <= (wd.er || 0) + WARN_MARGIN;
         }
       } else {
         const w = Math.hypot(wx, wy, wz);
         const along = (dx * wx + dy * wy + dz * wz) / w;
         warn = Math.hypot(dx - wx / w * along, dy - wy / w * along,
-          dz - wz / w * along) <= (wd.er || 0) + 20;
+          dz - wz / w * along) <= (wd.er || 0) + WARN_MARGIN;
       }
       // one line of sight, the same door the AI's lookout, the IR lock and the
       // pre-aim box go through: terrain, a canopy or a screen of smoke hides a
@@ -665,6 +677,11 @@ export class Game {
         aimed = dot > Math.cos(LASER_CONE);
       }
       if (!aimed) continue;
+      // a laser is light: a ridge, a canopy or a screen of smoke between us is
+      // the same wall it is for a round, so his sight line has to pass the one
+      // sight rule before the receiver says a word about it
+      if (sightBlocked(this.map, eye[0], eye[1], eye[2],
+                       e.x, e.y + 2.5, e.z, puffs)) continue;
       this.lasers.push({ x: e.x, z: e.z, dist: d, id: e.id });
     }
   }
@@ -678,6 +695,9 @@ export class Game {
   // this hull (`warn`) are worth a tone.
   _alarms(own) {
     const t = (own && this.threats) || [];
+    // the tone answers one question: is one of these on a course that reaches
+    // me?  A contact the receiver has no range for sings exactly like one it
+    // has a track on - "I cannot see it" is not "it is not coming"
     this.audio.missileWarning(t.some((x) => x.warn));
     const L = (own && this.lasers) || [];
     this.audio.laserWarning(L.length > 0);
@@ -1231,8 +1251,12 @@ export class Game {
       // moving at (it ramps up over three seconds), `mv*` its smoothed copy
       speed: own ? Math.hypot(own.mvx || 0, own.mvz || 0) * 3.6 : 0,
       threats: this.threats || [],
-      // metres at the edge of the threat dial, off `defs.radar` and the hull's
-      // own `radar_strength` - the corner label reads it back
+      // metres at the edge of the threat dial: a constant face (`RWR_RANGE`), so
+      // the corner label is the same in every machine and a mark's distance
+      // from the middle is its real distance
+      radarScale: RWR_RANGE,
+      // the hull's own echo floor - a contact inside this has a position, one
+      // outside it does not (the AI and the RWR solve the same equation)
       radarRing: this.radarRing || 0,
       lasers: this.lasers || [],
       smoke: m.smoke === undefined ? null : m.smoke,

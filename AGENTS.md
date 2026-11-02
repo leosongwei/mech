@@ -415,28 +415,44 @@ frontend/
   **kill**, with 14 % of margin.  It used to be a 4 m trigger against a 2.67 m
   lethal radius (8 at the edge, the round flew on): the trigger now sits
   *inside* the pattern, and the tighter circle is paid for by the rate of fire
-  (300 rpm) - measured, `tools/intercept_check.py` reads 34 / 36 either way.
+  (300 rpm) - measured, `tools/intercept_check.py` read 34 / 36 either way before
+  the mech's radar went to 1.75e14, and 36 / 36 after it (the crew sees the round
+  368 m earlier).
 * **Radar is one equation, two implementations** (`defs.radar_k`): a doppler
   receiver only sees what closes on it, so `radar_strength * rcs / d^4 *
   (v_c / RADAR_V_REF)^2 >= 1`, i.e. `d² <= K·v_c` with `K = sqrt(S·rcs)/V_REF`.
   `V_REF` (600 m/s, `defs.RADAR_V_REF`) only makes the speed term dimensionless;
-  `radar_strength` (m⁴, on the unit type: mech 5e13, APC 3.125e12, nobody else)
-  is the one knob, and `d ∝ S^¼` is why an APC sees half as far.  `v_c <= 0`
-  fails the test by itself, which is why there is no speed threshold any more
-  (the client's old `RADAR_SPEED` is gone).  Discovery distances against a mech:
-  SACLOS 1000 m, S-8 713 m, top-attack 563 m, RPG 398 m.  Both sides read the
+  `radar_strength` (m⁴, on the unit type: mech 1.75e14, APC 3.125e12, nobody
+  else) is the one knob, and `d ∝ S^¼` is why an APC sees 1/2.7 as far.
+  `v_c <= 0` fails the test by itself, which is why there is no speed threshold
+  any more (the client's old `RADAR_SPEED` is gone).  Discovery distances
+  against a mech, each round at the speed it arrives at: SACLOS 1368 m, S-8
+  975 m, top-attack 977 m (measured 778 m on a 2.2 km launch, because it is
+  slower and steeper by the time it is that close), RPG 544 m.  The mech's
+  number is tuned to the top attack and to a *time*: the round is 778 m out and
+  closing at 195 m/s exactly 4 s before it goes off, so `K >= 778²/195 = 3100`,
+  i.e. `S >= 1.73e14` - four seconds being the window in which a pilot can lay
+  a 30 mm burst inside the fuse's 0.26 deg cone at that range.  Both sides read the
   same numbers: `netcode.static_payload` sends a `radar` block (`v_ref`, the
-  largest `rcs`) and the client derives the dial's outer ring from it - the
-  `1 km` label is no longer a constant.  The receiver is **gated at 1 km**
-  (`RWR_RANGE`, or the machine's own ring when that is shorter) and **gated on
-  line of sight** (`map.sightBlocked`: terrain, canopies, smoke - the same door
-  the AI's lookout, the IR lock and the pre-aim box go through), because
-  without either of them every missile on a 16 km map that merely closed on the
-  hull rang the alarm: measured, 29 % of hull-frames were ringing at a median
-  threat range of 5.5 km, 0 % of them aimed at that hull.  The client draws
-  three states: seen
-  (diamond at true bearing/range + a pre-aim box through the sight rule), heard
-  closing (a 5 Hz red spoke from the dial's edge - bearing, no range) and shot
+  largest `rcs`).  The dial's **face is a constant 2 km** (`RWR_RANGE` in
+  `game.js`), the same in every machine, so a mark's radius reads as metres;
+  `radarRing` (the hull's own discovery range, 1368 m for a mech) no longer sets
+  the scale - it decides whether a contact has a *position* at all.  Every gate
+  is **gated on line of sight** (`map.sightBlocked`: terrain, canopies, smoke -
+  the same door the AI's lookout, the IR lock and the pre-aim box go through),
+  for the bearing-only contacts and for laser designators both, because without
+  it every missile on a 16 km map that merely closed on the hull rang the alarm:
+  measured, 29 % of hull-frames were ringing at a median threat range of 5.5 km,
+  0 % of them aimed at that hull.  (The *seen* contact is exempt - an echo is the
+  radar's own return, a ridge does not stop it - which is why a hull behind a
+  hill still shows a dot, just with no pre-aim box.)  Four marks, four answers:
+  seen (a red **dot** at true bearing and range, plus a pre-aim box through the
+  sight rule), heard closing (a 5 Hz red **line** from the centre to the rim -
+  bearing, no range - drawn only for a round whose course reaches this hull and
+  only if the sight line is clear), a laser inside 2 km (a red **triangle** at
+  its true position with a dashed beam) and a laser further out (the same
+  triangle **pinned to the rim**: the bearing is real, the range is "2 km or
+  more").  And shot
   down (`intercept` fx: a few sparks for everyone who can see it, and no cue of
   its own - the event still carries `pid` (the crew that fired the burst) and
   `firer` (whose round it was) so a script can read them, but a chime per round
@@ -445,9 +461,17 @@ frontend/
   drawn whether or not it is coming for this hull, but only an *incoming* one
   (`warn`) sings and turns the rim red - the course is solved on the **relative
   velocity** (the round's against the hull's) for the nearest approach, inside
-  the blast's reach (`er + 20`), and a guided round (SACLOS, top attack) is
-  judged on its horizontal track because its profile is a climb and a dive, not
-  a line.
+  `er + WARN_MARGIN` (20 m of slack for a 2 m hull, a 10-20 m tick and a fuze),
+  and a guided round (SACLOS, top attack) is judged on its horizontal track
+  because its profile is a climb and a dive, not a line.  `warn` never looks at
+  `seen`: **the tone answers "will it hit me", not "can I see it"**, so a
+  bearing-only contact on a collision course sings exactly like a tracked one,
+  and a tracked round bound for somebody else stays silent.  The two gates
+  upstream of both remain and they are about the receiver *holding* the round at
+  all - 2 km and a clear sight line.  Do not drop the sight gate to "make the
+  alarm honest": a battle is 16 km of houses, tree lines and smoke, and the RWR
+  that sang through all of it rang 29 % of hull-frames at a median 5.5 km with
+  none of them aimed at that hull.
 * **AI missile defence** (`systems/ai.py::_missile_step`) runs inline in
   `ai.run` before the ground fight and preempts it: a crew that has a round
   coming for it lays the sight on the lead point (`mu.solve_lead`, which honours

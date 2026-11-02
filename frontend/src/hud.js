@@ -575,23 +575,32 @@ export class HUD {
   }
 
   // Warning circle, in the top right corner: a bird's eye of everything the
-  // threat receiver has a track on, drawn in the hull's own frame - straight up
-  // is where the mech is looking.
-  // The green dot in the middle is the pilot, the red diamonds are the rounds
-  // the self-defence radar has *seen*, the short red spokes are rounds it can
-  // hear closing but has no range on (they blink, a bearing is not a track),
-  // and the red arrows are laser designators (somebody's sight is on us), each
-  // pointing at the hull from where the designator sits, with a dashed beam
-  // running in along its line of sight.
-  // The rim turns red for an *incoming* round only (`warn`): the dial plots
-  // everything it hears, including a missile on its way to somebody else.
+  // threat receiver holds, drawn in the hull's own frame - straight up is where
+  // the mech is looking.  The face is a **fixed 2 km** for every machine, so a
+  // mark's distance from the middle is its real distance and two pilots read
+  // the same dial.
+  //
+  // Four marks, four answers, and which one you get is *what the receiver
+  // knows*, not a style:
+  //   * a red **dot** at the true bearing and true range - the doppler return
+  //     cleared the floor (`seen`), so the round has a position;
+  //   * a blinking **spoke** out from the middle on the bearing only - the
+  //     round is inside the receiver, closing, on a course that reaches this
+  //     hull and has line of sight, but its echo never cleared the floor, so
+  //     there is no range to draw.  A bearing is not a track;
+  //   * a red **triangle** at the true position with a **dashed** beam running
+  //     out to it - somebody's laser sight is on this hull and he is inside
+  //     2 km;
+  //   * the same triangle **pinned to the rim** when he is further out than
+  //     that: the bearing is real, the distance is "2 km or more".
+  // The rim turns red for an *incoming* round only (`warn`).
   _radar(s, w, h) {
     const ctx = this.ctx;
     const R = RADAR_PX;
-    // metres at the edge of the dial: the radar's own discovery range, so the
-    // scale under the marks is the machine's and not a constant (1000 m for a
-    // mech, 500 m for an APC)
-    const ring = s.radarRing > 0 ? s.radarRing : 1000;
+    // metres at the edge of the dial: a constant, not the machine's own
+    // discovery range - that is a number the receiver *earns* (an echo), and
+    // it is drawn as one by whether a contact has a position at all
+    const ring = s.radarScale || 2000;
     const cx = w - R - RADAR_MARGIN;
     const cy = R + RADAR_MARGIN + 10;   // up in the corner, the gear sits beside it
     const own = s.own;
@@ -624,14 +633,14 @@ export class HUD {
     ctx.stroke();
     ctx.font = '9px "Courier New", monospace';
     ctx.fillStyle = 'rgba(160,200,185,0.7)';
-    // the scale under the heading tick, in the short form the corner has room
-    // for - 1000 m reads as "1.0 km"
-    ctx.fillText(ring >= 1000 ? `${(ring / 1000).toFixed(1)} km` : `${Math.round(ring)} m`,
-      cx - 11, cy - R - 8);
+    // the scale under the heading tick: the face is a constant 2 km, so this
+    // label is too ("2.0 km")
+    ctx.fillText(`${(ring / 1000).toFixed(1)} km`, cx - 11, cy - R - 8);
     // laser designators: bearing 0 is straight ahead (screen up), positive to
-    // the right.  The sight line is a thin dashed spoke inwards - a beam, not
-    // a track - and the source itself gets a solid arrow pointing at the hull,
-    // so it reads at a glance which of the marks is the laser.
+    // the right.  The beam is a dashed line in along the line of sight and the
+    // source is a solid triangle, so it reads at a glance which marks are
+    // lasers - and a designator past the face (2 km) has its triangle pinned to
+    // the rim: the bearing is the truth, the range is "out there".
     for (const l of lasers) {
       const a = Math.atan2(l.z - own.z, l.x - own.x) - own.yaw;
       const lr = Math.min(R, (l.dist / ring) * R);
@@ -661,22 +670,24 @@ export class HUD {
       ctx.lineWidth = 1;
       ctx.stroke();
     }
-    // missiles.  A round the radar has seen gets a diamond at its true bearing
-    // and true range; one it can only hear closing gets a spoke from the edge
-    // of the dial to the pilot, because the bearing is all the receiver has -
-    // it blinks so it never reads as a track.
+    // missiles.  A round the receiver has a *position* on gets a dot at its true
+    // bearing and true range.  One it only has a bearing on gets a blinking line
+    // out from the middle along that bearing and nothing else - and only if the
+    // round is actually coming for this hull (`warn`) and can be seen through
+    // the terrain (`_threats` already dropped the ones behind a ridge): the dial
+    // is a warning, not an air-traffic display.
     const blink = (performance.now() / 1000 * 5) % 1 < 0.5;
     for (const t of threats) {
       const a = Math.atan2(t.z - own.z, t.x - own.x) - own.yaw;
       const sa = Math.sin(a), ca = -Math.cos(a);   // dial space: up is forward
       if (!t.seen) {
-        if (!blink) continue;
+        if (!t.warn || !blink) continue;
         ctx.globalAlpha = 0.9;
         ctx.strokeStyle = FAR_COLOR;
         ctx.lineWidth = 1.6;
         ctx.beginPath();
-        ctx.moveTo(cx + sa * R, cy + ca * R);
-        ctx.lineTo(cx, cy);
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(cx + sa * R, cy + ca * R);
         ctx.stroke();
         continue;
       }
@@ -684,12 +695,13 @@ export class HUD {
       const x = cx + sa * r;
       const y = cy + ca * r;
       ctx.globalAlpha = 0.95;
+      ctx.beginPath();
+      ctx.arc(x, y, 3.0, 0, 6.284);
       ctx.fillStyle = FAR_COLOR;
-      ctx.save();
-      ctx.translate(x, y);
-      ctx.rotate(a - Math.PI / 4);         // a square standing on its corner
-      ctx.fillRect(-2.8, -2.8, 5.6, 5.6);
-      ctx.restore();
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
     }
     // the pilot
     ctx.globalAlpha = 0.95;

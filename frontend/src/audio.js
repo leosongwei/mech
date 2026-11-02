@@ -138,22 +138,20 @@ export function airCutoff(dist) {
 }
 
 // ...and the other half of the same physics: what the air takes off the top has
-// to come back under it, or a far bang only ever gets quieter.  The shelf is the
-// makeup - it puts the weight back into the octaves the distance lowpass left
-// alive, which is exactly what a real one sounds like 5 km off (all rumble, no
-// crack).  It is also ear, not just air: 100 Hz needs far more level than 1 kHz
-// to be called equally loud, so a flat attenuation curve reads as "gone" long
-// before the gain says it should.  Nothing inside BASS_NEAR: a muzzle next to
-// the cockpit is bright.
-export const BASS_NEAR = 120;          // m, no makeup inside this
-const BASS_SLOPE = 9;                  // dB per decade of distance
-const BASS_MAX = 18;                   // dB, the ceiling at ~16 km
-export const BASS_SHELF_HZ = 180;
-
-export function bassLift(dist) {
-  return Math.min(BASS_MAX,
-                  BASS_SLOPE * Math.log10(Math.max(1, dist) / BASS_NEAR));
-}
+// to come back under it, or a far bang only ever gets quieter.  It is also ear,
+// not just air: 100 Hz needs far more level than 1 kHz to be called equally
+// loud, so a flat attenuation curve reads as "gone" long before the gain says
+// it should.
+//
+// This used to be a 180 Hz lowshelf *per voice* in `_bus`, up to +18 dB past
+// 6 km.  It is gone, and the far layer below is why: measured, the shelf bought
+// a solo 5 km shot nothing at all (peak 0.117 with it, 0.117 without, because
+// that shot is the far voice already), while in a battle it summed over ninety
+// events a second to +4 dB of bed - and, being one biquad on every voice, it
+// cost more DSP than everything else in the mix put together (measured: 1.30 of
+// realtime with it, 0.84 without).  Whatever is done about the low end of a
+// distant report has to happen on a bus that is compressed as one, not on every
+// event separately.
 
 // How much of a sound event is the terrain answering back, 0..1.  Distance is
 // the only knob: the wavefront of a far shot arrives smeared and raggedy.
@@ -185,6 +183,49 @@ export const FAR_LEVEL = 0.13;   // the layer's own level, before the law
 const FAR_ROLLOFF = 0.25;        // (25/d)^0.25: 11 dB over the whole map
 const FAR_NEAR = 700;            // m, nothing inside this - the near cue is whole
 const FAR_FULL = 2600;           // m, fully in past this (faded, squared)
+// ...and the two things that keep it a *bed* instead of a wall.  A battle is
+// ninety sound events a second, and every one of them is kilometres away: mixed
+// per event the layer has no ceiling at all, so it summed to +9 dB over the mix
+// it was added to (measured, a scripted 90 event/s fight) and buried the cues
+// that matter.  So the far voices all land on one bus with a compressor on it -
+// `FAR_CEIL` is where that bed settles however many events are in it - and a
+// rate limit stops a burst of them from opening a voice each.  A far rumble is
+// not a thing the ear counts: twenty a second is already a battle.
+const FAR_CEIL = -20;            // dBFS, where the far bed settles
+const FAR_MIN_GAP = 0.05;        // s, at most one far voice per this
+
+// The master bus ends in a soft clipper, and this is the headroom it gets.  A
+// DynamicsCompressor is not a limiter: at 4 ms attack it hands a transient its
+// first few milliseconds at full gain, so a 105 mm round next to the pilot
+// measured 1.17 at the destination - over 0 dBFS, i.e. hard-clipped by the
+// browser, which is the fizzy crackle that sounds like a broken speaker rather
+// than a big gun.  Keeping the sum under CLIP_GAIN and rounding the last
+// `CLIP_KNEE` of the scale makes that impossible whatever the mix does.
+//
+// The figure is measured, not chosen: the compressor does its own makeup gain
+// (this pair of settings lifts everything +1.3 dB on its own), so the trim is
+// whatever puts the chain back at unity - a cue next to the cockpit has to be
+// exactly as loud as it was, the whole mix was tuned by ear against it.  A
+// constant cue reads 0.094 at the destination before and after.
+const CLIP_GAIN = 0.86;          // unity through the limiter, then the shaper
+const CLIP_KNEE = 0.7;           // the linear part of the curve
+
+// The soft-clip curve: linear up to CLIP_KNEE, then a tanh bend that reaches 1
+// without a corner.  A hard 0 dBFS clamp is broadband fizz on every transient;
+// this is a rounding a decibel and a half wide, which no ear hears as anything
+// but the peak it already was.
+function _clipCurve() {
+  const n = 4096;
+  const curve = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const x = (i / (n - 1)) * 2 - 1;
+    const a = Math.abs(x);
+    const y = a <= CLIP_KNEE
+      ? a : CLIP_KNEE + (1 - CLIP_KNEE) * Math.tanh((a - CLIP_KNEE) / (1 - CLIP_KNEE));
+    curve[i] = Math.sign(x) * Math.min(1, y);
+  }
+  return curve;
+}
 
 function storedVolume() {
   try {
@@ -209,6 +250,12 @@ export class GameAudio {
     this.master = null;
     this.alarms = null;
     this.verb = null;
+    this.far = null;                // the distant bed's own bus (see FAR_CEIL)
+    this.farLim = null;
+    this.limiter = null;
+    this.top = null;                // CLIP_GAIN into the shaper
+    this.clip = null;               // the soft ceiling, the last node there is
+    this._farT = -1e9;              // when a far voice was last opened
     this.lockOsc = null;
     this.lockGain = null;
     this.warbles = {};
@@ -240,14 +287,31 @@ export class GameAudio {
     // A limiter between the mix and the speaker: a dead hull plays four layers
     // at once, and the sum is louder than the 0 dB the destination clamps at -
     // clipping that sounds like fizz rather than like weight.  The compressor
-    // catches the peaks so the layers can be pushed without it.
+    // catches the peaks so the layers can be pushed without it, and the shaper
+    // after it is the promise: a compressor has an attack, so a transient is
+    // always partly through before it ducks, and a hard 0 dBFS clamp on that
+    // sliver is a speaker buzz rather than a bang.
+    //
+    // The curve is deliberately a gentle one (8:1 over an 8 dB knee).  A hard
+    // limiter does hold a dense mix down, but it also flattens the two cues the
+    // ear is listening for - measured on a 105 mm round next to the pilot, a
+    // 12:1 limiter with a 2 ms attack took it from 1.12 (clipped) to 0.63,
+    // i.e. the loudest thing on the field came out quieter than the mix it is
+    // supposed to sit on top of.  These numbers keep it at 0.84.
     this.limiter = this.ctx.createDynamicsCompressor();
     this.limiter.threshold.value = -8;
-    this.limiter.knee.value = 12;
-    this.limiter.ratio.value = 12;
-    this.limiter.attack.value = 0.004;
-    this.limiter.release.value = 0.25;
-    this.limiter.connect(this.ctx.destination);
+    this.limiter.knee.value = 8;
+    this.limiter.ratio.value = 8;
+    this.limiter.attack.value = 0.003;
+    this.limiter.release.value = 0.2;
+    this.top = this.ctx.createGain();
+    this.top.gain.value = CLIP_GAIN;
+    this.clip = this.ctx.createWaveShaper();
+    this.clip.curve = _clipCurve();
+    this.clip.oversample = '4x';
+    this.limiter.connect(this.top);
+    this.top.connect(this.clip);
+    this.clip.connect(this.ctx.destination);
     this.master = this.ctx.createGain();
     this.master.gain.value = MASTER_GAIN * this.volume;
     this.master.connect(this.limiter);
@@ -258,6 +322,16 @@ export class GameAudio {
     this.verb = this.ctx.createConvolver();
     this.verb.buffer = this._impulse(2.4, 2.8);
     this.verb.connect(this.master);
+    // the far field is a bed, so it gets a bus of its own: see FAR_CEIL
+    this.far = this.ctx.createGain();
+    this.farLim = this.ctx.createDynamicsCompressor();
+    this.farLim.threshold.value = FAR_CEIL;
+    this.farLim.knee.value = 8;
+    this.farLim.ratio.value = 8;
+    this.farLim.attack.value = 0.01;
+    this.farLim.release.value = 0.35;
+    this.far.connect(this.farLim);
+    this.farLim.connect(this.master);
     const len = this.ctx.sampleRate * 1.2;
     const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
     const d = buf.getChannelData(0);
@@ -306,9 +380,13 @@ export class GameAudio {
   // fires: a one-shot is located where it was heard, not tracked as the head
   // turns.  `dist` is the other lowpass - the air itself (see `airCutoff`) - and
   // the two are one filter, because the steeper of the two is the only one that
-  // matters.  The bass shelf after it is the makeup for what the air just took
-  // off the top (`bassLift`): without it a distant shot is not dull, it is gone.
-  _bus(g, pan = 0, behind = 0, dist = 0) {
+  // matters.  What the air just took off the top is not made up here: a makeup
+  // curve applied per voice sums into a bass wall (see `_bus`'s neighbour above
+  // and `FAR_CEIL`), so the body of a distant report comes from the far voice,
+  // which is a bed and is compressed as one.
+  // `dest` is the bus the voice lands on - the master for everything the pilot
+  // is meant to hear as an event, the far bus for the distant bed.
+  _bus(g, pan = 0, behind = 0, dist = 0, dest = null) {
     let out = g;
     const cut = Math.min(airCutoff(dist),
                          behind > 0.02 ? 12000 - 10000 * Math.min(1, behind) : 1e9);
@@ -320,22 +398,13 @@ export class GameAudio {
       out.connect(lp);
       out = lp;
     }
-    const lift = bassLift(dist);
-    if (lift > 0.5) {
-      const sh = this.ctx.createBiquadFilter();
-      sh.type = 'lowshelf';
-      sh.frequency.value = BASS_SHELF_HZ;
-      sh.gain.value = lift;       // 0 inside 120 m, +18 dB past ~6 km
-      out.connect(sh);
-      out = sh;
-    }
     if (Math.abs(pan) > 0.01 && this.ctx.createStereoPanner) {
       const p = this.ctx.createStereoPanner();
       p.pan.value = Math.max(-1, Math.min(1, pan));
       out.connect(p);
       out = p;
     }
-    out.connect(this.master);
+    out.connect(dest || this.master);
   }
 
   // Send a voice into the shared room by `wet` (0..1).  Knobbed off it is a
@@ -387,8 +456,13 @@ export class GameAudio {
       g.gain.exponentialRampToValueAtTime(0.0008, t + dur);
     }
     src.connect(f); f.connect(g);
-    this._bus(g, pan, behind, dist);
-    this._verbSend(g, wet === null ? reverberation(dist) : wet, dist);
+    // a voice on the far bus is already the sample that crossed the valley:
+    // sending it into the room again put a reverb tail on every single event of
+    // a battle, which is both the loudest thing in the bed and the most
+    // expensive one (a convolver input per voice, ninety times a second)
+    const dest = opts && opts.dest ? opts.dest : null;
+    this._bus(g, pan, behind, dist, dest);
+    if (!dest) this._verbSend(g, wet === null ? reverberation(dist) : wet, dist);
     src.start(t, Math.random() * 0.4);
     src.stop(t + dur + 0.05);
   }
@@ -418,9 +492,12 @@ export class GameAudio {
     }
     g.gain.exponentialRampToValueAtTime(0.001, t + attack + dur);
     o.connect(g);
-    this._bus(g, pan, behind, dist);
-    this._verbSend(g, opts && opts.wet !== undefined ? opts.wet
-      : reverberation(dist) * 0.6, dist);
+    const dest = opts && opts.dest ? opts.dest : null;
+    this._bus(g, pan, behind, dist, dest);
+    if (!dest) {
+      this._verbSend(g, opts && opts.wet !== undefined ? opts.wet
+        : reverberation(dist) * 0.6, dist);
+    }
     o.start(t); o.stop(t + attack + dur + 0.02);
   }
 
@@ -429,27 +506,36 @@ export class GameAudio {
   // faded in past `FAR_NEAR`, so the near cue is whole where the pilot can see
   // what fired.
   //
-  // Both layers are played at `dist` 0 on purpose: the air filter and the bass
-  // shelf of `_bus` are for a *near* sample heard through the atmosphere, and
+  // Both layers are played at `dist` 0 on purpose: the air filter of `_bus` is
+  // for a *near* sample heard through the atmosphere, and
   // this is the already-through-the-atmosphere sample.  Filtering it again
-  // would take the edge off the very band it was built to keep.  The reverb
-  // send is where the distance goes - `wet` is passed explicitly, and
-  // `reverbLift` still lifts it, because a far bang is mostly the valley.
+  // would take the edge off the very band it was built to keep.
+  //
+  // What it does not get is a reverb send of its own.  The room is for the near
+  // cue that arrived *through* the field; this voice is the field's answer
+  // already, and a convolver input on every distant event is the one thing that
+  // turned a battle into a wall (see `FAR_CEIL`).  It lands on the far bus
+  // instead, which is compressed as one bed.
   _farBoom(dist, src, weight, pan, behind, tall = 0.55) {
-    if (!this.ctx) return;
+    if (!this.ctx || !this.far) return;
     const fade = Math.max(0, Math.min(1, (dist - FAR_NEAR) / (FAR_FULL - FAR_NEAR)));
     const law = Math.pow(SOUND_REF_DIST / Math.max(SOUND_REF_DIST, dist),
                          FAR_ROLLOFF);
     const g = FAR_LEVEL * src * weight * law * fade * fade;
     if (!(g > 0.0015)) return;
-    const wet = 0.6 + 0.4 * reverberation(dist);
+    // one voice at a time: at ninety events a second the bed is the same rumble
+    // whether or not each bang opens its own
+    const now = this.ctx.currentTime;
+    if (now - (this._farT === undefined ? -1e9 : this._farT) < FAR_MIN_GAP) return;
+    this._farT = now;
+    const dest = this.far;
     // the body: a slow sine falling 95 -> 42 Hz, swelling rather than slamming,
     // because a wavefront that crossed six kilometres has no transient left
     this._thump(95, tall, Math.min(0.9, g), 0, pan, behind,
-                { sweepTo: 42, attack: 0.04, wet });
+                { sweepTo: 42, attack: 0.04, dest });
     // the dull edge an octave up, so it reads as a report instead of a hum
     this._noiseBurst(tall * 0.8, 340, 0.8, Math.min(0.7, g * 0.8), 'lowpass',
-                     120, 0, wet, pan, behind);
+                     120, 0, null, pan, behind, { dest });
   }
 
   // `vol` is the source level (`SOUND_LEVEL`) already multiplied by the

@@ -904,17 +904,42 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
   mixed on `(25/d)^0.25` (`FAR_ROLLOFF`, 11 dB across the whole map instead of
   34) and faded in from `FAR_NEAR` 700 m to `FAR_FULL` 2.6 km. It is played at
   `dist` 0 *on purpose* - it is the already-through-the-atmosphere sample, so
-  the air lowpass and the bass shelf of `_bus` must not touch it again. Weight
-  per source: 105 mm 1.6, 30 mm 1.0, guided launch 0.4 (a whoosh, not a thud),
-  round impact 1.0-1.3, hull going up 1.2 with a longer tail. The near cues are
-  untouched inside 700 m.
-* **The air's loss has to come back under it.** `audio.bassLift` is the makeup
-  for what `airCutoff` just took off the top: a 180 Hz lowshelf in `_bus`, 0
-  inside 120 m and up to +18 dB past ~10 km. Without it a far shot is not dull,
-  it is gone - the 1.4 kHz floor keeps the body, the shelf keeps the weight, and
-  the far layer keeps the event. Note that the shelf and the far layer both
-  boost the same octave: if distant autocannon fire reads as a continuous drone,
-  `FAR_LEVEL` is the knob, not `SOUND_ROLLOFF`.
+  the air lowpass of `_bus` must not touch it again. Weight per source: 105 mm
+  1.6, 30 mm 1.0, guided launch 0.4 (a whoosh, not a thud), round impact 1.0-1.3,
+  hull going up 1.2 with a longer tail. The near cues are untouched inside
+  700 m. It gets **no reverb send** - it is the valley answering already, and a
+  convolver input per voice is the most expensive thing a battle does.
+* **The far field is a bed, and a bed is compressed, not summed.** `_farBoom`
+  lands on `this.far` -> `farLim`, a bus compressor at `FAR_CEIL` (-20 dBFS),
+  and it is rate limited to one voice per `FAR_MIN_GAP` (50 ms). A battle is
+  ~90 sound events a second and every one of them is kilometres away, so mixed
+  per event straight into `master` the layer had no ceiling: measured on a
+  scripted 90 event/s fight it put the mix **8.5 dB** over the one it was added
+  to and cost **2.1x realtime** of audio DSP against 0.96 - i.e. the audio
+  thread could no longer keep up, which is heard as a crackle and then as a tab
+  that has gone silent. With the bus it is 1.09x and 2.5 dB up (the bed it is
+  meant to be). Weight a single far event normally, do not raise `FAR_LEVEL` to
+  win a loudness argument: `FAR_CEIL` is where a bed settles, `FAR_LEVEL` is how
+  loud one bang is.
+* **There is no per-voice bass makeup, and it was measured out.** `bassLift` (a
+  180 Hz lowshelf in `_bus`, up to +18 dB past 6 km) is gone. It bought a solo
+  5 km shot nothing at all (peak 0.117 with it, 0.117 without - that shot *is*
+  the far voice), while in a battle it summed per event to +4 dB of bed and,
+  being one biquad on every voice, cost 0.84 -> 1.30 of realtime by itself. The
+  body of a distant report comes from the far bus; a makeup curve belongs on a
+  bed, which is compressed, not on each event, which is not.
+* **The master chain ends in a soft clipper, because a compressor is not a
+  limiter.** `master` -> `limiter` (a gentle 8:1 over an 8 dB knee: a hard
+  curve holds a dense mix down but flattens the cues worth hearing) ->
+  `top` (`CLIP_GAIN`) -> `clip` (a `WaveShaper`, linear to `CLIP_KNEE` 0.7 and
+  tanh to exactly 1, `oversample` 4x) -> destination. Before it, a single 105 mm
+  round next to the pilot and a single hull exploding 300 m away both measured
+  **over 1.0** at the destination - a hard 0 dBFS clamp is broadband fizz on
+  every transient, which is what a "broken speaker" is. `CLIP_GAIN` is a
+  measured constant, not a taste: the DynamicsCompressor adds its own makeup
+  gain (+1.3 dB for these settings, +2.9 dB for a 12:1 / -10 dB one), so 0.86 is
+  what puts the chain back at unity. Check it with a constant cue (`denied`
+  reads 0.094 at the destination) before changing either number.
 * **The server decides what a pilot's ear gets.** `defs.SOUND_*` mirror the
   client's curve (`attenuation`, `SOUND_LEVEL`, same numbers), and
   `netcode.hearable(events, ear)` drops every `shot`/`boom` whose arriving gain

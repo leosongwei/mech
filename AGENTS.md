@@ -434,11 +434,11 @@ frontend/
   three states: seen
   (diamond at true bearing/range + a pre-aim box through the sight rule), heard
   closing (a 5 Hz red spoke from the dial's edge - bearing, no range) and shot
-  down (`intercept` fx: a few sparks for everyone who can see it, and the hit
-  tone only for the two crews it concerns - `pid`, the one that fired the
-  burst, and `firer`, the one whose round it was; the battle's AI crews shoot
-  missiles down all over the map and a chime per round for everybody was the
-  busiest sound in the game).  **Plotting is not warning**: a tracked round is
+  down (`intercept` fx: a few sparks for everyone who can see it, and no cue of
+  its own - the event still carries `pid` (the crew that fired the burst) and
+  `firer` (whose round it was) so a script can read them, but a chime per round
+  was the busiest sound in the game, since the battle's AI crews shoot missiles
+  down all over the map).  **Plotting is not warning**: a tracked round is
   drawn whether or not it is coming for this hull, but only an *incoming* one
   (`warn`) sings and turns the rim red - the course is solved on the **relative
   velocity** (the round's against the hull's) for the nearest approach, inside
@@ -918,7 +918,9 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
   `EAR_NEAR` (1 m) the pan is faded to the centre, because a bang on the canopy
   has no side. The reverb send leaves ahead of `_bus`, so the room stays wide
   while only the direct sound is placed. The machine's own voices (RWR warble,
-  lock tone, `hit`/`denied`) stay centred - they are not in the world.
+  lock tone, `denied`) stay centred - they are not in the world. There is no
+  hit/kill tone: taking a hit is the red rim flash and a kill is the kill feed
+  line, both visual.
 * **Every cue has its own voice.** `audio.boom()` is a round going off;
   `audio.explosion()` is a hull going up (`ev.blast`) - four layers (crack, fire,
   sub-bass thump, rumble) written because a dead mech is a different event, not a

@@ -446,21 +446,6 @@ export class GameAudio {
                      0.55 + 0.45 * wet, pan, behind);
   }
 
-  hit() {
-    this.ensure();
-    if (!this.ctx) return;
-    const t = this.ctx.currentTime;
-    const o = this.ctx.createOscillator();
-    o.type = 'square';
-    o.frequency.setValueAtTime(1250, t);
-    o.frequency.exponentialRampToValueAtTime(700, t + 0.07);
-    const g = this.ctx.createGain();
-    g.gain.setValueAtTime(0.12, t);
-    g.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
-    o.connect(g); g.connect(this.master);
-    o.start(t); o.stop(t + 0.09);
-  }
-
   denied() {
     this.ensure();
     if (!this.ctx) return;

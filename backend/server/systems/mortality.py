@@ -97,12 +97,12 @@ def _kill_round(world: World, eid: int) -> None:
     No warhead, no wreck, no kill money, no bearing on the match.  That is
     deliberate: a SACLOS carries ED 80 over 6 m, so a round destroyed 300 m out
     that still went off would make shooting it down pointless - the point of the
-    intercept is that the *guidance* dies with the round.  Two pilots have an
-    interest in that and only two: the one who fired the burst (`pid`, the
-    confirmation he shot something down rather than watched it miss) and the one
-    whose missile it was (`firer`, who has to know his round is gone).  A battle
-    has AI crews shooting missiles down all over the map, and everybody else has
-    no business being told.
+    intercept is that the *guidance* dies with the round.  Two pilots are told the
+    identity of the shooter and the round's owner (`pid` / `firer`) so a client
+    can address anything it wants to them, and nothing else is owed: a battle has
+    AI crews shooting missiles down all over the map, so the event carries no cue
+    of its own - the round's small `boom` (emitted just below) is the whole of
+    what anybody hears, wherever they are.
     """
     e = world.ecs
     if not e.alive[eid]:
@@ -118,9 +118,10 @@ def _kill_round(world: World, eid: int) -> None:
     # nothing - there is no ear to tell.
     src = int(e["proj_src"][eid])
     firer = int(e["owner"][src]) if src >= 0 and e.alive[src] else -1
-    # debug only: the flash and the cue below are what the pilot gets, and the
-    # interception itself is settled - `tools/intercept_check.py` is the one
-    # reader left and it raises the logger to DEBUG itself
+    # debug only: the small boom below is what everybody hears (the sparks the
+    # client draws around it are the only other sign), and the interception
+    # itself is settled - `tools/intercept_check.py` is the one reader left and
+    # it raises the logger to DEBUG itself
     log.debug("intercept: %s round %d shot down at (%.1f, %.1f, %.1f)",
               wd.get("name", "?"), eid, pos[0], pos[1], pos[2])
     world.emit("boom", x=float(pos[0]), y=float(pos[1]), z=float(pos[2]), r=3.0,

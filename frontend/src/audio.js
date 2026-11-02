@@ -121,10 +121,38 @@ export function attenuation(dist) {
 // Air and ground eat the top end far faster than the bottom (~0.4 dB/km at
 // 125 Hz against ~30 dB/km at 4 kHz, ISO 9613-1 at 20 C), so 2 km out the highs
 // are simply gone.  That, not the level, is what the ear reads as "far away": a
-// distant cannon is a dull thud with no crack left in it.  18 kHz inside 300 m,
-// 6 kHz at 2 km, floored at 600 Hz so the sub-bass layers keep their weight.
+// distant cannon is a dull thud with no crack left in it.
+//
+// The curve is two segments, and the floor is why.  A single exponential from
+// 18 kHz put a cue 6 km out below 640 Hz, and a gun cue is *made* of a
+// 1400-1900 Hz noise burst (the 105 mm's crack sits at 2.8 kHz): the air filter
+// was not dulling the far shot, it was deleting it, and no gain curve can bring
+// back a band that is no longer there.  So the near field loses its top at half
+// the old rate (5.5 kHz at 1 km instead of 10 kHz), the far field keeps falling,
+// and everything past ~6.5 km is held at 1.4 kHz - still clearly a muffled
+// thud, still something a thump layer underneath can carry.
 export function airCutoff(dist) {
-  return Math.min(18000, Math.max(600, 18000 * Math.exp(-dist / 1800)));
+  const near = 18000 * Math.exp(-Math.min(dist, 1200) / 2400);
+  const far = near * Math.exp(-Math.max(0, dist - 1200) / 2600);
+  return Math.min(18000, Math.max(1400, far));
+}
+
+// ...and the other half of the same physics: what the air takes off the top has
+// to come back under it, or a far bang only ever gets quieter.  The shelf is the
+// makeup - it puts the weight back into the octaves the distance lowpass left
+// alive, which is exactly what a real one sounds like 5 km off (all rumble, no
+// crack).  It is also ear, not just air: 100 Hz needs far more level than 1 kHz
+// to be called equally loud, so a flat attenuation curve reads as "gone" long
+// before the gain says it should.  Nothing inside BASS_NEAR: a muzzle next to
+// the cockpit is bright.
+export const BASS_NEAR = 120;          // m, no makeup inside this
+const BASS_SLOPE = 9;                  // dB per decade of distance
+const BASS_MAX = 18;                   // dB, the ceiling at ~16 km
+export const BASS_SHELF_HZ = 180;
+
+export function bassLift(dist) {
+  return Math.min(BASS_MAX,
+                  BASS_SLOPE * Math.log10(Math.max(1, dist) / BASS_NEAR));
 }
 
 // How much of a sound event is the terrain answering back, 0..1.  Distance is
@@ -137,6 +165,26 @@ export function reverberation(dist) {
 export function reverbLift(dist) {
   return Math.min(6, Math.pow(1 / attenuation(dist), 1 - VERB_FALLOFF));
 }
+
+// The far-field layer.  A gun 6 km off is not a quiet gun - it is a different
+// sound: all body, no crack, the crack having been eaten by the air long before
+// it got here.  Every game that does distance well gets this from a *separate
+// voice* for the far field rather than by turning the near one down (Arma's
+// rifles are crack / bang / distant thud as three samples, DCS gives each
+// `sdef` an outer radius with its own curve), and the reason is that a level
+// curve cannot re-arrange a spectrum: at -30 dB a gunshot is still a gunshot,
+// only inaudible.
+//
+// So `attenuation` stays what it is for the direct sound, and this layer is
+// mixed on its own law - 25^(1/4) instead of 25^(3/5) - which costs 11 dB
+// across the whole map instead of 34.  A battle 10 km away therefore sits a
+// few dB under one 3 km away rather than 20 dB under, which is the compression
+// every sim makes on purpose (a valley really is a quieter place than a
+// parade ground, but "inaudible" is a bug, not realism).
+export const FAR_LEVEL = 0.13;   // the layer's own level, before the law
+const FAR_ROLLOFF = 0.25;        // (25/d)^0.25: 11 dB over the whole map
+const FAR_NEAR = 700;            // m, nothing inside this - the near cue is whole
+const FAR_FULL = 2600;           // m, fully in past this (faded, squared)
 
 function storedVolume() {
   try {
@@ -258,7 +306,8 @@ export class GameAudio {
   // fires: a one-shot is located where it was heard, not tracked as the head
   // turns.  `dist` is the other lowpass - the air itself (see `airCutoff`) - and
   // the two are one filter, because the steeper of the two is the only one that
-  // matters.
+  // matters.  The bass shelf after it is the makeup for what the air just took
+  // off the top (`bassLift`): without it a distant shot is not dull, it is gone.
   _bus(g, pan = 0, behind = 0, dist = 0) {
     let out = g;
     const cut = Math.min(airCutoff(dist),
@@ -266,10 +315,19 @@ export class GameAudio {
     if (cut < 17500) {
       const lp = this.ctx.createBiquadFilter();
       lp.type = 'lowpass';
-      lp.frequency.value = cut;   // 12k -> 2k behind, 18k -> 600 Hz far
+      lp.frequency.value = cut;   // 12k -> 2k behind, 18k -> 1.4 kHz far
       lp.Q.value = 0.4;
-      g.connect(lp);
+      out.connect(lp);
       out = lp;
+    }
+    const lift = bassLift(dist);
+    if (lift > 0.5) {
+      const sh = this.ctx.createBiquadFilter();
+      sh.type = 'lowshelf';
+      sh.frequency.value = BASS_SHELF_HZ;
+      sh.gain.value = lift;       // 0 inside 120 m, +18 dB past ~6 km
+      out.connect(sh);
+      out = sh;
     }
     if (Math.abs(pan) > 0.01 && this.ctx.createStereoPanner) {
       const p = this.ctx.createStereoPanner();
@@ -366,6 +424,34 @@ export class GameAudio {
     o.start(t); o.stop(t + attack + dur + 0.02);
   }
 
+  // The far-field voice: the same event heard from kilometres away, as a rumble
+  // with no crack left in it.  It is mixed on its own law (see `FAR_LEVEL`) and
+  // faded in past `FAR_NEAR`, so the near cue is whole where the pilot can see
+  // what fired.
+  //
+  // Both layers are played at `dist` 0 on purpose: the air filter and the bass
+  // shelf of `_bus` are for a *near* sample heard through the atmosphere, and
+  // this is the already-through-the-atmosphere sample.  Filtering it again
+  // would take the edge off the very band it was built to keep.  The reverb
+  // send is where the distance goes - `wet` is passed explicitly, and
+  // `reverbLift` still lifts it, because a far bang is mostly the valley.
+  _farBoom(dist, src, weight, pan, behind, tall = 0.55) {
+    if (!this.ctx) return;
+    const fade = Math.max(0, Math.min(1, (dist - FAR_NEAR) / (FAR_FULL - FAR_NEAR)));
+    const law = Math.pow(SOUND_REF_DIST / Math.max(SOUND_REF_DIST, dist),
+                         FAR_ROLLOFF);
+    const g = FAR_LEVEL * src * weight * law * fade * fade;
+    if (!(g > 0.0015)) return;
+    const wet = 0.6 + 0.4 * reverberation(dist);
+    // the body: a slow sine falling 95 -> 42 Hz, swelling rather than slamming,
+    // because a wavefront that crossed six kilometres has no transient left
+    this._thump(95, tall, Math.min(0.9, g), 0, pan, behind,
+                { sweepTo: 42, attack: 0.04, wet });
+    // the dull edge an octave up, so it reads as a report instead of a hum
+    this._noiseBurst(tall * 0.8, 340, 0.8, Math.min(0.7, g * 0.8), 'lowpass',
+                     120, 0, wet, pan, behind);
+  }
+
   // `vol` is the source level (`SOUND_LEVEL`) already multiplied by the
   // distance loss, and `dist` is how far the event was from the pilot when the
   // wavefront reached them: between them they set the level, the air's lowpass
@@ -413,6 +499,12 @@ export class GameAudio {
     } else {
       this._noiseBurst(0.08, 1800, 1.5, 0.2 * vol, 'bandpass', 600, dist, null, pan, behind);
     }
+    // and, far enough out to have lost its crack on the way, the voice that
+    // survived the trip.  A guided launch is a whoosh and carries nothing like
+    // as far as a gun, hence the weight.
+    const guided = kind === 'rocket' || kind === 'saclos' || kind === 'top';
+    this._farBoom(dist, vol / attenuation(dist), heavy ? 1.6 : guided ? 0.4 : 1.0,
+                  pan, behind, heavy ? 0.9 : 0.5);
   }
 
   boom(vol = 1, big = false, dist = 0, pan = 0, behind = 0) {
@@ -421,6 +513,8 @@ export class GameAudio {
     this._noiseBurst(big ? 1.1 : 0.5, big ? 420 : 600, 0.8, Math.min(1, 0.5 * vol),
                      'lowpass', 90, dist, null, pan, behind);
     this._thump(big ? 55 : 85, big ? 0.9 : 0.4, Math.min(1, 0.5 * vol), dist, pan, behind);
+    this._farBoom(dist, vol / attenuation(dist), big ? 1.3 : 1.0, pan, behind,
+                  big ? 1.2 : 0.6);
   }
 
   // A hull going up (defs.DEATH_BLAST).  Not a louder `boom()` - a dead mech is
@@ -444,21 +538,10 @@ export class GameAudio {
     // the tail: the valley answering back long after the fire is out
     this._noiseBurst(4.5, 240, 0.35, Math.min(1, 0.5 * v), 'lowpass', 40, dist,
                      0.55 + 0.45 * wet, pan, behind);
-  }
-
-  hit() {
-    this.ensure();
-    if (!this.ctx) return;
-    const t = this.ctx.currentTime;
-    const o = this.ctx.createOscillator();
-    o.type = 'square';
-    o.frequency.setValueAtTime(1250, t);
-    o.frequency.exponentialRampToValueAtTime(700, t + 0.07);
-    const g = this.ctx.createGain();
-    g.gain.setValueAtTime(0.12, t);
-    g.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
-    o.connect(g); g.connect(this.master);
-    o.start(t); o.stop(t + 0.09);
+    // and the far-field version of the same event: a hull going up is the
+    // loudest thing on the field, so it carries further than anything else and
+    // rumbles for longer when it gets there
+    this._farBoom(dist, vol / attenuation(dist), 1.2, pan, behind, 1.8);
   }
 
   denied() {

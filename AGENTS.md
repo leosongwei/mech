@@ -223,8 +223,8 @@ frontend/
 * **An AI crew has no shop, so it draws its loadout.** `World.spawn_unit` hands
   a hull that declares `arms` (the mech — the one component test, not a type
   switch) a template off `defs.AI_LOADOUTS` when no `weapons` were passed: six
-  configs at 30/20/20/10/10/10 %, the two old arms first so two thirds of the
-  field is unchanged. A pilot's mech always passes `player.loadout`, and the
+  configs at 30/10/10/25/15/10 %, the left arm always the 30 mm and the right
+  arm the variable. A pilot's mech always passes `player.loadout`, and the
   range's defence post passes its own, so both are untouched by the table. The
   draw comes off `world.rng`, which makes the order of the list part of the
   simulation like every other draw.
@@ -434,11 +434,11 @@ frontend/
   three states: seen
   (diamond at true bearing/range + a pre-aim box through the sight rule), heard
   closing (a 5 Hz red spoke from the dial's edge - bearing, no range) and shot
-  down (`intercept` fx: a few sparks for everyone who can see it, and the hit
-  tone only for the two crews it concerns - `pid`, the one that fired the
-  burst, and `firer`, the one whose round it was; the battle's AI crews shoot
-  missiles down all over the map and a chime per round for everybody was the
-  busiest sound in the game).  **Plotting is not warning**: a tracked round is
+  down (`intercept` fx: a few sparks for everyone who can see it, and no cue of
+  its own - the event still carries `pid` (the crew that fired the burst) and
+  `firer` (whose round it was) so a script can read them, but a chime per round
+  was the busiest sound in the game, since the battle's AI crews shoot missiles
+  down all over the map).  **Plotting is not warning**: a tracked round is
   drawn whether or not it is coming for this hull, but only an *incoming* one
   (`warn`) sings and turns the rim red - the course is solved on the **relative
   velocity** (the round's against the hull's) for the nearest approach, inside
@@ -452,7 +452,11 @@ frontend/
   trigger only when the *bore* is within `atan((prox + hit_r)/d)` (0.23° at
   1 km, not the 0.14 rad a hull gets).  Only a fused arm fires (`PROX[wid] > 0`,
   today just the 30 mm), so a 12.7 mm carrier stays out of it - data driven, not
-  a type switch.  "Coming for me" is `seeker target == me` for a top-attack (it
+  a type switch.  That gate is the *AI's* rule only: a missile is a 10 hp / 1
+  armour target like any other, so **any** round landing on one kills it
+  (one 12.7 mm bullet is `AD 10`), which is why a pilot in an APC can and does
+  shoot an incoming round down with the gatling while the AI crew ignores it -
+  the fuse buys margin (4 m trigger, 2.67 m kill), not the ability.  "Coming for me" is `seeker target == me` for a top-attack (it
   climbs 150 m and dives, so its straight line misses) - or, once that lock is
   cut, a stare point inside `CPA_MEM` (100 m) of the hull, because a blinded
   round still flies at its memory and can take the hull back - and closest
@@ -880,20 +884,37 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
   actually caught up with it - never cache the distance at emit time. Flashes,
   impacts, screen shake and the electronic cues (lock tone, RWR alarms,
   kill/denied chimes) stay immediate.
-* **Distance is three effects, not one curve.** `audio.attenuation` is inverse
+* **Distance is four effects, not one curve.** `audio.attenuation` is inverse
   square *compressed* (`SOUND_ROLLOFF` 0.6, reference `SOUND_REF_DIST` 25 m):
   true 1/r over 16 km is 84 dB of dynamic range, i.e. silence, so the shape of
   the near field is kept (a gun at 100 m is 7 dB below one at 20 m) and the far
   field stays audible (-32 dB at 12 km). `audio.airCutoff` is the second: air
   absorbs the top end far faster than the bottom (0.4 dB/km at 125 Hz, 30 dB/km
-  at 4 kHz), 18 kHz inside 300 m down to 600 Hz past 8 km - a distant cannon is
-  a dull thud, and *that*, not the level, is what the ear reads as distance. It
-  shares one filter with the "behind you" lowpass in `audio._bus(g, pan, behind,
-  dist)`. Third is the direct/reverberant split: the wet send is lifted by
-  `reverbLift(dist)` so the diffuse field decays slower than the direct sound
-  (wet is ~13 dB above dry at 8 km) - far away is "echo", not "turned down".
-  `SOUND_LEVEL` (shot .6 / boom .7 / big .8 / blast 1) is how loud a cue is at
-  the reference distance.
+  at 4 kHz), 18 kHz inside 300 m down to a 1.4 kHz floor past ~6.5 km - a
+  distant cannon is a dull thud, and *that*, not the level, is what the ear
+  reads as distance. It shares one filter with the "behind you" lowpass in
+  `audio._bus(g, pan, behind, dist)`. Third is the direct/reverberant split: the
+  wet send is lifted by `reverbLift(dist)` so the diffuse field decays slower
+  than the direct sound (wet is ~13 dB above dry at 8 km) - far away is "echo",
+  not "turned down". `SOUND_LEVEL` (shot .6 / boom .7 / big .8 / blast 1) is how
+  loud a cue is at the reference distance.
+* **A level curve cannot re-arrange a spectrum, so the far field is its own
+  voice.** `audio._farBoom` is the fourth effect and the reason a fight 10 km
+  off is still audible: a slow 95->42 Hz sine plus a 340->120 Hz lowpassed edge,
+  mixed on `(25/d)^0.25` (`FAR_ROLLOFF`, 11 dB across the whole map instead of
+  34) and faded in from `FAR_NEAR` 700 m to `FAR_FULL` 2.6 km. It is played at
+  `dist` 0 *on purpose* - it is the already-through-the-atmosphere sample, so
+  the air lowpass and the bass shelf of `_bus` must not touch it again. Weight
+  per source: 105 mm 1.6, 30 mm 1.0, guided launch 0.4 (a whoosh, not a thud),
+  round impact 1.0-1.3, hull going up 1.2 with a longer tail. The near cues are
+  untouched inside 700 m.
+* **The air's loss has to come back under it.** `audio.bassLift` is the makeup
+  for what `airCutoff` just took off the top: a 180 Hz lowshelf in `_bus`, 0
+  inside 120 m and up to +18 dB past ~10 km. Without it a far shot is not dull,
+  it is gone - the 1.4 kHz floor keeps the body, the shelf keeps the weight, and
+  the far layer keeps the event. Note that the shelf and the far layer both
+  boost the same octave: if distant autocannon fire reads as a continuous drone,
+  `FAR_LEVEL` is the knob, not `SOUND_ROLLOFF`.
 * **The server decides what a pilot's ear gets.** `defs.SOUND_*` mirror the
   client's curve (`attenuation`, `SOUND_LEVEL`, same numbers), and
   `netcode.hearable(events, ear)` drops every `shot`/`boom` whose arriving gain
@@ -914,7 +935,9 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
   `EAR_NEAR` (1 m) the pan is faded to the centre, because a bang on the canopy
   has no side. The reverb send leaves ahead of `_bus`, so the room stays wide
   while only the direct sound is placed. The machine's own voices (RWR warble,
-  lock tone, `hit`/`denied`) stay centred - they are not in the world.
+  lock tone, `denied`) stay centred - they are not in the world. There is no
+  hit/kill tone: taking a hit is the red rim flash and a kill is the kill feed
+  line, both visual.
 * **Every cue has its own voice.** `audio.boom()` is a round going off;
   `audio.explosion()` is a hull going up (`ev.blast`) - four layers (crack, fire,
   sub-bass thump, rumble) written because a dead mech is a different event, not a
@@ -1346,6 +1369,22 @@ for (let k = 0; k < 6; k++) {
 * Minimal, scoped edits: match the surrounding style (numpy vectorised
   systems, short helper functions, comment density of the file you touch).
 * Units are metres and seconds; the map is 16 km square, the clock is 30 Hz.
+* **The product version lives in `backend/pyproject.toml`** (`frontend/package.json`'s
+  own `version` is a private manifest, not the product's - never read it). Its
+  `version = "1.0.0"` is stamped into the boot page at build time:
+  `frontend/webpack.config.js` parses that file (`smol-toml`, a build-time dev
+  dependency - a regex is not a TOML reader and a `version` key in another
+  table must never win), fails the build if the key is missing and hands the
+  string to `HtmlWebpackPlugin` as `templateParameters`,
+  which fills the `<p class="ver">` line under the lobby's subtitle (on the
+  range server too). So the number a player reads on the start page is the one
+  the build actually read - a stale `backend/assets` shows a stale version,
+  which is exactly the point. **Every feature change bumps the second number
+  (`1.0.0` -> `1.1.0` -> `1.2.0`); the third stays 0** - it is reserved, not
+  another counter, and internal refactors with no player-visible effect do not
+  bump at all. A bump is part of the change, in the same commit as the
+  `doc/product/` entry, so a build, a changelog line and a screenshot all name
+  the same version.
 * Tuning values (damage, rpm, range, speeds, wave interval, capture time) live
   in `defs.py` and at the top of the mode systems (`modes/battle/waves.py`,
   `modes/range/targets.py`) — prefer changing them there over editing the code

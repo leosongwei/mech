@@ -15,6 +15,7 @@
   #boot h1 { font-size: 54px; letter-spacing: 18px; margin: 0; color: #9fe8b8;
              text-shadow: 0 0 22px rgba(120,255,170,.45); }
   #boot p { margin: 2px; color: #7f9aa8; font-size: 13px; letter-spacing: 2px; }
+  #boot p.ver { margin: 0; color: #52707e; font-size: 11px; letter-spacing: 1px; }
   #boot .keys { display: grid; grid-template-columns: auto auto; gap: 4px 18px; font-size: 13px;
                 color: #9ab7c4; margin-top: 12px; }
   #boot .keys b { color: #cfe6d6; }
@@ -49,6 +50,7 @@
 <div id="boot">
   <h1>MECH</h1>
   <p>16 KM SQUARE FRONT &middot; RED VS BLUE &middot; THREE LANES</p>
+  <p class="ver">v<%= version %></p>
   <div class="keys">
     <b>W A S D</b><span>move (relative to view)</span>
     <b>MOUSE</b><span>sight: hull &amp; arms follow</span>

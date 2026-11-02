@@ -335,13 +335,12 @@ export class Game {
           ? this.audio.explosion(vol, dist, pan, behind)
           : this.audio.boom(vol, big, dist, pan, behind)));
       } else if (ev.k === 'intercept') {
-        // a missile was shot down: a few sparks where it broke up for everyone
-        // who can see it, but the tone belongs to the two crews it concerns -
-        // the one that fired the burst (`pid`) and the one whose round it was
-        // (`firer`).  The battle's AI crews shoot missiles down all over the
-        // map; a chime per round for everybody was the busiest sound in it.
+        // a missile was shot down: a few sparks where it broke up, for everyone
+        // who can see it, and no cue of any kind beyond them - the battle's AI
+        // crews shoot missiles down all over the map and a chime per round was
+        // the busiest sound in it.  `pid` / `firer` still travel (the crews it
+        // concerns are the ones that can read them off `__game`).
         this.particles.impact(ev.x, ev.y, ev.z, 1);
-        if (ev.pid === this.init.pid || ev.firer === this.init.pid) this.audio.hit();
       } else if (ev.k === 'shot') {
         if (ev.eid !== undefined) this.flashes.set(ev.eid, { t: 0.07, arm: ev.arm });
         const wd = this.defs.weapons[ev.wid] || {};
@@ -362,10 +361,10 @@ export class Game {
         this._killfeed(ev);
       } else if (ev.k === 'kill') {
         if (ev.pid === this.init.pid) {
-          // the kill feed already said the words: it only owes the pilot a bare
-          // number when the line was suppressed (an infantryman is not announced)
+          // the kill feed already said the words: the event only owes the pilot
+          // a bare number when the line was suppressed (an infantryman is not
+          // announced).  No tone - the kill feed line is the whole announce.
           if (!ev.feed) this._message(`+$${ev.reward}`, '#a9f0c0');
-          this.audio.hit();
         }
       } else if (ev.k === 'seeker') {
         // an IR missile lost its lock: its line of sight is full of smoke or a
@@ -684,12 +683,13 @@ export class Game {
     this.audio.laserWarning(L.length > 0);
   }
 
+  // taking a hit is shown, never sounded: the red rim flash is the whole of the
+  // feedback (a tone for every round that lands is a tone per second under fire)
   _checkDamage(own) {
     if (!own) { this.lastHpSum = -1; return; }
     const sum = own.hp[0] + own.hp[1] + own.hp[2] + own.hp[3];
     if (this.lastHpSum >= 0 && sum < this.lastHpSum) {
       this.hitFlash = Math.min(1, this.hitFlash + 0.55);
-      this.audio.hit();
     }
     this.lastHpSum = sum;
   }

@@ -374,7 +374,7 @@ frontend/
   Rows are `(centres, radii, ids, modules, factions, blocks, cull, prev, disp)`
   and the sweep solves the *relative* leg: `rel = prev - p0`, `w = seg - disp`,
   `t* = clamp(rel·w/|w|²)`, `d_min = |rel - w t*|`.  A missile covers 20 m a tick
-  against a 4 m fuse and a 0.08 m ball, so a solve against a standing target is
+  against a 2.5 m fuse and a 0.08 m ball, so a solve against a standing target is
   decided by the phase of the clock (measured: the head-on crossing case is 6 m
   off at the end of the leg, i.e. a clean miss).  The two blocks are gathered at
   different moments and each says so: a **unit** has already been moved by
@@ -410,9 +410,12 @@ frontend/
   stage later against positions gathered for the whole tick, by which time a
   600 m/s round is twenty metres out of a four metre radius - settling it
   directly is what turns "did the blast catch it" into an exact answer.  The
-  numbers are unchanged: blast only, at the true gap (14 at contact, 10 at
-  2.67 m, 8 at the 4 m edge, against 10 hp) - so the fuse **triggers** at 4 m
-  and only **kills** inside 2.67 m.  That gap is deliberate.
+  numbers are unchanged: blast only, at the true gap (17 at contact, 11.4 at
+  the 2.5 m trigger, against 10 hp) - so a fuse that **triggers** at all is a
+  **kill**, with 14 % of margin.  It used to be a 4 m trigger against a 2.67 m
+  lethal radius (8 at the edge, the round flew on): the trigger now sits
+  *inside* the pattern, and the tighter circle is paid for by the rate of fire
+  (300 rpm) - measured, `tools/intercept_check.py` reads 34 / 36 either way.
 * **Radar is one equation, two implementations** (`defs.radar_k`): a doppler
   receiver only sees what closes on it, so `radar_strength * rcs / d^4 *
   (v_c / RADAR_V_REF)^2 >= 1`, i.e. `d² <= K·v_c` with `K = sqrt(S·rcs)/V_REF`.
@@ -449,14 +452,14 @@ frontend/
   `ai.run` before the ground fight and preempts it: a crew that has a round
   coming for it lays the sight on the lead point (`mu.solve_lead`, which honours
   the target's vertical velocity - a climbing ATGM is not a hull) and pulls the
-  trigger only when the *bore* is within `atan((prox + hit_r)/d)` (0.23° at
+  trigger only when the *bore* is within `atan((prox + hit_r)/d)` (0.15° at
   1 km, not the 0.14 rad a hull gets).  Only a fused arm fires (`PROX[wid] > 0`,
   today just the 30 mm), so a 12.7 mm carrier stays out of it - data driven, not
   a type switch.  That gate is the *AI's* rule only: a missile is a 10 hp / 1
   armour target like any other, so **any** round landing on one kills it
   (one 12.7 mm bullet is `AD 10`), which is why a pilot in an APC can and does
   shoot an incoming round down with the gatling while the AI crew ignores it -
-  the fuse buys margin (4 m trigger, 2.67 m kill), not the ability.  "Coming for me" is `seeker target == me` for a top-attack (it
+  the fuse buys margin (2.5 m trigger, 11.4 against 10 hp), not the ability.  "Coming for me" is `seeker target == me` for a top-attack (it
   climbs 150 m and dives, so its straight line misses) - or, once that lock is
   cut, a stare point inside `CPA_MEM` (100 m) of the hull, because a blinded
   round still flies at its memory and can take the hull back - and closest
@@ -584,7 +587,7 @@ frontend/
   become. `blast_t > dt` would be a burning area; nothing uses that yet.
 * **`hp` is one number, and `hp <= 0` is the whole of "dead".** A hull built out
   of separately damaged modules declares `arms=(left, right)` in its defs and
-  the factory gives it `arm_hp` / `arm_hpmax` (a mech: hull 100, one arm 50
+  the factory gives it `arm_hp` / `arm_hpmax` (a mech: hull 120, one arm 50
   each). Every system tests *the component*, never the type - `combat.arm_alive`
   is `arm_hp[eid, arm] > 0`, and the arm index is the weapon index. Three rules
   live in `combat._mech_hit` and nowhere else: a hit on an arm stays off the

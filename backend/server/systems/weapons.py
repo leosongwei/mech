@@ -187,9 +187,10 @@ def run(world: World, dt: float) -> None:
             if wd["lock"] and int(owner[eid]) < 0:
                 # an AI crew does not empty a rack of fire-and-forget rounds at
                 # the rack's own cycle: it launches one, watches it arrive, and
-                # only then thinks about the next.  Eight tubes at 0.5 s was the
-                # whole nest gone in four seconds; at `AI_LAUNCH_GAP` a top
-                # attack is something that keeps coming back instead
+                # only then thinks about the next.  Eight tubes at the rack's
+                # own cycle is the whole nest gone in two and a half seconds;
+                # at `AI_LAUNCH_GAP` a top attack is something that keeps
+                # coming back instead
                 cycle = max(cycle, defs.AI_LAUNCH_GAP)
             cool[row, arm] = cycle
         trigger_prev[eid] = trig

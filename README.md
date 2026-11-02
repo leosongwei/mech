@@ -110,7 +110,7 @@ turn-rate limit.
 
 | weapon | kind | range | notes |
 | --- | --- | --- | --- |
-| 30mm autocannon | ballistic | 3.2 km | 1080 m/s, 190 rpm, 3 m splash |
+| 30mm autocannon | ballistic | 3.2 km | 1080 m/s, 300 rpm, 8 m splash |
 | 12.7mm machine gun | ballistic | 1.8 km | 890 m/s, 680 rpm |
 | unguided rocket pod | rocket | 4 km | one round per trigger pull, no reload, 20 in the pod; the launcher is sighted 2.5° up so it meets the cannon's line at 1 km |
 | SACLOS ATGM | beam rider | 3.75 km | steers onto your sight line, keep the reticle on target |

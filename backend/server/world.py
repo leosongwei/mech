@@ -464,6 +464,11 @@ class World:
         self.mode_mod.setup(self)
         for pl in self.players.values():
             pl.mech = -1
+            # a fresh round opens with a fresh purse: what was left of the last
+            # war chest is not carried into this one (`add_player` starts a
+            # pilot on the same figure).  The kills, deaths and score stay - they
+            # are the record of the war, not of the round
+            pl.money = self.mode_mod.start_money
             pl.respawn = self.mode_mod.restart_respawn
             pl.death_pos = None
             pl.lock_target = -1

@@ -142,7 +142,13 @@ def _award(world: World, eid: int, pid: int, faction: int, d: dict,
         return
     reward = int(d.get("reward", 0))
     killer.money += reward
-    killer.kills += 1
+    # a man is not a kill - a battle kills infantry by the dozen, so counting
+    # them would drown the scoreboard in the one number that is meant to be
+    # about machines.  The money and the score still come in; the count does
+    # not.  Being killed *by* one counts as usual, and that is `_plan_respawn`'s
+    # `deaths` (a victim's own account, whoever fired the round)
+    if not world.ecs.has(eid, "person"):
+        killer.kills += 1
     killer.score += reward
     owner = int(world.ecs["owner"][eid])
     # `feed` says whether the kill line already carries the money (`_feed`); when

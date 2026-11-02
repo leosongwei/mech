@@ -203,19 +203,29 @@ WEAPONS = [
     # distance at which the round still carries its nominal energy, while life
     # is a hand-written estimate of 10 km of flight: 10000 m / the round's
     # speed, rounded.  Nothing is meant to expire in the air inside the map
-    # one belt of 300, no reload: the magazine boundary is gone, so a pull of
+    # one belt of 400, no reload: the magazine boundary is gone, so a pull of
     # the trigger runs the whole load downrange and the gun only goes quiet
-    # when the arm is dry.  Full load is still 300 rounds, so the price of a
-    # fresh weapon and its ammunition did not move
-    # the round carries an airburst fuse: 4 m off an enemy rifleman it goes off
-    # instead of planting itself in the dirt behind him, so a burst of cannon
+    # when the arm is dry.  400 rounds is 80 s of held trigger at the 300 rpm
+    # below, and a full load costs $300 + 400 x $0.5 = $500
+    # 300 rpm is six ticks a round: the 30 Hz clock divides it outright, where
+    # the old 190 (9.47 ticks) fired an uneven 9/10 tick pulse.  It is also the
+    # real 2A72's cadence, and it is what the 10.6 a round direct hit is *for* -
+    # a 120 hull dies 12 rounds in (AD 7 through the plate plus the 3.6 the
+    # burst keeps off a 20-de armour), i.e. 3.2 s to a kill at 70 % hits.  The
+    # rate was raised and the behind-armour effect lowered to keep that number:
+    # 300 rpm at the old AD 10 was 2.1 s, which read as "the autocannon is the
+    # best anti-armour weapon in the game"
+    # the round carries an airburst fuse: 2.5 m off an enemy rifleman it goes
+    # off instead of planting itself in the dirt behind him, so a burst of cannon
     # fire sweeps infantry up without needing a direct hit on a 0.65 m sphere.
     # Only people set it off - an APC at the same distance is ignored and waits
-    # for the impact fuse.
-    dict(wid=WID_AC30, key="ac30", name="30mm AUTOCANNON", kind="bullet", ap=15, ad=10, ed=15, er=10.0,
-         rpm=190, mag=300, reserve=0, reload=0.0, vel=1080, spread=0.0011, bias=0.0, g=9.81,
+    # for the impact fuse.  The trigger is set *inside* the burst (2.5 m against
+    # a 3.11 m one-round kill on a man, ED 18 / ER 8): a fuse that fired in a
+    # band where the fragments cannot kill would be spending its own trigger.
+    dict(wid=WID_AC30, key="ac30", name="30mm AUTOCANNON", kind="bullet", ap=15, ad=7, ed=18, er=8.0,
+         rpm=300, mag=400, reserve=0, reload=0.0, vel=1080, spread=0.0011, bias=0.0, g=9.81,
          thrust=0, maxvel=0, life=9.3, range=3200, cost=300, ammo_cost=0.5, lock=0, lock_time=0,
-         salvo=0, semi=0, color=(1.0, 0.82, 0.25), cal=30, prox=4.0,
+         salvo=0, semi=0, color=(1.0, 0.82, 0.25), cal=30, prox=2.5,
          desc="High velocity, 3.2 km effective"),
     # one belt of 1500, no reload: the gun runs dry and that is it.  1800 rpm is
     # exactly one round per tick, the fastest the 30 Hz clock can fire - twice
@@ -231,8 +241,14 @@ WEAPONS = [
     # S-8 class: a launch charge throws the 80 mm rocket out at ~55 m/s, the
     # motor burns for a second and it leaves at 610 m/s.  A small shaped charge
     # plus a lot of frag: it is the pod's *burst*, not the single round, that
-    # kills - three rockets on the hull, two on an arm
-    dict(wid=WID_ROCKET, key="rocket", name="UNGUIDED ROCKET POD", kind="rocket", ap=40, ad=20, ed=35, er=10.0,
+    # kills - three rockets on the hull, two on an arm.
+    # AD 20 -> 25 is what keeps that "three on the hull" true against a 120 hp
+    # mech: 25 through the plate plus the 15 the burst keeps off a 20-de armour
+    # is 40 a hit, i.e. exactly 3 x 40 = 120.  Anything less (AD 24 is 39) makes
+    # it four, and the pod's 40 rounds would carry ten hulls instead of thirteen.
+    # Only the direct hit moved: the burst, its 10 m, the infantry sweep and the
+    # 267 rockets the command base costs are untouched
+    dict(wid=WID_ROCKET, key="rocket", name="UNGUIDED ROCKET POD", kind="rocket", ap=40, ad=25, ed=35, er=10.0,
          rpm=600, mag=40, reserve=0, reload=0.0, vel=55, spread=0.003, bias=0.0429, g=9.81, thrust=560,
          maxvel=610, life=16.4, range=3200, cost=350, ammo_cost=4.0, lock=0, lock_time=0, salvo=1,
          semi=0, color=(1.0, 0.45, 0.15), cal=80, rcs=0.005, rack=RACK_ROCKET,
@@ -245,7 +261,8 @@ WEAPONS = [
     # round cooks off where it runs out, so the reach is the wire and not the
     # motor.  Fast out, lazy in, and a long shot is a commitment rather than a
     # sniper rifle.  A tandem HEAT warhead: AD 120 is past every hull pool in
-    # the game (mech/APC 100, arm 50), so one hit takes a machine apart without
+    # the game (mech 120, APC 100, arm 50), so one hit takes a machine
+    # apart without
     # doing the base's 4000 hp much of a favour - the price is that the operator
     # has to hold the sight on it
     #
@@ -276,7 +293,10 @@ WEAPONS = [
     # measured envelope in doc/top_attack_plan.md, tool tools/top_attack_trace.py
     #
     # Eight rounds in a 2 x 4 rack and nothing behind them: no magazine, no
-    # reload, 0.5 s between launches (`rpm` 120).  The rack is the rocket pod's
+    # reload, 0.3 s between launches (`rpm` 200) - fast enough that a crew can
+    # put the whole rack at one hull inside a second, which is why the AI has
+    # its own `AI_LAUNCH_GAP` floor and a pilot does not.  The rack is the
+    # rocket pod's
     # mechanism, not a second one - one round per tube, out of the tube it was
     # drawn in - and a fresh rack is bought at the base like a fresh belt.
     # `body` is how the round itself is drawn, (across, long): a 1.3 m missile
@@ -284,13 +304,13 @@ WEAPONS = [
     # leaves from.  (`dia` is not that - it is the aero reference area, 127 mm,
     # and moving it would move the measured envelope.)
     dict(wid=WID_TOPATTACK, key="topattack", name="TOP-ATTACK IR ATGM", kind="top", ap=900, ad=120, ed=60,
-         er=7.0, rpm=120, mag=8, reserve=0, reload=0.0, vel=20, spread=0.002, bias=0.0,
+         er=7.0, rpm=200, mag=8, reserve=0, reload=0.0, vel=20, spread=0.002, bias=0.0,
          g=9.81, thrust=110.0,
          maxvel=306.0, life=30.0, range=4000, cost=700, ammo_cost=45.0,
          mass=20.0, dia=0.127, cd0=0.75, k_cl=0.12, cl_alpha=16.0, cl_max=5.0,
          burn=3.4, ignite=0.15, loft=RACK_TOP["elev"], apex=950.0, turn_r=700.0,
          pn_n=4.0, pn_r=300.0, pn_v=120.0, rack=RACK_TOP, body=(0.18, 1.30),
-         lock=1, lock_time=0.6, salvo=0, semi=0, color=(1.0, 0.35, 0.9), cal=127, rcs=0.02,
+         lock=1, lock_time=0.3, salvo=0, semi=0, color=(1.0, 0.35, 0.9), cal=127, rcs=0.02,
          desc="4 km lock-on, fire and forget"),
     dict(wid=WID_RIFLE556, key="rifle556", name="5.56mm RIFLE", kind="bullet", ap=5, ad=4, ed=0, er=0,
          rpm=430, mag=30, reserve=900, reload=2.2, vel=900, spread=0.007, bias=0.0, g=9.81, thrust=0,
@@ -341,12 +361,16 @@ WEAPONS = [
 # carries a radar cross-section (`rcs`, m^2, what the RWR and an AI's radar see
 # it by), a collision sphere and a small pool of health, so it can be shot
 # down.  `hit_r` is the half-calibre, i.e. the round's actual frontal size - not
-# a playability knob; the 30 mm's 4 m proximity fuse is the intended way to
+# a playability knob; the 30 mm's 2.5 m proximity fuse is the intended way to
 # bring one down, and a direct hit on a 0.08 m ball is a sniper's shot.
 #
-# `aim_hp` 10 against the 30 mm burst (ED 15 / ER 10): a fuse at 4 m takes 8
-# points off (it survives), 2.67 m kills it.  Deliberate - the fuse starts the
-# burst, the fragments are what bring the round down.
+# `aim_hp` 10 against the 30 mm burst (ED 18 / ER 8): the fuse's own trigger,
+# 2.5 m, is 11.4 points - a burst that fires at all is a kill.  Where it used
+# to be a 4 m trigger against a 2.67 m lethal radius (8 points at the edge, the
+# round flew on), the trigger now sits *inside* the pattern, and the tighter
+# fuse is what keeps interception rate honest: the AI's bore gate is
+# `atan((prox + hit_r)/d)`, so a shorter fuse asks for a better shot instead of
+# a wider burst.
 INTERCEPT_KINDS = ("rocket", "saclos", "top")
 
 for _w in WEAPONS:
@@ -529,11 +553,11 @@ def ai_name(rng) -> str:
 
 
 # seconds between two launches of a lock-on round by an AI crew.  A rack of
-# eight fire-and-forget rounds at the rack's own 0.5 s cycle is four seconds of
-# war and an empty arm for the rest of the battle, so the crew launches one,
-# watches it arrive and picks the next moment (`systems/weapons.py`).  A beam
-# rider is not on this clock: its price is holding the sight on the target, so
-# it fires at the rack's own rate.
+# eight fire-and-forget rounds at the rack's own 0.3 s cycle is two and a half
+# seconds of war and an empty arm for the rest of the battle, so the crew
+# launches one, watches it arrive and picks the next moment
+# (`systems/weapons.py`).  A beam rider is not on this clock: its price is
+# holding the sight on the target, so it fires at the rack's own rate.
 AI_LAUNCH_GAP = 15.0
 
 # ------------------------------------------------------------------- shop
@@ -643,8 +667,14 @@ UNIT_DEFS = {
                     death=dict(blast=(DEATH_BLAST["ed"], DEATH_BLAST["er"]), loud="blast",
                                wreck=(ETYPE_DEBRIS, WRECK_TIME, 1)),
                     tags=("unit", "combat", "lockable", "moves", "vehicle")),
-    # hull pool 100 (chassis + torso), one arm 50 each; armour of a light tank
-    ETYPE_MECH: dict(name="MECH", hp=100, arms=(50, 50), dp=10, de=20,
+    # hull pool 120 (chassis + torso), one arm 50 each; armour of a light tank.
+    # The hull was 100 until the autocannon went to 300 rpm: 120 is what keeps a
+    # sustained-fire machine from being the answer to everything, and it costs
+    # the cannon two extra rounds (12 hits, 2.2 s at full hits, 3.2 s at 70 %)
+    # while every one-shot killer - SACLOS 180, top attack 160, 105 mm 203 - is
+    # still past the whole pool in one round.  The arms are *not* scaled with it:
+    # an arm is 50, so it is 42 % of the hull now rather than half
+    ETYPE_MECH: dict(name="MECH", hp=120, arms=(50, 50), dp=10, de=20,
                      speed=50.0, radius=1.9, height=6.5,
                      # 398 / 713 / 1000 / 563 m against the RPG / S-8 / SACLOS /
                      # top-attack round (`defs.radar_range`); see the radar
@@ -658,7 +688,7 @@ UNIT_DEFS = {
     # the objective: a target, but it never moves and cannot be locked.  4000 hp
     # behind 80 of plate: neither 80 mm rockets (AP 40) nor 30 mm rounds (AP 15)
     # get through, so both only do their blast - which prices the base at
-    # exactly 267 rockets (15 each) or 1334 cannon rounds (3 each)
+    # exactly 267 rockets (15 each) or 1112 cannon rounds (3.6 each)
     ETYPE_BASE: dict(name="COMMAND BASE", hp=4000, dp=80, de=20,
                      speed=0.0, radius=7.0, height=12.0,
                      weapons=(WID_NONE, WID_NONE), ai_range=0, sight=0, reward=2000, splat=8.0,
@@ -693,7 +723,7 @@ UNIT_DEFS = {
 }
 
 # repair: welding a mech from nothing back to full armour costs
-# REPAIR_FULL_COST, split evenly over its 200 points (hull 100 + both arms 50).
+# REPAIR_FULL_COST, split evenly over the machine's own points (hull 120 + arms 50+50).
 # Kept as a total so the bill stays sane if the hp table moves.
 REPAIR_FULL_COST = 400.0
 REPAIR_COST_PER_HP = REPAIR_FULL_COST / max(

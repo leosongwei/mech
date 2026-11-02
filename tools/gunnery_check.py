@@ -242,7 +242,7 @@ def check_bore(check: Check, verbose: bool) -> None:
         world.events.clear()
         if abs(mu.wrap_pi(_pose(world, mech)["yaw"] - pl.in_yaw)) < 1e-3:
             break
-    for _ in range(30):                  # cooldown (190 rpm) and the edge
+    for _ in range(30):                  # cooldown (300 rpm) and the edge
         world.update(DT)
         world.events.clear()
     pids, p = _fire(world, pl)

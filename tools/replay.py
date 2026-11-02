@@ -158,13 +158,14 @@ def _death_blast() -> None:
     # the dead ids come back as the wrecks (LIFO reuse), so "dead" means "no
     # longer a unit", not "no longer alive"
     assert not e.has(dead, "unit"), "the mech did not die"
-    assert e.has(beside, "unit") and float(e["hp"][beside]) < 100.0, \
+    apc_hp = float(defs.UNIT_DEFS[defs.ETYPE_APC]["hp"])
+    assert e.has(beside, "unit") and float(e["hp"][beside]) < apc_hp, \
         "the blast did not touch the hull beside it"
     assert e.has(man, "unit") and float(e["hp"][man]) < 10.0, \
         "the blast did not reach the man four metres away"
     assert e.has(man_far, "unit") and float(e["hp"][man_far]) < 10.0, \
         "the blast did not reach a man twenty metres out"
-    assert float(e["hp"][far]) == 100.0, "the blast reached a hull 60 m away"
+    assert float(e["hp"][far]) == apc_hp, "the blast reached a hull 60 m away"
     assert len(e.query("wreck_t")) == 1, "the burning hulk did not leave a wreck"
     e.validate()
 
@@ -180,12 +181,13 @@ def _damage_model() -> None:
     world = World(seed=3, mode="range")
     e = world.ecs
     mech = world.spawn_unit(defs.ETYPE_MECH, 1, 600.0, 600.0)
-    assert float(e["hp"][mech]) == 100.0 and float(e["hpmax"][mech]) == 100.0
+    hull = float(defs.UNIT_DEFS[defs.ETYPE_MECH]["hp"])
+    assert float(e["hp"][mech]) == hull and float(e["hpmax"][mech]) == hull
     assert e["arm_hp"][mech].tolist() == [50.0, 50.0]
     assert e["armor"][mech].tolist() == [10.0, 20.0]
 
     combat.apply(world, mech, defs.MOD_LEFT, 20.0, 1)
-    assert float(e["hp"][mech]) == 100.0, "an arm hit reached the hull"
+    assert float(e["hp"][mech]) == hull, "an arm hit reached the hull"
     assert float(e["arm_hp"][mech, 0]) == 30.0
     combat.apply(world, mech, defs.MOD_LEFT, 100.0, 2)          # the arm comes off
     assert float(e["arm_hp"][mech, 0]) == 0.0
@@ -193,11 +195,11 @@ def _damage_model() -> None:
         "the lost arm kept its rounds"
     assert not combat.arm_alive(world, mech, 0), "a lost arm can still fire"
     assert combat.arm_alive(world, mech, 1)
-    assert float(e["hp"][mech]) == 100.0, "losing an arm is not losing the hull"
+    assert float(e["hp"][mech]) == hull, "losing an arm is not losing the hull"
     combat.apply(world, mech, defs.MOD_LEFT, 30.0, 3)           # arm gone -> hull
-    assert float(e["hp"][mech]) == 70.0, "a round into a lost arm skipped the hull"
+    assert float(e["hp"][mech]) == hull - 30.0, "a round into a lost arm skipped the hull"
     combat.apply(world, mech, defs.MOD_TORSO, 10.0, 4)          # torso is hit geometry
-    assert float(e["hp"][mech]) == 60.0, "the torso did not charge the hull"
+    assert float(e["hp"][mech]) == hull - 40.0, "the torso did not charge the hull"
     assert int(e["last_hit"][mech]) == 4
 
     # a single-pool hull has no arms, and its hits land on the one pool
@@ -304,11 +306,11 @@ def _radar() -> None:
 def _intercept() -> None:
     """Regression: a missile is a target with 10 hit points, not a trajectory.
 
-    A direct 30 mm round is worth 24 points against it (10 behind the plate plus
+    A direct 30 mm round is worth 24 points against it (7 behind the plate plus
     the burst) and kills; the *fuse* is what arm's-length interception is for,
-    and its blast is 14 at contact, 10 at 2.67 m and 8 at the 4 m edge - so a
-    burst at the edge of the fuse leaves it flying.  What is left behind is
-    nothing: no warhead, no wreck, no credit.
+    and its blast is 17 at contact and 11.4 at the 2.5 m trigger - so a burst
+    that fires at all brings the round down.  What is left behind is nothing:
+    no warhead, no wreck, no credit.
     """
     import logging
 
@@ -353,13 +355,10 @@ def _intercept() -> None:
     assert float(e["hp"][mid]) <= 0.0, "a direct 30 mm round did not kill a missile"
     e.destroy(mid)
 
-    # the blast at the edge of the fuse: 8 points, it flies on; at 2.67 m: dead
+    # the fuse's own trigger is inside the pattern: 2.5 m is 11.4 points, dead
     mid = missile(3000.0, 3000.0)
-    combat.splash(world, mid, defs.MOD_CHASSIS, wd, 4.0, -1)
-    assert abs(float(e["hp"][mid]) - 2.0) < 1e-4, "the 4 m edge was not 8 points"
-    assert e.alive[mid], "a burst at the edge of the fuse killed it"
-    combat.splash(world, mid, defs.MOD_CHASSIS, wd, 2.67, -1)
-    assert float(e["hp"][mid]) <= 0.0, "2.67 m did not kill it"
+    combat.splash(world, mid, defs.MOD_CHASSIS, wd, 2.5, -1)
+    assert float(e["hp"][mid]) <= 0.0, "a burst at the fuse's trigger did not kill it"
     # judged a stage later, and it leaves neither a burst nor a wreck behind it
     e.query("unit")
     n_blast = len(e.query("blast"))

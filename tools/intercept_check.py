@@ -6,8 +6,9 @@ The range carries one AI mech whose only job is to shoot missiles down
 approaches instead of argued about:
 
     radar    d^2 <= K * v_closing, K = sqrt(radar_strength * rcs) / RADAR_V_REF
-    fuse     the 30 mm bursts within 4 m of the round (systems/proximity.py)
-    kill     10 hp against the burst's blast (AD 15 / ER 10): 2.67 m or closer
+    fuse     the 30 mm bursts within 2.5 m of the round (systems/proximity.py)
+    kill     10 hp against the burst's blast (ED 18 / ER 8): the fuse's own
+             trigger is 11.4, so a burst that fires is a kill
 
 For every weapon and launch distance it fires a few rounds, follows each one
 until it is gone, and prints what happened to it: how much health the 30 mm took
@@ -199,7 +200,7 @@ def main() -> int:
             if not res["post_alive"]:
                 print(f"   the post was destroyed (back in "
                       f"{interceptor_mod.RESPAWN_AFTER:.0f} s)")
-            total["fin"] += res["post_hp"] < 100.0
+            total["fin"] += res["post_hp"] < defs.UNIT_DEFS[defs.ETYPE_MECH]["hp"]
             total["shots"] += len(rounds)
             total["touched"] += touched
             total["downed"] += downed

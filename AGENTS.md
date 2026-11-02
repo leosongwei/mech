@@ -1350,6 +1350,22 @@ for (let k = 0; k < 6; k++) {
 * Minimal, scoped edits: match the surrounding style (numpy vectorised
   systems, short helper functions, comment density of the file you touch).
 * Units are metres and seconds; the map is 16 km square, the clock is 30 Hz.
+* **The product version lives in `backend/pyproject.toml`** (`frontend/package.json`'s
+  own `version` is a private manifest, not the product's - never read it). Its
+  `version = "1.0.0"` is stamped into the boot page at build time:
+  `frontend/webpack.config.js` parses that file (`smol-toml`, a build-time dev
+  dependency - a regex is not a TOML reader and a `version` key in another
+  table must never win), fails the build if the key is missing and hands the
+  string to `HtmlWebpackPlugin` as `templateParameters`,
+  which fills the `<p class="ver">` line under the lobby's subtitle (on the
+  range server too). So the number a player reads on the start page is the one
+  the build actually read - a stale `backend/assets` shows a stale version,
+  which is exactly the point. **Every feature change bumps the second number
+  (`1.0.0` -> `1.1.0` -> `1.2.0`); the third stays 0** - it is reserved, not
+  another counter, and internal refactors with no player-visible effect do not
+  bump at all. A bump is part of the change, in the same commit as the
+  `doc/product/` entry, so a build, a changelog line and a screenshot all name
+  the same version.
 * Tuning values (damage, rpm, range, speeds, wave interval, capture time) live
   in `defs.py` and at the top of the mode systems (`modes/battle/waves.py`,
   `modes/range/targets.py`) — prefer changing them there over editing the code

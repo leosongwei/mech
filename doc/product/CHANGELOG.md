@@ -11,6 +11,21 @@
 
 ---
 
+## 2026-11-02 · 启动页显示版本号，产品版本进入 1.0.0
+
+- **玩家能感觉到的差别**：启动页副标题下面多了一行小字 `v1.0.0`，一眼就知道自己进的
+  是哪个构建。版本号只有一个来源：`backend/pyproject.toml` 的 `version`，前端
+  **构建时**读它写进页面（`frontend/webpack.config.js` → `HtmlWebpackPlugin`
+  的 `templateParameters`），所以页面显示的就是那次构建读到的版本；靶场服务器
+  （`--range`）同样显示。
+- **以后每次特性改动都把第二位加一**（`1.0.0` → `1.1.0` → `1.2.0`），第三位保留
+  不用，约定写进 `AGENTS.md` 的 Conventions 一节；版本号与 `doc/product/` 的登记
+  算同一次改动，同一个提交。
+- 涉及文件：`backend/pyproject.toml`（`version = "1.0.0"`）、`frontend/webpack.config.js`、
+  `frontend/src/index.html`、`frontend/package.json` + `package-lock.json`（构建期
+  依赖 `smol-toml`，真正按 TOML 解析而不是正则取行）、`AGENTS.md`、
+  `doc/product/screens.md`、本文件。
+
 ## 2026-11-01 · AI 机甲装备模板重排：攻顶加权重，取消「机枪 + 火箭巢」
 
 - **AI 机甲出生抽的配置表改了**（`defs.AI_LOADOUTS`，抽签在 `World.spawn_unit`）：

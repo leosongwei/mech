@@ -130,8 +130,9 @@ public static class Netcode
             ["buyable"] = Defs.BUYABLE,
             ["rearm"] = new Dictionary<string, object?>
             {
-                ["smoke_cost"] = Defs.SMOKE_REFILL_COST,
-                ["smoke_charges"] = Defs.SMOKE_REFILL_CHARGES,
+                ["smoke_cost"] = Defs.SMOKE_LOAD_COST,
+                ["smoke_charges"] = Defs.SMOKE_CHARGES,
+                ["smoke_load_s"] = Defs.SMOKE_LOAD_S,
                 ["sell_refund"] = Defs.SELL_REFUND,
                 ["repair_cost"] = Defs.REPAIR_COST_PER_HP,
                 ["swap_s"] = Defs.REARM_SWAP_S,

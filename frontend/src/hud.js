@@ -972,7 +972,7 @@ export class HUD {
     const mouse = s.mouse || [-1, -1];
     const refund = cfg.sell_refund === undefined ? 0.5 : cfg.sell_refund;
     const perHp = cfg.repair_cost === undefined ? 1 : cfg.repair_cost;
-    const smokeCost = cfg.smoke_cost === undefined ? 250 : cfg.smoke_cost;
+    const smokeCost = cfg.smoke_cost === undefined ? 10 : cfg.smoke_cost;
     const smokeFull = cfg.smoke_charges === undefined ? 10 : cfg.smoke_charges;
     const round = (v) => Math.floor(v + 0.5);
     const fs = Math.max(11, Math.min(16, ph * 0.026));
@@ -1042,10 +1042,11 @@ export class HUD {
 
     // middle column: smoke on top, repair below
     const smokeNow = meta.smoke === null || meta.smoke === undefined ? smokeFull : meta.smoke;
-    const smokeSpent = smokeNow < smokeFull || (meta.smoke_cd || 0) > 0;
+    const smokeMissing = Math.max(0, smokeFull - smokeNow);
     btn('smoke', px + pw * 0.5 - pw * 0.105, py + ph * 0.05, pw * 0.21, ph * 0.105,
-      ['REARM SMOKE', `$${smokeCost} · ${smokeNow}/${smokeFull}`],
-      { active: draft.smoke && smokeSpent, disabled: !smokeSpent });
+      ['REARM SMOKE', smokeMissing > 0 ? `${smokeMissing} × $${smokeCost}` : 'FULL',
+        `${smokeNow}/${smokeFull}`],
+      { active: draft.smoke && smokeMissing > 0, disabled: smokeMissing <= 0 });
     const mechHp = s.mechHp || [0, 0, 0, 0];
     const hpNow = meta.hp || [];
     let need = 0;

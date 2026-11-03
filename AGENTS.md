@@ -224,7 +224,10 @@ frontend/
   pause in a fight — the mech can still look around. The job dies with the
   mech (and the money with it), and a second order is refused until it ends.
   Durations are `defs.REARM_*` (swap 2 s per arm, ammo 4 s per arm, repair 2 s
-  per 100 hp); `shop.quote` charges a swap both a fit and a reload. What was
+  per 100 hp) plus `defs.SMOKE_LOAD_S` for the smoke rack; `shop.quote` charges a
+  swap both a fit and a reload. A smoke reload is priced per canister
+  (`defs.SMOKE_LOAD_COST`, `SMOKE_CHARGES` in the rack) and only for the ones
+  missing, so `REPAIR & REARM` can carry it. What was
   bought dies with the hull: `World.spawn_mech` resets `Player.loadout` to
   `defs.DEFAULT_LOADOUT`, so every respawn is a fresh standard machine and a
   105 mm is a thing to buy again.

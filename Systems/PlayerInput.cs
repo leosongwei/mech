@@ -37,7 +37,7 @@ public static class PlayerInput
 
             // a rearm job (Systems/Rearm.cs) holds the machine where it stands
             // and kills the triggers: the pilot may still look around, nothing
-            // else
+            // else (a Q pressed during the job is dropped in `Smoke._launch`)
             bool busy = work[eid] > 0f;
 
             float mx = pl.in_move.x, mz = pl.in_move.z;

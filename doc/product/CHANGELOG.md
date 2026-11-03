@@ -11,6 +11,29 @@
 
 ---
 
+## 2026-11-03 · 烟幕补装按发计价（每发 $10、2 s），`REPAIR & REARM` 顺带补烟幕，版本进 1.7.0
+
+- **玩家能感觉到的差别**：
+  - **补装烟幕不再是一口价 $250，而是每发 $10、只补缺的那几发**（缺 3 发 = $30），
+    库存上限仍是 **10 次**。面板按钮从 `$250 · 10/10` 变成 `3 × $10` / `7/10`
+    （缺几发 × 单价 + 当前库存），满库存时变灰显示 `FULL`。
+  - **补装要花 2 s**：以前是点完立刻到手，现在和换装/补弹/维修一样是一笔整备活儿
+    （进度条标签 `SMOKE`，期间不能移动、不能开火），只补缺的几发也是这 2 s。
+  - **`REPAIR & REARM` 一键按钮现在把烟幕一起补满**：以前它只补两臂弹药 + 修机，
+    拉完烟想顺手补满还得再单独点一次 `REARM SMOKE`。
+  - 整备期间按 `Q` 拉烟不再有效（服务器把那一按丢掉），否则"整备中拉一发、结束时
+    补满"等于白送一发。
+- **怎么算的**：一发烟幕一个库存，一次拉烟是 14 发烟弹同时抛出，所以计价单位是
+  "库存里的那一发"，不是"抛一次"。`Defs.SMOKE_LOAD_COST = 10` / `SMOKE_LOAD_S = 2.0`，
+  客户端预览读的是同一份（init 的 `rearm.smoke_cost` / `rearm.smoke_load_s`）。
+- 涉及文件：`Core/Defs.cs`（`SMOKE_REFILL_COST`/`SMOKE_REFILL_CHARGES` →
+  `SMOKE_LOAD_COST`/`SMOKE_LOAD_S`）、`Core/Shop.cs`（烟幕行按缺失发数计价、`dur` 2 s）、
+  `Systems/PlayerInput.cs`（整备期间丢掉 `smoke_q`）、`Net/Netcode.cs`（`rearm` 块）、
+  `frontend/src/shop.js`（预览、`quickDraft()` 带 `smoke`）、`frontend/src/hud.js`
+  （按钮文案与置灰条件）、`doc/product/{flow,screens,units,weapons,range}.md`。
+
+---
+
 ## 2026-11-03 · 后端换成 C#（.NET 10），协议不变，版本进 1.6.0
 
 - **玩家能感觉到的差别**：几乎没有——开局页版本号变成 `v1.6.0`，其余界面、按键、数值、

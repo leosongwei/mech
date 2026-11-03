@@ -48,12 +48,13 @@ export function quote(cfg, meta, draft) {
   const prices = (cfg && cfg.rearm) || {};
   const refund = prices.sell_refund === undefined ? 0.5 : prices.sell_refund;
   const perHp = prices.repair_cost === undefined ? 1 : prices.repair_cost;
-  const smokeCost = prices.smoke_cost === undefined ? 250 : prices.smoke_cost;
+  const smokeCost = prices.smoke_cost === undefined ? 10 : prices.smoke_cost;
   const smokeFull = prices.smoke_charges === undefined ? 10 : prices.smoke_charges;
   // seconds at the wrench: a fit 2 s, a full load of rounds 4 s per arm,
-  // armour 2 s per 100 hp
+  // a smoke rack 2 s, armour 2 s per 100 hp
   const swapS = prices.swap_s === undefined ? 2 : prices.swap_s;
   const ammoS = prices.ammo_s === undefined ? 4 : prices.ammo_s;
+  const smokeS = prices.smoke_load_s === undefined ? 2 : prices.smoke_load_s;
   const repairS = prices.repair_s === undefined ? 2 : prices.repair_s;
 
   const lines = [];
@@ -112,9 +113,12 @@ export function quote(cfg, meta, draft) {
 
   if (draft.smoke && meta) {
     const charges = meta.smoke === undefined || meta.smoke === null ? smokeFull : meta.smoke;
-    if (charges < smokeFull || (meta.smoke_cd || 0) > 0) {
-      total += smokeCost;
-      lines.push({ text: `REARM SMOKE x${smokeFull}`, delta: smokeCost, dur: 0 });
+    const missing = smokeFull - charges;
+    if (missing > 0) {
+      const delta = missing * smokeCost;
+      total += delta;
+      dur += smokeS;
+      lines.push({ text: `REARM SMOKE ${missing}/${smokeFull}`, delta, dur: smokeS });
     }
   }
 
@@ -122,14 +126,15 @@ export function quote(cfg, meta, draft) {
 }
 
 /**
- * The draft behind the REPAIR & REARM button: weld every module back to full
- * and top both arms up, nothing else - no weapon change (which would cost a
- * trade-in and a fit) and no smoke rack.
+ * The draft behind the REPAIR & REARM button: weld every module back to full,
+ * top both arms up and reload the smoke rack, nothing else - no weapon change
+ * (which would cost a trade-in and a fit).
  */
 export function quickDraft() {
   const d = emptyDraft();
   d.rearm = [true, true];
   d.repair = true;
+  d.smoke = true;
   return d;
 }
 

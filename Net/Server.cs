@@ -44,6 +44,9 @@ public sealed class Client
     public WebSocket ws;
     public int pid;
     public int dropped;
+    // this pilot's interest sphere: the tier table is per eye, so his snapshot
+    // is built for him alone (`Netcode.SnapshotView`)
+    public readonly Netcode.SnapshotView view = new();
     // 24 frames is under a second of snapshots+meta: a client that cannot take
     // that many has a socket that is not coming back
     private readonly Channel<(string kind, byte[] data)> q;
@@ -297,8 +300,11 @@ public static class Server
     public static void broadcast(int tick)
     {
         if (CONNECTIONS.Count == 0) return;
-        byte[]? snap = null;
-        if (tick % SNAP_EVERY == 0) snap = Netcode.snapshot_bytes(world);
+        bool snap_tick = tick % SNAP_EVERY == 0;
+        // the minimap block is one list for everybody and does not need 15 Hz:
+        // built once here, appended to each pilot's frame on the way out
+        byte[]? contacts = tick % Netcode.CONTACT_EVERY == 0
+            ? Netcode.contacts_bytes(world) : null;
         List<Dictionary<string, object?>>? fx = null;
         if (world.events.Count > 0)
         {
@@ -311,7 +317,13 @@ public static class Server
         foreach (var (pid, client) in CONNECTIONS.ToArray())
         {
             if (!world.players.TryGetValue(pid, out var pl)) continue;
-            if (snap is not null) client.offer("b", snap);
+            // one snapshot per pilot, not one per tick: the rows outside his
+            // tier are not built at all (measured: 468 -> ~100 kB/s per pilot)
+            if (snap_tick)
+            {
+                client.view.at(world, pl);
+                client.offer("b", Netcode.snapshot_bytes(world, client.view, contacts));
+            }
             if (fx is not null)
             {
                 // sound is per ear: a bang nobody could hear is not put on the wire

@@ -381,17 +381,19 @@ export class HUD {
         ctx.stroke();
       }
     }
-    // units
-    for (const e of s.entities.values()) {
-      if (e.type === 5) {
+    // units: the map shows the whole field, so it reads the contacts block (the
+    // snapshot itself is a tier sphere around this pilot's eye and would have
+    // hidden everything past 2-6 km)
+    for (const e of s.contacts || []) {
+      if (e.etype === 5) {
         ctx.fillStyle = '#fff';
         ctx.fillRect(x0 + e.x * kx - 4, y0 + e.z * kz - 4, 8, 8);
         continue;
       }
-      if (e.type === 6) continue;
+      if (e.etype === 6) continue;
       const f = FACTION_COLORS[e.faction] || [0.8, 0.8, 0.8];
       const px = x0 + e.x * kx, pz = y0 + e.z * kz;
-      const sz = e.type === 4 ? 3 : 1.6;
+      const sz = e.etype === 4 ? 3 : 1.6;
       ctx.fillStyle = `rgb(${f[0] * 255 | 0},${f[1] * 255 | 0},${f[2] * 255 | 0})`;
       ctx.fillRect(px - sz, pz - sz, sz * 2, sz * 2);
     }
@@ -428,7 +430,7 @@ export class HUD {
     ctx.fillText(`${mm}:${ss < 10 ? '0' : ''}${ss}`, w / 2, 42);
     if (s.range) {
       let targets = 0;
-      for (const e of s.entities.values()) if (e.type === 3) targets++;
+      for (const e of s.contacts || []) if (e.etype === 3) targets++;
       ctx.fillStyle = 'rgba(200,230,210,0.55)';
       ctx.fillText(`TARGETS ${targets}`, w / 2, 58);
     }

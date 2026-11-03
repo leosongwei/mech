@@ -6,10 +6,12 @@
 // here is little-endian, row-major and named exactly like the Python side.
 //
 //   init       one JSON text frame, `static_payload` + who you are
-//   snapshot   one binary frame: 14 B header, 80 B unit rows, 32 B projectile
-//              rows, 32 B smoke rows.  The header is 14 bytes, not 12: the
-//              client's `HEADER` is 14 because `struct.pack("<IIHHH")` is
-//              4 + 4 + 2 + 2 + 2, and the rows start there.
+//   snapshot   one binary frame: 16 B header, 80 B unit rows, 32 B projectile
+//              rows, 32 B smoke rows, and - every `CONTACT_EVERY` ticks - the
+//              minimap's 6 B contact rows.  The header is magic, tick and four
+//              u16 counts (units, projectiles, smoke, contacts); the rows start
+//              there.  It was 14 B (three counts) until the minimap got its own
+//              block.
 //   meta       one JSON text frame per pilot, 10 Hz
 //
 // The JSON tables are public *fields* on the C# side (`WeaponDef.wid`,
@@ -24,10 +26,13 @@ namespace Mech.Server;
 public static class Netcode
 {
     public const uint MAGIC = 0x4D454348;      // "MECH"
-    public const int HEADER = 14;              // magic, tick, three u16 counts
+    public const int HEADER = 16;              // magic, tick, four u16 counts
     public const int UNIT_STRIDE = 80;
     public const int PROJ_STRIDE = 32;
     public const int SMOKE_STRIDE = 32;
+    public const int CONTACT_STRIDE = 6;       // minimap point: x, z, faction, etype
+    public const int CONTACT_EVERY = 8;        // ticks: 3.75 Hz, and that is smooth
+    public const float CONTACT_QUANT = 4f;     // metres per unit of the u16 (16 km -> 4000)
 
     // ------------------------------------------------------------------
     // init
@@ -221,30 +226,194 @@ public static class Netcode
     private static void _wf(Span<byte> s, int o, float v) =>
         BinaryPrimitives.WriteSingleLittleEndian(s[o..], v);
 
-    public static byte[] snapshot_bytes(World world)
+    // ------------------------------------------------------------------
+    // interest: one frame per pilot, not one per tick
+    // ------------------------------------------------------------------
+    // A snapshot used to be the whole field for everybody, and with 300-400
+    // hulls on it that was 468 kB/s per pilot (94 % of the download, measured
+    // with `--check net`).  It is now a **tier sphere around the pilot's own
+    // eye**: the rows he can still use, and not one more.  Every radius below
+    // is a client constant read the other way round, so the table is not a
+    // taste - it is the answer to "where does the HUD stop reading this row".
+    //
+    //   6 km  mechs, APCs, the range's bunkers   fire control reaches 4 km
+    //                                            (`Defs.ZERO_RANGE`: the centre
+    //                                            cross and the impact marker
+    //                                            solve against these rows) and
+    //                                            the laser warning 3.4 km
+    //         smoke, canisters and puffs         `map.js sightBlocked` reads
+    //                                            puffs out to the same 4 km
+    //   4 km  wrecks, shells                     a hulk and a tracer are still
+    //                                            in the picture at the range a
+    //                                            hull is
+    //   3 km  guided rounds (rocket/SACLOS/top)  the receiver's own gate is
+    //                                            `RWR_RANGE` 2 km and it reads
+    //                                            *these* rows, so 2 km is the
+    //                                            floor; 3 km keeps the launch
+    //                                            in sight
+    //         infantry, civilians
+    //   2 km  corpses, anything else
+    //   always  the pilot's own hull, both command bases
+    //
+    // The bases are exempt because the HUD's base-integrity bars scan the
+    // entity table for `type === 5` (`hud.js`): a base dropped at 2 km would
+    // blink out of the top bar for most of a match.  Two rows are 2.4 kB/s.
+    //
+    // **Enter at R, leave at 1.15 R.**  `net.js` deletes every entity the
+    // newest frame does not mention, so a hull parked on a circle would be
+    // re-created (position snap, `mvx` smoothing reset) on every crossing -
+    // the dead band is what turns that flicker into a single late departure.
+    public const float TIER_HULL = 6000f;
+    public const float TIER_WRECK = 4000f;
+    public const float TIER_SHELL = 4000f;
+    public const float TIER_ROUND = 3000f;
+    public const float TIER_INF = 3000f;
+    public const float TIER_SMOKE = 6000f;
+    public const float TIER_DEFAULT = 2000f;
+    public const float TIER_DEAD_BAND = 1.15f;
+
+    /// <summary>One pilot's interest sphere: where his eye is, the hull that
+    /// must never be dropped, and the ids the last frame carried (the dead
+    /// band).  Owned by the connection, reused every frame.</summary>
+    public sealed class SnapshotView
+    {
+        public float x, z;
+        public int mech = -1;
+        // the whole field, tiers off: the baseline a harness prices the
+        // filtered frame against (nothing on the live server sets it)
+        public bool all;
+        public readonly HashSet<int> keep = new();
+
+        public void at(World world, Player pl)
+        {
+            mech = world.ecs.is_alive(pl.mech) ? pl.mech : -1;
+            if (mech >= 0)
+            {
+                var p = world.ecs.fv("pos").get3(mech);
+                x = p.x;
+                z = p.z;
+                return;
+            }
+            // no hull: the client's camera sits in the base orbit and shows the
+            // same field the base can see
+            var (bx, bz) = world.terrain.bases[pl.faction];
+            x = bx;
+            z = bz;
+        }
+    }
+
+    public static float tier_of_unit(int etype) => etype switch
+    {
+        Defs.ETYPE_MECH or Defs.ETYPE_APC or Defs.ETYPE_BUNKER => TIER_HULL,
+        Defs.ETYPE_DEBRIS => TIER_WRECK,
+        Defs.ETYPE_INF_RIFLE or Defs.ETYPE_INF_ROCKET or Defs.ETYPE_CIV => TIER_INF,
+        Defs.ETYPE_BASE => float.PositiveInfinity,
+        _ => TIER_DEFAULT,
+    };
+
+    public static float tier_of_round(int kind) => kind == 0 ? TIER_SHELL : TIER_ROUND;
+
+    /// <summary>Is this row inside the pilot's sphere?  A row the last frame
+    /// carried keeps its place out to `TIER_DEAD_BAND` further - enter at R,
+    /// leave at 1.15 R.</summary>
+    private static bool inside(Archetype a, int row, in SnapshotView v, float tier, int eid)
+    {
+        if (v.all || tier == float.PositiveInfinity) return true;
+        if (eid == v.mech) return true;
+        float dx = a.get_f("pos", row, 0) - v.x;
+        float dz = a.get_f("pos", row, 2) - v.z;
+        float r = v.keep.Contains(eid) ? tier * TIER_DEAD_BAND : tier;
+        return dx * dx + dz * dz <= r * r;
+    }
+
+    /// <summary>The minimap's own channel: **every** unit on the field as one
+    /// point - x and z in `CONTACT_QUANT`-metre units, faction, etype - 6 bytes
+    /// a row.  The snapshot is a tier sphere around one eye, so the strategic
+    /// picture cannot come from it; this block is the same for every pilot, so
+    /// `Server.broadcast` builds it once and hands the same bytes to each
+    /// frame.  A 210 px map of 16 km resolves ~76 m per pixel, so 3.75 Hz is
+    /// smooth: the block would cost 36 kB/s at the snapshot's own 15 Hz.
+    /// Quantising to 4 m keeps a row at 6 B and nobody can see a quarter pixel.</summary>
+    public static byte[] contacts_bytes(World world)
+    {
+        var e = world.ecs;
+        int[] uids = world.all_units();
+        var buf = GC.AllocateUninitializedArray<byte>(uids.Length * CONTACT_STRIDE);
+        var s = buf.AsSpan();
+        int off = 0;
+        foreach (int eid in uids)
+        {
+            var slot = e.slot(eid);
+            if (!slot.ok || !slot.a.has("pos")) continue;
+            var a = slot.a;
+            int r = slot.row;
+            _w16(s, off + 0, (int)(a.get_f("pos", r, 0) / CONTACT_QUANT));
+            _w16(s, off + 2, (int)(a.get_f("pos", r, 2) / CONTACT_QUANT));
+            s[off + 4] = _b(a, r, "faction");
+            s[off + 5] = _b(a, r, "etype");
+            off += CONTACT_STRIDE;
+        }
+        return off == buf.Length ? buf : buf[..off];
+    }
+
+    public static byte[] snapshot_bytes(World world, SnapshotView v, byte[]? contacts = null)
     {
         var e = world.ecs;
         int[] uids = world.all_units();        // hulls, wrecks, corpses - by id
         int[] pids = world.projectiles();
         int[] sids = e.query("smoke_r");       // canisters and puffs alike
-        // One frame per tick and every connection reads the same one, so it is
-        // allocated whole and never pooled: a pooled buffer cannot be returned
-        // until every writer task has flushed its copy out.
+        // Pass one: which rows this pilot's sphere carries.  The counts are in
+        // the header, so they have to be known before the first row is written.
+        v.keep.Clear();
+        var ku = new List<int>(uids.Length);
+        foreach (int eid in uids)
+        {
+            var slot = e.slot(eid);
+            if (!slot.ok || !slot.a.has("pos")) continue;
+            int et = slot.a.has("etype") ? slot.a.get_u8("etype", slot.row) : 0;
+            if (!inside(slot.a, slot.row, v, tier_of_unit(et), eid)) continue;
+            ku.Add(eid);
+        }
+        var kp = new List<int>(pids.Length);
+        foreach (int eid in pids)
+        {
+            var slot = e.slot(eid);
+            if (!slot.ok || !slot.a.has("pos")) continue;
+            int kind = slot.a.has("proj_kind") ? slot.a.get_u8("proj_kind", slot.row) : 0;
+            if (!inside(slot.a, slot.row, v, tier_of_round(kind), eid)) continue;
+            kp.Add(eid);
+        }
+        var ks = new List<int>(sids.Length);
+        foreach (int eid in sids)
+        {
+            var slot = e.slot(eid);
+            if (!slot.ok || !slot.a.has("pos")) continue;
+            if (!inside(slot.a, slot.row, v, TIER_SMOKE, eid)) continue;
+            ks.Add(eid);
+        }
+        foreach (int eid in ku) v.keep.Add(eid);
+        foreach (int eid in kp) v.keep.Add(eid);
+        foreach (int eid in ks) v.keep.Add(eid);
+
+        // Allocated whole and never pooled: a buffer cannot be returned until
+        // the client's writer task has flushed its copy out.
+        int nc = contacts is null ? 0 : contacts.Length / CONTACT_STRIDE;
         var buf = GC.AllocateUninitializedArray<byte>(
-            HEADER + uids.Length * UNIT_STRIDE + pids.Length * PROJ_STRIDE
-                   + sids.Length * SMOKE_STRIDE);
+            HEADER + ku.Count * UNIT_STRIDE + kp.Count * PROJ_STRIDE
+                   + ks.Count * SMOKE_STRIDE + nc * CONTACT_STRIDE);
         var s = buf.AsSpan();
         _w32(s, 0, MAGIC);
         _w32(s, 4, (uint)world.tick);
-        _w16(s, 8, uids.Length);
-        _w16(s, 10, pids.Length);
-        _w16(s, 12, sids.Length);
+        _w16(s, 8, ku.Count);
+        _w16(s, 10, kp.Count);
+        _w16(s, 12, ks.Count);
+        _w16(s, 14, nc);
 
         int off = HEADER;
         var ammo = e.iv("ammo");
         var mag = e.iv("mag");
         var wpn = e.uv("weapon");
-        foreach (int eid in uids)
+        foreach (int eid in ku)
         {
             var slot = e.slot(eid);
             if (!slot.ok) continue;
@@ -299,7 +468,7 @@ public static class Netcode
             off += UNIT_STRIDE;
         }
 
-        foreach (int eid in pids)
+        foreach (int eid in kp)
         {
             var slot = e.slot(eid);
             if (!slot.ok) continue;
@@ -318,7 +487,7 @@ public static class Netcode
             off += PROJ_STRIDE;
         }
 
-        foreach (int eid in sids)
+        foreach (int eid in ks)
         {
             var slot = e.slot(eid);
             if (!slot.ok) continue;
@@ -336,6 +505,7 @@ public static class Netcode
             _wf(s, off + 28, _f(a, r, "smoke_t"));
             off += SMOKE_STRIDE;
         }
+        if (nc > 0) contacts!.CopyTo(s[off..]);
         return buf;
     }
 

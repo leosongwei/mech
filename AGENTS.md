@@ -74,7 +74,8 @@ Modes/                     # per-mode rule sets: map, setup, pipeline, spawn rul
                            #   never shoot back), Record.cs: the top-attack trace,
                            #   Interceptor.cs: the missile-defence post
 Harness/                   # headless checks, no socket: Check.cs (battle/range/diag),
-                           # InterceptCheck.cs (missile defence, target hits)
+                           # InterceptCheck.cs (missile defence, target hits),
+                           # NetCheck.cs (one pilot's wire, per minute)
 assets/                    # compiled client (webpack output, gitignored)
 tools/
   gun_report.py            # weapon-report audio analysis (numpy; the numbers in audio.js)
@@ -791,7 +792,8 @@ frontend/
   cut so they sit on terraces like the lanes do; they are part of `roads`, so
   the client draws them from the same bits.
 * **Netcode** — one init payload with the map and all definitions, then binary
-  snapshots at 15 Hz (`SNAP_EVERY`) and JSON meta at 10 Hz (`META_EVERY`).
+  snapshots at 15 Hz (`SNAP_EVERY`, 16 B header, and the minimap block every
+  `CONTACT_EVERY` ticks) and JSON meta at 10 Hz (`META_EVERY`).
   Entity state is authoritative on the server; the client only interpolates.
   A unit row is 80 bytes (`UNIT_DTYPE`): `yaw` / `pitch` are the *laid gun*
   (hull and arms), `syaw` / `spitch` where the crew is looking, and `vx` / `vy` /
@@ -802,6 +804,56 @@ frontend/
   *camera* is the local view (an instant sight) sitting on the server-side
   eye.  `defs.MECH_SIGHT_Z` travels in the init payload (`mech.sight_z`) so
   `game._sightEye` mounts the eye where `mathutil.sight_eye` does.
+* **The snapshot is a sphere around the pilot's eye, not the field**
+  (`Netcode.SnapshotView`: `snapshot_bytes(world, view)`).  One frame
+  per *connection* - the tier is per eye, so `Server.broadcast` builds one
+  buffer per pilot instead of one per tick.  Radii are client constants read the
+  other way round, so the table is not a taste:
+
+  | radius | rows | the client constant behind it |
+  | --- | --- | --- |
+  | 6 km | mech, APC, the range's bunkers | `Defs.ZERO_RANGE` 4 km - the centre cross and the impact marker solve *against these rows* - and `game.LASER_RANGE` 3.4 km |
+  | 6 km | smoke, canisters and puffs | `map.js sightBlocked` reads puffs out to the same 4 km |
+  | 4 km | wrecks, shells | a hulk and a tracer are in the picture at the range a hull is |
+  | 3 km | guided rounds (rocket/SACLOS/top) | the receiver's own gate is `game.RWR_RANGE` 2 km and it reads *these* rows, so 2 km is the floor; 3 km keeps the launch in sight |
+  | 3 km | infantry, civilians | they are 90 % of the field and invisible past a few hundred metres |
+  | 2 km | corpses, anything else | |
+  | always | the pilot's own hull, both command bases | see below |
+
+  Two exemptions are load bearing, not politeness: **the pilot's own hull**
+  (`view.mech`), because `game.ownEntity()` returning null sends the camera to
+  the base orbit - i.e. a drop looks like a death - and **the command bases**,
+  because the HUD's base-integrity bars scan the entity table for `type === 5`
+  (`hud.js`), so a base at 2 km would blink out of the top bar for most of a
+  match.  Two rows are 2.4 kB/s.  A dead pilot's eye is his base
+  (`view.at`), which is where the client's camera is anyway.
+  **Enter at R, leave at 1.15 R** (`TIER_DEAD_BAND`): `net.js` deletes every
+  entity the newest frame does not mention, so without the band a hull parked on
+  a circle is re-created (position snap, `mvx` smoothing reset) every crossing.
+  The client needs **no change** for any of this - every consumer is map-driven
+  or `.get()`-guarded; what changes is that distant rows are absent, so what
+  pops is late, not earlier.  Measured
+  (`--check net`, minutes 8..15 of one pilot): **112 kB/s mean** against 468
+  unfiltered, 80 of it snapshots at 53 unit rows; `--check tiers` prices
+  alternative tables on the same battle.
+  Not tiered: the `fx` channel.  Explosions are *not* rows - there is no blast
+  entity - and an event carries both the flash and the bang, so a visual radius
+  is a change to `fx` (which today travels by sound level, 7-17 km), not to the
+  snapshot.
+* **The minimap has its own block in the same frame**
+  (`Netcode.contacts_bytes`, `CONTACT_*`).  The map is the *strategic* picture -
+  16 km of hulls at 210 px, no tier - so it cannot come from a sphere around one
+  eye: one row per unit, `x` / `z` in 4 m units (u16, 16 km -> 4000), `faction`,
+  `etype`, 6 B, appended after the smoke rows.  The header is **16 B** since
+  then: magic, tick and **four** u16 counts, the fourth being the contact rows -
+  `0` means "no new picture this frame" and the client keeps the last list, which
+  is how the block rides every `CONTACT_EVERY` (8 ticks = 3.75 Hz, 1.8 kB a
+  frame, 6.7 kB/s measured) without a second message type.  A pixel of that map
+  is 76 m, so 3.75 Hz cannot be seen to step - 15 Hz would cost 36 kB/s for
+  nothing.  It is one list for everybody, so `broadcast` builds it once and
+  hands the same bytes to each pilot's frame.  `hud._minimap` and the range's
+  `TARGETS` counter read `net.contacts`; the base-integrity bars stay on
+  `entities` (they need `hp`, and the base is never tiered out).
 * **Debug messages** are accepted only when `MECH_DEBUG=1` (see `Net/Server.cs`),
   except `respawn`, which is always allowed. All of them are sent from the
   console as `g.net.send({t: '...', ...})`; the payloads are in
@@ -1078,6 +1130,7 @@ cd frontend && npm install && npm run build      # -> assets/
   ./dotnet.sh run -- --check hit                   # every weapon vs a parked APC
   ./dotnet.sh run -- --check intercept             # every missile vs the defence post
   ./dotnet.sh run -- --check diag --minutes 2      # what a few AI hulls are doing
+  ./dotnet.sh run -- --check net --minutes 30 --from 8   # one pilot's download, per minute
   ```
   `MECH_PERF=1` on the battle check runs it without the per-tick event scan and
   prints the per-minute cost: on a 12 minute battle it is **1.2 ms/tick**
@@ -1085,6 +1138,22 @@ cd frontend && npm install && npm run build      # -> assets/
   ~9x, and the curve is flat where Python's climbs to 18 ms as the field matures.
   Every check ends with `ecs.validate()`, so bookkeeping that a value comparison
   would not catch (a row pointing past its buffer) fails the run.
+* **`--check net` prices the wire** (`Harness/NetCheck.cs`): one scripted pilot
+  (`Check.drive`), every payload `Server.broadcast` would have offered him, off
+  the same doors (`snapshot_bytes` / `meta_payload` / `hearable`) at the same
+  cadence, flat out with no wall clock - a 30 minute battle costs ~100 s of CPU.
+  Per minute it prints kB/s by source (snapshot / fx / meta / frame headers) and
+  the row census; it ends with what the same field *could* ride in (deflate, a
+  2 km interest sphere, a leaner row), so a wire change is a number before it is
+  an edit.  Measured unfiltered on 30 minutes, one pilot's ear: **468 kB/s mean, 523 kB/s
+  peak, 94 % of it snapshots** (326 unit rows x 80 B x 15 Hz), 4 % meta (1886 B
+  x 10 Hz), 2 % fx; the field is 300-400 rows and ~90 % of it is infantry.
+  With the shipped tier sphere it is **112 kB/s** (minutes 8..15): 80 snapshot
+  (6.7 of it the minimap block), 18 meta, 14 fx - i.e. meta and fx are now the
+  ones worth looking at.
+  It measures *a* client, not every client (one `SnapshotView`, as the server
+  builds it), and a scripted pilot's address decides how much lives inside his
+  sphere: the numbers move with where he is.
 * **`tools/gun_report.py`** is the weapon-report analysis (it reads a recording
   with ffmpeg and prints the third-octave spectrum per window; `--synth` renders
   the cue `HEAVY_REPORT` in `audio.js` describes).  It is the one Python script

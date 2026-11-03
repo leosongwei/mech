@@ -1237,6 +1237,7 @@ export class Game {
       meta: m,
       own,
       entities: this.net.entities,
+      contacts: this.net.contacts,
       weapons: this.defs.weapons,
       units: this.defs.units,
       buyable: this.buyable,

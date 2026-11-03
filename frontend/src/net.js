@@ -1,9 +1,11 @@
 // WebSocket protocol client: compressed init, binary snapshots, JSON meta/fx.
 
-const HEADER = 14;
+const HEADER = 16;              // magic, tick, four u16 counts
 const UNIT_STRIDE = 80;
 const PROJ_STRIDE = 32;
 const SMOKE_STRIDE = 32;
+const CONTACT_STRIDE = 6;       // minimap point: x, z, faction, etype
+const CONTACT_QUANT = 4;        // metres per unit of the u16
 const TICK_HZ = 30;
 
 export class Net {
@@ -13,6 +15,9 @@ export class Net {
     this.entities = new Map();
     this.projectiles = [];
     this.smoke = [];            // canisters in flight and deployed puffs
+    // the minimap's own list: every unit on the field, updated at 3.75 Hz
+    // (`CONTACT_EVERY`), independent of what the snapshot's tier sphere carries
+    this.contacts = [];
     this.meta = null;
     this.init = null;
     this.onFx = null;
@@ -56,6 +61,7 @@ export class Net {
     const nUnits = dv.getUint16(8, true);
     const nProj = dv.getUint16(10, true);
     const nSmoke = dv.getUint16(12, true);
+    const nContacts = dv.getUint16(14, true);
     this.seq += 1;
     const seen = new Set();
     let off = HEADER;
@@ -168,6 +174,22 @@ export class Net {
     }
     this.smoke = smoke;
     this.smokeBy = new Map(smoke.map((r) => [r.id, r]));
+
+    // the minimap block rides every fourth snapshot (`CONTACT_EVERY` ticks), so
+    // an empty list means "no new picture this frame" - keep the last one
+    if (nContacts > 0) {
+      const contacts = new Array(nContacts);
+      for (let k = 0; k < nContacts; k++) {
+        contacts[k] = {
+          x: dv.getUint16(off, true) * CONTACT_QUANT,
+          z: dv.getUint16(off + 2, true) * CONTACT_QUANT,
+          faction: dv.getUint8(off + 4),
+          etype: dv.getUint8(off + 5),
+        };
+        off += CONTACT_STRIDE;
+      }
+      this.contacts = contacts;
+    }
   }
 
   // smooth the render state towards the last snapshot

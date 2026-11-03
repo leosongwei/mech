@@ -11,6 +11,33 @@
 
 ---
 
+## 2026-11-03 · 后端换成 C#（.NET 10），协议不变，版本进 1.6.0
+
+- **玩家能感觉到的差别**：几乎没有——开局页版本号变成 `v1.6.0`，其余界面、按键、数值、
+  规则全部照旧（同一份 `assets/bundle.js`，一行没改）。真正的差别在服务器侧：
+  一局 12 分钟的仗从 **11.5 ms/tick 降到 1.2 ms/tick**（30 Hz 预算的 36 % → 4 %），
+  峰值也从 18 ms 压到 2 ms，同样一台机器能带的战场规模大了一个量级。
+- **怎么换的**：`backend/server/*.py` 的每一个模块在仓库根目录有对应的 C# 文件，
+  类名、系统顺序、组件集合、archetype 规则一一对应（`Ecs/Ecs.cs`、`Core/World.cs`、
+  `Systems/*.cs`、`Modes/*`、`Net/*`）。ECS 从 numpy 稠密数组换成同布局的扁平
+  `float`/`int`/`byte` 缓冲，全体单精度；协议（init 键集、80 B 单位行 / 32 B 弹丸行 /
+  32 B 烟行、meta 键、fx 事件）逐字节不变，所以客户端不需要改。
+- **不变的口径**：伤害、时长、射程、探测、命中判定、车道、攻城、突袭、靶场夹具全部
+  与 1.5.0 相同；随机数换了实现，所以地图和每一局战斗本身是新的一局（这是允许的）。
+- **工具**：Python 版的 `tools/*.py` 验证脚本随 Python 后端一起删除，换成
+  `./dotnet.sh run -- --check battle|range|hit|intercept|diag` 的无头跑法；
+  只剩 `tools/gun_report.py`（音频分析）和 `tools/smoke_lock_test.js`（浏览器控制台）。
+- **构建**：`.NET 10 SDK`，`./dotnet.sh build`（沙箱里 `dotnet` 写不了 `$HOME`，
+  脚本把它的状态放进 `.dotnet_tmp/`）。版本号来源从 `backend/pyproject.toml` 移到
+  `MechServer.csproj` 的 `<Version>`，前端构建读的是它。
+- 涉及文件：整个 `backend/`（删除）、仓库根的 `MechServer.csproj` / `Program.cs` /
+  `Ecs/` / `Core/` / `Systems/` / `Modes/` / `Net/` / `Harness/`、`dotnet.sh`、
+  `dev.sh`、`frontend/webpack.config.js`（输出目录 `assets/`、版本读 csproj）、
+  `.gitignore`、`README.md`、`AGENTS.md`、`doc/product/screens.md`（版本号来源）、
+  `doc/product/{units,weapons,range,README}.md`（文件路径）、本文件。
+
+---
+
 ## 2026-11-03 · 机甲雷达 5.0e13 → 1.75e14：2.2 km 发射的攻顶弹在命中前 4 s 就被发现，版本进 1.5.0
 
 - **玩家能感觉到的差别**：告警圈外沿 **1.0 km → 1.4 km**；攻顶弹从"离车 555 m 才

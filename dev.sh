@@ -6,19 +6,21 @@
 #   ./dev.sh attach    attach to that session (detach with F6 / Ctrl-a d)
 #   ./dev.sh stop      kill the session
 #   ./dev.sh status    list sessions
-#   ./dev.sh build     build the web client into backend/assets
+#   ./dev.sh build     build the web client into assets/
 #   ./dev.sh dev       build once, then start the server
 #   ./dev.sh range     start a weapon range server on :8011 (4 km test map)
 #
-# The server is started exactly like the rest of this box's long running
-# processes: a detached byobu session that can be re-attached later.
+# The server is the C# backend in this directory (`MechServer.csproj`), started
+# through `./dotnet.sh` - which is also what puts dotnet's own first-run state
+# under `.dotnet_tmp/` on a box whose $HOME is not writable.  The server is
+# started exactly like the rest of this box's long running processes: a detached
+# byobu session that can be re-attached later.
 #
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SESSION="${MECH_SESSION:-mech}"
 PORT="${MECH_PORT:-8010}"
-PY="$ROOT/.venv/bin/python"
 LOG="${MECH_LOG:-/tmp/mech-server.log}"
 # the server never starts at DEBUG: per-weapon lines (a round bursting, a seeker
 # losing its lock, a missile taking a hit) are all DEBUG and would drown the log
@@ -26,6 +28,7 @@ LOG="${MECH_LOG:-/tmp/mech-server.log}"
 # `MECH_DEBUG` below is a different thing - it unlocks the console's debug
 # messages (debug_spawn, god, trees), not logging.
 LOGLEVEL="${MECH_LOG_LEVEL:-INFO}"
+DOTNET="$ROOT/dotnet.sh"
 
 # byobu is a tmux wrapper; fall back to plain tmux when the byobu config dir is
 # not writable (e.g. inside a sandbox) so the helper always works.
@@ -39,13 +42,14 @@ mux() {
 }
 
 cmd_start() {
-  command -v "$PY" >/dev/null 2>&1 || { echo "missing venv: run  uv venv && uv pip install -r backend/pyproject.toml"; exit 1; }
+  command -v dotnet >/dev/null 2>&1 || { echo "missing dotnet SDK (see README)"; exit 1; }
   if mux has-session -t "=$SESSION" 2>/dev/null; then
     echo "session '$SESSION' already running - use ./dev.sh attach"
     return 0
   fi
+  "$DOTNET" build --nologo --artifacts-path "$ROOT/.dotnet_tmp/run" >/dev/null
   mux new-session -A -d -s "$SESSION" \
-    bash -ic "cd '$ROOT/backend' && MECH_DEBUG=1 MECH_LOG_LEVEL='$LOGLEVEL' exec '$PY' run.py --port '$PORT' 2>&1 | tee '$LOG'"
+    bash -ic "cd '$ROOT' && MECH_DEBUG=1 MECH_LOG_LEVEL='$LOGLEVEL' exec '$DOTNET' run --no-build --artifacts-path '$ROOT/.dotnet_tmp/run' -- --port '$PORT' 2>&1 | tee '$LOG'"
   sleep 2
   echo "MECH server starting in byobu session '$SESSION' on http://127.0.0.1:$PORT"
   echo "  attach: ./dev.sh attach      logs: tail -f $LOG"
@@ -65,13 +69,14 @@ cmd_range() {
   # `MECH_RECORD_PATH` moves the file
   local record="${MECH_RECORD:-1}"
   local trace="${MECH_RECORD_PATH:-/tmp/mech-range-trace.jsonl}"
-  command -v "$PY" >/dev/null 2>&1 || { echo "missing venv: run  uv venv && uv pip install -r backend/pyproject.toml"; exit 1; }
+  command -v dotnet >/dev/null 2>&1 || { echo "missing dotnet SDK (see README)"; exit 1; }
   if mux has-session -t "=$session" 2>/dev/null; then
     echo "session '$session' already running - tmux attach -t '$session'"
     return 0
   fi
+  "$DOTNET" build --nologo --artifacts-path "$ROOT/.dotnet_tmp/run" >/dev/null
   mux new-session -A -d -s "$session" \
-    bash -ic "cd '$ROOT/backend' && MECH_DEBUG=1 MECH_LOG_LEVEL='$LOGLEVEL' MECH_RECORD='$record' MECH_RECORD_PATH='$trace' exec '$PY' run.py --range --port '$port' 2>&1 | tee '$log'"
+    bash -ic "cd '$ROOT' && MECH_DEBUG=1 MECH_LOG_LEVEL='$LOGLEVEL' MECH_RECORD='$record' MECH_RECORD_PATH='$trace' exec '$DOTNET' run --no-build --artifacts-path '$ROOT/.dotnet_tmp/run' -- --port '$port' --range 2>&1 | tee '$log'"
   sleep 2
   echo "MECH range server starting in session '$session' on http://127.0.0.1:$port"
   echo "  attach: tmux attach -t '$session'      logs: tail -f $log"
@@ -96,7 +101,7 @@ cmd_status() {
 
 cmd_build() {
   ( cd "$ROOT/frontend" && npm install --cache /tmp/npmcache --no-audit --no-fund && npm run build )
-  echo "client built into backend/assets"
+  echo "client built into assets/"
 }
 
 case "${1:-start}" in

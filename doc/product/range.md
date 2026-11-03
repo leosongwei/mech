@@ -13,7 +13,7 @@
 手动启动（不开 tmux）：
 
 ```bash
-cd backend && MECH_DEBUG=1 ../.venv/bin/python run.py --range --port 8011
+MECH_DEBUG=1 ./dotnet.sh run -- --range --port 8011
 ```
 
 `--range` 等价于在启动 uvicorn 之前设置 `MECH_RANGE=1`（世界在 import 时构建，
@@ -134,8 +134,8 @@ g.net.send({ t: 'debug_spawn', etype: 3, dist: 300, angle: 0 });
   （树干才挡子弹、挡车）。判断视线时按每棵树自己的冠层算，不是按整个 16 m 瓦片，
   所以站在树旁边、或从林间空隙看出去的车照样能锁定、照样有预瞄框。
 * `debug_spawn`：`etype` 1 步枪兵 / 2 反坦克兵 / 3 APC / 4 机甲 / 5 指挥部 /
-  6 平民 / 9 碉堡（见 `defs.py`）；`weapons` 可选，指定左右手武器 id。
-  **放出来的 AI 车是一个活的机组**（`modes/range/test_ai.py`）：它会索敌、开火、
+  6 平民 / 9 碉堡（见 `Core/Defs.cs`）；`weapons` 可选，指定左右手武器 id。
+  **放出来的 AI 车是一个活的机组**（`Modes/Range/TestAi.cs`）：它会索敌、开火、
   朝敌方指挥部方向走（靶场没有车道，所以只走直线，不走路点）。靶场的靶子和防御
   哨位不在这套 AI 里，照旧不还手。
 * **试 AI 的导弹**：放一台**红方**机甲（`faction: 0`）在蓝方 APC 集群附近，它就会
@@ -165,7 +165,7 @@ g.net.send({ t: 'debug_spawn', etype: 3, dist: 300, angle: 0 });
 * 观测窗口在 `/tmp/mech-range.log`：每次起爆一行 `prox fuse: ... off missile N`，
   每削掉一点血一行 `missile N took ... - hp ... -> ...`，真打下来一行
   `intercept: ... round N shot down at (x, y, z)`。后两行是 **DEBUG** 级别，常规日志
-  里没有（`tools/intercept_check.py` 自己打开它们）。屏幕上则是弹在半路炸开：一小簇
+  里没有（跑 `--check intercept` 时才打开）。屏幕上则是弹在半路炸开：一小簇
   火花，**没有提示音**——谁的弹被打下来都一样，看火花和告警圈的变化。
   **告警圈的三态**（已探测 / 未探测但正在逼近 / 已击落）
   报的是**来袭**的弹，所以单人时要看它得去战斗模式挨打；**开第二个浏览器**就能在

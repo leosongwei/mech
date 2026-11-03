@@ -1,0 +1,337 @@
+// Weapon handling: magazines, reloads, cooldowns and projectile spawning.
+//
+// The system only *fires* stored intent (the trigger bits) - aiming lives in the
+// player-input / AI systems, ballistics in `Core/Ballistics.cs` and the round's
+// own flight in `Systems/Projectiles.cs`.
+//
+// Two headings, never one (see `aim_of` / `bore_of`): the sight is where the
+// crew is looking and answers instantly, the bore is where the metal points and
+// has to slew after it (`Systems/Gunnery.cs`).  A round leaves along the bore.
+//
+// Ported from `backend/server/systems/weapons.py`.
+
+namespace Mech.Server.Systems;
+
+public static class Weapons
+{
+    // weapon kind -> the wire's `proj_kind` (what the round *flies* as)
+    public static readonly Dictionary<string, int> KIND_ID = new()
+    {
+        ["bullet"] = 0, ["rocket"] = 1, ["saclos"] = 2, ["top"] = 3,
+    };
+
+    // the weapon table as one array, so a whole archetype of magazines can be
+    // refilled in one pass instead of a table lookup per arm
+    public static readonly int[] MAG_OF = Defs.WEAPONS.Select(w => w.mag).ToArray();
+
+    public static int kind_id(string kind) => KIND_ID.TryGetValue(kind, out int k) ? k : 0;
+
+    /// <summary>(origin, yaw, pitch) of the *sight*: where this unit's crew is looking.
+    ///
+    /// For a mech that is the free turret on the roof - the eye the camera sits in
+    /// (`MathUtil.sight_eye`), the line the IR seeker sweeps, and the beam a SACLOS
+    /// missile rides.  It answers the view instantly and is therefore *not* the
+    /// barrels: those are on the hull and slew after it (`bore_of`), so ask for
+    /// them at the muzzle, never here.</summary>
+    public static (Vec3 origin, float yaw, float pitch) aim_of(World world, int eid)
+    {
+        var e = world.ecs;
+        var pos = e.fv("pos").get3(eid);
+        int etype = e.uv("etype")[eid];
+        if (etype == Defs.ETYPE_MECH)
+        {
+            // the head is bolted to the hull, so the hull's yaw places the eye
+            var origin = MathUtil.sight_eye(pos, e.fv("yaw")[eid]);
+            return (origin, e.fv("sight_yaw")[eid], e.fv("sight_pitch")[eid]);
+        }
+        if (etype == Defs.ETYPE_APC)
+        {
+            float yaw = e.fv("turret_yaw")[eid];
+            float pitch = e.fv("pitch")[eid];
+            float h = Defs.UNIT_DEFS[etype].height;
+            return (new Vec3(pos.x, pos.y + h * 0.85f, pos.z), yaw, pitch);
+        }
+        float hh = Defs.UNIT_DEFS.TryGetValue(etype, out var d) ? d.height : 1.8f;
+        return (new Vec3(pos.x, pos.y + hh * 0.8f, pos.z),
+                e.fv("yaw")[eid], e.fv("pitch")[eid]);
+    }
+
+    /// <summary>(yaw, pitch) the barrels of this unit are *actually* laid at.
+    ///
+    /// A mech's arms ride on the hull and elevate on their own pivots, so this is
+    /// the hull's yaw and the arms' `pitch` - which trail the sight by up to the
+    /// slew rates in `Systems/Gunnery.cs`.  A round leaves along these, not along
+    /// the sight line: what the cross promises and what the gun delivers only
+    /// agree once the machine has caught up.</summary>
+    public static (float yaw, float pitch) bore_of(World world, int eid)
+    {
+        var e = world.ecs;
+        if (e.uv("etype")[eid] == Defs.ETYPE_APC)
+            return (e.fv("turret_yaw")[eid], e.fv("pitch")[eid]);
+        return (e.fv("yaw")[eid], e.fv("pitch")[eid]);
+    }
+
+    public static void run(World world, float dt)
+    {
+        var e = world.ecs;
+        var ids = world.units();
+        if (ids.Length == 0) return;
+
+        // ---- countdowns, a whole archetype at a time -----------------------
+        // Every arm counts down on its own: no row looks at another, so this is one
+        // pass per group instead of two Reads per (unit, arm).  A reload that lands
+        // on this tick refills the magazine here and keeps the arm from firing this
+        // tick, which is what the old per-entity `continue` meant.
+        var just_reloaded = new HashSet<int>();
+        foreach (var g in e.groups("cool", "reload_t", "mag", "ammo", "weapon"))
+        {
+            int n = g.n;
+            var cool = g.f("cool");
+            var reload_t = g.f("reload_t");
+            var mag = g.i("mag");
+            var ammo = g.i("ammo");
+            var weapon = g.u8("weapon");
+            for (int row = 0; row < n; row++)
+            {
+                for (int arm = 0; arm < 2; arm++)
+                {
+                    int k = row * 2 + arm;
+                    if (cool[k] > 0f) cool[k] = MathF.Max(0f, cool[k] - dt);
+                    if (reload_t[k] <= 0f) continue;
+                    reload_t[k] -= dt;
+                    if (reload_t[k] > 0f) continue;
+                    int take = Math.Min(MAG_OF[weapon[k]], ammo[k]);
+                    mag[k] = take;
+                    ammo[k] = ammo[k] - take;
+                    reload_t[k] = 0f;
+                    just_reloaded.Add(g.ids[row] * 2 + arm);
+                }
+            }
+        }
+
+        // ---- firing, in ascending id order --------------------------------
+        // `fire` draws the spread from `world.rng`, so the order of these pulls is
+        // part of the simulation: keep the query order, do not group it.
+        var trigger = e.uv("trigger");
+        var trigger_prev = e.uv("trigger_prev");
+        var owner = e.iv("owner");
+        // the AI's own target (`Systems/Ai.cs` writes it): what a lock weapon on a
+        // hull nobody is driving takes its lock from
+        var ai_target = e.iv("target");
+        e.locate(ids, out int[] rows, out int[] archs);
+
+        for (int k = 0; k < ids.Length; k++)
+        {
+            int eid = ids[k];
+            int ai = archs[k];
+            int row = rows[k];
+            if (ai < 0) continue;
+            var a = e.archetypes[ai];
+            int trig = trigger[eid];
+            if (trig == 0)
+            {
+                // nothing is being asked for: still drop the edge state (a released
+                // trigger is what re-arms a semi automatic arm) and move on
+                if (trigger_prev[eid] != 0) trigger_prev[eid] = 0;
+                continue;
+            }
+            for (int arm = 0; arm < 2; arm++)
+            {
+                int c = row * 2 + arm;
+                if (a.f("reload_t")[c] > 0f) continue;     // still reloading
+                if (just_reloaded.Count > 0 && just_reloaded.Contains(eid * 2 + arm))
+                    continue;                              // finished this very tick
+                int wid = a.u8("weapon")[c];
+                if (wid == Defs.WID_NONE) continue;
+                if (((trig >> arm) & 1) == 0) continue;
+                if (a.has("arm_hp") && a.f("arm_hp")[c] <= 0f) continue;  // shot off
+                var wd = Defs.WEAPONS[wid];
+                // semi automatic arms fire once per pull: the trigger has to be
+                // released and pressed again, holding it does nothing
+                if (wd.semi != 0 && ((trigger_prev[eid] >> arm) & 1) != 0) continue;
+                if (a.i("mag")[c] <= 0)
+                {
+                    if (a.i("ammo")[c] > 0) a.f("reload_t")[c] = wd.reload;
+                    continue;
+                }
+                // a hair of float dust left over from the tick subtraction must not
+                // cost a whole tick: 600 rpm on a 30 Hz clock is exactly 3 ticks,
+                // and 0.1 - 3 * dt rounds to a positive 1e-9
+                if (a.f("cool")[c] > 1e-4f) continue;
+                int target = -1;
+                if (wd.@lock != 0)
+                {
+                    if (world.players.TryGetValue(owner[eid], out var pl))
+                    {
+                        if (pl.lock_target < 0 || pl.lock_progress < 1f) continue;
+                        if (!e.is_alive(pl.lock_target)) continue;
+                        target = pl.lock_target;
+                    }
+                    else
+                    {
+                        // an AI crew has no seeker display to watch: its sight is
+                        // already on the hull it is engaging (the trigger waits for
+                        // the bore), so the round leaves the rack holding that lock
+                        int tid = ai_target[eid];
+                        if (tid < 0 || !e.is_alive(tid)) continue;
+                        target = tid;
+                    }
+                }
+                fire(world, eid, arm, wid, wd, target);
+                // the round's own archetype may have grown inside `fire`, so the
+                // buffers are read back off the hull's archetype rather than off a
+                // reference taken before the shot
+                a.i("mag")[c] -= 1;
+                float cycle = 60f / MathF.Max(wd.rpm, 1f);
+                if (wd.@lock != 0 && owner[eid] < 0)
+                {
+                    // an AI crew does not empty a rack of fire-and-forget rounds at
+                    // the rack's own cycle: it launches one, watches it arrive, and
+                    // only then thinks about the next.  Eight tubes at the rack's
+                    // own cycle is the whole nest gone in two and a half seconds; at
+                    // `AI_LAUNCH_GAP` a top attack is something that keeps coming
+                    // back instead
+                    cycle = MathF.Max(cycle, Defs.AI_LAUNCH_GAP);
+                }
+                a.f("cool")[c] = cycle;
+            }
+            trigger_prev[eid] = (byte)trig;
+        }
+    }
+
+    /// <summary>Spawn the projectile(s) of one trigger pull.
+    ///
+    /// The random draws are, per round of a salvo: one `gauss` for the yaw, one
+    /// `gauss` for the pitch, then one `random()` for the round's own seed - in
+    /// that order, because the battle is a replay of this sequence.</summary>
+    public static void fire(World world, int eid, int arm, int wid, WeaponDef wd, int target = -1)
+    {
+        var e = world.ecs;
+        int etype = e.uv("etype")[eid];
+        // the fire control solves from the sight's eye, the round leaves the mouth
+        // of the barrel: two points, and with the machine lagging the sight, two
+        // headings as well
+        var (origin, _, _) = aim_of(world, eid);
+        var (yaw, pitch) = bore_of(world, eid);
+
+        int kind = kind_id(wd.kind);
+        int n = Math.Max(1, wd.salvo);
+        float life = wd.life;
+
+        // where the tubes point, which is the one thing that decides the mouth the
+        // round leaves and the heading it leaves on: a launcher bolted at its own
+        // quadrant stands there whatever the arm does (the top attack's 42 deg is
+        // the round's own loft), one carried on the arm adds its elevation bias to
+        // the arm's aim, and one mounted flat (`elev` 0, the rocket nest) is simply
+        // the arm - depression included, or a nest could never bear on anything
+        // closer than its own range setting.  Everything is drawn on this angle as
+        // well, so the mouth drawn is the mouth fired from.
+        //
+        // Never clamp this as a floor (`max(pitch, elev)`): a flat rack whose
+        // `elev` is 0 would be pinned to the horizon and could never bear on
+        // anything close.
+        var rack = wd.rack;
+        float elev = rack is not null ? rack.elev : 0f;
+        if (rack is not null && rack.bolted) pitch = elev;
+        else pitch = pitch + elev;
+
+        float right = 0f, up = 0f;
+        if (etype == Defs.ETYPE_MECH)
+        {
+            // where the bore ends, in order of who knows best: the weapon itself
+            // (the 105 mm's barrel runs 5 m past its receiver), then its rack (a
+            // launcher of tubes ends at the mouth of the tubes), then the kind's
+            // figure.
+            float reach;
+            if (wd.reach is not null) reach = wd.reach.Value;              // its own bore
+            else if (rack is not null) reach = rack.mouth;                 // the tubes' mouth
+            else if (Defs.MECH_ARM_REACH.TryGetValue(wd.kind, out float r)) reach = r;
+            else reach = 1.8f;
+            if (rack is not null)
+            {
+                // a launcher of tubes is one round per tube: the round leaves the
+                // tube its slot in the rack belongs to, so a half-empty pod fires
+                // out of its upper rows.  `mag` is still the pre-shot count here -
+                // the loop takes the round off the top of this call.
+                (right, up) = Defs.rack_tube(wd.mag - e.iv("mag").get(eid, arm), rack);
+            }
+            origin = MathUtil.muzzle_point(e.fv("pos").get3(eid), yaw,
+                                           arm == 0 ? Defs.MOD_LEFT : Defs.MOD_RIGHT,
+                                           pitch, reach, right, up);
+        }
+
+        // direct fire is zeroed: hold off for the drop so the round meets the sight
+        // line at the pilot's setting.  A pilot's gun uses that fixed range, which
+        // keeps the barrel still while the sight crosses a crest; the AI solves
+        // against the target it is aiming at, because it never has to read a
+        // reticle.  `bias` was the launcher's mechanical sighting and is absorbed
+        // by the solution; guided rounds keep it.
+        float? zero = null;
+        if (kind == 0 || kind == 1)
+        {
+            if (world.players.TryGetValue(e.iv("owner")[eid], out var pl))
+                zero = Ballistics.zero_at(origin, yaw, pitch, wd, pl.zero_range);
+            else
+                zero = Ballistics.zero_pitch(world, origin, yaw, pitch, wd, ignore: eid,
+                                             faction: e.uv("faction")[eid]);
+        }
+
+        for (int k = 0; k < n; k++)
+        {
+            float sp = wd.spread * (k == 0 ? 1f : 0.6f);
+            float dy = yaw + world.rng.gauss(0f, sp);
+            // `bias` is the mechanical elevation the launcher is sighted at: the
+            // rocket pod is tilted up so its slow round meets the cannon at 1 km
+            float dp = (zero is null ? pitch + wd.bias : zero.Value)
+                       + world.rng.gauss(0f, sp);
+            var d = MathUtil.dir_from(dy, dp);
+            // a missile is its own archetype: it carries a pool of health and its
+            // own armour, so it can be fused, holed and killed
+            // (`Components.MISSILE_COMPS`)
+            int pid;
+            if (Defs.is_interceptable(wid))
+            {
+                pid = e.create(Components.MISSILE_COMPS);
+                float hp = wd.aim_hp;
+                e.fv("hp")[pid] = hp;
+                e.fv("hpmax")[pid] = hp;
+                e.fv("armor").set(pid, 0, wd.aim_dp);
+                e.fv("armor").set(pid, 1, wd.aim_de);
+                // the seeker leaves the launcher already knowing what it is looking
+                // at, and how fast that thing was going: from here on the round owns
+                // the lock (`Core/Seeker.cs`), and its memory is what carries it
+                // through a lock cut before the first tick of flight.  Only the
+                // guided kind has a seeker; a beam rider and a rocket ride their own
+                // guidance.
+                if (kind == 3 && target >= 0 && e.is_alive(target))
+                {
+                    e.fv("tgt_mem").set3(pid, Seeker.roof(world, target));
+                    e.fv("tgt_vel").set3(pid, e.fv("vel").get3(target));
+                }
+            }
+            else
+            {
+                pid = e.create(Components.PROJ_COMPS);
+            }
+            e.fv("pos").set3(pid, origin);
+            e.fv("vel").set3(pid, d.x * wd.vel, d.y * wd.vel, d.z * wd.vel);
+            e.uv("faction")[pid] = e.uv("faction")[eid];
+            e.uv("proj_kind")[pid] = (byte)kind;
+            e.uv("proj_wid")[pid] = (byte)wid;
+            e.fv("proj_life")[pid] = life;
+            e.iv("proj_src")[pid] = eid;
+            // the credit travels with the round, not with the hull that fired it: a
+            // cannon round can outlive the machine by a second and a rocket by
+            // several, and a kill it lands is still the pilot's
+            e.iv("proj_pid")[pid] = e.iv("owner")[eid];
+            e.uv16("proj_name")[pid] = e.uv16("name_id")[eid];
+            e.uv("proj_etype")[pid] = e.uv("etype")[eid];
+            e.fv("proj_age")[pid] = 0f;
+            e.fv("proj_seed")[pid] = world.rng.random();
+            e.fv("proj_trav")[pid] = 0f;
+            e.iv("target")[pid] = target;
+        }
+        world.emit("shot", ("x", origin.x), ("y", origin.y), ("z", origin.z),
+                   ("wid", wid), ("eid", eid), ("arm", arm));
+    }
+}

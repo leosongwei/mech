@@ -1,7 +1,7 @@
 # AGENTS.md
 
 Working notes for coding agents touching **MECH**, a browser-based mech
-shooter: numpy-ECS Python server, WebGL2 client, 16 km tile map, three lanes,
+shooter: C# (.NET 10) archetype-ECS server, WebGL2 client, 16 km tile map, three lanes,
 RED vs BLUE.
 
 ## Read `doc/product` first
@@ -10,7 +10,7 @@ Everything under `doc/` is written in Chinese (the code, the comments and every
 string a player sees are English - see [Conventions](#conventions)).
 `doc/product/` is the product documentation and the source of truth for
 everything a player can see: interaction flow, every screen, and the full unit
-and weapon parameter tables (mirrors of `defs.py` and the mode systems).
+and weapon parameter tables (mirrors of `Core/Defs.cs` and the mode systems).
 
 * **Before changing anything, read `doc/product/`** and check the change fits
   the documented rules.
@@ -19,7 +19,7 @@ and weapon parameter tables (mirrors of `defs.py` and the mode systems).
   at the top of `doc/product/CHANGELOG.md` in the same commit. That covers UI
   elements, copy, keybindings, unit/weapon numbers, spawn and rule timers,
   win conditions and debug UI.
-* Tuning changes in `defs.py` / mode systems without the matching table update
+* Tuning changes in `Core/Defs.cs` / mode systems without the matching table update
   count as unfinished work. Internal refactors with no player-visible effect do
   not need an entry.
 
@@ -27,55 +27,60 @@ and weapon parameter tables (mirrors of `defs.py` and the mode systems).
 
 ```
 dev.sh                     # build / start / attach / stop helper (byobu or tmux)
+dotnet.sh                  # build / run helper (dotnet's own state in .dotnet_tmp/)
+MechServer.csproj          # the server; its <Version> is the product version
+Program.cs                 # entry point: --host / --port / --range / --check battle|range|hit|intercept
 doc/                       # Chinese: every document in the repo lives here
   product/                 #   player-facing rules: flow, screens, units, weapons, changelog
   plans/                   #   refactor and feature plans (e.g. speed_component.md)
   top_attack_plan.md       #   design notes next to the code they describe
-backend/
-  run.py                   # dev entry point: uvicorn server.main:app
-  pyproject.toml           # fastapi, uvicorn[standard], numpy
-  server/
-    ecs.py                 # archetype ECS: component set is the entity's type
-    components.py          # every component the game declares
-    defs.py                # entity types, weapons, unit stats, mech geometry
-    world.py               # World: terrain, players, spawning, tick, queries
-    terrain.py             # 1000x1000 tiles of 16 m -> 16 km square map
-    mathutil.py            # angles, lead solving, terrain helpers
-    profiler.py            # white-box probes (MECH_PROBE=1), off and free by default
-    grid.py                # 128 m cell index over the units, refiled every tick (AI broadphase)
-    ballistics.py          # fire control: sight setting elevation (player) / sight-point solve (AI)
-    flight.py              # aerodynamics + guidance of a winged round (the top-attack missile)
-    seeker.py              # an IR round's lock: what it stares at, and what it re-locks on
-    combat.py              # damage resolution: the only writer of `hp` (apply/hit/splash)
-    netcode.py             # init payload, binary snapshots, JSON meta
-    main.py                # FastAPI: websockets, static files, 30 Hz game loop
-    systems/               # mechanics shared by every mode, each exposes run(world, dt)
-                         #   gunnery.py: the sight leads, the hull and the arms slew after it
-                         #   sight.py: the one line of sight (terrain + smoke), clear/why
-                         #   smoke.py: hot smoke canisters, opaque puffs, blocks(a, b)
-                         #   proximity.py: 30mm airburst fuse, people *and* missiles
-                         #   blasts.py: an explosion is an entity; the only area damage
-                         #   mortality.py: `hp <= 0` -> wreck, burst, kill money, victory
-                         #   rearm.py: the bought job at the base, `work_remaining_time`
-    modes/                 # per-mode rule sets: map, setup, pipeline, spawn rules
-      base.py              #   Mode interface every mode implements
-      battle/              #   waves.py: town capture + reinforcement waves
-                           #   raids.py: the raiding parties - one mech per lane,
+Ecs/
+  Ecs.cs                   # archetype ECS: component set is the entity's type
+  Components.cs            # every component the game declares
+Core/
+  Defs.cs                  # entity types, weapons, unit stats, mech geometry
+  World.cs                 # World/Player: terrain, players, spawning, tick, queries
+  Terrain.cs               # 1000x1000 tiles of 16 m -> 16 km square map
+  MathUtil.cs              # angles, lead solving, hit spheres, muzzle geometry
+  Profiler.cs              # white-box probes (MECH_PROBE=1), off and free by default
+  Grid.cs                  # 128 m cell index over the units, refiled every tick (AI broadphase)
+  Ballistics.cs            # fire control: sight setting elevation (player) / sight-point solve (AI)
+  Flight.cs                # aerodynamics + guidance of a winged round (the top-attack missile)
+  Seeker.cs                # an IR round's lock: what it stares at, and what it re-locks on
+  Combat.cs                # damage resolution: the only writer of `hp` (apply/hit/splash)
+  Shop.cs                  # the rearm panel: quote, buy, the time a job costs
+  SphereTable.cs           # the tick's hit spheres (was `projectiles.sphere_table`'s tuple)
+Net/
+  Netcode.cs               # init payload, binary snapshots, JSON meta, per-ear sound filter
+  Server.cs                # ASP.NET Core: websockets, static files, 30 Hz game loop
+Systems/                   # mechanics shared by every mode, each exposes run(world, dt)
+                           #   Gunnery.cs: the sight leads, the hull and the arms slew after it
+                           #   Sight.cs: the one line of sight (terrain + smoke), clear/why
+                           #   Smoke.cs: hot smoke canisters, opaque puffs, blocks(a, b)
+                           #   Proximity.cs: 30mm airburst fuse, people *and* missiles
+                           #   Blasts.cs: an explosion is an entity; the only area damage
+                           #   Mortality.cs: `hp <= 0` -> wreck, burst, kill money, victory
+                           #   Rearm.cs: the bought job at the base, `work_remaining_time`
+Modes/                     # per-mode rule sets: map, setup, pipeline, spawn rules
+  Mode.cs                  #   Mode interface every mode implements
+  Modes.cs                 #   the registry `Modes.get(name)`
+  Battle/                  #   BattleMode.cs: setup, bases, respawn A/B/C, kills feed
+                           #   Waves.cs: town capture + reinforcement waves
+                           #   Raids.cs: the raiding parties - one mech per lane,
                            #   force-gradient + two-level (128 m / 16 m) pathfinding
-      range/               #   targets.py: passive APC targets, bunkers.py: ridge blockhouses
-                           #   test_ai.py: the ground AI for hulls a pilot drops there
-                           #   (the range's own fixtures never shoot back)
-  assets/                  # compiled client (webpack output, gitignored)
+  Range/                   #   RangeMode.cs, Targets.cs: passive APC targets,
+                           #   Bunkers.cs: ridge blockhouses, TestAi.cs: the ground AI
+                           #   for hulls a pilot drops there (the range's own fixtures
+                           #   never shoot back), Record.cs: the top-attack trace,
+                           #   Interceptor.cs: the missile-defence post
+Harness/                   # headless checks, no socket: Check.cs (battle/range/diag),
+                           # InterceptCheck.cs (missile defence, target hits)
+assets/                    # compiled client (webpack output, gitignored)
 tools/
-  replay.py                # scripted battle replay: the simulation's sanity harness
-  fixtures/                # its recorded tick summaries (checked in)
+  gun_report.py            # weapon-report audio analysis (numpy; the numbers in audio.js)
   smoke_lock_test.js       # browser-console driver: seeker A/B smoke test
-  vehicle_trace.py         # range APC route trace: SVG path plot + per-tick CSV
-  raid_trace.py            # a battle's raiders: force-gradient + driven traces as SVG
-  intercept_check.py       # range: fire every missile at the defence post, read the log
-  profile_battle.py        # headless battle profiling: per-system + cProfile + per-minute timeline
 frontend/
-  webpack.config.js        # entry src/main.js -> ../backend/assets/bundle.js
+  webpack.config.js        # entry src/main.js -> ../assets/bundle.js
   icons.json               # single source of truth for every HUD icon glyph
   scripts/                 # fetch-material-icons.sh: rebuild the font subset
   vendor/material-symbols/ # committed Material Symbols subset (a few KB) + LICENSE
@@ -98,23 +103,25 @@ frontend/
 ### Server
 
 * **ECS** — an *archetype* ECS: the group of entities that own exactly the same
-  component set is an `Archetype`, and it holds one dense buffer per component,
-  as long as the entities that actually have it. An entity id is not a storage
-  address any more — `_arch`/`_row` turn it into (archetype, row). Queries
-  return ascending ids (`ecs.query("unit")`); `ecs["pos"]` still answers
-  `view[eid]`, `view[eid, i]`, `view[ids]`, `view[ids, i]`, filling a default
-  where the entity does not own the component, and `ecs.row(eid, "pos")` is the
-  cheap single-entity door.
+  component set is an `Archetype`, and it holds one dense, flat buffer per
+  component (`float[]`, `int[]`, `byte[]` or `ushort[]`, `stride` elements per
+  row), as long as the entities that actually have it. An entity id is not a
+  storage address any more — `_arch`/`_row` turn it into (archetype, row), so a
+  hull's position is `a.f("pos")[row * 3 + 0..2]`. Queries return ascending ids
+  (`ecs.query("unit")`); `ecs.fv("pos")` answers `view[eid]`, `view.get(eid, i)`,
+  `view.get(ids, i, dst)`, filling a registered default where the entity does not
+  own the component, and `ecs.slot(eid)` / `ecs.row_f(eid, "pos", out row)` are
+  the cheap single-entity doors.  Everything in the simulation is `float`.
 * **The component set is the entity's type and never changes.** It is decided
   in the one `ECS.create(comps)` call that spawns the entity, from
-  `components.UNIT_COMPS` / `*_COMPS` plus `UNIT_DEFS[...]["tags"]`. A state
-  transition is a *different* entity: `systems/smoke.py` destroys a canister and
+  `Components.UNIT_COMPS` / `*_COMPS` plus `Defs.UNIT_DEFS[etype].tags`. A state
+  transition is a *different* entity: `Smoke.cs` destroys a canister and
   creates the puff it bursts into. There is deliberately no
   `add_component`/`remove_component` — allowing one would make the archetype key
   space explode, invalidate row indices mid-tick, and turn the mask back into a
   mutable soup.
 * **One position, one velocity, on everything that moves.** `pos` and `vel` are
-  `float32[3]` on every mover - a hull, a round, a smoke canister - and `vel` is
+  `float[3]` on every mover - a hull, a round, a smoke canister - and `vel` is
   **what the entity is actually doing**: `pos` is advanced by it, every collision
   is solved against it, a seeker leads on it. The order a hull was given lives in
   its own component, `vel_cmd`, and only a hull has one: the gap between the two
@@ -122,13 +129,12 @@ frontend/
   one writer of a hull's `vel` (including `vel[1]`, the slope it just drove
   over), `projectiles` of a round's, `smoke` of a canister's. A scripted mover or
   a teleport writes `pos` **and** zeroes `vel`; a controller writes `vel_cmd`.
-  The invariant is checked - `World.spawn_unit` asserts it at every spawn and
-  `tools/replay.py::_speed_invariant` over the archetypes - and it is worth
+  The invariant is checked - `World.spawn_unit` throws at every spawn if a mover
+  was built without `vel` (or a `moves` hull without `vel_cmd`) - and it is worth
   keeping because the alternative was five subsystems each quietly rebuilding a
-  velocity of their own: `seeker.track` handed proportional navigation a hull's
+  velocity of their own: `Seeker.track` handed proportional navigation a hull's
   *command* (50 m/s the instant a pilot nudged the stick) and the top attack
-  missed a stationary hull by 8-36 m (`doc/plans/speed_component.md`,
-  `tools/top_attack_dive.py`).
+  missed a stationary hull by 8-36 m (`doc/plans/speed_component.md`).
 * **Wheeled locomotion state is three scalars, not a component.** `wheel_speed`
   (m/s along the hull, negative in reverse), `backout_t`, `blocked_t` belong to
   `movement._vehicle` alone: not on the wire, never written by a mode or an AI.
@@ -137,7 +143,7 @@ frontend/
 * **Write systems against buffers, not through `View`.** `ecs.groups(...)`
   hands out an archetype with its buffers hoisted and rows `0..n-1`: reach for
   it whenever the system integrates entities independently (movement, countdown
-  timers, leg turning) and the whole pass becomes a handful of numpy calls.
+  timers, leg turning) and the whole pass becomes a handful of array calls.
   `ecs.slot(eid)` is the same thing for a per-entity loop that touches many
   components — one lookup, then `bufs["pos"][row, 0]`; `"combat" in bufs` is the
   component test. `ecs.locate(ids)` gives `(rows, archetypes)` when the loop has
@@ -150,11 +156,13 @@ frontend/
   spread/acquire draws take numbers from `world.rng` inside a loop over
   entities, so visiting them in a different order produces a different battle.
   Those loops must keep the ascending `query()` order (`locate`/`slot`);
-  `groups` (archetype-major) is only for order-free work. `tools/replay.py`
-  fails loudly when this is broken.
+  `groups` (archetype-major) is only for order-free work.  The port deserves the
+  same warning: the RNG stream is C#'s, not Python's, so two runs never agree -
+  but *within* a run the draw order is still the battle, and a `groups` pass in a
+  system that draws would quietly change it.
 * **Identity is a component, never a type switch.** What an entity *is* comes
   from the marker components its type declares in
-  `defs.UNIT_DEFS[...]["tags"]`: `unit` (a hull rounds stop on and damage
+  `Defs.UNIT_DEFS[etype].tags`: `unit` (a hull rounds stop on and damage
   applies to), `combat` (may be targeted, may hold a town), `lockable` (IR
   seeker), `moves` (locomotion), `invulnerable` (bunker). Systems ask for the
   tag they can handle — `world.units()`, `combat_units()`, `lockable_units()`,
@@ -162,7 +170,7 @@ frontend/
   a shell) is invisible to combat code without any exclusion list. `etype` is
   per-type *data* (hull geometry, death recipe, which arm fires what) and is only
   read for that.
-* **World** (`world.py`) owns terrain, players, the ECS and the system
+* **World** (`Core/World.cs`) owns terrain, players, the ECS and the system
   pipeline. Shared order: `rearm`, `player_input`, the mode's pre-systems
   (battle: `ai`), `gunnery, locking, smoke, weapons, movement, projectiles,
   proximity, blasts, mortality, economy, debris`, then the mode's post-systems
@@ -174,10 +182,10 @@ frontend/
   and leave bursts behind, `blasts` judges the bursts (including the ones the
   previous tick's deaths left), and `mortality` decides who died - after every
   damage source, before `waves` counts hulls to take a town.
-  `World.update(dt)` is the only entry point; the loop in `main.py` calls it at
+  `World.update(dt)` is the only entry point; the loop in `Net/Server.cs` calls it at
   a fixed 30 Hz (`TICK_DT = 1/30`).
 * **An empty server is a paused server.**  With `CONNECTIONS` empty the tick
-  loop in `main.py` skips `world.update` and `broadcast` altogether and just
+  loop in `Net/Server.cs` skips `World.update` and `broadcast` altogether and just
   sleeps (`IDLE_SLEEP` = 0.1 s, re-basing `next_t` on the way out so the world
   resumes on a clean tick instead of catching up).  Nothing is simulated and
   nothing is sent while nobody is connected - the battle, the economy, the
@@ -186,9 +194,9 @@ frontend/
   pilot a mid-war map.  `MECH_DEBUG=1` disables the pause (`PAUSE_WHEN_EMPTY`),
   because that is the run a script, a replay or a console session inspects from
   the outside with no browser attached.  A tool that drives `world` directly
-  (`tools/replay.py`, `tools/raid_trace.py`, ...) never goes through the loop
-  and is unaffected either way.
-* **The sight leads, the machine follows** (`systems/gunnery.py`, `defs.MECH_
+  (`Harness/Check.cs`, ...) never goes through the loop and is unaffected
+  either way.
+* **The sight leads, the machine follows** (`Gunnery.cs`, `defs.MECH_
   SIGHT_Z`).  A mech's aim is a free turret on the roof, mounted *on the hull*
   `MECH_SIGHT_Z` (0.62 m) behind the hull's own rotation axis.  Two component
   pairs, never one: `sight_yaw` / `sight_pitch` is where the crew is looking
@@ -210,7 +218,7 @@ frontend/
   0.02`), or a hull still coming round would hose the dirt.
 * **Buying costs time, not just money.** `shop.deal` charges the bill and books
   the priced lines on the pilot, writing the seconds the draft cost into the
-  mech's `work_remaining_time` (a plain float, 0.0 = idle); `systems/rearm.py`
+  mech's `work_remaining_time` (a plain float, 0.0 = idle); `Rearm.cs`
   counts it down and only at zero applies the lines. `player_input` zeroes the
   movement and both trigger bits while it is above zero, so a job is a real
   pause in a fight — the mech can still look around. The job dies with the
@@ -244,7 +252,7 @@ frontend/
   it with the cannon's number put every missile tens of metres behind a moving
   hull (measured: 16 launches, no kills on movers; after: 3–4 kills per 16).
   `mean_speed` is the boost-and-coast profile off `vel` / `thrust` / `maxvel` /
-  `burn`, so a new missile needs no entry in `ai.py`.
+  `burn`, so a new missile needs no entry in `Systems/Ai.cs`.
 * **A launcher of tubes is described once, in `defs.rack`.** `rack(cols, rows,
   count, bore=, length=, centre=, ...)` hands back a plain dict — the lattice,
   the tube diameter and length, the pitch, the mouth (`centre + length/2`) and
@@ -278,7 +286,7 @@ frontend/
   outside diameter in **both** halves of the file:
   the client's hexagon scales as a width, so passing half a bore draws a tube a
   quarter of its area and leaves a hole's worth of empty box around it.
-* **Grid** (`grid.py`) is a 128 m cell index over every unit that moves *or* can
+* **Grid** (`Core/Grid.cs`) is a 128 m cell index over every unit that moves *or* can
   be fought (`moves` ∪ `combat`), refiled at the top of each tick (`world.grid`)
   so "who is near me" is a box of cells instead of a scan of the field. It keeps
   its own copy of the positions — the build gathers them once per archetype, so
@@ -290,7 +298,7 @@ frontend/
   same target comes back) and then distance-sorts the few candidates in it.
   Rebuild before querying anything that has moved since; in the tick's pipeline
   only `player_input` runs ahead of `ai`, and it moves nothing.
-* **Raiders** (`modes/battle/raids.py`) are the one unit that plans.  Every
+* **Raiders** (`Modes/Battle/Raids.cs`) are the one unit that plans.  Every
   `RAID_INTERVAL` a side sends `RAID_SIZE` mechs out, **one per lane, the lanes
   drawn at random**, and each of them is briefed separately (a plan belongs to a
   hull, keyed `(faction, party, lane)` on the world - two raiders two minutes
@@ -313,19 +321,20 @@ frontend/
   keeps the enemy from taking the cut back), then the next weak spot.  The
   `raider` tag is what takes them out of `ai._advance`; the guns stay `ai.run`'s.
   Raiders die like any other hull - 58% of them in a measured round - which is
-  why the plan dict is pruned when a party is gone.  `tools/raid_trace.py` runs
-  a battle and draws the gradient, the planned routes and where the hulls died.
-* **Modes** (`modes/`) own everything that differs between game modes: the
+  why the plan dict is pruned when a party is gone.  (The Python tool that drew
+  the gradient, the planned routes and where the hulls died went with the Python
+  backend; `--check battle` still exercises a whole raid cycle.)
+* **Modes** (`Modes/`) own everything that differs between game modes: the
   map, what a fresh round spawns, the mode's own systems and the rules the
   shared code asks about (`fixed_faction`, `start_money`, `rearm_anywhere`,
   `restart_respawn`, `mech_spawn`, `respawn_delay`). Adding a mode means adding
   a folder, never another `if` in a shared system. Battle runs `ai` + `waves`
   (capture and reinforcement waves); range runs `targets`, the missile post, and
-  `ai` only over the hulls a pilot spawned there (`range/test_ai.py`).
+  `ai` only over the hulls a pilot spawned there (`Modes/Range/TestAi.cs`).
 * **A death is planned from where it happened.** `World.kill` records
   `Player.death_pos` and asks the mode for `respawn_delay`; the mode's
   `mech_spawn` later turns that position into a place. Battle's version
-  (`modes/battle/__init__.py`) picks the town with `waves.respawn_town`, which
+  (`Modes/Battle/Init.cs`) picks the town with `waves.respawn_town`, which
   is three steps: **A** the faction's own town nearest the death (it only picks
   the lane, so a spawn may come from another lane), **B** the town on A's lane
   nearest the death that is still connected to the base *and* not contested,
@@ -343,8 +352,8 @@ frontend/
   `contested` only decides who gets to raise troops.
 * **Players** are plain Python objects (`world.Player`) attached to a mech
   entity through `owner`; `pl.mech` is -1 while dead. Income and respawns live
-  in `systems/economy.py`; wreck/corpse cleanup in `systems/debris.py`.
-* **Proximity fuse** (`systems/proximity.py`) — the 30mm round bursts on
+  in `Economy.cs`; wreck/corpse cleanup in `Debris.cs`.
+* **Proximity fuse** (`Proximity.cs`) — the 30mm round bursts on
   *personnel*: `defs.WEAPONS[...]["prox"]` is a fuse radius in metres (absent =
   impact fuse only), and `person` is the tag a man carries (riflemen, AT
   riflemen, civilians). Hulls are not tagged, so the fuse ignores them. A round
@@ -363,7 +372,7 @@ frontend/
   `kind` `rocket`/`saclos`/`top` round is spawned with `interceptable` + `hp` +
   `hpmax` + `armor` + `last_hit` (10 points, 1/1 of plate), a bullet keeps
   `PROJ_COMPS` and pays nothing.  A guided round also carries the seeker's
-  memory (`tgt_mem` / `tgt_vel`, `seeker.py`) - see the seeker bullet below.
+  memory (`tgt_mem` / `tgt_vel`, `Core/Seeker.cs`) - see the seeker bullet below.
   The tag is what puts a round in the
   hit-sphere table and in the fuse's target set, so `combat.hit`/`splash`/
   `apply` work on it with no special case, and `systems/mortality.py::
@@ -401,9 +410,9 @@ frontend/
   says "this leg crossed a tree tile", which is handed back to the scalar
   `ground_hit`: a trunk is a cylinder solved analytically, not something to
   sample.  What is *not* worth batching is the integration itself — a few
-  numpy calls over one or two rows cost more than the scalar arithmetic they
+  batched loops over one or two rows cost more than the scalar arithmetic they
   replace (measured, twice).
-* **The fuse settles the round it fused on.**  `systems/proximity.py` fuses on
+* **The fuse settles the round it fused on.**  `Proximity.cs` fuses on
   `person` ∪ `interceptable` and bursts at the round's position at `t*`; a
   missile found there takes `combat.splash` **immediately**, at the gap it was
   at when the fuse fired, and is handed to the burst as `skip`.  `blasts` runs a
@@ -492,15 +501,15 @@ frontend/
   first seen).
   `ai.intercept(world, dt)` is the same step as a standalone pass, for a mode
   whose hulls do not fight.
-* **The range has a missile-defence post** (`modes/range/interceptor.py`): one
+* **The range has a missile-defence post** (`Modes/Range/Interceptor.cs`): one
   blue AI mech at `(1550, 2250)` with a 30 mm only, running `ai.intercept` and
   none of the ground AI - it never shoots at the pilot and never drives, and it
-  comes back 5 s after being destroyed.  `tools/intercept_check.py` fires every
+  comes back 5 s after being destroyed.  `--check intercept` fires every
   missile type at it and prints the outcome per round, read out of the server
   log (`missile N took X (prox Y m) - hp A -> B`, `intercept: ... round N shot
   down at ...` - both DEBUG, the tool raises those loggers itself).  Measured:
   34 of 36 rounds fused and shot down (two got through).
-* **A guided round flies an airframe, it does not follow a curve** (`flight.py`).
+* **A guided round flies an airframe, it does not follow a curve** (`Core/Flight.cs`).
   The top-attack missile is a point mass with an angle of attack: guidance demands
   a lateral acceleration, `CL = m·a/(qS)` capped at `cl_max` is what the airframe
   can make of it, the nose leads the velocity by `α = CL/cl_α`, and the drag polar
@@ -520,10 +529,10 @@ frontend/
   (`tgt_mem` / `tgt_vel`) belong to the seeker and never change the wire.
   Its `life` is a **battery**: at zero `projectiles` calls
   `impact` and the warhead goes off where the round happens to be, which is what
-  puts the range ceiling at ~4.3 km, not the motor.  `tools/top_attack_trace.py`
-  is the harness: it flies the same model headless, prints the envelope table and
-  draws the plan view / profile / speed-AoA plot.
-* **The seeker remembers, and the guidance does not care** (`seeker.py`).  A
+  puts the range ceiling at ~4.3 km, not the motor.  (The headless envelope
+  harness - `top_attack_trace.py` - went with the Python backend; the range's
+  own `MECH_RECORD` trace and `--check range` still fly the same model.)
+* **The seeker remembers, and the guidance does not care** (`Core/Seeker.cs`).  A
   top-attack round's lock is not a hull id, it is a *point* (`tgt_mem`, the
   deck at `defs.AIM_ROOF` = 92 % of the hull's height) and the velocity that
   hull had the last time it was seen (`tgt_vel`, copied from the hull's `vel` -
@@ -561,14 +570,15 @@ frontend/
   pilot `mortality` credits a hull's kill money to and addresses a missile's
   shot-down cue to - a hit that kills is exactly the one that has to be written
   down.
-* **Damage is not a system.** `combat.py` is a library next to `ballistics.py`
-  and `shop.py`: a round writes hp where it lands, inside the system that fired
+* **Damage is not a system.** `Core/Combat.cs` is a library next to
+  `Core/Ballistics.cs` and `Core/Shop.cs`: a round writes hp where it lands,
+  inside the system that fired
   it. There is deliberately no damage queue - a system owns state, and damage
   owns none. The consequence to remember: **hp a system reads is the hp at its
   own stage**, and a hull at 0 is still in the record until `mortality` runs
   (last of the damage chain), which is why `combat.apply` also zeroes `vel` and
   `vel_cmd` - a hull at 0 stops where it is instead of driving on for a stage.
-* **Death has one judge.** `systems/mortality.py` asks one question for every
+* **Death has one judge.** `Mortality.cs` asks one question for every
   unit, `hp <= 0`, and then follows the type's own recipe from
   `defs.UNIT_DEFS[...]["death"]`: `blast=(ed, er)` burst, `loud` for the cue,
   `wreck=(etype, seconds, wire kind)`, `ends_match` for the base. The three
@@ -600,7 +610,7 @@ frontend/
   `hud._messages` resolves `fac` through `FACTION_COLORS` and draws a dark
   plate under the line, since 12px monospace in three colours is unreadable
   straight off a bright cloud.
-* **An explosion is an entity** (`systems/blasts.py`). Whoever wants one - a
+* **An explosion is an entity** (`Blasts.cs`). Whoever wants one - a
   round landing, a proximity fuse, a wreck - only calls `blasts.spawn`, and the
   one implementation of area damage reads it a stage later: `blast_power` =
   `[ed, er]`, `blast_t` the fuse, `blast_friendly` (a weapon burst spares its
@@ -618,12 +628,12 @@ frontend/
   hull, an arm at 0 loses its ammunition, and a round into an arm that is
   already gone goes inwards. `MOD_TORSO` is hit geometry only - it charges the
   hull, and column 1 of the wire `hp` is always 0.
-* **Debris** — `systems/mortality.py` leaves an inert entity behind: a corpse
+* **Debris** — `Mortality.cs` leaves an inert entity behind: a corpse
   (`ETYPE_CORPSE`, 5 s) for infantry, a smoking hulk (`ETYPE_DEBRIS`, 10 s,
   original model in snapshot `flags` bits 4-5) for vehicles and mechs. They are
   spawned without the `unit` tag, so `world.units()` (rounds, damage, AI,
   capture) never sees them; only `world.all_units()` (the snapshot) does.
-* **Smoke** (`systems/smoke.py`) — a pull throws a lattice of `canister`
+* **Smoke** (`Smoke.cs`) — a pull throws a lattice of `canister`
   entities that closes the whole front hemisphere (14 of them, 50 m out); each
   one trades its tag for `smoke` + `smoke_r` + `smoke_t`, a 45 m sphere that
   bursts open fast and then creeps (`_radii(age)`) for its 5 s life. The puffs
@@ -631,7 +641,7 @@ frontend/
   what is behind it and costs nothing to blend. It has no
   `unit`/`faction`/`etype`, so nothing can target or hit it. What it does do is
   **hide**, and it hides through the same door a tree canopy does: `systems/
-  sight.py` asks `smoke.blocks(world, a, b)` for it, so the IR lock, the AI's
+  `Systems/Sight.cs` asks `Smoke.blocks(world, a, b)` for it, so the IR lock, the AI's
   lookout and a missile's seeker all lose the hull behind a screen - exactly as
   they lose one behind a stand of trees. It travels in its own snapshot block.
 * **Lanes** — `world.lanes` counts from the red base, `world.lanes_rev` from
@@ -688,9 +698,9 @@ frontend/
   aimed at, because the acceptance radius drops a corner while the hull is still
   ~12 m short of it.
   The gunner keeps the turret; the hull points where it drives, so `yaw` is not
-  the AI's to turn for a vehicle. `tools/vehicle_trace.py` drives one round the
+  the AI's to turn for a vehicle.  (The trace tool went with the Python backend.)
   range and draws the trace if you want to see the result.
-* **Terrain** (`terrain.py`) — 1000x1000 tiles of 16 m, heights on 4 m steps.
+* **Terrain** (`Core/Terrain.cs`) — 1000x1000 tiles of 16 m, heights on 4 m steps.
   Three extra bitmaps travel with the map: `roads` (direction bits `ROAD_N/E/
   S/W` for a straight, half-tile strip plus `ROAD_D_WS`/`ROAD_D_NE` for the two
   45° half-tile pieces the diagonal lanes alternate between) and `walls`
@@ -712,7 +722,7 @@ frontend/
   Keep it scalar and inline (`_spans` unrolled into the loop, `sample()` caching
   the previous tile's four corner heights, the tree test hoisted out of
   `_trunk_hit`/`_canopy_hit`).  Vectorising a *single* ray is a trap: five
-  samples are cheaper in plain Python than in a dozen small numpy calls (tried,
+  samples are cheaper inline than in a dozen small array operations (tried,
   measured 10× slower).  `ground_hits_many` is the other side of the same coin -
   many rays, one batch.
 * **Trees are trunks for physics, canopies for sight.** A tree/forest tile
@@ -736,14 +746,14 @@ frontend/
   16 m cell - hid hulls standing in the open beside a stand, so it is gone.
   Never make a tree tile block a round or a hull, and never give a canopy a
   bullet collision: the plan is trunk-solid, leaves-see-through.
-* **There is one line of sight, and it is `systems/sight.py`.** `sight.clear` /
+* **There is one line of sight, and it is `Sight.cs`.** `sight.clear` /
   `sight.why` answer "does anything cut a->b" out of the two halves that hide
   things: the static field (`terrain.los` - ground, buildings up to the roof,
   tree canopies) and the smoke (`smoke.blocks` - deployed puffs, `why` returns
   "smoke"/"terrain" for the seeker's log). A tree hides what stands behind it
   for good, a puff hides it for five seconds and is gone: nothing else differs
   between them, so nothing pairs the two checks up on its own. Every eye goes
-  through it - the AI's `_sees`, the player's IR lock (`locking.py`, which used
+  through it - the AI's `_sees`, the player's IR lock (`Systems/Locking.cs`, which used
   to ask the field only and so let a hull be locked straight through a screen
   of smoke) and the missile seeker. `map.js` mirrors the same rule for the HUD
   (`MapData.sightAt` + `sightBlocked`, canopy and puffs); the pre-aim box is
@@ -789,7 +799,7 @@ frontend/
   *camera* is the local view (an instant sight) sitting on the server-side
   eye.  `defs.MECH_SIGHT_Z` travels in the init payload (`mech.sight_z`) so
   `game._sightEye` mounts the eye where `mathutil.sight_eye` does.
-* **Debug messages** are accepted only when `MECH_DEBUG=1` (see `main.py`),
+* **Debug messages** are accepted only when `MECH_DEBUG=1` (see `Net/Server.cs`),
   except `respawn`, which is always allowed. All of them are sent from the
   console as `g.net.send({t: '...', ...})`; the payloads are in
   [Debug knobs](#debug-knobs) below.  This flag gates the *console*, not the
@@ -812,7 +822,7 @@ menu** (top right of the HUD, needs a free pointer: press `ESC`):
 | `debug_tp` | `dist` (m, default `300`), `angle` (rad, relative to your yaw) | teleports the mech forward along its yaw |
 | `debug_hurt` | `module` (`0` hull / `1` torso, which charges the hull pool / `2` left arm / `3` right arm, default `1`), `amount` (default `100` = a whole hull), `base` (damage to the *enemy* command base) | wounds the player or the enemy base |
 
-Entity types for `debug_spawn` come from `defs.py`: `1` rifleman, `2` AT
+Entity types for `debug_spawn` come from `Core/Defs.cs`: `1` rifleman, `2` AT
 rifleman, `3` APC, `4` mech, `5` command base, `6` civilian, `9` bunker.
 
 ```js
@@ -1016,20 +1026,26 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
 ## Build
 
 ```bash
-cd frontend && npm install && npm run build      # -> backend/assets/
+cd frontend && npm install && npm run build      # -> assets/
 ./dev.sh build                                    # same, with a shared npm cache
 ```
 
-* Webpack production build, output `backend/assets/{bundle.js,index.html}`,
+* Webpack production build, output `assets/{bundle.js,index.html}`,
   gitignored. The server serves them at `/` and `/static/*`.
 * Frontend changes need **only** a rebuild — the server reads the files per
   request, no restart.
 * Backend changes need a **server restart** (`./dev.sh stop && ./dev.sh start`,
-  ~8 s). `netcode.STATIC` (map + definitions) is built once at import time.
-* Python: `>=3.10`, venv at `.venv`
-  (`uv venv && uv pip install -r backend/pyproject.toml`).
-* No test suite, no linter, no type checker. Verify by running the game and
-  watching `/tmp/mech-server.log` plus the browser console.
+  ~8 s). `Netcode.STATIC` (map + definitions) is built once at startup - which
+  also means the 16 km map costs ~0.7 s to generate on every start.
+* Server: .NET 10 SDK, no third-party packages.  Always build through
+  `./dotnet.sh` - a bare `dotnet build` dies on a read-only `$HOME` in this
+  sandbox (`dotnet.sh` points the CLI home, the NuGet cache and
+  `XDG_RUNTIME_DIR` at `.dotnet_tmp/`, which is gitignored and survives between
+  sessions).
+* No test suite, no linter. `./dotnet.sh build` must be clean (zero warnings -
+  `Nullable` is on) and every change is verified by running the game and watching
+  `/tmp/mech-server.log` plus the browser console, or by one of the `--check`
+  harnesses above.
 * **Logging: a weapon-level line is DEBUG, never INFO.** A round bursting
   (`mech.prox: prox fuse: ...`), a seeker losing or retaking its lock
   (`mech.smoke`), a missile taking a hit and being shot down
@@ -1037,8 +1053,9 @@ cd frontend && npm install && npm run build      # -> backend/assets/
   measured, one 20 minute scripted round wrote 693 lines / 148 KB, 95 % of it
   the fuse line — so they are `log.debug` and a normal run writes none of it.
   INFO is for the rare, once-a-session events; DEBUG is where anything that
-  fires per round, per hit, per lock or per tick belongs.  `main.py` sets the
-  level from `MECH_LOG_LEVEL` (default `INFO`) and uvicorn stays at `info`.
+  fires per round, per hit, per lock or per tick belongs.  `Net/Server.cs` sets the
+  level from `MECH_LOG_LEVEL` (default `INFO`) in `Net/Server.cs`; anything
+  Microsoft logs is filtered out so the file stays readable.
 * **`dev.sh` does not start the server with debug logging**: it passes
   `MECH_LOG_LEVEL="${MECH_LOG_LEVEL:-INFO}"`, so the per-weapon lines are off.
   Turn them on deliberately, for the run that needs them:
@@ -1049,140 +1066,28 @@ cd frontend && npm install && npm run build      # -> backend/assets/
   `debug_trees`, `debug_restart`) and for the DEBUG block of the settings menu;
   `dev.sh` sets it to 1 and that has nothing to do with what is written to the
   log.
-* **`tools/gunnery_check.py`** is the sight/hull/arm check: headless on the
-  range map it flicks the view 90 degrees and measures the hull rate, the arm
-  rate, the stop at the elevation limit, the eye's place on the pivot (turning
-  the sight must not move it, turning the hull must walk it round the 0.62 m
-  arc) and, by firing mid-flick, that a round leaves along the *barrel* rather
-  than along the cross.  Every line it prints is a number with what it should
-  be.
+* **The headless harness is `Harness/`** (`./dotnet.sh run -- --check ...`), the
+  replacement for the Python tools the port came from.  It drives a real `World`
+  in-process - no socket, no wall clock - so a check is a number, not a session:
   ```bash
-  .venv/bin/python tools/gunnery_check.py        # -v for a per-tick trace
+  ./dotnet.sh run -- --check battle --minutes 12   # scripted battle, per-minute census
+  ./dotnet.sh run -- --check range  --minutes 2    # range world, a pilot firing
+  ./dotnet.sh run -- --check hit                   # every weapon vs a parked APC
+  ./dotnet.sh run -- --check intercept             # every missile vs the defence post
+  ./dotnet.sh run -- --check diag --minutes 2      # what a few AI hulls are doing
   ```
-* **`tools/replay.py` is the one automated check there is.** It drives a
-  scripted 30 s battle (900 ticks: both weapons, smoke pulls, debug spawns,
-  forced kills, AI waves), records per-tick aggregates — entity counts, total
-  hp, the sum of every position and velocity, money / kills / deaths — and
-  compares them with `tools/fixtures/replay_battle.json`. The first raiding
-  party is brought forward into the window, so a round of `raids.py` (plan,
-  march, fight, die) is covered as well, and a separate assertion checks that a
-  raider's route starts under it, ends at the town it was sent to, stays on its
-  lane, and touches no building tile. It is tolerant by
-  design: float sums may drift 1 %, counts may be off by one. Run it after
-  anything that touches `ecs.py`, `systems/` or `terrain.py`; `--save` rewrites
-  the fixture when a change is meant to move the numbers.  Three self-checks run
-  before the battle and assert instead of comparing
-  (`_cache_after_growth`, `_damage_model`, `_death_blast`, `_raid_plan`):
-  `_damage_model` is the hp layout - one pool per hull, `hp <= 0` kills, the mech
-  is the only hull with `arm_hp` and losing an arm costs its ammunition - and
-  `_death_blast` is the wreck going up, which needs two `world.update` calls
-  because the kill and the burst it leaves are deliberately a tick apart, and
-  `_speed_invariant` is the one-velocity rule: every mover owns `pos` + `vel`,
-  every hull owns `vel_cmd` too, and `vel` is the motion rather than the order
-  (a mech told to run flat out still leaves the mark at `MECH_ACCEL`).
-  ```bash
-  .venv/bin/python tools/replay.py          # compare
-  .venv/bin/python tools/replay.py --save   # re-baseline
-  ```
-* **`tools/profile_battle.py`** is where "what does a tick cost" is answered:
-  it drops the 30 Hz sleep and runs a scripted battle as fast as the CPU allows,
-  then prints wall time, ticks/s, every entry of `world.systems` (total, mean per
-  tick, worst tick), the netcode cost per tick and a per-minute timeline - and
-  with cProfile on, the function ranking too (inflated ~1.7-2.5×, so only read it
-  for the order).  `--no-profile` is the honest read; `--minutes 20` is the
-  meaningful window, because the field only matures after ~10 minutes and three
-  of the four optimisations in `doc/profiling_results.md` scale with it.
-  ```bash
-  .venv/bin/python tools/profile_battle.py --minutes 5 --no-profile
-  .venv/bin/python tools/profile_battle.py --minutes 5,10,20 --out /tmp/prof.json
-  # an A/B needs a clean checkout, not a stash of the work in progress.
-  # `backend/assets` is gitignored, so make it or `server.main` refuses to import;
-  # the worktree has no venv of its own, so name the main one.
-  git worktree add /tmp/mech-base HEAD && mkdir -p /tmp/mech-base/backend/assets
-  cd /tmp/mech-base && /path/to/mech/.venv/bin/python tools/profile_battle.py \
-      --minutes 20 --no-profile --out /tmp/prof_base.json
-  ```
-* **`tools/raid_trace.py`** runs a whole battle headless and draws the raiders:
-  the **force gradient** of both armies, every raider's planned route (dashed)
-  against the trace it actually drove (solid), the capture rings it was sent to
-  hold, the towns changing hands and an × where a hull died.  Per raider it
-  prints distance, time, woods crossed, mean enemy exposure against what the
-  straight line would have been, deviation off its own route, time in a fight,
-  time holding, replans/rescues and when it was destroyed - the four things a
-  raid is judged on (target, movement, fighting, losses).  It also writes the
-  per-sample trace as CSV.  Pass `--bbox X0,Z0,X1,Z1` to plot one corner of the
-  map at street scale.
-  ```bash
-  .venv/bin/python tools/raid_trace.py                       # -> /tmp/raid_trace.{svg,csv}
-  .venv/bin/python tools/raid_trace.py --minutes 20 --seed 7 --out /tmp/r7
-  .venv/bin/python tools/raid_trace.py --bbox 9600,10000,14000,14200
-  # the SVG is hand-written: render it with headless chrome if you want a PNG
-  google-chrome --headless --screenshot=/tmp/r.png --window-size=1180,1320 \
-      --user-data-dir=/tmp/chrome-prof file:///tmp/raid_trace.svg
-  ```
-* **`tools/intercept_check.py`** fires every missile type at the range's
-  defence post and reads the outcome out of the log: how much health the 30 mm
-  took off each round, at what fuse gap, and whether it came down.  It is the
-  measurement behind the interception numbers - run it after touching the fuse,
-  the radar constants or the AI's intercept branch.
-  ```bash
-  .venv/bin/python tools/intercept_check.py              # every type, two ranges
-  .venv/bin/python tools/intercept_check.py -v           # and every log line
-  ```
-* **`tools/gun_report.py`** is where the 105 mm cue's numbers come from: point it
-  at a recording (a video is fine, ffmpeg pulls the audio out) and give it the
-  shots' times, and it prints each one's third-octave spectrum per window, its
-  total envelope out to 2.5 s and, per band, when it peaks and when it is 6 and
-  20 dB down.  `--synth` renders the same table for the cue as `HEAVY_REPORT`
-  describes it, so the two are comparable without a browser.  Tuning a weapon
-  sound by ear is guessing: a real report is five events (crack, cough, boom,
-  rumble, tail) tens of milliseconds apart, and the gaps are the weight.
-  ```bash
-  .venv/bin/python tools/gun_report.py plan_imgs/m1fire.mkv --at 90.43,114.90
-  .venv/bin/python tools/gun_report.py plan_imgs/m1fire.mkv --at 114.90 --synth
-  ```
-* **`tools/profile_battle.py`** profiles the simulation instead of playing it:
-  it drops the 30 Hz sleep and runs a battle as fast as the CPU allows,
-  timing every entry of `world.systems` plus the grid build and the rest of
-  `World.update` (total, mean per tick, worst tick), the netcode the loop also
-  pays for (one snapshot every `SNAP_EVERY`, one meta per pilot every
-  `META_EVERY`), a per-minute timeline of the entity census, and an optional
-  cProfile breakdown.  Two scripted pilots fly it, so every duration replays
-  the same battle.  `backend/server/profiler.py` is the door for the *inside*
-  of a system - a stage calls `PROBE.start()` / `PROBE.end(name, t0)`, and
-  `MECH_PROBE=1` turns those into a per-name accumulator (unset they are two
-  no-ops).  No call site uses it yet; that is the next pass.
-  ```bash
-  .venv/bin/python tools/profile_battle.py --minutes 5
-  .venv/bin/python tools/profile_battle.py --minutes 5,10 --no-profile --out /tmp/p.json
-  ```
-* **`tools/top_attack_dive.py`** is the tuning harness for the missile's dive:
-  it reads a range trace (`MECH_RECORD`, `modes/range/record.py`), re-flies
-  every recorded shot through `flight.step` off the state the real round had,
-  and reports the miss distance per shot under a candidate `pn_n` / `pn_r` /
-  `pn_v`.  Two inputs are worth comparing, and they are the whole argument for
-  the velocity refactor: `--vel recorded` is what the *old* engine handed
-  proportional navigation (a hull's velocity *command*, up to 50 m/s the instant
-  a pilot nudged the stick) and `--vel truth` the velocity it was really moving
-  at.  Measured on five dives at a hull that mostly stood still: 8-36 m misses
-  fed the command, 0.7-2.8 m fed the truth, and no `pn_n`/`pn_r` can out-vote a
-  50 m/s phantom.  `--sweep` prints the grid for both.
-  ```bash
-  .venv/bin/python tools/top_attack_dive.py --sweep
-  .venv/bin/python tools/top_attack_dive.py --pn-n 2 --pn-r 800 -v
-  ```
-* **`tools/vehicle_trace.py`** drives one APC round a route on the range map
-  (a 100 m square or the 3.7 km winding road) and writes an SVG - way points,
-  the rounded reference route, the driven trace coloured by speed, a velocity
-  vector every few dozen metres - plus a per-tick CSV. It steps `ai._advance_route`
-  by hand because the range runs no AI. Useful whenever the vehicle model or the
-  route follower changes: it prints the lap time, the mean speed, the worst
-  deviation off the route and the speed through the corners.
-  ```bash
-  .venv/bin/python tools/vehicle_trace.py                    # -> /tmp/apc_trace.{svg,csv}
-  .venv/bin/python tools/vehicle_trace.py --route winding --out /tmp/w
-  ```
-
+  `MECH_PERF=1` on the battle check runs it without the per-tick event scan and
+  prints the per-minute cost: on a 12 minute battle it is **1.2 ms/tick**
+  (0.2 ms of it the 15 Hz wire) against the Python server's 11.5 ms/tick, i.e.
+  ~9x, and the curve is flat where Python's climbs to 18 ms as the field matures.
+  Every check ends with `ecs.validate()`, so bookkeeping that a value comparison
+  would not catch (a row pointing past its buffer) fails the run.
+* **`tools/gun_report.py`** is the weapon-report analysis (it reads a recording
+  with ffmpeg and prints the third-octave spectrum per window; `--synth` renders
+  the cue `HEAVY_REPORT` in `audio.js` describes).  It is the one Python script
+  left, it needs `numpy` in `.venv`, and it never touches the server.
+  `tools/smoke_lock_test.js` is a browser-console driver for the seeker's smoke
+  A/B test.
 ## Run
 
 `dev.sh` is the normal entry point. It starts the server inside a detached
@@ -1206,12 +1111,12 @@ once; pressing `ENTER` in game must not send another `join`.
 `./dev.sh range` starts a second world (`run.py --range`, i.e. `MECH_RANGE=1`)
 on <http://127.0.0.1:8011>: a 4 km test map, one 200 m hill NW, plains
 elsewhere, 12 blue APC targets (2 patrolling) that respawn 3 s after dying, one
-blue missile-defence post (`modes/range/interceptor.py`, 5 s respawn) and a
+blue missile-defence post (`Modes/Range/Interceptor.cs`, 5 s respawn) and a
 ring of per-pilot spawn berths. **The range's own fixtures never shoot at the
 ground** - the targets and the post fire at nothing, so it is the place to test
 ballistics or look at a model up close. A hull a pilot drops there himself
 (`debug_spawn`) is the exception: it is tagged `range_drone`
-(`Mode.console_spawn_extra`) and `modes/range/test_ai.py` runs `ai.run(hulls=)`
+(`Mode.console_spawn_extra`) and `Modes/Range/TestAi.cs` runs `ai.run(hulls=)`
 over exactly those hulls, so a spawned red mech picks its own fights with the
 blue targets - which is how an AI crew's missile arm gets watched without
 waiting for a battle.  The tag, not a fixture list, is the test: a tool's
@@ -1231,7 +1136,7 @@ such a missile is in the air and reads the event stream, not the log.
 Log: `/tmp/mech-range.log`, overrides `MECH_RANGE_PORT` (8011), `MECH_RANGE_LOG`.
 Product notes: `doc/product/range.md`.
 
-**The range records the top attack** (`modes/range/record.py`, the range's post
+**The range records the top attack** (`Modes/Range/Record.cs`, the range's post
 system, on by default there): one JSONL line a tick to `MECH_RECORD_PATH`
 (`/tmp/mech-range-trace.jsonl`, `MECH_RECORD=0` turns it off), carrying each
 `top` round's state under the component names it lives in - `pos`, `vel`,
@@ -1262,14 +1167,21 @@ Equivalent raw tmux invocation:
 
 ```bash
 tmux new-session -A -d -s mech \
-  "cd $PWD/backend && MECH_DEBUG=1 .venv/bin/python run.py --port 8010 2>&1 | tee /tmp/mech-server.log"
+  "cd $PWD && MECH_DEBUG=1 ./dotnet.sh run -- --port 8010 2>&1 | tee /tmp/mech-server.log"
 ```
 
 Manual run without tmux (add `MECH_LOG_LEVEL=DEBUG` for the per-weapon lines):
 
 ```bash
-cd backend && MECH_DEBUG=1 ../.venv/bin/python run.py --port 8010
+MECH_DEBUG=1 ./dotnet.sh run -- --port 8010
 ```
+
+`dotnet.sh` is not a convenience wrapper around a plain `dotnet` call: dotnet
+writes first-run sentinels into `$HOME` and a `mkdtemp` under `XDG_RUNTIME_DIR`
+before it reads the project, and in this sandbox both are read-only, so a bare
+`dotnet build` fails with `EROFS` before it compiles anything.  The script
+points `DOTNET_CLI_HOME`, `NUGET_PACKAGES`, `XDG_RUNTIME_DIR` and `TMPDIR` at
+`.dotnet_tmp/` (gitignored) and runs from the repo root.
 
 ### Inside a sandboxed agent shell
 
@@ -1414,32 +1326,31 @@ for (let k = 0; k < 6; k++) {
   is written in Chinese; a Chinese document quotes UI strings and identifiers
   verbatim in English rather than translating them.
 * The rule is about the *language of the file*, never about its name: a
-  `README.md` under `doc/` is Chinese, a `docstring` in `defs.py` is English,
+  `README.md` under `doc/` is Chinese, an English `///` comment is English,
   and the header comment of a tool in `tools/` is English like the code it
   documents. `AGENTS.md` itself stays English - it is the agent's working
   notes, not a document.
-* Minimal, scoped edits: match the surrounding style (numpy vectorised
+* Minimal, scoped edits: match the surrounding style (flat arrays, batched
   systems, short helper functions, comment density of the file you touch).
 * Units are metres and seconds; the map is 16 km square, the clock is 30 Hz.
-* **The product version lives in `backend/pyproject.toml`** (`frontend/package.json`'s
+* **The product version lives in `MechServer.csproj`** (`frontend/package.json`'s
   own `version` is a private manifest, not the product's - never read it). Its
-  `version = "1.0.0"` is stamped into the boot page at build time:
-  `frontend/webpack.config.js` parses that file (`smol-toml`, a build-time dev
-  dependency - a regex is not a TOML reader and a `version` key in another
-  table must never win), fails the build if the key is missing and hands the
-  string to `HtmlWebpackPlugin` as `templateParameters`,
-  which fills the `<p class="ver">` line under the lobby's subtitle (on the
-  range server too). So the number a player reads on the start page is the one
-  the build actually read - a stale `backend/assets` shows a stale version,
-  which is exactly the point. **Every feature change bumps the second number
-  (`1.0.0` -> `1.1.0` -> `1.2.0`); the third stays 0** - it is reserved, not
-  another counter, and internal refactors with no player-visible effect do not
-  bump at all. A bump is part of the change, in the same commit as the
-  `doc/product/` entry, so a build, a changelog line and a screenshot all name
-  the same version.
+  `<Version>` is stamped into the boot page at build time:
+  `frontend/webpack.config.js` reads that one property (a real read of
+  `<Version>`, not a regex that could pick up a `<PackageReference>`'s version),
+  fails the build if it is missing and hands the string to `HtmlWebpackPlugin`
+  as `templateParameters`, which fills the `<p class="ver">` line under the
+  lobby's subtitle (on the range server too). So the number a player reads on
+  the start page is the one the build actually read - a stale `assets` shows a
+  stale version, which is exactly the point. **Every feature change bumps the
+  second number (`1.5.0` -> `1.6.0` -> `1.7.0`); the third stays 0** - it is
+  reserved, not another counter, and internal refactors with no player-visible
+  effect do not bump at all. A bump is part of the change, in the same commit as
+  the `doc/product/` entry, so a build, a changelog line and a screenshot all
+  name the same version.
 * Tuning values (damage, rpm, range, speeds, wave interval, capture time) live
-  in `defs.py` and at the top of the mode systems (`modes/battle/waves.py`,
-  `modes/range/targets.py`) — prefer changing them there over editing the code
+  in `Core/Defs.cs` and at the top of the mode systems (`Modes/Battle/Waves.cs`,
+  `Modes/Range/Targets.cs`) — prefer changing them there over editing the code
   paths.
 * A weapon is a real projectile: keep `kind` semantics
   (`bullet`/`rocket`/`saclos`/`top`) intact when adding or retuning one.

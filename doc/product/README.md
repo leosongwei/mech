@@ -1,7 +1,7 @@
 # MECH 产品文档
 
 > 面向玩家的功能说明与数值台本。**代码是唯一事实来源**，本目录是它的中文镜像：
-> 数值以 `backend/server/defs.py`、`systems/spawner.py` 为准，界面文案以
+> 数值以 `Core/Defs.cs`、`Systems/Spawner.cs` 为准，界面文案以
 > `frontend/src/hud.js`、`index.html` 为准。
 
 ## 文档索引
@@ -42,7 +42,7 @@
 3. 登记顺序：先改对应页面（`flow.md` / `screens.md` / `units.md` / `weapons.md`），
    再在 `CHANGELOG.md` 顶部加一条，格式：
    `## YYYY-MM-DD · 一句话标题` + 变更点列表 + 涉及文件。
-4. 只改代码不改文档 = 未完成。数值页必须与 `defs.py` / `spawner.py` 保持一致，
+4. 只改代码不改文档 = 未完成。数值页必须与 `Core/Defs.cs` / 各模式系统保持一致，
    改数值时同一提交里同步本文档。
 5. 纯内部重构（不改玩家可见行为）不必登记，但若顺带改了行为就按第 2 条处理。
 6. 文档用中文；界面上的英文原文（如 `MECH DESTROYED`、`REARM / REPAIR`）

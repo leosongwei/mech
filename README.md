@@ -1,19 +1,28 @@
 # MECH — 16 km Front
 
-A browser based mech shooter: a numpy-ECS Python server, a WebGL2 client with
-indirect (multi-draw) instanced rendering, three lanes, two factions and
-physically flown projectiles.
+A browser based mech shooter: a C# (.NET 10 / ASP.NET Core) archetype-ECS
+server, a WebGL2 client with indirect (multi-draw) instanced rendering, three
+lanes, two factions and physically flown projectiles.
 
 ```
 dev.sh                 # start / attach / stop the server (byobu / tmux)
-backend/               # FastAPI + simulation
-  server/ecs.py        # numpy component registry, entity masks, queries
-  server/components.py # every component the game declares
-  server/systems/      # gameplay systems, one module per mechanic
-  server/terrain.py    # 1000x1000 tiles of 16 m -> 16 km square map
-  server/netcode.py    # init payload, binary snapshots, JSON meta
-  server/main.py       # websockets + static files + 30 Hz game loop
-  assets/              # compiled client (webpack output)
+dotnet.sh              # build / run helper (dotnet's own state in .dotnet_tmp/)
+MechServer.csproj      # the server; <Version> is the product version
+Program.cs             # entry point: --host / --port / --range / --check
+Ecs/                   # archetype ECS: an entity's component set is its type
+  Ecs.cs               #   buffers, queries, views, slot/group doors
+  Components.cs        #   every component the game declares
+Core/                  # the shared libraries and the world
+  Defs.cs              #   entity types, weapons, unit stats, mech geometry
+  Terrain.cs           #   1000x1000 tiles of 16 m -> 16 km square map
+  World.cs             #   players, spawning, tick, the system pipeline
+  Combat.cs Ballistics.cs Flight.cs Seeker.cs Shop.cs Grid.cs MathUtil.cs
+Systems/               # gameplay systems, one file per mechanic
+Modes/                 # per-mode rules: Battle (waves, raids), Range
+Net/                   # Netcode.cs: init payload / snapshots / meta
+                       # Server.cs:   websockets + static files + 30 Hz loop
+Harness/               # headless checks: ./dotnet.sh run -- --check battle|range
+assets/                # compiled client (webpack output, gitignored)
 frontend/              # webpack + WebGL2 client
   src/renderer.js      # tiled terrain (near patch + far LOD), roads, instancing
   src/map.js           # client copy of terrain + identical ballistics
@@ -32,10 +41,14 @@ frontend/              # webpack + WebGL2 client
 or manually:
 
 ```bash
-uv venv && uv pip install -r backend/pyproject.toml
-cd frontend && npm install && npm run build
-cd ../backend && ../.venv/bin/python run.py --port 8010
+cd frontend && npm install && npm run build && cd ..
+./dotnet.sh run -- --port 8010                 # battle (16 km map)
+./dotnet.sh run -- --port 8011 --range         # weapon range (4 km test map)
 ```
+
+Needs the .NET 10 SDK.  `dotnet.sh` exists because `dotnet` wants to write
+first-run state into `$HOME`; the script points all of it at `.dotnet_tmp/`
+(gitignored) so a bare `dotnet build` is never needed.
 
 Then open <http://127.0.0.1:8010/>.  The lobby lets you pick a callsign, a side
 (RED / BLUE / AUTO) and the weapon in each arm before you hit **DEPLOY**.
@@ -83,13 +96,17 @@ when 20x squeezes it into a three degree cone.
 
 ## Simulation model
 
-* **ECS.** Every component is a dense numpy array of `(capacity, *shape)`;
-  entities carry a 64-bit mask so `ecs.query("pos", "hp")` is one vectorised
-  test. New mechanics = one new component + one system module.
-* **Systems** (in `World.systems` order): `player_input` → `ai` → `locking` →
-  `weapons` → `movement` → `projectiles` → `spawner`.
-* **Tick** 30 Hz, snapshots 15 Hz as a packed binary blob (64 B/unit, 32 B/round),
-  meta (money, lock progress, towns) at 10 Hz, effects as JSON.
+* **ECS.** An archetype ECS: the group of entities owning exactly the same
+  component set holds one dense, flat `float`/`int`/`byte` buffer per
+  component, and an id resolves to (archetype, row). The component set is the
+  entity's type and never changes, so new mechanics = one new component + one
+  system file.
+* **Systems** (in `World.systems` order): `rearm` → `player_input` → *(mode)*
+  `raids` → `ai` → `gunnery` → `locking` → `smoke` → `weapons` → `movement` →
+  `projectiles` → `proximity` → `blasts` → `mortality` → `economy` → `debris` →
+  *(mode)* `waves`.
+* **Tick** 30 Hz, snapshots 15 Hz as a packed binary blob (80 B/unit, 32 B/round,
+  32 B/smoke), meta (money, lock progress, towns) at 10 Hz, effects as JSON.
   Each socket has its own outbound queue so a stalled client can never stop the
   simulation.
 * **Lobby.** the websocket `join` message carries callsign, side and the two

@@ -1,4 +1,4 @@
-# python
+# python (only tools/gun_report.py needs it: numpy for the audio analysis)
 .venv/
 __pycache__/
 *.py[cod]
@@ -6,8 +6,8 @@ __pycache__/
 # node
 node_modules/
 
-# compiled client (npm run build output, served from backend/assets)
-backend/assets/
+# compiled client (npm run build output, served from /static and gitignored)
+assets/
 
 # logs / scratch
 *.log
@@ -17,3 +17,10 @@ backend/assets/
 # feed is checked in as tools/gun_report.py numbers and audio.js HEAVY_REPORT)
 *.mkv
 *.mp4
+
+# dotnet: CLI home / nuget cache / build output.  The sandbox cannot write
+# $HOME, so every bit of dotnet's own state lives in .dotnet_tmp/ (see
+# dotnet.sh); bin/ and obj/ are the build's.
+.dotnet_tmp/
+bin/
+obj/

@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- The product version.  This file is the single source of truth: the web
+         client's build reads it and stamps it under the lobby's subtitle
+         (`frontend/webpack.config.js`), and the server logs it at boot.  Every
+         feature change bumps the SECOND number; the third stays 0. -->
+    <Version>1.6.0</Version>
+    <AssemblyName>MechServer</AssemblyName>
+    <RootNamespace>Mech.Server</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <TieredPGO>true</TieredPGO>
+    <EnableDefaultCompileItems>true</EnableDefaultCompileItems>
+  </PropertyGroup>
+
+</Project>

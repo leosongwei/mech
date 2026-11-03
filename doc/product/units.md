@@ -1,8 +1,8 @@
 # 单位参数
 
-数据来源：`backend/server/defs.py`（`UNIT_DEFS`、`MECH_HITSPHERES`、`MECH_EYE`、
-`MECH_ARM_MUZZLE`）、`backend/server/mathutil.py`（`unit_spheres`）、
-`backend/server/systems/spawner.py`（编成与上限）。
+数据来源：`Core/Defs.cs`（`UNIT_DEFS`、`MECH_HITSPHERES`、`MECH_EYE`、
+`MECH_ARM_MUZZLE`）、`Core/Mathutil.cs`（`unit_spheres`）、
+`Systems/Spawner.cs`（编成与上限）。
 
 ## 单位总表
 
@@ -247,7 +247,7 @@ AI 机组没有经济系统，不会去换装，所以**出生时按概率抽一
 * 开火条件：武器指向误差小于 `0.14 rad`（APC 用炮塔朝向，其他用车身朝向）；
   **机甲还要再加一条：俯仰误差 < 0.02 rad**——炮管没抬到位前不浪费弹药。
 * 目标距离小于交战距离的 55% 时停车开火，否则边走边打。
-* **AI 机炮拦截导弹**（`systems/ai.py`，同一份代码也给靶场的防御哨位用）：
+* **AI 机炮拦截导弹**（`Systems/Ai.cs`，同一份代码也给靶场的防御哨位用）：
   * **AI 机组只用带引信的武器拦弹**（`prox > 0`，目前只有 **30mm 机炮**）：机枪 /
     火箭巢 / 105mm 的机组看着导弹飞过来也不打，带引信的那条臂还得有弹、没被打掉。
     左臂一律是 30mm，所以**每一台 AI 机甲都会拦**；**AI 开的装甲车不会**（它的

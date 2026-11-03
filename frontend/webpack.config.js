@@ -1,22 +1,24 @@
 const fs = require('fs');
 const path = require('path');
-const { parse } = require('smol-toml');
 const HtmlWebpackPlugin = require('html-webpack-plugin');
 
-// the version is the server's, read once at build time: `backend/pyproject.toml`
-// is the single source of truth for it and the boot page prints what it built.
-// A real TOML parse, not a regex - a `version` key in another table must never
-// be the one that ends up on screen
-const pyproject = path.resolve(__dirname, '../backend/pyproject.toml');
-const version = parse(fs.readFileSync(pyproject, 'utf8')).project?.version;
-if (typeof version !== 'string' || !version) {
-  throw new Error(`webpack.config.js: no [project] version in ${pyproject}`);
+// The version is the server's, read once at build time: `MechServer.csproj` is
+// the single source of truth for it and the boot page prints what it built.  A
+// real XML read of the project's own `Version` property, not a regex over the
+// whole file - a version string in a `<PackageReference>` must never be the one
+// that ends up on screen.
+const csproj = path.resolve(__dirname, '../MechServer.csproj');
+const project = fs.readFileSync(csproj, 'utf8');
+const match = project.match(/<Version>\s*([^<\s]+)\s*<\/Version>/);
+if (!match) {
+  throw new Error(`webpack.config.js: no <Version> in ${csproj}`);
 }
+const version = match[1];
 
 module.exports = {
   entry: './src/main.js',
   output: {
-    path: path.resolve(__dirname, '../backend/assets'),
+    path: path.resolve(__dirname, '../assets'),
     filename: 'bundle.js',
     clean: true,
     publicPath: '/static/',

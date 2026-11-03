@@ -30,6 +30,54 @@ frontend/              # webpack + WebGL2 client
   src/hud.js           # crosshairs, lock box, module health, minimap
 ```
 
+## Install (.NET 10 on Ubuntu 26.04)
+
+The server is a single .NET 10 project with **no third-party packages**, so the
+SDK is the whole dependency (it brings the ASP.NET Core runtime with it):
+
+```bash
+sudo apt update
+sudo apt install -y dotnet-sdk-10.0
+dotnet --list-sdks          # must print 10.0.x
+```
+
+That is the whole install on Ubuntu 26.04, whose archive carries .NET 10 as an
+LTS.  If `dotnet-sdk-10.0` is not found there, or you are on a release whose
+archive is behind, use one of these two instead:
+
+```bash
+# 1. Microsoft's apt feed (replaces any distro dotnet package)
+sudo apt install -y wget gpg
+wget -qO- https://packages.microsoft.com/keys/microsoft.asc \
+  | sudo gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg
+echo "deb [signed-by=/usr/share/keyrings/microsoft-prod.gpg] \
+https://packages.microsoft.com/ubuntu/24.04/prod noble main" \
+  | sudo tee /etc/apt/sources.list.d/microsoft-prod.list
+sudo apt update && sudo apt install -y dotnet-sdk-10.0
+
+# 2. user-local install, no root, no repo (put it on PATH yourself)
+curl -sSL https://dot.net/v1/dotnet-install.sh \
+  | bash -s -- --channel 10.0 --install-dir "$HOME/.dotnet"
+export PATH="$HOME/.dotnet:$PATH"
+```
+
+Only the **SDK** is needed - not the desktop/runtime bundles, not
+`dotnet-aspnetcore-runtime` separately.  Client-side builds want Node.js 20+
+(`frontend/`, `npm install && npm run build`).
+
+`dotnet.sh` is the way to run it here, not a convenience wrapper: `dotnet`
+writes first-run state into `$HOME` (and a `mkdtemp` under `$XDG_RUNTIME_DIR`)
+before it reads the project, so on a box where those are read-only a bare
+`dotnet build` dies with `EROFS`.  The script puts all of it under
+`.dotnet_tmp/` (gitignored) and runs from the repo root:
+
+```bash
+./dotnet.sh build                              # restore + compile
+./dotnet.sh run -- --port 8010                 # battle
+./dotnet.sh run -- --port 8011 --range         # weapon range
+./dotnet.sh run -- --check battle --minutes 5  # headless, no socket
+```
+
 ## Run
 
 ```bash
@@ -46,9 +94,8 @@ cd frontend && npm install && npm run build && cd ..
 ./dotnet.sh run -- --port 8011 --range         # weapon range (4 km test map)
 ```
 
-Needs the .NET 10 SDK.  `dotnet.sh` exists because `dotnet` wants to write
-first-run state into `$HOME`; the script points all of it at `.dotnet_tmp/`
-(gitignored) so a bare `dotnet build` is never needed.
+Everything runs through `./dotnet.sh` (see **Install** above) - a bare
+`dotnet build` is never needed.
 
 Then open <http://127.0.0.1:8010/>.  The lobby lets you pick a callsign, a side
 (RED / BLUE / AUTO) and the weapon in each arm before you hit **DEPLOY**.

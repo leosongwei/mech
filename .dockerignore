@@ -4,7 +4,7 @@
 .github
 .DS_Store
 
-# python
+# python (tools only)
 .venv
 __pycache__
 *.py[cod]
@@ -13,10 +13,23 @@ __pycache__
 node_modules
 frontend/node_modules
 
-# build output: the client stage produces this from source
-backend/assets
+# dotnet: CLI state and build output
+.dotnet_tmp
+bin
+obj
+dotnet.sh
 
-# not needed inside the image
+# compiled client (webpack output)
+assets
+
+# dev shell / formatter
+.direnv
+.envrc
+flake.nix
+flake.lock
+treefmt.nix
+
+# not needed inside the images
 deploy
 doc
 plan_imgs

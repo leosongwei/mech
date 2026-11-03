@@ -352,9 +352,6 @@ public static class Server
             fx = new List<Dictionary<string, object?>>(world.events);
             world.events.Clear();
         }
-        byte[]? fx_all = null;
-        if (fx is not null)
-            fx_all = json(new Dictionary<string, object?> { ["t"] = "fx", ["events"] = fx });
         foreach (var (pid, client) in CONNECTIONS.ToArray())
         {
             if (!world.players.TryGetValue(pid, out var pl)) continue;
@@ -381,13 +378,17 @@ public static class Server
             {
                 // sound is per ear: a bang nobody could hear is not put on the wire
                 var mine = Netcode.hearable(fx, _ear(pl));
-                if (mine.Count == fx.Count)
-                    client.offer("t", fx_all!);       // nothing dropped: the shared message
-                else if (mine.Count > 0)
-                    client.offer("t", json(new Dictionary<string, object?>
-                    {
-                        ["t"] = "fx", ["events"] = mine,
-                    }));
+                if (mine.Count > 0)
+                {
+                    // rounds ride as 12 B rows, words as a dictionary
+                    byte[]? bin = Netcode.fx_bytes(mine, out var words);
+                    if (bin is not null) client.offer("b", bin);
+                    if (words.Count > 0)
+                        client.offer("t", json(new Dictionary<string, object?>
+                        {
+                            ["t"] = "fx", ["events"] = words,
+                        }));
+                }
             }
             if (tick % META_EVERY == 0)
                 client.offer("t", json(Netcode.meta_payload(world, pl)));

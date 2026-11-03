@@ -19,6 +19,10 @@
 //              snapshot (`MAGIC_PING`).  It exists so the clock - and with it
 //              the ack the server judges him by - keeps moving while the pipe
 //              drains.  The client leaves its whole field untouched on one.
+//   fx         the round events (`shot`, `boom`) as 12 B rows under `MAGIC_FX`
+//              - 6 B header + count - plus a JSON text frame for the rare ones
+//              (a kill line, a capture, a seeker losing its lock), filtered per
+//              ear by `hearable`
 //   meta       one JSON text frame per pilot, 10 Hz
 //
 // The JSON tables are public *fields* on the C# side (`WeaponDef.wid`,
@@ -36,6 +40,7 @@ public static class Netcode
     // A hold frame: magic + tick, 8 bytes, no rows at all.  It is what a jammed
     // connection gets instead of a snapshot, so the client's clock (and the ack
     // the server judges him by) keeps moving while the pipe drains.
+    public const uint MAGIC_FX = 0x4D454346;    // "MECF": the round events, as rows
     public const uint MAGIC_PING = 0x4D454350;  // "MECP"
     public const int HEADER = 24;              // magic, tick, eight u16 counts
     // A unit row is as wide as the *kind* of unit needs, not as wide as the
@@ -53,6 +58,11 @@ public static class Netcode
     public const int PROJ_STRIDE = 32;
     public const int SMOKE_STRIDE = 32;
     public const int CONTACT_STRIDE = 6;       // minimap point: x, z, faction, etype
+    // a round leaving / a round landing: kind, wid, id, x, y, z, r, flags.  The
+    // position and the radius stay **float32** - they are floats in the world
+    // and the wire is not the place to start rounding them; what this row saves
+    // is JSON's key names, not the precision of the data.
+    public const int FX_STRIDE = 24;
     public const int CONTACT_EVERY = 8;        // ticks: 3.75 Hz, and that is smooth
     public const float CONTACT_QUANT = 4f;     // metres per unit of the u16 (16 km -> 4000)
 
@@ -223,6 +233,58 @@ public static class Netcode
             }
         }
         return outv;
+    }
+
+    /// <summary>The two fx events that fire dozens of times a second, as rows:
+    /// a round leaving and a round landing.  Eight gatlings are 240 rounds a
+    /// second and every one of them bursts where it lands, so this is 480
+    /// events: as JSON each paid ~68 B, of which ~40 was its own key names
+    /// (`"t":"fx","k":"boom","x":…`).  A row is 24 B: three ids, four floats
+    /// exactly as the world carries them, one flags byte and three zero pad
+    /// bytes.  Nothing about the data is rounded to get here - a float is a
+    /// float.
+    /// Everything else in `fx` is rare - a kill line, a capture, a seeker losing
+    /// its lock - and stays a dictionary (`words`), because words are read by
+    /// people and scripts and there is no rate to save on.</summary>
+    public static byte[]? fx_bytes(List<Dictionary<string, object?>> evs,
+                                   out List<Dictionary<string, object?>> words)
+    {
+        words = new List<Dictionary<string, object?>>();
+        int n = 0;
+        foreach (var ev in evs)
+        {
+            if (ev.GetValueOrDefault("k") is string k && (k == "shot" || k == "boom")) n++;
+            else words.Add(ev);
+        }
+        if (n == 0) return null;
+        var buf = GC.AllocateUninitializedArray<byte>(6 + n * FX_STRIDE);
+        var s = buf.AsSpan();
+        _w32(s, 0, MAGIC_FX);
+        _w16(s, 4, n);
+        int off = 6;
+        foreach (var ev in evs)
+        {
+            if (ev.GetValueOrDefault("k") is not string k) continue;
+            bool shot = k == "shot";
+            if (!shot && k != "boom") continue;
+            s[off + 0] = (byte)(shot ? 1 : 2);          // 1 shot, 2 boom
+            s[off + 1] = (byte)_num(ev.GetValueOrDefault("wid"));
+            // `eid` for a shot (whose muzzle to flash), `proj` for a boom
+            _w16(s, off + 2, (int)_num(ev.GetValueOrDefault(shot ? "eid" : "proj")));
+            _wf(s, off + 4, _num(ev.GetValueOrDefault("x")));
+            _wf(s, off + 8, _num(ev.GetValueOrDefault("y")));
+            _wf(s, off + 12, _num(ev.GetValueOrDefault("z")));
+            _wf(s, off + 16, _num(ev.GetValueOrDefault("r")));
+            s[off + 20] = (byte)((_truthy(ev, "big") ? 1 : 0)
+                                 | (_truthy(ev, "blast") ? 2 : 0)
+                                 | (_truthy(ev, "small") ? 4 : 0)
+                                 | (((int)_num(ev.GetValueOrDefault("arm")) & 3) << 3));
+            s[off + 21] = 0;                    // pad, written - never heap bytes
+            s[off + 22] = 0;
+            s[off + 23] = 0;
+            off += FX_STRIDE;
+        }
+        return buf;
     }
 
     /// <summary>Magic + tick, nothing else: the frame a congested pilot gets.</summary>

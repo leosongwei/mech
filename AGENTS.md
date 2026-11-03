@@ -1015,6 +1015,26 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
   rule instead (`sightPoint`/`groundHit`) - leaves and smoke never stop a
   bullet. Both solvers are mirrored line for line, and the two shapes of canopy
   (ball, cone) have their own.
+* **A bang is 12 bytes, and its words are JSON.** `fx` is two channels since
+  the row work: the events that fire dozens of times a *second* - `shot` and
+  `boom`, i.e. a round leaving and a round landing - ride a binary frame
+  (`MAGIC_FX`, 6 B header + `FX_STRIDE` 24 B a row: kind, wid, id, `pos` and
+  `r` as the float32s the world carries, flags for big/blast/small/arm and three
+  zero pad bytes - **the wire does not round a float**, what it saves is JSON's
+  key names), and everything
+  rare - a kill line, a capture, an intercept, a seeker losing its lock, the
+  tile paint - stays a dictionary in the JSON `fx` message.  Eight gatlings are
+  240 rounds a second and *every* one of them bursts where it lands, so a
+  gatling storm is ~480 events/s: **11.5 kB/s** as rows against **33 kB/s** as
+  JSON, whose key names alone (`"t":"fx","k":"boom","x":…`) were 40 of every
+  68 bytes.  Measured on a real 6-mech fight: 190 events/s, 2.41 kB/s, and the
+  same batch serialised as JSON is 2.9x bigger; over minutes 8..15 of a battle
+  the fx line went 13.9 -> **4.1 kB/s**.  `net.js` dispatches binary frames by
+  magic (`MECH` snapshot, `MECF` fx, `MECP` ping) and rebuilds the events in the
+  shape `game._fx` already speaks, so nothing downstream knows the difference.
+  `hearable` runs *before* the split, so the per-ear filter is unchanged: it
+  drops a `shot`/`boom` under `SOUND_FLOOR`, and the binary frame is built from
+  what survived for that ear.
 * **Sound is not immediate.** Gunfire and explosions go through
   `game._sound(x, y, z, level, play)` -> `game.sounds`, a list of acoustic events
   in the air (emit position, time, source level, 50 s TTL - a 17 km

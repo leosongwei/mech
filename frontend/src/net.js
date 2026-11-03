@@ -1,6 +1,8 @@
 // WebSocket protocol client: compressed init, binary snapshots, JSON meta/fx.
 
+const MAGIC_FX = 0x4d454346;    // "MECF": the round events, as 12 B rows
 const MAGIC_PING = 0x4d454350;  // "MECP": magic + tick only, no rows at all
+const FX_STRIDE = 24;           // kind, wid, id, x, y, z, r, flags (+3 pad)
 const HEADER = 24;              // magic, tick, eight u16 counts
 // A unit row is as wide as its *kind* needs (`Netcode.ROWS`): the classes are
 // mech 74 B, apc 46 B, base 30 B, wreck/bunker 25 B, infantry/civilian/corpse
@@ -56,11 +58,40 @@ export class Net {
           } else if (this.onMessage) {
             this.onMessage(msg);
           }
+        } else if (message_is_fx(ev.data)) {
+          this._fx_rows(ev.data);
         } else {
           this._snapshot(ev.data);
         }
       };
     });
+  }
+
+  // A round leaving or landing, off the binary fx frame: 12 B a row, twelve
+  // hundred bytes for a whole gatling storm where JSON paid 68 B a bang.  The
+  // events are rebuilt in the shape `game._fx` already speaks, so nothing
+  // downstream knows the difference.
+  _fx_rows(buf) {
+    const dv = new DataView(buf);
+    const n = dv.getUint16(4, true);
+    const evs = new Array(n);
+    let off = 6;
+    for (let k = 0; k < n; k++) {
+      const kind = dv.getUint8(off);
+      const wid = dv.getUint8(off + 1);
+      const id = dv.getUint16(off + 2, true);
+      const x = dv.getFloat32(off + 4, true);
+      const y = dv.getFloat32(off + 8, true);
+      const z = dv.getFloat32(off + 12, true);
+      const r = dv.getFloat32(off + 16, true);
+      const fl = dv.getUint8(off + 20);
+      evs[k] = kind === 1
+        ? { t: 'fx', k: 'shot', x, y, z, wid, eid: id, arm: (fl >> 3) & 3 }
+        : { t: 'fx', k: 'boom', x, y, z, wid, proj: id, r,
+            big: fl & 1, blast: (fl >> 1) & 1, small: (fl >> 2) & 1 };
+      off += FX_STRIDE;
+    }
+    if (this.onFx) this.onFx(evs);
   }
 
   _snapshot(buf) {
@@ -269,6 +300,10 @@ export class Net {
   send(obj) {
     if (this.ws && this.ws.readyState === 1) this.ws.send(JSON.stringify(obj));
   }
+}
+
+function message_is_fx(buf) {
+  return buf.byteLength >= 6 && new DataView(buf).getUint32(0, true) === MAGIC_FX;
 }
 
 function wrapPi(a) {

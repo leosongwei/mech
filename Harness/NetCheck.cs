@@ -120,14 +120,25 @@ public static class NetCheck
             {
                 long q0 = System.Diagnostics.Stopwatch.GetTimestamp();
                 var mine = Netcode.hearable(fx, ear);
-                // exactly `Server.broadcast`: the shared payload when nothing was
-                // dropped, a rebuilt one for the events this ear keeps
-                byte[] payload = mine.Count == fx.Count
-                    ? Server.json(fx_msg(fx))
-                    : mine.Count > 0 ? Server.json(fx_msg(mine)) : Array.Empty<byte>();
+                // exactly `Server.broadcast`: rounds as binary rows, words as JSON
+                int payload = 0;
+                if (mine.Count > 0)
+                {
+                    byte[]? bin = Netcode.fx_bytes(mine, out var words);
+                    if (bin is not null)
+                    {
+                        payload += bin.Length;
+                        headB[min] += frame(bin.Length);
+                    }
+                    if (words.Count > 0)
+                    {
+                        var w = Server.json(fx_msg(words));
+                        payload += w.Length;
+                        headB[min] += frame(w.Length);
+                    }
+                }
                 cpuFx += System.Diagnostics.Stopwatch.GetElapsedTime(q0).TotalMilliseconds;
-                fxB[min] += payload.Length;
-                headB[min] += payload.Length > 0 ? frame(payload.Length) : 0;
+                fxB[min] += payload;
                 fxEv[min] += fx.Count;
                 fxKeep[min] += mine.Count;
             }

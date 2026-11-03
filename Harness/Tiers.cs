@@ -185,11 +185,11 @@ public static class Tiers
             foreach (var (_, tgt) in tgts)
                 if (tgt >= 0 && !cur.Contains(tgt)) dangl++;
 
-            int raw = Netcode.HEADER + world.all_units().Length * Netcode.UNIT_STRIDE
-                      + world.projectiles().Length * Netcode.PROJ_STRIDE
+            int raw = Netcode.HEADER + world.projectiles().Length * Netcode.PROJ_STRIDE
                       + e.query("smoke_r").Length * Netcode.SMOKE_STRIDE;
-            int tiered = Netcode.HEADER + nu * Netcode.UNIT_STRIDE + np * Netcode.PROJ_STRIDE
-                         + sm * Netcode.SMOKE_STRIDE;
+            foreach (int id in world.all_units()) raw += Netcode.row_bytes(e.uv("etype")[id]);
+            int tiered = Netcode.HEADER + np * Netcode.PROJ_STRIDE + sm * Netcode.SMOKE_STRIDE;
+            foreach (int id in cur) if (e.slot(id).a.has("etype")) tiered += Netcode.row_bytes(e.uv("etype")[id]);
 
             int inn = 0, outn = 0;
             foreach (int id in cur) if (!prev.Contains(id)) inn++;

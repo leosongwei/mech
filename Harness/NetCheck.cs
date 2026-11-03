@@ -107,11 +107,13 @@ public static class NetCheck
                 conB[min] += contacts is null ? 0 : contacts.Length;
                 headB[min] += frame(snap.Length);
                 snapN[min]++;
-                // the frame's own rows, off its header - the field is only the
+                // the frame's own rows, off its header (five class counts, then
+                // rounds, smoke and the minimap block) - the field is only the
                 // pond it was picked from now that the wire is a tier sphere
-                unitSum[min] += BitConverter.ToUInt16(snap, 8);
-                projSum[min] += BitConverter.ToUInt16(snap, 10);
-                smokeSum[min] += BitConverter.ToUInt16(snap, 12);
+                for (int c = 0; c < Netcode.ROWS; c++)
+                    unitSum[min] += BitConverter.ToUInt16(snap, 8 + c * 2);
+                projSum[min] += BitConverter.ToUInt16(snap, 18);
+                smokeSum[min] += BitConverter.ToUInt16(snap, 20);
                 nearSum[min] += (pl.mech >= 0 && e.is_alive(pl.mech)) ? near(world, pl.mech, 2000f) : 0;
             }
             if (fx is not null)
@@ -169,22 +171,24 @@ public static class NetCheck
                           + $"frames {sHead / secs / 1024,4:0.0} kB/s  {100 * sHead / total,3:0}%");
         Console.WriteLine($"   of it the minimap block {sCon / secs / 1024,6:0.0} kB/s ({100 * sCon / Math.Max(sSnap, 1):0}% of the snapshots, "
                           + $"{sCon / Math.Max(1, (int)(secs * 30.0 / Netcode.CONTACT_EVERY)):0} B x {30.0 / Netcode.CONTACT_EVERY:0.00} Hz)");
-        // one snapshot, broken into the rows it is made of: this is where 94 %
-        // of a pilot's download goes, so the split is the whole diagnosis
+        // one snapshot, broken into the rows it is made of: this is where the
+        // download goes, so the split is the whole diagnosis
         double per_snap = sSnaps > 0 ? (double)sSnaps : 1;
         double uRow = (double)sUnits / per_snap, pRow = (double)sProj / per_snap;
         double mRow = (double)sSmoke / per_snap;
-        double snapBytes = uRow * Netcode.UNIT_STRIDE + pRow * Netcode.PROJ_STRIDE
-                           + mRow * Netcode.SMOKE_STRIDE + Netcode.HEADER;
+        double snapBytes = sSnap / per_snap;
+        double uBytes = snapBytes - Netcode.HEADER - pRow * Netcode.PROJ_STRIDE
+                        - mRow * Netcode.SMOKE_STRIDE
+                        - sCon / per_snap;      // the minimap block rides every 8th tick
         double hz = Server.SNAP_EVERY > 0 ? 30.0 / Server.SNAP_EVERY : 30.0;
         Console.WriteLine($"   one frame: {snapBytes / 1024:0.00} kB x {hz:0} Hz  =  "
-                          + $"units {uRow * Netcode.UNIT_STRIDE:0} B x {uRow:0} rows ({100 * uRow * Netcode.UNIT_STRIDE / snapBytes:0}%),  "
+                          + $"units {uBytes:0} B x {uRow:0} rows ({uBytes / uRow:0} B each, {100 * uBytes / snapBytes:0}%),  "
                           + $"rounds {pRow * Netcode.PROJ_STRIDE:0} B x {pRow:0} rows ({100 * pRow * Netcode.PROJ_STRIDE / snapBytes:0}%),  "
                           + $"smoke {mRow * Netcode.SMOKE_STRIDE:0} B x {mRow:0.0}");
         Console.WriteLine($"   one meta: {sMeta / Math.Max(sMetas, 1):0} B x {30.0 / Server.META_EVERY:0} Hz "
                           + $"({100 * sMeta / total:0}% of the wire)");
         double nearUnits = (double)sNear / Math.Max(sSnaps, 1), nearBytes = Netcode.HEADER
-                          + nearUnits * Netcode.UNIT_STRIDE + pRow * Netcode.PROJ_STRIDE
+                          + nearUnits * (uBytes / Math.Max(uRow, 1)) + pRow * Netcode.PROJ_STRIDE
                           + mRow * Netcode.SMOKE_STRIDE;
         Console.WriteLine($"   the frame carries {uRow:0} unit rows; a 2 km sphere alone would carry "
                           + $"{nearUnits:0} ({rate((long)nearBytes, hz, 1024):0} kB/s of the "
@@ -226,12 +230,15 @@ public static class NetCheck
         foreach (float r in new[] { 800f, 1500f, 3000f })
         {
             int ku = 0, kp = 0;
+            long ub = 0;
             foreach (int eid in world.all_units())
             {
                 var q = e.slot(eid);
                 if (!q.ok || !q.a.has("pos")) continue;
                 float dx = q.a.get_f("pos", q.row, 0) - p.x, dz = q.a.get_f("pos", q.row, 2) - p.z;
-                if (dx * dx + dz * dz <= r * r) ku++;
+                if (dx * dx + dz * dz > r * r) continue;
+                ku++;
+                ub += Netcode.row_bytes(e.uv("etype")[eid]);
             }
             foreach (int eid in world.projectiles())
             {
@@ -240,7 +247,7 @@ public static class NetCheck
                 float dx = q.a.get_f("pos", q.row, 0) - p.x, dz = q.a.get_f("pos", q.row, 2) - p.z;
                 if (dx * dx + dz * dz <= r * r) kp++;
             }
-            long bytes = Netcode.HEADER + (long)ku * Netcode.UNIT_STRIDE
+            long bytes = Netcode.HEADER + ub
                          + (long)kp * Netcode.PROJ_STRIDE + (long)ns * Netcode.SMOKE_STRIDE;
             Console.WriteLine($"     inside {r,4:0} m     {bytes / kb,7:0.00} kB x {hz:0} Hz = {rate(bytes, hz, kb),6:0} kB/s"
                               + $"   ({ku} unit + {kp} round rows)");
@@ -258,14 +265,21 @@ public static class NetCheck
             float dx = q.a.get_f("pos", q.row, 0) - p.x, dz = q.a.get_f("pos", q.row, 2) - p.z;
             if (dx * dx + dz * dz > 400f * 400f) far++;
         }
-        long noFar = raw.Length - (long)far * Netcode.UNIT_STRIDE;
+        long noFar = raw.Length - (long)far * Netcode.row_bytes(Defs.ETYPE_INF_RIFLE);
         Console.WriteLine($"     infantry >400 m   {noFar / kb,7:0.00} kB x {hz:0} Hz = {rate(noFar, hz, kb),6:0} kB/s"
                           + $"   ({inf} infantry, {far} of them out of range)");
 
-        // and the floor: the same rows with a position, a heading and a hp
-        long lean = Netcode.HEADER + (long)nu * 32 + (long)np * 16 + (long)ns * 32;
-        Console.WriteLine($"     a 32 B row        {lean / kb,7:0.00} kB x {hz:0} Hz = {rate(lean, hz, kb),6:0} kB/s"
-                          + $"   (no ammo/sight/turret/vel columns)");
+        // and the floor: quantise the pose.  `pos` / `vel` are f32 today; an
+        // int16 pair (1 m, 1 m/s) carries the same battle in half the bytes for
+        // everything that has one - which is what a delta scheme would do next.
+        long quant = Netcode.HEADER + (long)np * 20 + (long)ns * 32;
+        foreach (int eid in world.all_units())
+        {
+            int et = e.uv("etype")[eid];
+            quant += Netcode.row_bytes(et) - (et == Defs.ETYPE_BASE ? 6 : 12);
+        }
+        Console.WriteLine($"     int16 pos/vel     {quant / kb,7:0.00} kB x {hz:0} Hz = {rate(quant, hz, kb),6:0} kB/s"
+                          + $"   (pose as 1 m / 1 m/s shorts)");
     }
 
     /// <summary>bytes per simulated second at a snapshot rate</summary>

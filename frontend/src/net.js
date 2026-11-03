@@ -1,7 +1,11 @@
 // WebSocket protocol client: compressed init, binary snapshots, JSON meta/fx.
 
-const HEADER = 16;              // magic, tick, four u16 counts
-const UNIT_STRIDE = 80;
+const MAGIC_PING = 0x4d454350;  // "MECP": magic + tick only, no rows at all
+const HEADER = 24;              // magic, tick, eight u16 counts
+// A unit row is as wide as its *kind* needs (`Netcode.ROWS`): the classes are
+// mech 74 B, apc 46 B, base 30 B, wreck/bunker 25 B, infantry/civilian/corpse
+// 20 B, and the header carries one count per class in that order.
+const ROWS = [74, 46, 30, 25, 20];
 const PROJ_STRIDE = 32;
 const SMOKE_STRIDE = 32;
 const CONTACT_STRIDE = 6;       // minimap point: x, z, faction, etype
@@ -23,6 +27,10 @@ export class Net {
     this.onFx = null;
     this.onMessage = null;
     this.seq = 0;               // snapshots received, lets the HUD throttle work
+    this.tick = 0;              // the last applied snapshot's tick: the server
+                                // wants it back (`st`) to know how far behind
+                                // this pilot is, and skip frames instead of
+                                // queueing them (`Server.Client.want`)
     this.ready = false;
   }
 
@@ -57,83 +65,29 @@ export class Net {
 
   _snapshot(buf) {
     const dv = new DataView(buf);
-    const tick = dv.getUint32(4, true);
-    const nUnits = dv.getUint16(8, true);
-    const nProj = dv.getUint16(10, true);
-    const nSmoke = dv.getUint16(12, true);
-    const nContacts = dv.getUint16(14, true);
-    this.seq += 1;
-    const seen = new Set();
-    let off = HEADER;
-    for (let k = 0; k < nUnits; k++) {
-      const id = dv.getUint16(off, true);
-      const type = dv.getUint8(off + 2);
-      const faction = dv.getUint8(off + 3);
-      const owner = dv.getUint8(off + 4);
-      const flags = dv.getUint8(off + 5);
-      const target = dv.getUint16(off + 6, true);
-      let e = this.entities.get(id);
-      if (!e) {
-        e = { id, x: 0, y: 0, z: 0, yaw: 0, pitch: 0, turret: 0, leg: 0, syaw: 0, spitch: 0,
-          vx: 0, vz: 0, hp: [0, 0, 0, 0], ammo: [0, 0], mag: [0, 0], weapon: [0, 0] };
-        this.entities.set(id, e);
-      }
-      e.type = type;
-      e.faction = faction;
-      e.owner = owner;
-      e.flags = flags;
-      e.target = target === 65535 ? -1 : target;
-      e.tx = dv.getFloat32(off + 8, true);
-      e.ty = dv.getFloat32(off + 12, true);
-      e.tz = dv.getFloat32(off + 16, true);
-      e.tyaw = dv.getFloat32(off + 20, true);
-      e.tpitch = dv.getFloat32(off + 24, true);
-      e.tturret = dv.getFloat32(off + 28, true);
-      e.tleg = dv.getFloat32(off + 32, true);
-      // the velocity the hull is actually moving at (the server sends `vel`,
-      // not the command) - the same number its own AI leads on
-      e.vx = dv.getFloat32(off + 36, true);
-      e.vy = dv.getFloat32(off + 40, true);
-      e.vz = dv.getFloat32(off + 44, true);
-      for (let i = 0; i < 4; i++) e.hp[i] = dv.getUint16(off + 48 + i * 2, true);
-      e.ammo[0] = dv.getUint16(off + 56, true);
-      e.ammo[1] = dv.getUint16(off + 58, true);
-      e.mag[0] = dv.getUint16(off + 60, true);
-      e.mag[1] = dv.getUint16(off + 62, true);
-      e.weapon[0] = dv.getUint16(off + 64, true);
-      e.weapon[1] = dv.getUint16(off + 66, true);
-      // where the crew is looking (the hull and the arms are slewing to it);
-      // `yaw` / `pitch` above are the laid gun
-      e.tsyaw = dv.getFloat32(off + 68, true);
-      e.tspitch = dv.getFloat32(off + 72, true);
-      if (!e.init) {
-        e.x = e.tx; e.y = e.ty; e.z = e.tz;
-        e.yaw = e.tyaw; e.pitch = e.tpitch; e.turret = e.tturret; e.leg = e.tleg;
-        e.syaw = e.tsyaw; e.spitch = e.tspitch;
-        e.init = true;
-      }
-      // the authoritative position this snapshot carries, kept next to the
-      // smoothed one: automation and the debug teleport loop read `px/pz` when
-      // they want where the server says the hull is, not where it is drawn
-      e.px = e.tx; e.py = e.ty; e.pz = e.tz;
-      // a smoothed copy of the hull's own velocity, for the lead rings and the
-      // speed readout: the wire is a 15 Hz sample and the marker does not need
-      // to twitch with it
-      if (e.mvx === undefined) {
-        e.mvx = e.vx; e.mvy = e.vy; e.mvz = e.vz;
-      } else {
-        e.mvx += (e.vx - e.mvx) * 0.5;
-        e.mvy += (e.vy - e.mvy) * 0.5;
-        e.mvz += (e.vz - e.mvz) * 0.5;
-      }
-      seen.add(id);
-      off += UNIT_STRIDE;
+    this.tick = dv.getUint32(4, true);
+    // A hold frame (8 B) is what a jammed connection gets instead of a
+    // snapshot: the clock moves, the field does not.  Everything the client
+    // had - entities, projectiles, smoke, contacts - stays exactly as it was,
+    // and the ack it sends back is how the server learns it can resume.
+    if (dv.getUint32(0, true) === MAGIC_PING) {
+      this.held = true;
+      return;
     }
-    for (const id of this.entities.keys()) {
-      if (!seen.has(id)) this.entities.delete(id);
+    this.held = false;
+    this.seq += 1;
+    let off = HEADER;
+    const seen = new Set();
+    for (let cls = 0; cls < ROWS.length; cls++) {
+      const n = dv.getUint16(8 + cls * 2, true);
+      for (let k = 0; k < n; k++) {
+        this._row(dv, off, cls, seen);
+        off += ROWS[cls];
+      }
     }
 
     const proj = [];
+    const nProj = dv.getUint16(18, true);
     for (let k = 0; k < nProj; k++) {
       proj.push({
         id: dv.getUint16(off, true),
@@ -154,6 +108,7 @@ export class Net {
     // smoke: a short-lived cloud and the canisters on their way to become one.
     // Positions are interpolated like the units, so a canister does not stutter
     // at the 15 Hz snapshot rate.
+    const nSmoke = dv.getUint16(20, true);
     const smoke = [];
     for (let k = 0; k < nSmoke; k++) {
       const id = dv.getUint16(off, true);
@@ -175,8 +130,9 @@ export class Net {
     this.smoke = smoke;
     this.smokeBy = new Map(smoke.map((r) => [r.id, r]));
 
-    // the minimap block rides every fourth snapshot (`CONTACT_EVERY` ticks), so
-    // an empty list means "no new picture this frame" - keep the last one
+    // the minimap block rides every 8th tick (`CONTACT_EVERY`), so an empty
+    // list means "no new picture this frame" - keep the last one
+    const nContacts = dv.getUint16(22, true);
     if (nContacts > 0) {
       const contacts = new Array(nContacts);
       for (let k = 0; k < nContacts; k++) {
@@ -190,6 +146,104 @@ export class Net {
       }
       this.contacts = contacts;
     }
+
+    // whatever the frame did not mention is gone (a tier edge, a death, a
+    // wreck cleaned up): `net.js` is the only place that knows the field is a
+    // set of rows and not a database
+    for (const id of this.entities.keys()) {
+      if (!seen.has(id)) this.entities.delete(id);
+    }
+  }
+
+  // One unit row, in its class's own layout.  Every field the class does not
+  // carry is reset first: entity ids are recycled, and a rifleman is not to
+  // inherit the magazines of the mech whose id he took.
+  _row(dv, off, cls, seen) {
+    const id = dv.getUint16(off, true);
+    let e = this.entities.get(id);
+    if (!e) {
+      e = { id, x: 0, y: 0, z: 0, yaw: 0, pitch: 0, turret: 0, leg: 0, syaw: 0, spitch: 0,
+        vx: 0, vy: 0, vz: 0, hp: [0, 0, 0, 0], ammo: [0, 0], mag: [0, 0], weapon: [0, 0] };
+      this.entities.set(id, e);
+    }
+    e.owner = 255;
+    e.flags = 0;
+    e.target = -1;
+    e.pitch = 0; e.turret = 0; e.leg = 0; e.syaw = 0; e.spitch = 0;
+    e.vx = 0; e.vy = 0; e.vz = 0;
+    e.hp[0] = 0; e.hp[1] = 0; e.hp[2] = 0; e.hp[3] = 0;
+    e.ammo[0] = 0; e.ammo[1] = 0; e.mag[0] = 0; e.mag[1] = 0;
+    e.weapon[0] = 0; e.weapon[1] = 0;
+    e.type = dv.getUint8(off + 2);
+    e.faction = dv.getUint8(off + 3);
+    const f32 = (o) => dv.getFloat32(o, true);
+    const u16 = (o) => dv.getUint16(o, true);
+    let p;                                  // where pos / yaw start
+    if (cls === 0) {                        // mech: everything
+      e.owner = dv.getUint8(off + 4);
+      e.flags = dv.getUint8(off + 5);
+      e.target = u16(off + 6) === 65535 ? -1 : u16(off + 6);
+      p = off + 8;
+      e.pitch = f32(off + 24);
+      e.turret = f32(off + 28);
+      e.leg = f32(off + 32);
+      e.vx = f32(off + 36); e.vy = f32(off + 40); e.vz = f32(off + 44);
+      e.hp[0] = u16(off + 48);
+      e.hp[2] = u16(off + 50);              // left arm
+      e.hp[3] = u16(off + 52);              // right arm
+      e.ammo[0] = u16(off + 54); e.ammo[1] = u16(off + 56);
+      e.mag[0] = u16(off + 58); e.mag[1] = u16(off + 60);
+      e.weapon[0] = u16(off + 62); e.weapon[1] = u16(off + 64);
+      e.syaw = f32(off + 66);
+      e.spitch = f32(off + 70);
+    } else if (cls === 1) {                 // apc: turret + velocity, no arms
+      e.owner = dv.getUint8(off + 4);
+      e.flags = dv.getUint8(off + 5);
+      e.target = u16(off + 6) === 65535 ? -1 : u16(off + 6);
+      p = off + 8;
+      e.pitch = f32(off + 24);
+      e.turret = f32(off + 28);
+      e.vx = f32(off + 32); e.vy = f32(off + 36); e.vz = f32(off + 40);
+      e.hp[0] = u16(off + 44);
+    } else if (cls === 2) {                 // command base
+      p = off + 4;
+      e.pitch = f32(off + 20);
+      e.turret = f32(off + 24);
+      e.hp[0] = u16(off + 28);
+    } else if (cls === 3) {                 // wreck / bunker
+      e.flags = dv.getUint8(off + 4);        // bits 4-5: what the hulk was
+      p = off + 5;
+      e.leg = f32(off + 21);
+    } else {                                // infantry / civilian / corpse
+      p = off + 4;
+    }
+    e.tx = f32(p); e.ty = f32(p + 4); e.tz = f32(p + 8);
+    e.tyaw = f32(p + 12);
+    e.tpitch = e.pitch;
+    e.tturret = e.turret;
+    e.tleg = e.leg;
+    e.tsyaw = e.syaw;
+    e.tspitch = e.spitch;
+    if (!e.init) {
+      e.x = e.tx; e.y = e.ty; e.z = e.tz;
+      e.yaw = e.tyaw; e.init = true;
+    }
+    // the authoritative position this snapshot carries, kept next to the
+    // smoothed one: automation and the debug teleport loop read `px/pz` when
+    // they want where the server says the hull is, not where it is drawn
+    e.px = e.tx; e.py = e.ty; e.pz = e.tz;
+    // a smoothed copy of the hull's own velocity, for the lead rings and the
+    // speed readout: the wire is a 15 Hz sample and the marker does not need
+    // to twitch with it
+    if (e.mvx === undefined) {
+      e.mvx = e.vx; e.mvy = e.vy; e.mvz = e.vz;
+    } else {
+      e.mvx += (e.vx - e.mvx) * 0.5;
+      e.mvy += (e.vy - e.mvy) * 0.5;
+      e.mvz += (e.vz - e.mvz) * 0.5;
+    }
+    seen.add(id);
+    return e;
   }
 
   // smooth the render state towards the last snapshot

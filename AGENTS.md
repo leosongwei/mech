@@ -795,10 +795,26 @@ frontend/
   snapshots at 15 Hz (`SNAP_EVERY`, 16 B header, and the minimap block every
   `CONTACT_EVERY` ticks) and JSON meta at 10 Hz (`META_EVERY`).
   Entity state is authoritative on the server; the client only interpolates.
-  A unit row is 80 bytes (`UNIT_DTYPE`): `yaw` / `pitch` are the *laid gun*
-  (hull and arms), `syaw` / `spitch` where the crew is looking, and `vx` / `vy` /
-  `vz` the velocity the hull is **actually** moving at (`vel`, not `vel_cmd`),
-  which is what the client's lead boxes and speed readout use.  The client's
+  **A unit row is as wide as its kind is read for** (`Netcode.ROWS`): mech 74,
+  apc 46, command base 30, wreck/bunker 25, infantry/civilian/corpse 20 B, and
+  the header carries one count per class in that order (24 B: magic, tick,
+  eight u16).  It was one 80 B row for everything - a numpy column dump from
+  before the archetype storage, where `arr[field] = columns(field)` wrote a
+  whole column whether the entity owned the component or not, so a rifleman
+  paid for a mech's arms, magazines and sight (56 of his 80 bytes empty, and
+  `pad3` + `hp[1]` were never even written: `AllocateUninitializedArray` sent
+  heap bytes).  Row widths now follow what `scene.js` / `hud.js` actually read:
+  a mech keeps `syaw`/`spitch` (its own sight head is drawn on them) and
+  `ammo`/`mag`/`weapon`/`arm_hp`, an APC keeps `turret`/`pitch`/`vel`/`target`
+  (the turret, the lead rings, the laser warning), a base keeps `pitch`/
+  `turret`/`hp[0]` (its gun and the integrity bar), a wreck keeps `flags` bits
+  4-5 and `leg`, and an infantryman keeps a point and a heading.  The client
+  resets every field its class does not carry before writing the ones it does,
+  because entity ids are recycled and a rifleman must not inherit a mech's
+  magazines.  In a mech row `yaw` / `pitch` are the *laid gun* (hull and arms),
+  `syaw` / `spitch` where the crew is looking, and `vx` / `vy` / `vz` the
+  velocity the hull is **actually** moving at (`vel`, not `vel_cmd`), which is
+  what the client's lead boxes and speed readout use.  The client's
   own machine reads its pose from the snapshot like any other - overriding it
   with the view is exactly the teleporting hull this split removed - while the
   *camera* is the local view (an instant sight) sitting on the server-side
@@ -833,13 +849,47 @@ frontend/
   The client needs **no change** for any of this - every consumer is map-driven
   or `.get()`-guarded; what changes is that distant rows are absent, so what
   pops is late, not earlier.  Measured
-  (`--check net`, minutes 8..15 of one pilot): **112 kB/s mean** against 468
-  unfiltered, 80 of it snapshots at 53 unit rows; `--check tiers` prices
+  (`--check net`, minutes 8..15 of one pilot): **78 kB/s mean** against 468
+  unfiltered and 112 before the row widths were split - 45 of it snapshots
+  (6.7 minimap block) at 53 unit rows of **36 B each**, 18 meta, 14 fx; `--check tiers` prices
   alternative tables on the same battle.
   Not tiered: the `fx` channel.  Explosions are *not* rows - there is no blast
   entity - and an event carries both the flash and the bang, so a visual radius
   is a change to `fx` (which today travels by sound level, 7-17 km), not to the
   snapshot.
+* **A jammed connection is stopped, not slowed** (`Server.Client.want`).  TCP
+  delivers everything, so a slow link cannot lose a frame - it can only
+  accumulate a queue, and every frame built on top of it is one more that has to
+  crawl through before the picture updates.  A lower frame rate does not help
+  either: the pipe is the pipe.  So the server stops: while a pilot is
+  congested he gets **an 8 byte tick frame** (`Netcode.ping_bytes`,
+  `MAGIC_PING`, magic + tick, no rows) and *nothing else* - snapshots, fx and
+  meta are not built for him at all - until his own heartbeat says he is
+  current again.
+
+  ```
+  congested := no message from him for HEARTBEAT_TIMEOUT (0.4 s)
+               or his newest applied snapshot is LAG_HIGH (12 ticks, 0.4 s) old
+  held      := not congested, and behind <= LAG_LOW (6 ticks, 0.2 s),
+               and the send queue is empty (everything sent has gone out)
+  ```
+
+  The client reports the tick of the newest snapshot it has **applied** on its
+  own 30 Hz input message (`st`, piggybacked on `in` - no extra traffic, and it
+  *is* the heartbeat), `Client.ack` keeps it, `Client.heard` is when he last
+  said anything at all.  The tick frame is what makes this recover by itself:
+  it advances `net.tick`, the client acks it, and the server sees a fresh
+  ack - so the clock keeps running through the hold instead of the two sides
+  waiting for each other.  On the client side a frame whose magic is
+  `MAGIC_PING` moves `net.tick` and leaves `entities` / `projectiles` / `smoke`
+  / `contacts` exactly as they were (`net.held` is true for the duration).
+  **No frame that was built is ever discarded** - the queue is never cleared,
+  so a "skipped" frame is one that was never built, and the queue-full
+  `dropped` counter stays at 0.  `ack < 0` (a client that reports nothing, or
+  hasn't yet) is not congested - only silence can hold it.  Measured with the
+  Node probe: healthy 14.7 frames/s; ack frozen 0 frames/s and 15 tick
+  frames/s (0.12 kB/s); ack frozen for 3 s then resumed - full frames came back
+  the instant the acks caught up.
 * **The minimap has its own block in the same frame**
   (`Netcode.contacts_bytes`, `CONTACT_*`).  The map is the *strategic* picture -
   16 km of hulls at 210 px, no tier - so it cannot come from a sphere around one
@@ -1148,9 +1198,10 @@ cd frontend && npm install && npm run build      # -> assets/
   an edit.  Measured unfiltered on 30 minutes, one pilot's ear: **468 kB/s mean, 523 kB/s
   peak, 94 % of it snapshots** (326 unit rows x 80 B x 15 Hz), 4 % meta (1886 B
   x 10 Hz), 2 % fx; the field is 300-400 rows and ~90 % of it is infantry.
-  With the shipped tier sphere it is **112 kB/s** (minutes 8..15): 80 snapshot
-  (6.7 of it the minimap block), 18 meta, 14 fx - i.e. meta and fx are now the
-  ones worth looking at.
+  With the shipped tier sphere and the per-class rows it is **78 kB/s**
+  (minutes 8..15): 45 snapshot (6.7 of it the minimap block), 18 meta, 14 fx -
+  i.e. meta and fx are now the ones worth looking at, and the unfiltered field
+  would still be 168 kB/s.
   It measures *a* client, not every client (one `SnapshotView`, as the server
   builds it), and a scripted pilot's address decides how much lives inside his
   sphere: the numbers move with where he is.

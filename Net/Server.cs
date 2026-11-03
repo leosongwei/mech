@@ -47,6 +47,46 @@ public sealed class Client
     // this pilot's interest sphere: the tier table is per eye, so his snapshot
     // is built for him alone (`Netcode.SnapshotView`)
     public readonly Netcode.SnapshotView view = new();
+    // --- the frame clock -------------------------------------------------
+    // Congestion is not something to paper over by sending less often: while a
+    // link is jammed, *any* frame is one more thing queued in front of the
+    // frames behind it, and a slow connection cannot use a lower frame rate any
+    // better than a full one.  So the server **stops** - nothing but an 8 byte
+    // tick frame goes out (so the client still learns the clock and can keep
+    // reporting it back), until the pilot's own heartbeat says he has caught up.
+    //
+    //   congested := no message from him for `HEARTBEAT_TIMEOUT`, or his newest
+    //                applied snapshot is `LAG_HIGH` ticks (0.4 s) old
+    //   held      := not congested any more *and* his acks are fresh *and* the
+    //                send queue is empty - i.e. everything sent has gone out
+    //
+    // `ack` is the tick of the newest snapshot he has applied, piggybacked on
+    // his own 30 Hz input (`st`); `heard` is when he last said anything at all.
+    // No frame that was built is ever discarded: the queue is never cleared, so
+    // a "skipped" frame is one that was never built.
+    public int ack = -1;            // -1: nobody has told us yet
+    public bool held;               // congested: tick frames only
+    public int holds;               // tick frames sent while held
+    public int behind;              // ticks between his newest applied frame and now
+    public long heard;              // Stopwatch timestamp of his last message
+
+    public const int LAG_HIGH = 12;             // ticks behind (0.4 s) = congested
+    public const int LAG_LOW = 6;               // ticks behind (0.2 s) = caught up
+    public const double HEARTBEAT_TIMEOUT = 0.4;// s of silence = congested
+
+    /// <summary>Should this pilot get a full snapshot on this tick, or only the
+    /// tick frame?  Answering false is not a drop - it is a decision not to
+    /// build, which is the only thing that helps a jammed link.</summary>
+    public bool want(int tick)
+    {
+        double silent = System.Diagnostics.Stopwatch.GetElapsedTime(heard).TotalSeconds;
+        behind = ack < 0 ? 0 : tick - ack;
+        bool congested = silent > HEARTBEAT_TIMEOUT || behind >= LAG_HIGH;
+        if (!held && congested) held = true;
+        else if (held && behind <= LAG_LOW && q.Reader.Count == 0) held = false;
+        return !held;
+    }
+
     // 24 frames is under a second of snapshots+meta: a client that cannot take
     // that many has a socket that is not coming back
     private readonly Channel<(string kind, byte[] data)> q;
@@ -55,6 +95,7 @@ public sealed class Client
     {
         this.ws = ws;
         this.pid = pid;
+        heard = System.Diagnostics.Stopwatch.GetTimestamp();
         // `FullMode.Wait` + `TryWrite` is Python's `put_nowait`: a full queue
         // refuses the frame (-> `dropped`) instead of blocking the caller
         q = Channel.CreateBounded<(string kind, byte[] data)>(new BoundedChannelOptions(24)
@@ -321,9 +362,21 @@ public static class Server
             // tier are not built at all (measured: 468 -> ~100 kB/s per pilot)
             if (snap_tick)
             {
-                client.view.at(world, pl);
-                client.offer("b", Netcode.snapshot_bytes(world, client.view, contacts));
+                if (client.want(tick))
+                {
+                    client.view.at(world, pl);
+                    client.offer("b", Netcode.snapshot_bytes(world, client.view, contacts));
+                }
+                else
+                {
+                    // congested: the clock, and nothing else
+                    client.holds += 1;
+                    client.offer("b", Netcode.ping_bytes(tick));
+                }
             }
+            // a held pilot gets no sound and no panel either: the whole point is
+            // to leave the pipe empty until his heartbeat catches up
+            if (client.held) continue;
             if (fx is not null)
             {
                 // sound is per ear: a bang nobody could hear is not put on the wire
@@ -467,6 +520,8 @@ public static class Server
     // ------------------------------------------------------------------
     private static void handle(Player pl, Client client, JsonElement msg)
     {
+        // anything he says is a heartbeat: the frame clock reads this
+        client.heard = System.Diagnostics.Stopwatch.GetTimestamp();
         switch (str(msg, "t", ""))
         {
             case "in":
@@ -483,6 +538,10 @@ public static class Server
                 pl.zero_range = Math.Clamp(zr, Defs.ZERO_STEPS[0], Defs.ZERO_STEPS[^1]);
                 // Q: one-shot hot smoke, latched until Systems/Smoke.cs eats it
                 if (flag(msg, "q", false)) pl.smoke_q = true;
+                // the snapshot this client has applied: the frame clock reads it
+                // (`Client.want`), so a slow connection skips frames instead of
+                // queueing them
+                client.ack = inum(msg, "st", client.ack);
                 pl.name = trunc(str(msg, "name", pl.name), 16);
                 break;
             }

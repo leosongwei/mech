@@ -504,6 +504,10 @@ export class Game {
       zr: this.input.zeroRange,
       // hot smoke: one pull per press, cleared as soon as it is on the wire
       q: this.shopOpen ? false : this.input.qPressed,
+      // the last snapshot this client has applied: the server skips frames for
+      // a pilot who is behind (TCP delivers everything, so the only way to
+      // catch up is to send fewer, and this is how it knows)
+      st: this.net.tick | 0,
     });
     this.input.qPressed = false;
   }

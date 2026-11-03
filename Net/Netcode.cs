@@ -6,12 +6,19 @@
 // here is little-endian, row-major and named exactly like the Python side.
 //
 //   init       one JSON text frame, `static_payload` + who you are
-//   snapshot   one binary frame: 16 B header, 80 B unit rows, 32 B projectile
-//              rows, 32 B smoke rows, and - every `CONTACT_EVERY` ticks - the
-//              minimap's 6 B contact rows.  The header is magic, tick and four
-//              u16 counts (units, projectiles, smoke, contacts); the rows start
-//              there.  It was 14 B (three counts) until the minimap got its own
-//              block.
+//   snapshot   one binary frame: 24 B header, then unit rows in five widths
+//              (`ROWS`: mech 74, apc 46, base 30, wreck/bunker 25, infantry
+//              20 B), 32 B projectile rows, 32 B smoke rows, and - every
+//              `CONTACT_EVERY` ticks - the minimap's 6 B contact rows.  The
+//              header is magic, tick and **eight** u16 counts (one per unit
+//              class, then projectiles, smoke, contacts); the rows start there.
+//              It was 14 B with three counts and one 80 B row for everything
+//              until the wire stopped dumping columns and started sending what
+//              each kind of entity is read for.
+//   ping       magic + tick, 8 B: what a congested pilot gets instead of a
+//              snapshot (`MAGIC_PING`).  It exists so the clock - and with it
+//              the ack the server judges him by - keeps moving while the pipe
+//              drains.  The client leaves its whole field untouched on one.
 //   meta       one JSON text frame per pilot, 10 Hz
 //
 // The JSON tables are public *fields* on the C# side (`WeaponDef.wid`,
@@ -26,8 +33,23 @@ namespace Mech.Server;
 public static class Netcode
 {
     public const uint MAGIC = 0x4D454348;      // "MECH"
-    public const int HEADER = 16;              // magic, tick, four u16 counts
-    public const int UNIT_STRIDE = 80;
+    // A hold frame: magic + tick, 8 bytes, no rows at all.  It is what a jammed
+    // connection gets instead of a snapshot, so the client's clock (and the ack
+    // the server judges him by) keeps moving while the pipe drains.
+    public const uint MAGIC_PING = 0x4D454350;  // "MECP"
+    public const int HEADER = 24;              // magic, tick, eight u16 counts
+    // A unit row is as wide as the *kind* of unit needs, not as wide as the
+    // richest one: the five classes below are the five layouts the client
+    // actually reads (see the offsets at `snapshot_bytes`).  It used to be one
+    // 80 B row for everything - a numpy column dump from before the archetype
+    // storage, where an infantryman paid for a mech's arms, magazines and
+    // sight, 56 of his 80 bytes empty.
+    public const int ROWS = 5;                 // mech, vehicle, base, structure, soft
+    public const int ROW_MECH = 74;
+    public const int ROW_VEHICLE = 46;
+    public const int ROW_BASE = 30;
+    public const int ROW_STRUCT = 25;
+    public const int ROW_SOFT = 20;
     public const int PROJ_STRIDE = 32;
     public const int SMOKE_STRIDE = 32;
     public const int CONTACT_STRIDE = 6;       // minimap point: x, z, faction, etype
@@ -203,6 +225,16 @@ public static class Netcode
         return outv;
     }
 
+    /// <summary>Magic + tick, nothing else: the frame a congested pilot gets.</summary>
+    public static byte[] ping_bytes(int tick)
+    {
+        var buf = GC.AllocateUninitializedArray<byte>(8);
+        var s = buf.AsSpan();
+        _w32(s, 0, MAGIC_PING);
+        _w32(s, 4, (uint)tick);
+        return buf;
+    }
+
     /// <summary>`np.clip(x, 0, 65535).astype(uint16)`: clamp, then truncate.</summary>
     private static ushort _u16(float v) =>
         v <= 0f ? (ushort)0 : v >= 65535f ? (ushort)65535 : (ushort)v;
@@ -218,6 +250,26 @@ public static class Netcode
         a.has(name) ? a.get_i(name, row) : 0;
     private static byte _b(Archetype a, int row, string name) =>
         a.has(name) ? a.get_u8(name, row) : (byte)0;
+
+    /// <summary>`-1` -> 255 ("nobody"), anything else capped at 254.</summary>
+    private static byte owner_of(Archetype a, int row)
+    {
+        int owner = _i(a, row, "owner");
+        return (byte)(owner < 0 ? 255 : Math.Min(owner, 254));
+    }
+
+    /// <summary>bit0/1 the triggers, bit2/3 a reload in progress, bit4-5 what a
+    /// wreck used to be (0 infantry, 1 apc, 2 mech).</summary>
+    private static byte flags_of(Archetype a, int row)
+    {
+        byte trig = _b(a, row, "trigger");
+        byte flags = (byte)(trig & 1);
+        flags |= (byte)(((trig >> 1) & 1) << 1);
+        if (_f(a, row, "reload_t", 0) > 0f) flags |= 1 << 2;
+        if (_f(a, row, "reload_t", 1) > 0f) flags |= 1 << 3;
+        flags |= (byte)((_b(a, row, "wreck_kind") & 3) << 4);
+        return flags;
+    }
 
     private static void _w16(Span<byte> s, int o, int v) =>
         BinaryPrimitives.WriteUInt16LittleEndian(s[o..], (ushort)(v & 0xFFFF));
@@ -302,6 +354,31 @@ public static class Netcode
         }
     }
 
+    /// <summary>Which row layout a unit travels in.  The class is the shape of
+    /// what the client reads off that kind of thing, not the type: a wreck and a
+    /// bunker are both a body with a heading, an infantryman and a corpse are a
+    /// point with a heading.</summary>
+    public static int class_of(int etype) => etype switch
+    {
+        Defs.ETYPE_MECH => 0,
+        Defs.ETYPE_APC => 1,
+        Defs.ETYPE_BASE => 2,
+        Defs.ETYPE_DEBRIS or Defs.ETYPE_BUNKER => 3,
+        _ => 4,                 // rifleman, AT rifleman, civilian, corpse
+    };
+
+    /// <summary>Bytes one unit of this type costs on the wire.</summary>
+    public static int row_bytes(int etype) => stride_of(class_of(etype));
+
+    public static int stride_of(int cls) => cls switch
+    {
+        0 => ROW_MECH,
+        1 => ROW_VEHICLE,
+        2 => ROW_BASE,
+        3 => ROW_STRUCT,
+        _ => ROW_SOFT,
+    };
+
     public static float tier_of_unit(int etype) => etype switch
     {
         Defs.ETYPE_MECH or Defs.ETYPE_APC or Defs.ETYPE_BUNKER => TIER_HULL,
@@ -362,17 +439,19 @@ public static class Netcode
         int[] uids = world.all_units();        // hulls, wrecks, corpses - by id
         int[] pids = world.projectiles();
         int[] sids = e.query("smoke_r");       // canisters and puffs alike
-        // Pass one: which rows this pilot's sphere carries.  The counts are in
-        // the header, so they have to be known before the first row is written.
+        // Pass one: which rows this pilot's sphere carries, bucketed by the row
+        // layout each of them travels in.  The counts are in the header, so they
+        // have to be known before the first row is written.
         v.keep.Clear();
-        var ku = new List<int>(uids.Length);
+        var ku = new List<int>[ROWS];
+        for (int c = 0; c < ROWS; c++) ku[c] = new List<int>(uids.Length / 4 + 4);
         foreach (int eid in uids)
         {
             var slot = e.slot(eid);
             if (!slot.ok || !slot.a.has("pos")) continue;
             int et = slot.a.has("etype") ? slot.a.get_u8("etype", slot.row) : 0;
             if (!inside(slot.a, slot.row, v, tier_of_unit(et), eid)) continue;
-            ku.Add(eid);
+            ku[class_of(et)].Add(eid);
         }
         var kp = new List<int>(pids.Length);
         foreach (int eid in pids)
@@ -391,29 +470,33 @@ public static class Netcode
             if (!inside(slot.a, slot.row, v, TIER_SMOKE, eid)) continue;
             ks.Add(eid);
         }
-        foreach (int eid in ku) v.keep.Add(eid);
+        for (int c = 0; c < ROWS; c++)
+            foreach (int eid in ku[c]) v.keep.Add(eid);
         foreach (int eid in kp) v.keep.Add(eid);
         foreach (int eid in ks) v.keep.Add(eid);
 
         // Allocated whole and never pooled: a buffer cannot be returned until
         // the client's writer task has flushed its copy out.
         int nc = contacts is null ? 0 : contacts.Length / CONTACT_STRIDE;
-        var buf = GC.AllocateUninitializedArray<byte>(
-            HEADER + ku.Count * UNIT_STRIDE + kp.Count * PROJ_STRIDE
-                   + ks.Count * SMOKE_STRIDE + nc * CONTACT_STRIDE);
+        int total = HEADER + kp.Count * PROJ_STRIDE + ks.Count * SMOKE_STRIDE
+                    + nc * CONTACT_STRIDE;
+        for (int c = 0; c < ROWS; c++) total += ku[c].Count * stride_of(c);
+        var buf = GC.AllocateUninitializedArray<byte>(total);
         var s = buf.AsSpan();
         _w32(s, 0, MAGIC);
         _w32(s, 4, (uint)world.tick);
-        _w16(s, 8, ku.Count);
-        _w16(s, 10, kp.Count);
-        _w16(s, 12, ks.Count);
-        _w16(s, 14, nc);
+        for (int c = 0; c < ROWS; c++) _w16(s, 8 + c * 2, ku[c].Count);
+        _w16(s, 18, kp.Count);
+        _w16(s, 20, ks.Count);
+        _w16(s, 22, nc);
 
         int off = HEADER;
         var ammo = e.iv("ammo");
         var mag = e.iv("mag");
         var wpn = e.uv("weapon");
-        foreach (int eid in ku)
+
+        // --- mech, 74 B: the one class that is read all the way through -------
+        foreach (int eid in ku[0])
         {
             var slot = e.slot(eid);
             if (!slot.ok) continue;
@@ -422,18 +505,8 @@ public static class Netcode
             _w16(s, off + 0, eid);
             s[off + 2] = _b(a, r, "etype");
             s[off + 3] = _b(a, r, "faction");
-            // `-1` -> 255, anything else capped at 254 (255 is "nobody")
-            int owner = _i(a, r, "owner");
-            s[off + 4] = (byte)(owner < 0 ? 255 : Math.Min(owner, 254));
-            // bit0/1 the triggers, bit2/3 a reload in progress, bit4-5 what a
-            // wreck used to be (0 infantry, 1 apc, 2 mech)
-            byte trig = _b(a, r, "trigger");
-            byte flags = (byte)(trig & 1);
-            flags |= (byte)(((trig >> 1) & 1) << 1);
-            if (_f(a, r, "reload_t", 0) > 0f) flags |= 1 << 2;
-            if (_f(a, r, "reload_t", 1) > 0f) flags |= 1 << 3;
-            flags |= (byte)((_b(a, r, "wreck_kind") & 3) << 4);
-            s[off + 5] = flags;
+            s[off + 4] = owner_of(a, r);
+            s[off + 5] = flags_of(a, r);
             int tgt = _i(a, r, "target");
             _w16(s, off + 6, tgt < 0 ? 65535 : Math.Min(tgt, 65534));
             _wf(s, off + 8, _f(a, r, "pos", 0));
@@ -449,23 +522,104 @@ public static class Netcode
             _wf(s, off + 40, _f(a, r, "vel", 1));
             _wf(s, off + 44, _f(a, r, "vel", 2));
             _w16(s, off + 48, _u16(_f(a, r, "hp")));
-            _w16(s, off + 50, 0);                 // MOD_TORSO: never a pool
-            _w16(s, off + 52, a.has("arm_hp") ? _u16(_f(a, r, "arm_hp", 0)) : 0);
-            _w16(s, off + 54, a.has("arm_hp") ? _u16(_f(a, r, "arm_hp", 1)) : 0);
+            _w16(s, off + 50, _u16(_f(a, r, "arm_hp", 0)));
+            _w16(s, off + 52, _u16(_f(a, r, "arm_hp", 1)));
             // the two-slot counters (`ammo` / `mag` are ints, `weapon` a byte,
             // two arms each) go through the views: the default they answer for
-            // a hull that has no arms is exactly what Python's `columns()` fills
-            _w16(s, off + 56, _u16(ammo.get(eid, 0)));
-            _w16(s, off + 58, _u16(ammo.get(eid, 1)));
-            _w16(s, off + 60, _u16(mag.get(eid, 0)));
-            _w16(s, off + 62, _u16(mag.get(eid, 1)));
-            _w16(s, off + 64, wpn.get(eid, 0));
-            _w16(s, off + 66, wpn.get(eid, 1));
+            // a hull that has no arms is exactly what `columns()` fills
+            _w16(s, off + 54, _u16(ammo.get(eid, 0)));
+            _w16(s, off + 56, _u16(ammo.get(eid, 1)));
+            _w16(s, off + 58, _u16(mag.get(eid, 0)));
+            _w16(s, off + 60, _u16(mag.get(eid, 1)));
+            _w16(s, off + 62, wpn.get(eid, 0));
+            _w16(s, off + 64, wpn.get(eid, 1));
             // where the crew is looking; `yaw` / `pitch` above are the laid gun
-            _wf(s, off + 68, _f(a, r, "sight_yaw"));
-            _wf(s, off + 72, _f(a, r, "sight_pitch"));
-            // 76: `pad3`, zero, keeps the row 80 B and 4-byte aligned
-            off += UNIT_STRIDE;
+            _wf(s, off + 66, _f(a, r, "sight_yaw"));
+            _wf(s, off + 70, _f(a, r, "sight_pitch"));
+            off += ROW_MECH;
+        }
+
+        // --- apc, 46 B: turret and velocity, no arms and no sight head -------
+        foreach (int eid in ku[1])
+        {
+            var slot = e.slot(eid);
+            if (!slot.ok) continue;
+            var a = slot.a;
+            int r = slot.row;
+            _w16(s, off + 0, eid);
+            s[off + 2] = _b(a, r, "etype");
+            s[off + 3] = _b(a, r, "faction");
+            s[off + 4] = owner_of(a, r);
+            s[off + 5] = flags_of(a, r);
+            int tgt = _i(a, r, "target");
+            _w16(s, off + 6, tgt < 0 ? 65535 : Math.Min(tgt, 65534));
+            _wf(s, off + 8, _f(a, r, "pos", 0));
+            _wf(s, off + 12, _f(a, r, "pos", 1));
+            _wf(s, off + 16, _f(a, r, "pos", 2));
+            _wf(s, off + 20, _f(a, r, "yaw"));
+            _wf(s, off + 24, _f(a, r, "pitch"));
+            _wf(s, off + 28, _f(a, r, "turret_yaw"));
+            _wf(s, off + 32, _f(a, r, "vel", 0));
+            _wf(s, off + 36, _f(a, r, "vel", 1));
+            _wf(s, off + 40, _f(a, r, "vel", 2));
+            _w16(s, off + 44, _u16(_f(a, r, "hp")));
+            off += ROW_VEHICLE;
+        }
+
+        // --- command base, 30 B: a body, its gun, one hp pool ----------------
+        foreach (int eid in ku[2])
+        {
+            var slot = e.slot(eid);
+            if (!slot.ok) continue;
+            var a = slot.a;
+            int r = slot.row;
+            _w16(s, off + 0, eid);
+            s[off + 2] = _b(a, r, "etype");
+            s[off + 3] = _b(a, r, "faction");
+            _wf(s, off + 4, _f(a, r, "pos", 0));
+            _wf(s, off + 8, _f(a, r, "pos", 1));
+            _wf(s, off + 12, _f(a, r, "pos", 2));
+            _wf(s, off + 16, _f(a, r, "yaw"));
+            _wf(s, off + 20, _f(a, r, "pitch"));
+            _wf(s, off + 24, _f(a, r, "turret_yaw"));
+            _w16(s, off + 28, _u16(_f(a, r, "hp")));
+            off += ROW_BASE;
+        }
+
+        // --- wreck / bunker, 25 B: a body, a heading, what it used to be -----
+        foreach (int eid in ku[3])
+        {
+            var slot = e.slot(eid);
+            if (!slot.ok) continue;
+            var a = slot.a;
+            int r = slot.row;
+            _w16(s, off + 0, eid);
+            s[off + 2] = _b(a, r, "etype");
+            s[off + 3] = _b(a, r, "faction");
+            s[off + 4] = flags_of(a, r);        // bits 4-5: what the hulk was
+            _wf(s, off + 5, _f(a, r, "pos", 0));
+            _wf(s, off + 9, _f(a, r, "pos", 1));
+            _wf(s, off + 13, _f(a, r, "pos", 2));
+            _wf(s, off + 17, _f(a, r, "yaw"));
+            _wf(s, off + 21, _f(a, r, "leg_yaw"));   // a mech hulk keeps its feet
+            off += ROW_STRUCT;
+        }
+
+        // --- infantry / civilian / corpse, 20 B: a point and a heading -------
+        foreach (int eid in ku[4])
+        {
+            var slot = e.slot(eid);
+            if (!slot.ok) continue;
+            var a = slot.a;
+            int r = slot.row;
+            _w16(s, off + 0, eid);
+            s[off + 2] = _b(a, r, "etype");
+            s[off + 3] = _b(a, r, "faction");
+            _wf(s, off + 4, _f(a, r, "pos", 0));
+            _wf(s, off + 8, _f(a, r, "pos", 1));
+            _wf(s, off + 12, _f(a, r, "pos", 2));
+            _wf(s, off + 16, _f(a, r, "yaw"));
+            off += ROW_SOFT;
         }
 
         foreach (int eid in kp)
@@ -478,6 +632,9 @@ public static class Netcode
             s[off + 2] = _b(a, r, "proj_kind");
             s[off + 3] = _b(a, r, "proj_wid");
             s[off + 4] = _b(a, r, "faction");
+            s[off + 5] = 0;                       // the old gap, written as zero
+            s[off + 6] = 0;
+            s[off + 7] = 0;
             _wf(s, off + 8, _f(a, r, "pos", 0));
             _wf(s, off + 12, _f(a, r, "pos", 1));
             _wf(s, off + 16, _f(a, r, "pos", 2));
@@ -496,6 +653,7 @@ public static class Netcode
             _w16(s, off + 0, eid);
             // bit0: still a canister on its way, i.e. not a deployed puff
             s[off + 2] = (byte)(a.has("canister") ? 1 : 0);
+            s[off + 3] = 0;
             _wf(s, off + 4, _f(a, r, "pos", 0));
             _wf(s, off + 8, _f(a, r, "pos", 1));
             _wf(s, off + 12, _f(a, r, "pos", 2));

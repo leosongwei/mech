@@ -6,6 +6,10 @@ lanes, two factions and physically flown projectiles.
 
 ```
 dev.sh                 # start / attach / stop the server (byobu / tmux)
+Dockerfile.backend     # .NET 10 server image (port 8010)
+Dockerfile.frontend    # nginx + webpack client image (port 8080)
+deploy/k8s/            # kustomize manifests: battle and range, split images
+.github/workflows/     # build & push both images to GHCR
 dotnet.sh              # build / run helper (dotnet's own state in .dotnet_tmp/)
 MechServer.csproj      # the server; <Version> is the product version
 Program.cs             # entry point: --host / --port / --range / --check
@@ -117,9 +121,9 @@ later on the same map.
 
 The deployment is split into two images:
 
-- **`mech-backend`** — `uv` installs the Python server from
-  `backend/pyproject.toml`. It ships no client files; the game endpoint is
-  `/ws`. It listens on `8010` and runs as a non-root user.
+- **`mech-backend`** — the .NET 10 SDK publishes the ASP.NET Core server from
+  `MechServer.csproj` and the runtime image runs it on `8010` as a non-root
+  user. It ships no client files; the game endpoint is `/ws`.
 - **`mech-frontend`** — Node 22 builds the client with the existing webpack
   flow, then the result is copied into `nginx-unprivileged`. Nginx serves the
   static files on `8080`, proxies `/ws` to the backend, and exposes `/healthz`
@@ -146,9 +150,9 @@ docker run -d --name mech-range-web --network mech -p 8081:8080 \
 Then open <http://127.0.0.1:8080/>. `MECH_DEBUG` is off in the image; turn the
 console helpers on deliberately with `-e MECH_DEBUG=1` on the backend.
 `MECH_LOG_LEVEL=DEBUG` enables the per-weapon log lines. There is no persistent
-state, so a restart is a fresh battle. Do not add uvicorn workers or run more
-than one backend replica: the world is a module-level single-instance object,
-and every extra process is a separate battle. The frontend is stateless.
+state, so a restart is a fresh battle. Do not run more than one backend
+replica: the world is a single in-process object, and every extra process is a
+separate battle. The frontend is stateless.
 
 ## Kubernetes
 
@@ -163,7 +167,7 @@ backend and a frontend:
 The frontend nginx proxies `/ws` to the matching backend Service. Backends run
 one replica with `Recreate` and TCP startup/readiness/liveness probes; frontends
 are stateless and probe `/healthz`. All four pods run non-root with a read-only
-root filesystem.
+root filesystem and a `/tmp` emptyDir.
 
 ```bash
 kubectl apply -k deploy/k8s

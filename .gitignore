@@ -28,3 +28,4 @@ assets/
 .dotnet_tmp/
 bin/
 obj/
+.direnv

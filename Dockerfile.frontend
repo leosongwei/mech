@@ -9,14 +9,23 @@ WORKDIR /src/frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY frontend/ ./
+<<<<<<< HEAD
 # webpack reads the product version from the C# project, then writes ../assets
 COPY MechServer.csproj /src/MechServer.csproj
+=======
+COPY backend/pyproject.toml /src/backend/pyproject.toml
+# webpack output.path is ../backend/assets, i.e. /src/backend/assets here
+>>>>>>> 75c7f47 (前后端分离)
 RUN npm run build
 
 FROM nginxinc/nginx-unprivileged:alpine
 
 COPY frontend/nginx.conf.template /etc/nginx/templates/default.conf.template
+<<<<<<< HEAD
 COPY --from=client /src/assets /usr/share/nginx/html
+=======
+COPY --from=client /src/backend/assets /usr/share/nginx/html
+>>>>>>> 75c7f47 (前后端分离)
 
 # k8s overrides the backend target per Deployment; these are the battle defaults
 ENV BACKEND_HOST=mech-battle-backend \

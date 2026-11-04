@@ -29,6 +29,10 @@
           ffmpeg
           # dev.sh starts the server in a tmux session
           tmux
+          # editor: Zed's C# extension downloads a framework-dependent Roslyn
+          # apphost, which cannot find a .NET runtime on NixOS; this is the
+          # wrapped build the project's .zed/settings.json points at
+          roslyn-ls
         ];
       };
     };

@@ -660,13 +660,27 @@ export function solveElevation(wd, ox, oy, oz, yaw, pitch, target, maxElev) {
 //    share a point at range.  The bearing is solved from the muzzle, so the
 //    round flies to the hull, and the ring is then drawn along that bearing
 //    *from the eye* - which is what the pilot actually lays the cross on.
+//
+// The lead itself is first order in the target's velocity, plus a second-order
+// term when one is measured (`ax` / `az`, off the wire by `net.js`): a hull
+// that is still pulling away is not where its current speed alone says it will
+// be, and at a 1.5-2 s time of flight a 9 m/s^2 machine is 10-20 m further on
+// than the straight lead.  The acceleration is a straight-line extrapolation of
+// what is often a bend, though, so it is trusted for the first
+// `LEAD_ACCEL_S` seconds of the flight and its magnitude is capped at what a
+// machine can actually do - integrating a turn out to a long flight would draw
+// a circle the target never drives.
+const LEAD_ACCEL_S = 1.0;           // s, how much of the flight the pull counts for
+const LEAD_ACCEL_MAX = 12;          // m/s^2, above the mech's 9.3 (measurement noise)
 export function leadPoint(wd, zeroRange, maxElev, mx, my, mz, ex, ey, ez,
-                          tx, ty, tz, vx, vz, vy = 0) {
+                          tx, ty, tz, vx, vz, vy = 0, ax = 0, az = 0) {
   // the bearing the bore has to take: from the muzzle to where the target will
   // be.  Static targets keep the pilot's heading, movers need the lead folded
   // in, so the bearing is solved twice.  `vy` is the target's climb rate: a
   // hull drives on the flat (0, and nothing changes for one), a missile in the
   // air climbs or dives and *that* component is half of the lead.
+  const amag = Math.hypot(ax, az);
+  if (amag > LEAD_ACCEL_MAX) { ax *= LEAD_ACCEL_MAX / amag; az *= LEAD_ACCEL_MAX / amag; }
   let bx = tx, by = ty, bz = tz;
   let yaw = Math.atan2(bz - mz, bx - mx);
   let shot = null;
@@ -689,10 +703,15 @@ export function leadPoint(wd, zeroRange, maxElev, mx, my, mz, ex, ey, ez,
       p += Math.atan2(err, dm);
     }
     if (shot === null) return null;
-    // where the target has moved to by the time that round lands
-    bx = tx + vx * shot.t;
+    // where the target has moved to by the time that round lands: velocity all
+    // the way, plus the measured pull over `ta` seconds of the flight.  The
+    // term is `0.5 a T ta` - the full square while the flight is short enough
+    // for the extrapolation to be worth trusting (`ta` = T), and linear in T
+    // past `LEAD_ACCEL_S` so a long shot does not draw a circle
+    const ta = Math.min(shot.t, LEAD_ACCEL_S);
+    bx = tx + vx * shot.t + 0.5 * ax * shot.t * ta;
     by = ty + vy * shot.t;
-    bz = tz + vz * shot.t;
+    bz = tz + vz * shot.t + 0.5 * az * shot.t * ta;
   }
   // the ring sits on the sight line the pilot lays the cross along: the bore's
   // bearing, drawn from the eye, so aiming at it puts the round on the target

@@ -20,6 +20,7 @@ namespace Mech.Server.Modes.Range;
 public sealed class TargetSlot
 {
     public string role = "static";      // "static" holds a post, "moving" drives a patrol
+    public int etype = Defs.ETYPE_APC;  // the hull it stands up as
     public float x, z;
     public string axis = "x";           // which axis the patrol span runs on
     public float lo, hi;                // the ends of that span, metres
@@ -28,13 +29,26 @@ public sealed class TargetSlot
     public float t;                     // s left before an empty post is stood back up
 }
 
-/// <summary>The range's twelve APC targets, one per post in `Terrain.RANGE_POSTS`.</summary>
+/// <summary>The range's targets: twelve APC hulks, one per post in
+/// `Terrain.RANGE_POSTS`, and one mech that drives a leg of its own.</summary>
 public sealed class Targets
 {
     public const int STATIC_TARGETS = 10;
     public const int MOVING_TARGETS = 2;
     public const float RESPAWN_DELAY = 3.0f;
     public const float PATROL_SPEED = 8.0f;
+
+    /// <summary>Where the moving mech drives: 200 m of ground square to the
+    /// firing line, 500 m out from the spawning berths, so a pilot standing
+    /// there watches it broadside at 1x.  Short on purpose - one leg is 12.5 s
+    /// at 16 m/s, so it turns round often enough to be studied, not waited for.</summary>
+    public static readonly (float x, float z) MECH_PATROL = (1672f, 2605f);
+    public const float MECH_PATROL_HALF = 100f;
+    // 16 m/s is over half the mech's top speed, so it spends a real part of
+    // every leg at the hull's own 9.3 m/s^2 - which is what an APC patrol never
+    // does and what the pre-aim ring's acceleration term is for
+    public const float MECH_PATROL_SPEED = 16.0f;
+    public const float MECH_RESPAWN_DELAY = 5.0f;
 
     public const float MARGIN = 300.0f;          // keep hulks off the map edge
     public const float MIN_PLAYER_DIST = 350.0f; // never pop one in the player's face
@@ -71,6 +85,23 @@ public sealed class Targets
             slots.Count(s => s.role == "moving") != MOVING_TARGETS)
             throw new InvalidOperationException(
                 "the range map must carry 10 static posts and 2 patrols");
+        // One moving *mech*, and it is a different test from the APC patrols: a
+        // car crawling down a straight at a constant 8 m/s is the case a lead
+        // ring never gets wrong, while a hull pulling at `MECH_ACCEL` in and out
+        // of a turn is exactly what the second-order term is for.  It carries no
+        // `ai` component, so it never fires (the range's fixtures still do not
+        // shoot back) and no weapon system ever looks at it - it is only a hull
+        // to practise on, and it walks the same slot machinery a patrol does, so
+        // a killed one comes back in place.
+        slots.Add(new TargetSlot
+        {
+            role = "mech", etype = Defs.ETYPE_MECH,
+            x = MECH_PATROL.x, z = MECH_PATROL.z,
+            axis = "x",
+            lo = MECH_PATROL.x - MECH_PATROL_HALF,
+            hi = MECH_PATROL.x + MECH_PATROL_HALF,
+            dir = 1f, eid = -1, t = 0f,
+        });
         foreach (var slot in slots) slot.eid = _spawn(world, slot);
     }
 
@@ -97,7 +128,7 @@ public sealed class Targets
             // armed - the slot's `t` only ever counts down, so a destroyed target
             // came back on the very next tick, while `doc/product/range.md` and
             // this mode's rule promise 3 s.  The timer is armed on the death here.)
-            if (eid >= 0) slot.t = RESPAWN_DELAY;
+            if (eid >= 0) slot.t = slot.role == "mech" ? MECH_RESPAWN_DELAY : RESPAWN_DELAY;
             slot.eid = -1;
             slot.t -= dt;
             if (slot.t <= 0f)
@@ -112,7 +143,11 @@ public sealed class Targets
     {
         float x = slot.x;
         float z = slot.z;
-        int eid = world.spawn_unit(Defs.ETYPE_APC, Defs.FACTION_BLUE, x, z);
+        // a mech is drawn its standard pair: an AI crew would draw one off
+        // `Defs.AI_LOADOUTS`, and this hull never fires, but a bare hull with no
+        // arms would not look like the machine a pilot is practising against
+        int eid = world.spawn_unit(slot.etype, Defs.FACTION_BLUE, x, z,
+            weapons: slot.etype == Defs.ETYPE_MECH ? Defs.DEFAULT_LOADOUT : null);
         // face the player's cross so the hulls read clearly through the sight
         var (sx, sz) = world.terrain.bases[Defs.FACTION_RED];
         float yaw = slot.role == "static" ? MathF.Atan2(sz - z, sx - x) : _leg_yaw(slot);
@@ -120,6 +155,7 @@ public sealed class Targets
         e.fv("yaw")[eid] = yaw;
         e.fv("leg_yaw")[eid] = yaw;
         e.fv("turret_yaw")[eid] = yaw;
+        e.fv("sight_yaw")[eid] = yaw;
         return eid;
     }
 
@@ -144,7 +180,7 @@ public sealed class Targets
         var cmd = e.fv("vel_cmd");
         cmd.set(eid, 0, 0f);
         cmd.set(eid, 2, 0f);
-        if (slot.role != "moving") return;
+        if (slot.role != "moving" && slot.role != "mech") return;
         float lo = slot.lo, hi = slot.hi;
         float d = slot.dir;
         int k = slot.axis == "x" ? 0 : 2;
@@ -154,13 +190,24 @@ public sealed class Targets
         slot.dir = d;
         // the hull is told a speed down the patrol axis and drives itself there: at
         // the end of a leg that is a direction reversal, which the wheeled model
-        // takes as a U-turn at its own radius (the steering is its state, not ours)
-        cmd.set(eid, k, d * PATROL_SPEED);
+        // takes as a U-turn at its own radius (the steering is its state, not ours).
+        // The mech has no steering of its own to spend: `movement` pulls its
+        // velocity after the command at `MECH_ACCEL`, so the same reversal is a
+        // deceleration and an acceleration - the cleanest moving hull the range
+        // has to aim at.
+        cmd.set(eid, k, d * (slot.role == "mech" ? MECH_PATROL_SPEED : PATROL_SPEED));
+        // a car's heading is its own state; a mech's is not, so a reversing mech
+        // is also *pointed* the other way - `gunnery` swings its hull after the
+        // sight at its own rate, which is what a pilot sees a mech do
+        if (slot.role == "mech") e.fv("sight_yaw")[eid] = _leg_yaw(slot);
     }
 
     /// <summary>Pick a fresh random spot for a destroyed slot.</summary>
     private static void _place(World world, TargetSlot slot)
     {
+        // the mech's leg is its post: it comes back where a pilot last saw it
+        // rather than walking the field to some new random straight
+        if (slot.role == "mech") { slot.dir = 1f; return; }
         if (slot.role == "moving")
         {
             var (x, z, axis, lo, hi) = _random_patrol(world);

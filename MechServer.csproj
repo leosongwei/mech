@@ -8,7 +8,7 @@
          client's build reads it and stamps it under the lobby's subtitle
          (`frontend/webpack.config.js`), and the server logs it at boot.  Every
          feature change bumps the SECOND number; the third stays 0. -->
-    <Version>1.11.0</Version>
+    <Version>1.12.0</Version>
     <AssemblyName>MechServer</AssemblyName>
     <RootNamespace>Mech.Server</RootNamespace>
     <InvariantGlobalization>true</InvariantGlobalization>

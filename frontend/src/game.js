@@ -966,10 +966,18 @@ export class Game {
       };
       for (const a of arms) {
         // the lead is solved against the hull's real velocity, which is what
-        // the wire carries (`vel`); `mv*` is the same number smoothed
+        // the wire carries (`vel`); `mv*` is the same number smoothed.  The
+        // pull is `ax` / `az`, the acceleration `net.js` measures off two
+        // velocity samples: a hull still accelerating into the shot, or
+        // braking out of one, is further on (or shorter) than its speed alone
+        // says by the time the round arrives.  A measurement older than half a
+        // second says nothing about now - a hull that was tiered out or held
+        // off the wire is ringed at its velocity alone.
+        const fresh = e.avt !== undefined && this.net.tick - e.avt <= 15;
         const p = leadPoint(a.wd, this.zeroRange, zero.max_elev,
           a.m[0], a.m[1], a.m[2], eye[0], eye[1], eye[2], t.x, t.y, t.z,
-          e.mvx === undefined ? e.vx : e.mvx, e.mvz === undefined ? e.vz : e.mvz);
+          e.mvx === undefined ? e.vx : e.mvx, e.mvz === undefined ? e.vz : e.mvz,
+          0, fresh ? e.ax : 0, fresh ? e.az : 0);
         if (p) t.marks.push({ arm: a.arm, x: p.x, y: p.y, z: p.z, tof: p.tof });
       }
       // the box stands on its own: a hull can be in view while the point to

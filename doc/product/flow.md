@@ -307,7 +307,8 @@
 ```
 敌方指挥部（4000 HP）被打爆
         │
-        ├─ 全屏 VICTORY / DEFEAT + `ENEMY COMMAND BASE DESTROYED`
+        ├─ 全屏 VICTORY / DEFEAT + 第二行 `ENEMY COMMAND BASE DESTROYED`（胜）
+        │  或 `OUR COMMAND BASE DESTROYED`（负，指的是自己那座）
         │
         └─ 40 s 倒计时（NEW MATCH IN n s）
               └─ 同一张地图重开：清空战场、重建基地/城镇/平民，

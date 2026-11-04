@@ -14,6 +14,12 @@ const SMOKE_STRIDE = 32;
 const CONTACT_STRIDE = 6;       // minimap point: x, z, faction, etype
 const CONTACT_QUANT = 4;        // metres per unit of the u16
 const TICK_HZ = 30;
+// the measured acceleration's two constants: how long a pull is remembered
+// (a hull that stopped pulling reads as stopping in a quarter second, which is
+// the scale of its own ramp) and the rate no machine can make, i.e. a hull
+// that did not accelerate but moved (`net.js _row`)
+const ACC_TAU = 0.25;           // s
+const ACC_JUMP = 25;            // m/s^2, against a mech's 9.3 and an APC's 8
 
 export class Net {
   constructor(url) {
@@ -323,6 +329,34 @@ export class Net {
       e.mvx += (e.vx - e.mvx) * 0.5;
       e.mvy += (e.vy - e.mvy) * 0.5;
       e.mvz += (e.vz - e.mvz) * 0.5;
+    }
+    // How hard a hull is pulling is not on the wire and cannot be: nobody
+    // broadcasts how much throttle is down.  It is measured off the one thing
+    // that is sent - two velocity samples, differenced over the ticks between
+    // them - and that measurement is smoothed with a *time constant* rather
+    // than a fixed per-frame gain, so a lost or a held frame lengthens the
+    // baseline instead of making the estimator quicker or slower.  Two samples
+    // are the shortest baseline on purpose: a hull's pull changes on the scale
+    // of its own ramp (a mech reaches its limit in a second), so a trend fitted
+    // over half a second would still be reporting the turn it was in.
+    // `game._leadMarkers` puts the result in the pre-aim ring as `ax` / `az`.
+    const tick = this.tick;
+    if (e.avt === undefined) {
+      e.pvx = e.vx; e.pvz = e.vz; e.avt = tick; e.ax = 0; e.az = 0;
+    } else if (tick > e.avt) {
+      const dt = (tick - e.avt) / TICK_HZ;
+      const sx = (e.vx - e.pvx) / dt, sz = (e.vz - e.pvz) / dt;
+      e.pvx = e.vx; e.pvz = e.vz; e.avt = tick;
+      // a jump no machine can make is not a pull: a respawn, a teleport, an id
+      // handed back to a new hull.  Drop the history instead of nearly capping
+      // it, so the ring does not carry a phantom acceleration for a few frames
+      if (sx * sx + sz * sz > ACC_JUMP * ACC_JUMP) {
+        e.ax = 0; e.az = 0;
+      } else {
+        const k = 1 - Math.exp(-dt / ACC_TAU);
+        e.ax += (sx - e.ax) * k;
+        e.az += (sz - e.az) * k;
+      }
     }
     seen.add(id);
     return e;

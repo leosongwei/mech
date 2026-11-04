@@ -932,7 +932,11 @@ export class HUD {
     ctx.fillText(won ? 'VICTORY' : 'DEFEAT', w / 2, h / 2 - 10);
     ctx.font = '16px "Courier New", monospace';
     ctx.fillStyle = '#e8f4ee';
-    ctx.fillText('ENEMY COMMAND BASE DESTROYED', w / 2, h / 2 + 24);
+    // the line is about the base that *ended the match*, which from the losing
+    // side is your own: a pilot who was just beaten does not want to be told his
+    // enemy's base went up
+    ctx.fillText(won ? 'ENEMY COMMAND BASE DESTROYED' : 'OUR COMMAND BASE DESTROYED',
+      w / 2, h / 2 + 24);
     const t = (s.meta && s.meta.end_timer) || 0;
     ctx.font = '13px "Courier New", monospace';
     ctx.fillText(`NEW MATCH IN ${t.toFixed(0)}s`, w / 2, h / 2 + 52);

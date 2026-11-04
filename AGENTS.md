@@ -68,7 +68,10 @@ Modes/                     # per-mode rule sets: map, setup, pipeline, spawn rul
                            #   Waves.cs: town capture + reinforcement waves
                            #   Raids.cs: the raiding parties - one mech per lane,
                            #   force-gradient + two-level (128 m / 16 m) pathfinding
-  Range/                   #   RangeMode.cs, Targets.cs: passive APC targets,
+  Range/                   #   RangeMode.cs, Targets.cs: passive APC targets plus
+                           #   one mech patrolling a 400 m leg (the only hull that
+                           #   accelerates hard - what the lead ring's second-order
+                           #   term is measured on),
                            #   Bunkers.cs: ridge blockhouses, TestAi.cs: the ground AI
                            #   for hulls a pilot drops there (the range's own fixtures
                            #   never shoot back), Record.cs: the top-attack trace,
@@ -1061,6 +1064,16 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
   `defs.MECH_SIGHT_Z`) and only the offset from the pivot follows `syaw` /
   `spitch`. Getting this wrong (passing the sight's angles to `at`) draws the
   head a metre and a half off its own pillar whenever the two disagree.
+* **The pre-aim ring reads the target's acceleration off the wire**
+  (`leadPoint`'s `ax` / `az`): nobody broadcasts throttle, so `net.js` measures
+  it - the difference of two velocity samples over the ticks between them, EMA
+  smoothed on a 0.25 s time constant, a jump over 25 m/s^2 treated as a
+  teleport rather than a pull, and a sample older than half a second ignored.
+  It is a straight-line extrapolation of what is often a bend, so the term only
+  counts for the first second of the flight (`LEAD_ACCEL_S`) and is capped at
+  12 m/s^2. Measured against the range's patrolling mech at 1.4 s: 1.35 -> 0.67 m
+  mean, 6.35 -> 2.45 m on the turns. A constant-curvature arc was measured too
+  and is *worse* (6.98 against 4.71) - a mech's pull rotates while it turns.
 * `map.js` must stay ballistically identical to the server: same gravity,
   same 1/30 step, same launch bias (`wd.bias`), the same "building walls are
   columns, tree trunks are cylinders" rule (`wallAt`/`obstacleAt`/`trunkHit`),

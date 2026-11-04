@@ -109,9 +109,7 @@ public static class Weapons
             }
         }
 
-        // ---- firing, in ascending id order --------------------------------
-        // `fire` draws the spread from `world.rng`, so the order of these pulls is
-        // part of the simulation: keep the query order, do not group it.
+        // ---- firing -------------------------------------------------------
         var trigger = e.uv("trigger");
         var trigger_prev = e.uv("trigger_prev");
         var owner = e.iv("owner");

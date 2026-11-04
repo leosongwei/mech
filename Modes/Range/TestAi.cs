@@ -23,8 +23,6 @@ public static class TestAi
         var e = world.ecs;
         var owner = e.iv("owner");
         var hulls = new List<int>();
-        // `movable()` is a query, so the hulls are visited in ascending id order -
-        // `Ai.run` draws from `world.rng` inside its loop
         foreach (var eid in world.movable())
             if (e.has(eid, "range_drone") && owner[eid] < 0) hulls.Add(eid);
         if (hulls.Count > 0) Systems.Ai.run(world, dt, hulls.ToArray());

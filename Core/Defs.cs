@@ -710,10 +710,6 @@ public static partial class Defs
     };
 
     /// <summary>One template off `AI_LOADOUTS`, drawn with `rng.random()`.</summary>
-    /// <remarks>
-    /// The draw is part of the simulation (it comes off `world.rng`), so a list of
-    /// templates in a different order fields a different battle.
-    /// </remarks>
     public static int[] ai_loadout(Rng rng)
     {
         float r = rng.random();
@@ -759,11 +755,7 @@ public static partial class Defs
         "Asakura", "Cuaran", "Giyal", "Sol", "Ross", "Magu",
     };
 
-    /// <summary>One crew name off `AI_NAMES`.</summary>
-    /// <remarks>
-    /// Drawn like the loadout (`ai_loadout`), off `world.rng`, so the order of the
-    /// pool is part of the simulation.
-    /// </remarks>
+    /// <summary>One crew name off `AI_NAMES`, drawn like the loadout.</summary>
     public static string ai_name(Rng rng) =>
         AI_NAMES[(int)(rng.random() * AI_NAMES.Length) % AI_NAMES.Length];
 

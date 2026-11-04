@@ -321,9 +321,8 @@ public static class Netcode
     private static ushort _u16(int v) =>
         v <= 0 ? (ushort)0 : v >= 65535 ? (ushort)65535 : (ushort)v;
 
-    // A component a wreck, a corpse or a round need not own: Python's
-    // `columns()` fills the default in where the entity has no buffer, so these
-    // do the same instead of throwing on the archetype that lacks it.
+    // A component a wreck, a corpse or a round need not own: these answer the
+    // registered default instead of throwing on the archetype that lacks it.
     private static float _f(Archetype a, int row, string name, int c = 0) =>
         a.has(name) ? a.get_f(name, row, c) : 0f;
     private static int _i(Archetype a, int row, string name) =>
@@ -608,8 +607,8 @@ public static class Netcode
             _w16(s, off + 50, _u16(_f(a, r, "arm_hp", 0)));
             _w16(s, off + 52, _u16(_f(a, r, "arm_hp", 1)));
             // the two-slot counters (`ammo` / `mag` are ints, `weapon` a byte,
-            // two arms each) go through the views: the default they answer for
-            // a hull that has no arms is exactly what `columns()` fills
+            // two arms each) go through the views, which answer the default for
+            // a hull that has no arms
             _w16(s, off + 54, _u16(ammo.get(eid, 0)));
             _w16(s, off + 56, _u16(ammo.get(eid, 1)));
             _w16(s, off + 58, _u16(mag.get(eid, 0)));

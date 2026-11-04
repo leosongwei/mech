@@ -64,7 +64,7 @@ public sealed class World
     public Terrain terrain;
     public ECS ecs = new();
     public Grid grid;
-    public Rng rng = new(2024);
+    public Rng rng = new();          // one stream per thread (Core/Rng.cs)
     public Dictionary<int, Player> players = new();
     public int next_pid = 1;
     public float time;

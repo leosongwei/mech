@@ -111,8 +111,9 @@ frontend/
   component (`float[]`, `int[]`, `byte[]` or `ushort[]`, `stride` elements per
   row), as long as the entities that actually have it. An entity id is not a
   storage address any more — `_arch`/`_row` turn it into (archetype, row), so a
-  hull's position is `a.f("pos")[row * 3 + 0..2]`. Queries return ascending ids
-  (`ecs.query("unit")`); `ecs.fv("pos")` answers `view[eid]`, `view.get(eid, i)`,
+  hull's position is `a.f("pos")[row * 3 + 0..2]`. `ecs.query("unit")` returns the
+  ids of one archetype block after another; `ecs.fv("pos")` answers `view[eid]`,
+  `view.get(eid, i)`,
   `view.get(ids, i, dst)`, filling a registered default where the entity does not
   own the component, and `ecs.slot(eid)` / `ecs.row_f(eid, "pos", out row)` are
   the cheap single-entity doors.  Everything in the simulation is `float`.
@@ -150,20 +151,24 @@ frontend/
   timers, leg turning) and the whole pass becomes a handful of array calls.
   `ecs.slot(eid)` is the same thing for a per-entity loop that touches many
   components — one lookup, then `bufs["pos"][row, 0]`; `"combat" in bufs` is the
-  component test. `ecs.locate(ids)` gives `(rows, archetypes)` when the loop has
-  to stay in query order. `ecs.columns(ids, names)` is the batch door: it
-  resolves the archetype split **once** and returns a dict of arrays for many
-  components at once (`View` pays that split again for every component, which is
-  why `netcode.snapshot_bytes` reads its twenty columns through it — 5× on the
-  wire build). The values are the ones a `View` gives, defaults included.
-* **Iteration order is part of the simulation.** `weapons`, `ai` and the
-  spread/acquire draws take numbers from `world.rng` inside a loop over
-  entities, so visiting them in a different order produces a different battle.
-  Those loops must keep the ascending `query()` order (`locate`/`slot`);
-  `groups` (archetype-major) is only for order-free work.  The port deserves the
-  same warning: the RNG stream is C#'s, not Python's, so two runs never agree -
-  but *within* a run the draw order is still the battle, and a `groups` pass in a
-  system that draws would quietly change it.
+  component test. `ecs.locate(ids)` resolves a flat id list into `(rows,
+  archetypes)` once, for a loop that keeps the ids and wants buffer access. A
+  `View` (`ecs.fv`/`uv`/`iv`) is the door for a scattered read of one component,
+  and answers the registered default where an entity does not own it. There is
+  no batch-column door: the snapshot builds its rows one `slot()` at a time.
+* **The order a system visits entities in is not part of the simulation.**
+  `world.rng` is one stream per thread (`Core/Rng.cs`), so a draw cannot depend
+  on which entity drew before it, and `query()` returns its ids in archetype
+  blocks. Any pass may take `groups()` (buffers hoisted, no per-row component
+  test) or `query()` (a flat id list) — pick on the shape of the loop, and the
+  cost of a row, never on "does this system draw random numbers". `MECH_SEED`
+  makes a run reproducible while one thread does all the drawing, which is what
+  `--check` does; with a socket attached, or once a `run()` is parallelised, two
+  runs differ. Verification is therefore by magnitude and by the per-tick
+  invariants, never by diffing two runs. What *is* order, and is semantics
+  rather than accident: the system pipeline below, and the damage chain
+  (`projectiles`/`proximity` write `hp`, `blasts` judges the burst, `mortality`
+  decides the death).
 * **Identity is a component, never a type switch.** What an entity *is* comes
   from the marker components its type declares in
   `Defs.UNIT_DEFS[etype].tags`: `unit` (a hull rounds stop on and damage
@@ -241,8 +246,7 @@ frontend/
   configs at 30/10/10/25/15/10 %, the left arm always the 30 mm and the right
   arm the variable. A pilot's mech always passes `player.loadout`, and the
   range's defence post passes its own, so both are untouched by the table. The
-  draw comes off `world.rng`, which makes the order of the list part of the
-  simulation like every other draw.
+  draw comes off `world.rng`.
 * **An AI crew fires the arms it has.** `ai._aim_and_fire` used to pull the
   right trigger only for `kind in ("rocket", "saclos")`; it now fires any arm
   whose own `range` covers the target (still 2.2 km for those two, `ai_range`
@@ -412,8 +416,9 @@ frontend/
   takes a whole tick's worth of round legs at once and answers where each one
   meets the ground, because a leg is 36 m of terrain sampling and there are
   dozens of them — `projectiles.run` therefore flies every round first, asks once,
-  and only then resolves impacts in ascending `pid` order (entity creation order
-  is part of the simulation, not an implementation detail).  `walk` in its return
+  and only then resolves what each leg ran into, one round at a time — the pass
+  with the side effects (a burst, the damage, the dead round), and the credit for
+  a kill follows a fixed rule inside one tick.  `walk` in its return
   says "this leg crossed a tree tile", which is handed back to the scalar
   `ground_hit`: a trunk is a cylinder solved analytically, not something to
   sample.  What is *not* worth batching is the integration itself — a few
@@ -605,8 +610,7 @@ frontend/
   several and by then its id can belong to the wreck it left. Names come from a
   component, never a type switch: `name_id` is an index into `World.names`
   (index 0 = nameless, and a car or a man answers to its `etype` name), an AI
-  mech draws one off `defs.AI_NAMES` at spawn (a draw off `world.rng`, so the
-  pool's order is part of the simulation) and a pilot's hull carries his
+  mech draws one off `defs.AI_NAMES` at spawn and a pilot's hull carries his
   callsign; `[bot]` is appended to the ones no pilot owns. **Who killed it is
   frozen at the hit, not looked up at the death** - `combat.apply` records
   `last_name` / `last_fac` / `last_etype` / `last_wid` next to `last_hit`, and
@@ -1262,7 +1266,11 @@ cd frontend && npm install && npm run build      # -> assets/
   log.
 * **The headless harness is `Harness/`** (`./dotnet.sh run -- --check ...`), the
   replacement for the Python tools the port came from.  It drives a real `World`
-  in-process - no socket, no wall clock - so a check is a number, not a session:
+  in-process - no socket, no wall clock - so a check is a number, not a session.
+  Every "measured" figure below and in the product notes is one run of one of
+  these: `MECH_SEED` makes it repeatable while a single thread does the drawing
+  (which is the harness's own case), and the number is read for its magnitude -
+  did the change make things worse - never as a baseline to diff:
   ```bash
   ./dotnet.sh run -- --check battle --minutes 12   # scripted battle, per-minute census
   ./dotnet.sh run -- --check range  --minutes 2    # range world, a pilot firing
@@ -1272,8 +1280,8 @@ cd frontend && npm install && npm run build      # -> assets/
   ./dotnet.sh run -- --check net --minutes 30 --from 8   # one pilot's download, per minute
   ```
   `MECH_PERF=1` on the battle check runs it without the per-tick event scan and
-  prints the per-minute cost: on a 12 minute battle it is **1.2 ms/tick**
-  (0.2 ms of it the 15 Hz wire) against the Python server's 11.5 ms/tick, i.e.
+  prints the per-minute cost: on a 12 minute battle it is **1.3 ms/tick**
+  (0.06 ms of it the 15 Hz wire) against the Python server's 11.5 ms/tick, i.e.
   ~9x, and the curve is flat where Python's climbs to 18 ms as the field matures.
   Every check ends with `ecs.validate()`, so bookkeeping that a value comparison
   would not catch (a row pointing past its buffer) fails the run.
@@ -1545,6 +1553,15 @@ for (let k = 0; k < 6; k++) {
   notes, not a document.
 * Minimal, scoped edits: match the surrounding style (flat arrays, batched
   systems, short helper functions, comment density of the file you touch).
+* **Do not write negations in comments or documents.** A thing that does not
+  exist is not worth a sentence: "the order is *not* load bearing", "do not use
+  `groups()` here", "this is not a type switch" all carry a rule that will drift
+  out of date while the code around them does not. Describe what the code *is*
+  and what it does; when a rule really has to hold, state it positively ("a crew
+  is visited once per tick, and its draws come off its own stream"). The one
+  place a negation belongs is *this file*, in the section that states a design
+  principle - that is what these notes are for. Everything else keeps the
+  comment lean and true.
 * Units are metres and seconds; the map is 16 km square, the clock is 30 Hz.
 * **The product version lives in `MechServer.csproj`** (`frontend/package.json`'s
   own `version` is a private manifest, not the product's - never read it). Its

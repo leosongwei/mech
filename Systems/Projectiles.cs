@@ -6,8 +6,8 @@
 //   1. fly every round, remembering the leg (`proj_prev` -> `pos`) it covered;
 //   2. ask the terrain once for every leg (`Terrain.ground_hits_many`) - a
 //      hundred short legs make one walk instead of a hundred;
-//   3. resolve what each leg ran into, in ascending round id, because entity
-//      creation order (a burst per impact) is part of the simulation.
+//   3. resolve what each leg ran into, one round at a time, because that is
+//      the pass with the side effects (a burst per impact, damage, a wreck).
 //
 // `sphere_table` is the tick's shared copy of every hit sphere on the field.
 // `prev`/`disp` are the reason it exists in this shape: a missile covers 20 m in
@@ -254,10 +254,10 @@ public static class Projectiles
             }
         }
 
-        // ---- pass two: what each leg ran into, in ascending round order ---
-        // (the side effects - a burst entity per impact, a destroyed round - stay
-        // in the order the loop always had, so ids are handed out the way every
-        // other system expects)
+        // ---- pass two: what each leg ran into ----------------------------
+        // the pass with the side effects: a burst entity per impact, the damage,
+        // the dead round.  One round at a time, because none of it can be
+        // batched.
         var stamp = new int[sph.n];             // candidate de-duplication, per leg
         var cand = new int[sph.n > 0 ? sph.n : 1];
         int tag = 1;
@@ -607,8 +607,7 @@ public static class Projectiles
                 }
             }
         }
-        // `np.unique` handed the sweep ascending rows, and it breaks distance ties
-        // by that order
+        // ascending rows, because the sweep breaks distance ties by that order
         Array.Sort(outv, 0, m);
         return m;
     }

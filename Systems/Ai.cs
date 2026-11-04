@@ -4,16 +4,12 @@
 // & ballistic compensation and otherwise push along their lane towards the enemy
 // command base.
 //
-// Ported one for one from `backend/server/systems/ai.py`.  Two things in here are
-// load bearing and must not be "tidied":
+// Ported one for one from `backend/server/systems/ai.py`.
 //
-//   * **the order of the loop is part of the simulation.**  `_acquire` and `_civ`
-//     draw from `world.rng`, so the crews are visited in ascending id order
-//     (`world.movable()` is a `query`), never archetype-major.
-//   * **the sight leads, the machine follows.**  A crew lays the *sight* on the
-//     intercept and pulls the trigger only once the *bore* is on it
-//     (`Systems/Gunnery.cs` does the slewing); a hull still coming round would
-//     otherwise hose the dirt.
+// **The sight leads, the machine follows.**  A crew lays the *sight* on the
+// intercept and pulls the trigger only once the *bore* is on it
+// (`Systems/Gunnery.cs` does the slewing); a hull still coming round would
+// otherwise hose the dirt.
 //
 // Everything is indexed by row off one `ecs.slot()` lookup, the way the Python
 // loop does it, because the component set of a row (has `arm_hp`? has `raider`?)
@@ -96,8 +92,6 @@ public static class Ai
         var mis = _missiles(world);
 
         // per entity: one `slot` lookup, then every component is `a.f("x")[row]`.
-        // The order is the query order (ascending ids) because this loop draws the
-        // random numbers, so `groups` would reshuffle the whole battle.
         for (int k = 0; k < ids.Length; k++)
         {
             int eid = ids[k];

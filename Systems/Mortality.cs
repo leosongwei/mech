@@ -40,8 +40,6 @@ public static class Mortality
         if (ids.Length > 0)
         {
             var hp = e.fv("hp");
-            // ascending id order, as always: the death list is consumed in the
-            // order the entities were created
             foreach (int eid in ids)
             {
                 if (hp[eid] <= 0f) _kill(world, eid);

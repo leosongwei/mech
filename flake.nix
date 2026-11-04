@@ -6,7 +6,6 @@
 
   outputs =
     {
-      self,
       nixpkgs,
       treefmt-nix,
       ...
@@ -21,9 +20,15 @@
       formatter.${system} = treefmtEval.config.build.wrapper;
       devShell."${system}" = mkShell {
         nativeBuildInputs = with pkgs; [
-          nodejs
-          python3
-          uv
+          # the server: .NET 10 SDK, no third-party packages (`dotnet.sh` runs it)
+          dotnet-sdk_10
+          # the client: the same major Node the image builds with (node:22-alpine)
+          nodejs_22
+          # tools/gun_report.py (ffmpeg reads the recording, numpy does the FFT)
+          (python3.withPackages (ps: [ ps.numpy ]))
+          ffmpeg
+          # dev.sh starts the server in a tmux session
+          tmux
         ];
       };
     };

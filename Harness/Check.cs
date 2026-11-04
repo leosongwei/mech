@@ -25,11 +25,7 @@ public static class Check
     /// <summary>The same scripted pilots `tools/profile_battle.py` flies, so the
     /// two backends are timed on the identical scenario: a slowly panning view,
     /// a walking hull, two firing windows and four smoke pulls.</summary>
-<<<<<<< HEAD
     internal static void drive(World world, Player pl, int tick)
-=======
-    private static void drive(World world, Player pl, int tick)
->>>>>>> 0595a7a (Replace the Python backend with the C# one, move the repo to a single root layout)
     {
         if (pl.mech < 0) return;
         pl.in_yaw = 0.4f + 0.02f * tick + (pl.faction == 1 ? 1.3f : 0f);
@@ -56,10 +52,7 @@ public static class Check
         const float dt = 1f / 30f;
         int ticks = (int)(minutes * 60f / dt);
         var counts = new Dictionary<string, int>();
-<<<<<<< HEAD
         var _view = new Netcode.SnapshotView();
-=======
->>>>>>> 0595a7a (Replace the Python backend with the C# one, move the repo to a single root layout)
         float next_report = 0f;
         var sw = System.Diagnostics.Stopwatch.StartNew();
         int next_minute = 60;
@@ -84,15 +77,11 @@ public static class Check
             if (world.tick % 2 == 0)
             {
                 wsw.Restart();
-<<<<<<< HEAD
                 // the wire is per pilot now: one view, rebuilt every frame
                 _view.at(world, pilots[0]);
                 var contacts = world.tick % Netcode.CONTACT_EVERY == 0
                     ? Netcode.contacts_bytes(world) : null;
                 Netcode.snapshot_bytes(world, _view, contacts);
-=======
-                Netcode.snapshot_bytes(world);
->>>>>>> 0595a7a (Replace the Python backend with the C# one, move the repo to a single root layout)
                 wsw.Stop();
                 wireMs += wsw.Elapsed.TotalMilliseconds;
             }

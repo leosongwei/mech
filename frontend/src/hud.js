@@ -886,12 +886,13 @@ export class HUD {
     // rate, and the share of this pilot's snapshots the server chose not to
     // send last second (a held connection reads 100)
     const net = s.net || {};
-    // -1 until the first echo comes back; a link faster than half a tick can
-    // smooth slightly negative, so the drawn value is clamped at 0
-    const rtt = net.rtt >= 0 ? Math.max(0, net.rtt).toFixed(0) : '-';
+    // the field is a fixed five characters - three digits padded with spaces
+    // plus the unit, or a bare dash until the first echo - so the rest of the
+    // line does not shuffle as the number grows
+    const ping = net.rtt >= 0 ? Math.max(0, net.rtt).toFixed(0).padStart(3) + 'ms' : '    -';
     const loss = net.loss !== undefined ? net.loss.toFixed(2) : '-';
     ctx.fillStyle = net.held ? 'rgba(255,170,120,0.85)' : 'rgba(150,200,175,0.75)';
-    ctx.fillText(`PING ${rtt}ms  TPS ${(net.tps || 0).toFixed(1)}  LOSS ${loss}%`, w - 16, h - 16);
+    ctx.fillText(`PING ${ping}  TPS ${(net.tps || 0).toFixed(1)}  LOSS ${loss}%`, w - 16, h - 16);
     ctx.fillStyle = 'rgba(150,200,175,0.75)';
     ctx.fillText(`FPS ${s.stats.fps | 0}  DRAWS ${s.stats.draws}  INST ${s.stats.instances}`, w - 16, h - 32);
     ctx.fillText(s.helpOpen ? 'H - HIDE CONTROLS' : 'H - CONTROLS', w - 16, h - 48);

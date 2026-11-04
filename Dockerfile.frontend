@@ -1,0 +1,26 @@
+# syntax=docker/dockerfile:1
+
+# ---------------------------------------------------------------------------
+# client: same webpack build as before, then nginx serves the result and
+# reverse-proxies /ws to the backend service.
+# ---------------------------------------------------------------------------
+FROM node:22-alpine AS client
+WORKDIR /src/frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY frontend/ ./
+COPY backend/pyproject.toml /src/backend/pyproject.toml
+# webpack output.path is ../backend/assets, i.e. /src/backend/assets here
+RUN npm run build
+
+FROM nginxinc/nginx-unprivileged:alpine
+
+COPY frontend/nginx.conf.template /etc/nginx/templates/default.conf.template
+COPY --from=client /src/backend/assets /usr/share/nginx/html
+
+# k8s overrides the backend target per Deployment; these are the battle defaults
+ENV BACKEND_HOST=mech-battle-backend \
+    BACKEND_PORT=8010 \
+    NGINX_ENVSUBST_FILTER="^(BACKEND_HOST|BACKEND_PORT)$"
+
+EXPOSE 8080

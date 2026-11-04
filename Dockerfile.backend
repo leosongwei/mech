@@ -1,19 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # ---------------------------------------------------------------------------
-# client: webpack builds the browser bundle straight into ../backend/assets
-# ---------------------------------------------------------------------------
-FROM node:22-alpine AS client
-WORKDIR /src/frontend
-COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci --no-audit --no-fund
-COPY frontend/ ./
-COPY backend/pyproject.toml /src/backend/pyproject.toml
-# webpack output.path is ../backend/assets, i.e. /src/backend/assets here
-RUN npm run build
-
-# ---------------------------------------------------------------------------
-# runtime: uv installs the backend dependencies from pyproject.toml
+# backend: FastAPI + websocket game loop.  No client files are shipped.
 # ---------------------------------------------------------------------------
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 
@@ -32,11 +20,13 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --system -r pyproject.toml
 
 COPY backend/ ./
-COPY --from=client /src/backend/assets ./assets
-
-RUN groupadd --gid 10001 mech \
+# main.py mounts StaticFiles at import time and raises when the directory is
+# missing; keep it empty - the client lives in the frontend image.
+RUN mkdir -p assets \
+ && groupadd --gid 10001 mech \
  && useradd --uid 10001 --gid mech --create-home mech \
  && chown -R mech:mech /app
+ENV HOME=/home/mech
 USER mech
 
 EXPOSE 8010

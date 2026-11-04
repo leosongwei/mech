@@ -115,55 +115,80 @@ later on the same map.
 
 ## Container
 
-The image is multi-stage: Node 22 builds the client into `backend/assets`, then
-the runtime image installs the backend from `pyproject.toml` with `uv`. The
-server listens on `8010` and runs as a non-root user.
+The deployment is split into two images:
+
+- **`mech-backend`** — `uv` installs the Python server from
+  `backend/pyproject.toml`. It ships no client files; the game endpoint is
+  `/ws`. It listens on `8010` and runs as a non-root user.
+- **`mech-frontend`** — Node 22 builds the client with the existing webpack
+  flow, then the result is copied into `nginx-unprivileged`. Nginx serves the
+  static files on `8080`, proxies `/ws` to the backend, and exposes `/healthz`
+  for probes.
 
 ```bash
-docker build -t mech .
+docker network create mech
 
-# battle
-docker run --rm -p 8010:8010 mech
+docker build -f Dockerfile.backend  -t mech-backend .
+docker build -f Dockerfile.frontend -t mech-frontend .
+
+# battle: backend is internal, the browser talks to nginx only
+docker run -d --name mech-backend --network mech mech-backend
+docker run -d --name mech-web --network mech -p 8080:8080 \
+  -e BACKEND_HOST=mech-backend -e BACKEND_PORT=8010 mech-frontend
 
 # range (4 km test map)
-docker run --rm -e MECH_RANGE=1 -p 8011:8010 mech
+docker run -d --name mech-range-backend --network mech \
+  -e MECH_RANGE=1 mech-backend
+docker run -d --name mech-range-web --network mech -p 8081:8080 \
+  -e BACKEND_HOST=mech-range-backend -e BACKEND_PORT=8010 mech-frontend
 ```
 
-`MECH_DEBUG` is off in the image; turn the console helpers on deliberately with
-`-e MECH_DEBUG=1`. `MECH_LOG_LEVEL=DEBUG` enables the per-weapon log lines.
-There is no persistent state, so a restart is a fresh battle. Do not add
-uvicorn workers or run more than one replica: the world is a module-level
-single-instance object, and every extra process is a separate battle.
+Then open <http://127.0.0.1:8080/>. `MECH_DEBUG` is off in the image; turn the
+console helpers on deliberately with `-e MECH_DEBUG=1` on the backend.
+`MECH_LOG_LEVEL=DEBUG` enables the per-weapon log lines. There is no persistent
+state, so a restart is a fresh battle. Do not add uvicorn workers or run more
+than one backend replica: the world is a module-level single-instance object,
+and every extra process is a separate battle. The frontend is stateless.
 
 ## Kubernetes
 
-`deploy/k8s/` contains kustomize manifests for both modes: `mech-battle`
-(ClusterIP `8010`) and `mech-range` (ClusterIP `8011`, `MECH_RANGE=1`). Both run
-one replica with `Recreate`, startup/readiness/liveness probes on `/`, a
-read-only root filesystem and a `/tmp` emptyDir.
+`deploy/k8s/` contains kustomize manifests for both modes, each split into a
+backend and a frontend:
+
+| mode | frontend (ClusterIP) | backend (ClusterIP) |
+| --- | --- | --- |
+| battle | `mech-battle-frontend:8080` | `mech-battle-backend:8010` |
+| range | `mech-range-frontend:8080` | `mech-range-backend:8010` |
+
+The frontend nginx proxies `/ws` to the matching backend Service. Backends run
+one replica with `Recreate` and TCP startup/readiness/liveness probes; frontends
+are stateless and probe `/healthz`. All four pods run non-root with a read-only
+root filesystem.
 
 ```bash
 kubectl apply -k deploy/k8s
 kubectl -n mech get pods,svc
-kubectl -n mech port-forward svc/mech-battle 8010:8010
-kubectl -n mech port-forward svc/mech-range 8011:8011
+kubectl -n mech port-forward svc/mech-battle-frontend 8080:8080
+kubectl -n mech port-forward svc/mech-range-frontend 8080:8080
 ```
 
-The Services are ClusterIP only: expose them through your own reverse proxy or
-gateway (it must pass WebSocket Upgrade and long-lived connections), or use
-`port-forward` for local play. `deploy/k8s/configmap.yaml` holds `MECH_DEBUG`
-and `MECH_LOG_LEVEL`; set `MECH_DEBUG=1` there only for a test deployment.
+The Services are ClusterIP only: expose the frontend Service through your own
+reverse proxy or gateway (it must pass WebSocket Upgrade and long-lived
+connections), or use `port-forward` for local play. `deploy/k8s/configmap.yaml`
+holds the backend's `MECH_DEBUG` and `MECH_LOG_LEVEL`; set `MECH_DEBUG=1` there
+only for a test deployment.
 
 `.github/workflows/container.yml` builds and pushes
-`ghcr.io/leosongwei/mech` to GHCR on `main` and `v*` tags (pull requests build
-without pushing). The manifests use `:latest`, so restart the Deployments after
-a new push:
+`ghcr.io/leosongwei/mech-backend` and `ghcr.io/leosongwei/mech-frontend` to GHCR
+on `main` and `v*` tags (pull requests build without pushing). The manifests use
+`:latest`, so restart the Deployments after a new push:
 
 ```bash
-kubectl -n mech rollout restart deploy/mech-battle deploy/mech-range
+kubectl -n mech rollout restart deploy/mech-battle-backend deploy/mech-battle-frontend
+kubectl -n mech rollout restart deploy/mech-range-backend deploy/mech-range-frontend
 ```
 
-If the GHCR package is private, add an `imagePullSecrets` entry to the
+If the GHCR packages are private, add an `imagePullSecrets` entry to the
 Deployments.
 
 ## Controls

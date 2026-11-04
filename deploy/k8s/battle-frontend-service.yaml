@@ -1,18 +1,18 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: mech-battle
+  name: mech-battle-frontend
   namespace: mech
   labels:
     app.kubernetes.io/name: mech
-    app.kubernetes.io/component: battle
+    app.kubernetes.io/component: battle-frontend
 spec:
   type: ClusterIP
   selector:
     app.kubernetes.io/name: mech
-    app.kubernetes.io/component: battle
+    app.kubernetes.io/component: battle-frontend
   ports:
     - name: http
-      port: 8010
+      port: 8080
       targetPort: http
       protocol: TCP

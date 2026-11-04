@@ -46,6 +46,7 @@ public static class NetCheck
         int nb = minutes + 1;
         var snapB = new double[nb];
         var conB = new double[nb];
+        var clockB = new double[nb];
         var fxB = new double[nb];
         var metaB = new double[nb];
         var headB = new double[nb];
@@ -102,6 +103,8 @@ public static class NetCheck
                 byte[]? contacts = tick % Netcode.CONTACT_EVERY == 0
                     ? Netcode.contacts_bytes(world) : null;
                 var snap = Netcode.snapshot_bytes(world, view, contacts);
+                // the ticks between snapshots carry the 16 B clock block
+                clockB[min] += Netcode.CLOCK;
                 cpuSnap += System.Diagnostics.Stopwatch.GetElapsedTime(q0).TotalMilliseconds;
                 snapB[min] += snap.Length;
                 conB[min] += contacts is null ? 0 : contacts.Length;
@@ -111,9 +114,9 @@ public static class NetCheck
                 // rounds, smoke and the minimap block) - the field is only the
                 // pond it was picked from now that the wire is a tier sphere
                 for (int c = 0; c < Netcode.ROWS; c++)
-                    unitSum[min] += BitConverter.ToUInt16(snap, 8 + c * 2);
-                projSum[min] += BitConverter.ToUInt16(snap, 18);
-                smokeSum[min] += BitConverter.ToUInt16(snap, 20);
+                    unitSum[min] += BitConverter.ToUInt16(snap, Netcode.CLOCK + c * 2);
+                projSum[min] += BitConverter.ToUInt16(snap, Netcode.CLOCK + 10);
+                smokeSum[min] += BitConverter.ToUInt16(snap, Netcode.CLOCK + 12);
                 nearSum[min] += (pl.mech >= 0 && e.is_alive(pl.mech)) ? near(world, pl.mech, 2000f) : 0;
             }
             if (fx is not null)
@@ -165,6 +168,7 @@ public static class NetCheck
         {
             sSnap += snapB[k]; sFx += fxB[k]; sMeta += metaB[k]; sHead += headB[k];
             sCon += conB[k];
+            sSnap += clockB[k];
             sUnits += unitSum[k]; sProj += projSum[k]; sSmoke += smokeSum[k];
             sNear += nearSum[k];
             sSnaps += snapN[k]; sMetas += metaN[k];
@@ -180,6 +184,8 @@ public static class NetCheck
                           + $"fx {sFx / secs / 1024,7:0.0} kB/s  {100 * sFx / total,3:0}%    "
                           + $"meta {sMeta / secs / 1024,5:0.0} kB/s  {100 * sMeta / total,3:0}%    "
                           + $"frames {sHead / secs / 1024,4:0.0} kB/s  {100 * sHead / total,3:0}%");
+        Console.WriteLine($"   of it {clockB.Sum() / secs / 1024:0.0} kB/s are the 16 B clock blocks "
+                          + $"on the ticks between snapshots (30 frames/s in all)");
         Console.WriteLine($"   of it the minimap block {sCon / secs / 1024,6:0.0} kB/s ({100 * sCon / Math.Max(sSnap, 1):0}% of the snapshots, "
                           + $"{sCon / Math.Max(1, (int)(secs * 30.0 / Netcode.CONTACT_EVERY)):0} B x {30.0 / Netcode.CONTACT_EVERY:0.00} Hz)");
         // one snapshot, broken into the rows it is made of: this is where the

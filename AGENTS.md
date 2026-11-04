@@ -791,14 +791,17 @@ frontend/
   ring and the civilians live inside it. Streets are laid *before* the corridor
   cut so they sit on terraces like the lanes do; they are part of `roads`, so
   the client draws them from the same bits.
-* **Netcode** — one init payload with the map and all definitions, then binary
-  snapshots at 15 Hz (`SNAP_EVERY`, 16 B header, and the minimap block every
-  `CONTACT_EVERY` ticks) and JSON meta at 10 Hz (`META_EVERY`).
+* **Netcode** — one init payload with the map and all definitions, then **one
+  binary frame every tick**: a snapshot at 15 Hz (`SNAP_EVERY`) and the 16 B
+  clock block on the ticks between (see the clock block bullet below), with the
+  minimap block every `CONTACT_EVERY` ticks, plus JSON meta at 10 Hz
+  (`META_EVERY`).
   Entity state is authoritative on the server; the client only interpolates.
   **A unit row is as wide as its kind is read for** (`Netcode.ROWS`): mech 74,
   apc 46, command base 30, wreck/bunker 25, infantry/civilian/corpse 20 B, and
-  the header carries one count per class in that order (24 B: magic, tick,
-  eight u16).  It was one 80 B row for everything - a numpy column dump from
+  the header carries one count per class in that order (32 B: the 16 B clock
+  block, then eight u16 counts).  It was one 80 B row for everything - a numpy
+  column dump from
   before the archetype storage, where `arr[field] = columns(field)` wrote a
   whole column whether the entity owned the component or not, so a rifleman
   paid for a mech's arms, magazines and sight (56 of his 80 bytes empty, and
@@ -850,52 +853,105 @@ frontend/
   or `.get()`-guarded; what changes is that distant rows are absent, so what
   pops is late, not earlier.  Measured
   (`--check net`, minutes 8..15 of one pilot): **78 kB/s mean** against 468
-  unfiltered and 112 before the row widths were split - 45 of it snapshots
+  unfiltered and 112 before the row widths were split (**67.8** once the fx rows
+  and the clock blocks were in) - 45 of it snapshots
   (6.7 minimap block) at 53 unit rows of **36 B each**, 18 meta, 14 fx; `--check tiers` prices
   alternative tables on the same battle.
   Not tiered: the `fx` channel.  Explosions are *not* rows - there is no blast
   entity - and an event carries both the flash and the bang, so a visual radius
   is a change to `fx` (which today travels by sound level, 7-17 km), not to the
   snapshot.
-* **A jammed connection is stopped, not slowed** (`Server.Client.want`).  TCP
-  delivers everything, so a slow link cannot lose a frame - it can only
-  accumulate a queue, and every frame built on top of it is one more that has to
-  crawl through before the picture updates.  A lower frame rate does not help
-  either: the pipe is the pipe.  So the server stops: while a pilot is
-  congested he gets **an 8 byte tick frame** (`Netcode.ping_bytes`,
-  `MAGIC_PING`, magic + tick, no rows) and *nothing else* - snapshots, fx and
-  meta are not built for him at all - until his own heartbeat says he is
-  current again.
+* **A frame every tick, and a clock block is a frame** (`Netcode.CLOCK`,
+  `Server.Client.observe`).  TCP delivers everything, so a slow link cannot lose
+  a frame - it can only accumulate a queue, and every frame built on top of it
+  is one more that has to crawl through before the picture updates.  A lower
+  frame rate does not help either: the pipe is the pipe.  So the server stops:
+  while a pilot is congested he gets the clock block **and nothing else** -
+  snapshots, fx and meta are not built for him at all - until his own heartbeat
+  says he is current again.
+
+  The other half is that **the clock never depends on the picture**: every
+  binary frame starts with the same 16 B **clock block** -
+  `magic u32, tick u32, echo u32, tps_x100 u16, loss_x10000 u16`
+  (`Netcode._clock`).  A snapshot is that block plus its eight u16 counts
+  (`HEADER` = 32 B); a hold frame *is* the block (`Netcode.ping_bytes`,
+  `MAGIC_PING`); the ticks between snapshots also carry the block alone, so a
+  healthy connection gets **30 frames/s** (15 snapshots, 15 blocks) instead of
+  15 and a clock that steps 1/15 s at a time.  Cost measured: 0.2 kB/s for the
+  blocks on top of the 16 B the header grew - 67.4 -> 67.8 kB/s per pilot over
+  minutes 8..15 (`--check net`), i.e. under 1 %.
+
+  `tps` and `loss` ride **in the frame, not in `meta`**: both are per-pilot
+  (loss is *his* skipped snapshots) and both are stale within a second, while
+  meta is one JSON a second at 10 Hz for the panel.  `TPS` is counted off the
+  wall clock in `game_loop` once a second, so a server that cannot keep up
+  reports < 30 instead of claiming the nominal rate.
 
   ```
-  congested := no message from him for HEARTBEAT_TIMEOUT (0.4 s)
-               or his newest applied snapshot is LAG_HIGH (12 ticks, 0.4 s) old
-  held      := not congested, and behind <= LAG_LOW (6 ticks, 0.2 s),
-               and the send queue is empty (everything sent has gone out)
+  behind_ms := (tick - ack) * 1000/TARGET_HZ                 (ack >= 0 only)
+  floor_ms  := min(behind_ms, MAX_FLOOR_MS, floor_ms + rise/TARGET_HZ)
+  slack     := max(HOLD_SLACK_MS 200, floor_ms * 0.75)
+  held      := silent > 0.4 s, or behind_ms - floor_ms >= slack
+  resumed   := behind_ms - floor_ms <= slack/2, and the send queue is empty
   ```
 
-  The client reports the tick of the newest snapshot it has **applied** on its
-  own 30 Hz input message (`st`, piggybacked on `in` - no extra traffic, and it
-  *is* the heartbeat), `Client.ack` keeps it, `Client.heard` is when he last
-  said anything at all.  The tick frame is what makes this recover by itself:
-  it advances `net.tick`, the client acks it, and the server sees a fresh
-  ack - so the clock keeps running through the hold instead of the two sides
-  waiting for each other.  On the client side a frame whose magic is
-  `MAGIC_PING` moves `net.tick` and leaves `entities` / `projectiles` / `smoke`
-  / `contacts` exactly as they were (`net.held` is true for the duration).
+  **Congestion is queueing, not distance.**  The first version compared the
+  absolute lag against 0.4 s and held every pilot more than 400 ms away, which
+  is a latency measurement, not a queue: measured with the Node probe, 233 ms
+  and 666 ms of one-way lag both read as "congested" and the picture dropped to
+  clock blocks for nothing.  So `floor_ms` is this path's own best sample - it
+  falls instantly (always take the better one), rises at `FLOOR_RISE_MS_S` (2
+  ms/s, or 20 ms/s once a hold has lasted `HELD_PATIENCE_S` = 10 s, so a path
+  that really got slower is let out instead of being held for ever), and is
+  capped at `MAX_FLOOR_MS` (2 s) so one bogus sample cannot blind the detector.
+  A pilot an ocean away sits at `extra = 0` and is never held; the same pilot
+  with 0.5 s of queue in front of him is.  Measured after the fix: lag 7 (233
+  ms) 15 snapshots/s and zero hold, lag 20 (666 ms) likewise, no-ack likewise;
+  ack frozen -> one `held: 267 ms behind (floor 34, slack 200)` a tick after the
+  threshold and 30 frames/s of clock blocks with `loss 100.00%`; a 3 s queue
+  (`jump`) -> `held: 533 ms behind (floor 33, slack 200)` then `resumed after
+  45 clock blocks` at the far end of it.
+
+  The client reports the newest tick it has **seen** - snapshot or clock block -
+  on its own 30 Hz input message (`st`, piggybacked on `in`; no extra traffic,
+  and it *is* the heartbeat), `Client.ack` keeps it, `Client.heard` is when he
+  last said anything at all.  A report from before the connection is not a
+  distance and is dropped (`st >= Client.born_tick`): a fresh client says
+  `st: 0` while the match is at tick 4000, which would put a 133 s "queue" into
+  the floor the moment he joins.
+
+  **RTT is measured on the echo, and half a tick comes back off it.**  The
+  block's `echo` is the pilot's own `ack` sent straight back, so the client can
+  time a round trip without either side owning a synchronised clock: `net.ack()`
+  stamps `ackSentAt` the first moment a tick value goes out, and when that same
+  value returns (`_clock`) the sample is `now - ackSentAt - 500/TICK_HZ`, EMA
+  0.15.  The half tick is the only quantization in the loop: the server reads
+  the ack as it arrives (the socket handler, not the tick) but can only echo it
+  on its *next* frame, i.e. a wait uniform over one tick - half of it on
+  average.  Nothing is subtracted for our own side: the stamp *is* the send.
+  (The first version took a whole tick off, double-counting; on loopback the
+  raw sample measures 21.6 ms mean against 16.7 for the wait, so a full tick
+  read 0 for every fast link.)  The sample is smoothed signed and clamped where
+  it is drawn, since a link faster than the bias reads slightly negative.  The
+  HUD shows it unhalved (`PING` is RTT, not one way) next to
+  `TPS` and `LOSS`, the last being the closed second's `skipped/due`
+  (`Client.close_window`, `WINDOW` = 30 ticks) - so a hold reads 100 %.
+  On the client side a frame whose magic is `MAGIC_PING` moves `net.tick` and
+  leaves `entities` / `projectiles` / `smoke` / `contacts` exactly as they were.
+  `net.held` is **not** "this frame is a clock block" - half of a healthy
+  link's frames are - but "no snapshot for more than 4 ticks" (snapshots come
+  every second tick), which is what the HUD colours orange.
   **No frame that was built is ever discarded** - the queue is never cleared,
   so a "skipped" frame is one that was never built, and the queue-full
   `dropped` counter stays at 0.  `ack < 0` (a client that reports nothing, or
-  hasn't yet) is not congested - only silence can hold it.  Measured with the
-  Node probe: healthy 14.7 frames/s; ack frozen 0 frames/s and 15 tick
-  frames/s (0.12 kB/s); ack frozen for 3 s then resumed - full frames came back
-  the instant the acks caught up.
+  hasn't yet) is not congested - only silence can hold it.
 * **The minimap has its own block in the same frame**
   (`Netcode.contacts_bytes`, `CONTACT_*`).  The map is the *strategic* picture -
   16 km of hulls at 210 px, no tier - so it cannot come from a sphere around one
   eye: one row per unit, `x` / `z` in 4 m units (u16, 16 km -> 4000), `faction`,
-  `etype`, 6 B, appended after the smoke rows.  The header is **16 B** since
-  then: magic, tick and **four** u16 counts, the fourth being the contact rows -
+  `etype`, 6 B, appended after the smoke rows.  Its counts are the last four of
+  the snapshot's eight u16 (`CLOCK + 10..14`), the fourth being the contact
+  rows -
   `0` means "no new picture this frame" and the client keeps the last list, which
   is how the block rides every `CONTACT_EVERY` (8 ticks = 3.75 Hz, 1.8 kB a
   frame, 6.7 kB/s measured) without a second message type.  A pixel of that map
@@ -1218,9 +1274,10 @@ cd frontend && npm install && npm run build      # -> assets/
   an edit.  Measured unfiltered on 30 minutes, one pilot's ear: **468 kB/s mean, 523 kB/s
   peak, 94 % of it snapshots** (326 unit rows x 80 B x 15 Hz), 4 % meta (1886 B
   x 10 Hz), 2 % fx; the field is 300-400 rows and ~90 % of it is infantry.
-  With the shipped tier sphere and the per-class rows it is **78 kB/s**
-  (minutes 8..15): 45 snapshot (6.7 of it the minimap block), 18 meta, 14 fx -
-  i.e. meta and fx are now the ones worth looking at, and the unfiltered field
+  With the shipped tier sphere, the per-class rows, the fx rows and the clock
+  blocks it is **67.8 kB/s** (minutes 8..15): 45.5 snapshot (6.7 of it the
+  minimap block), 18.4 meta, 3.7 fx, 0.2 clock blocks - i.e. meta and fx are
+  now the ones worth looking at, and the unfiltered field
   would still be 168 kB/s.
   It measures *a* client, not every client (one `SnapshotView`, as the server
   builds it), and a scripted pilot's address decides how much lives inside his

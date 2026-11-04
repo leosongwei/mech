@@ -504,10 +504,10 @@ export class Game {
       zr: this.input.zeroRange,
       // hot smoke: one pull per press, cleared as soon as it is on the wire
       q: this.shopOpen ? false : this.input.qPressed,
-      // the last snapshot this client has applied: the server skips frames for
-      // a pilot who is behind (TCP delivers everything, so the only way to
-      // catch up is to send fewer, and this is how it knows)
-      st: this.net.tick | 0,
+      // the newest server tick this client has seen: the frame clock reads it,
+      // and every binary frame echoes it back (that is what RTT is timed on).
+      // `ack()` stamps the moment this value first goes out.
+      st: this.net.ack(),
     });
     this.input.qPressed = false;
   }
@@ -1242,6 +1242,8 @@ export class Game {
       own,
       entities: this.net.entities,
       contacts: this.net.contacts,
+      net: { rtt: this.net.rttMs, tps: this.net.tps, loss: this.net.loss,
+             held: this.net.held },
       weapons: this.defs.weapons,
       units: this.defs.units,
       buyable: this.buyable,

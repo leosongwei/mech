@@ -48,53 +48,116 @@ public sealed class Client
     // is built for him alone (`Netcode.SnapshotView`)
     public readonly Netcode.SnapshotView view = new();
     // --- the frame clock -------------------------------------------------
-    // Congestion is not something to paper over by sending less often: while a
-    // link is jammed, *any* frame is one more thing queued in front of the
-    // frames behind it, and a slow connection cannot use a lower frame rate any
-    // better than a full one.  So the server **stops** - nothing but an 8 byte
-    // tick frame goes out (so the client still learns the clock and can keep
-    // reporting it back), until the pilot's own heartbeat says he has caught up.
+    // **One binary frame every tick, always.**  A snapshot on every second
+    // tick, and the 16 B clock block on all the others - so the client's sense
+    // of the server's clock (and the round trip it measures on `echo`) never
+    // depends on whether a snapshot happened to go out.
     //
-    //   congested := no message from him for `HEARTBEAT_TIMEOUT`, or his newest
-    //                applied snapshot is `LAG_HIGH` ticks (0.4 s) old
-    //   held      := not congested any more *and* his acks are fresh *and* the
-    //                send queue is empty - i.e. everything sent has gone out
+    // While a pilot is *held* he gets the clock block only: a jammed link cannot
+    // use a lower frame rate, because every frame queued in front of the
+    // picture is one more it has to crawl through.  Nothing built is ever
+    // discarded - a "lost" snapshot is one that was never built.
     //
-    // `ack` is the tick of the newest snapshot he has applied, piggybacked on
-    // his own 30 Hz input (`st`); `heard` is when he last said anything at all.
-    // No frame that was built is ever discarded: the queue is never cleared, so
-    // a "skipped" frame is one that was never built.
-    public int ack = -1;            // -1: nobody has told us yet
-    public bool held;               // congested: tick frames only
-    public int holds;               // tick frames sent while held
-    public int behind;              // ticks between his newest applied frame and now
+    // Congestion is **queueing, not distance**: `behind` is how many ticks old
+    // the newest frame this pilot has seen is, and what matters is how far that
+    // is above the *floor* of the same measurement on his own path - a player
+    // 200 ms away on a clean line is not congested, the same player with 400 ms
+    // of queue in front of him is.  `floor` falls instantly and rises slowly,
+    // so it tracks the path and forgets a bad minute.
+    public int ack = -1;            // newest tick this pilot has *seen* (`st`)
+    public int echo = -1;           // the ack to send back on the next frame
+    public bool held;               // congested: clock blocks only
+    public int holds;               // clock blocks sent while held
+    public int behind;              // ticks between his newest seen frame and now
+    public float floor_ms = 1e9f;   // the best `behind` this path has shown, ms
+    public int held_ticks;          // how long he has been held, for the escape hatch
     public long heard;              // Stopwatch timestamp of his last message
+    public int due;                 // snapshots this second should have gone out
+    public int skipped;             // ... and did not (held)
+    public int loss_x10000;         // the last closed second, in 0.01 %
+    private static readonly ILogger log = MechLog.get("mech.main");
 
-    public const int LAG_HIGH = 12;             // ticks behind (0.4 s) = congested
-    public const int LAG_LOW = 6;               // ticks behind (0.2 s) = caught up
-    public const double HEARTBEAT_TIMEOUT = 0.4;// s of silence = congested
+    // thresholds are *times*, turned into ticks once here, so a different tick
+    // rate cannot silently change what "400 ms behind" means
+    public const float TARGET_HZ = 30f;
+    public const float HOLD_SLACK_MS = 200f;    // loose: we have players an ocean away
+    public const float HOLD_PCT = 0.75f;        // ... and three quarters above their own floor
+    public const float FLOOR_RISE_MS_S = 2f;    // how fast the floor forgets a bad path
+    public const float FLOOR_RISE_HELD_MS_S = 20f;  // ... and how fast it lets a held one out
+    public const float HELD_PATIENCE_S = 10f;   // memory of a path change takes this long
+    public const float MAX_FLOOR_MS = 2000f;    // no path we serve is slower than this
+    public const double HEARTBEAT_TIMEOUT = 0.4; // s of silence = congested
+    public const int WINDOW = (int)TARGET_HZ;    // ticks in the loss window (1 s)
 
-    /// <summary>Should this pilot get a full snapshot on this tick, or only the
-    /// tick frame?  Answering false is not a drop - it is a decision not to
-    /// build, which is the only thing that helps a jammed link.</summary>
-    public bool want(int tick)
+    /// <summary>Read the clock off the pilot's heartbeat: how far behind he is,
+    /// what the floor of his path is, and whether he is congested.  Called for
+    /// every tick (the ping is a frame too), so recovery is a tick away.</summary>
+    public void observe(int tick)
     {
         double silent = System.Diagnostics.Stopwatch.GetElapsedTime(heard).TotalSeconds;
-        behind = ack < 0 ? 0 : tick - ack;
-        bool congested = silent > HEARTBEAT_TIMEOUT || behind >= LAG_HIGH;
-        if (!held && congested) held = true;
-        else if (held && behind <= LAG_LOW && q.Reader.Count == 0) held = false;
-        return !held;
+        if (ack < 0)
+        {
+            // he has not reported a tick yet, so there is no *distance* to judge
+            // - only silence can hold him, and a client that never reports one
+            // (an old client, `st` absent) is never held while it talks
+            behind = 0;
+            held = silent > HEARTBEAT_TIMEOUT;
+            held_ticks = 0;
+            return;
+        }
+        behind = tick - ack;
+        float behind_ms = behind * (1000f / TARGET_HZ);
+        // the floor falls instantly (always take the better sample) and rises at
+        // a crawl, so the picture of "this path" is the best it has been lately
+        // rather than a standing queue being mistaken for the path
+        float rise = held_ticks > (int)(HELD_PATIENCE_S * TARGET_HZ)
+            ? FLOOR_RISE_HELD_MS_S : FLOOR_RISE_MS_S;
+        // a floor is a path, and no path we serve is slower than this: the cap
+        // keeps one bogus sample from blinding the detector
+        floor_ms = MathF.Min(MathF.Min(behind_ms, MAX_FLOOR_MS), floor_ms + rise / TARGET_HZ);
+        if (floor_ms < 0f) floor_ms = 0f;
+        float slack = MathF.Max(HOLD_SLACK_MS, floor_ms * HOLD_PCT);
+        float extra = behind_ms - floor_ms;
+        if (!held && (silent > HEARTBEAT_TIMEOUT || extra >= slack))
+        {
+            held = true;
+            held_ticks = 0;
+            log.LogDebug($"pid {pid} held: {behind_ms:0} ms behind (floor {floor_ms:0}, "
+                         + $"slack {slack:0}), silent {silent:0.00}s");
+        }
+        else if (held)
+        {
+            held_ticks += 1;
+            if (extra <= slack / 2 && q.Reader.Count == 0)
+            {
+                held = false;
+                held_ticks = 0;
+                log.LogDebug($"pid {pid} resumed after {holds} clock blocks "
+                             + $"({behind_ms:0} ms behind, floor {floor_ms:0})");
+            }
+        }
+    }
+
+    /// <summary>Close the one-second loss window: what should have been sent
+    /// against what was.  A held pilot reads 100 %.</summary>
+    public void close_window()
+    {
+        loss_x10000 = due > 0 ? Math.Min(10000, 10000 * skipped / due) : 0;
+        due = 0;
+        skipped = 0;
     }
 
     // 24 frames is under a second of snapshots+meta: a client that cannot take
     // that many has a socket that is not coming back
     private readonly Channel<(string kind, byte[] data)> q;
 
-    public Client(WebSocket ws, int pid)
+    public readonly int born_tick;   // the world clock when he connected
+
+    public Client(WebSocket ws, int pid, int born_tick)
     {
         this.ws = ws;
         this.pid = pid;
+        this.born_tick = born_tick;
         heard = System.Diagnostics.Stopwatch.GetTimestamp();
         // `FullMode.Wait` + `TryWrite` is Python's `put_nowait`: a full queue
         // refuses the frame (-> `dropped`) instead of blocking the caller
@@ -196,6 +259,10 @@ public static class Server
     public const int SNAP_EVERY = 2;        // 15 Hz snapshots
     public const int META_EVERY = 3;        // 10 Hz meta
     public const int IDLE_SLEEP_MS = 100;   // how often an empty server looks for a connection
+    // the tick rate the loop actually achieves, averaged over the last second:
+    // what the HUD's `TPS` reads.  `TPS_X100` is the wire's form (3000 = 30.00)
+    public static float TPS = 30f;
+    public static int TPS_X100 = 3000;
 
     public static readonly bool DEBUG = Environment.GetEnvironmentVariable("MECH_DEBUG") == "1";
     // An empty server is a paused server: with nobody on the wire there is
@@ -352,24 +419,38 @@ public static class Server
             fx = new List<Dictionary<string, object?>>(world.events);
             world.events.Clear();
         }
+        // the loss window: one second of "should have / did"
+        bool window = tick % Client.WINDOW == 0;
         foreach (var (pid, client) in CONNECTIONS.ToArray())
         {
             if (!world.players.TryGetValue(pid, out var pl)) continue;
-            // one snapshot per pilot, not one per tick: the rows outside his
-            // tier are not built at all (measured: 468 -> ~100 kB/s per pilot)
+            client.observe(tick);
+            if (window) client.close_window();
+            client.view.echo = client.ack;
+            client.view.loss_x10000 = client.loss_x10000;
+            // one snapshot per pilot on every second tick - the rows outside his
+            // tier are not built at all (measured: 468 -> ~100 kB/s per pilot) -
+            // and the 16 B clock block on every other tick
             if (snap_tick)
             {
-                if (client.want(tick))
+                client.due += 1;
+                if (!client.held)
                 {
                     client.view.at(world, pl);
                     client.offer("b", Netcode.snapshot_bytes(world, client.view, contacts));
                 }
                 else
                 {
-                    // congested: the clock, and nothing else
                     client.holds += 1;
-                    client.offer("b", Netcode.ping_bytes(tick));
+                    client.skipped += 1;
+                    client.offer("b", Netcode.ping_bytes(tick, client.ack,
+                                                        TPS_X100, client.loss_x10000));
                 }
+            }
+            else
+            {
+                client.offer("b", Netcode.ping_bytes(tick, client.ack,
+                                                    TPS_X100, client.loss_x10000));
             }
             // a held pilot gets no sound and no panel either: the whole point is
             // to leave the pipe empty until his heartbeat catches up
@@ -380,7 +461,7 @@ public static class Server
                 var mine = Netcode.hearable(fx, _ear(pl));
                 if (mine.Count > 0)
                 {
-                    // rounds ride as 12 B rows, words as a dictionary
+                    // rounds ride as 24 B rows, words as a dictionary
                     byte[]? bin = Netcode.fx_bytes(mine, out var words);
                     if (bin is not null) client.offer("b", bin);
                     if (words.Count > 0)
@@ -394,6 +475,9 @@ public static class Server
                 client.offer("t", json(Netcode.meta_payload(world, pl)));
         }
     }
+
+    private static double _tps_t;
+    private static int _tps_n;
 
     public static async Task game_loop(CancellationToken ct)
     {
@@ -428,6 +512,17 @@ public static class Server
                     log.LogError(ex, "tick");
                     lock (_wlock) world.events.Clear();
                 }
+                // the honest tick rate: ticks per wall-clock second, closed once
+                // a second (a server that cannot keep up reports < 30)
+                _tps_n += 1;
+                double now = sw.Elapsed.TotalSeconds;
+                if (now - _tps_t >= 1.0)
+                {
+                    TPS = (float)(_tps_n / (now - _tps_t));
+                    TPS_X100 = Math.Clamp((int)MathF.Round(TPS * 100f), 0, 65535);
+                    _tps_t = now;
+                    _tps_n = 0;
+                }
                 next_t += TICK_DT;
                 double delay = next_t - sw.Elapsed.TotalSeconds;
                 if (delay < 0)
@@ -460,7 +555,7 @@ public static class Server
         lock (_wlock)
         {
             pl = world.add_player("PILOT");
-            client = new Client(ws, pl.pid);
+            client = new Client(ws, pl.pid, world.tick);
             CONNECTIONS[pl.pid] = client;
         }
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ctx.RequestAborted);
@@ -539,10 +634,14 @@ public static class Server
                 pl.zero_range = Math.Clamp(zr, Defs.ZERO_STEPS[0], Defs.ZERO_STEPS[^1]);
                 // Q: one-shot hot smoke, latched until Systems/Smoke.cs eats it
                 if (flag(msg, "q", false)) pl.smoke_q = true;
-                // the snapshot this client has applied: the frame clock reads it
-                // (`Client.want`), so a slow connection skips frames instead of
-                // queueing them
-                client.ack = inum(msg, "st", client.ack);
+                // the newest tick this client has *seen* (a snapshot or a clock
+                // block): the frame clock reads it, and every binary frame
+                // echoes it back so the client can time a round trip.  A report
+                // from before he connected (a fresh client says `st: 0` while the
+                // match is at tick 4000) is not a distance, so it is ignored -
+                // otherwise it would poison the path's floor for ten seconds.
+                int st = inum(msg, "st", client.ack);
+                if (st >= client.born_tick) client.ack = st;
                 pl.name = trunc(str(msg, "name", pl.name), 16);
                 break;
             }

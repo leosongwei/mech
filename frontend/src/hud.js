@@ -882,8 +882,19 @@ export class HUD {
     ctx.textAlign = 'right';
     ctx.fillStyle = 'rgba(180,210,195,0.65)';
     ctx.font = '11px "Courier New", monospace';
-    ctx.fillText(`FPS ${s.stats.fps | 0}  DRAWS ${s.stats.draws}  INST ${s.stats.instances}`, w - 16, h - 16);
-    ctx.fillText(s.helpOpen ? 'H - HIDE CONTROLS' : 'H - CONTROLS', w - 16, h - 32);
+    // the network line: RTT measured on the echoed ack, the server's own tick
+    // rate, and the share of this pilot's snapshots the server chose not to
+    // send last second (a held connection reads 100)
+    const net = s.net || {};
+    // -1 until the first echo comes back; a link faster than half a tick can
+    // smooth slightly negative, so the drawn value is clamped at 0
+    const rtt = net.rtt >= 0 ? Math.max(0, net.rtt).toFixed(0) : '-';
+    const loss = net.loss !== undefined ? net.loss.toFixed(2) : '-';
+    ctx.fillStyle = net.held ? 'rgba(255,170,120,0.85)' : 'rgba(150,200,175,0.75)';
+    ctx.fillText(`PING ${rtt}ms  TPS ${(net.tps || 0).toFixed(1)}  LOSS ${loss}%`, w - 16, h - 16);
+    ctx.fillStyle = 'rgba(150,200,175,0.75)';
+    ctx.fillText(`FPS ${s.stats.fps | 0}  DRAWS ${s.stats.draws}  INST ${s.stats.instances}`, w - 16, h - 32);
+    ctx.fillText(s.helpOpen ? 'H - HIDE CONTROLS' : 'H - CONTROLS', w - 16, h - 48);
     ctx.restore();
   }
 

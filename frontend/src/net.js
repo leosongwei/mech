@@ -1,9 +1,10 @@
 // WebSocket protocol client: compressed init, binary snapshots, JSON meta/fx.
 
-const MAGIC_FX = 0x4d454346;    // "MECF": the round events, as 12 B rows
-const MAGIC_PING = 0x4d454350;  // "MECP": magic + tick only, no rows at all
+const MAGIC_FX = 0x4d454346;    // "MECF": the round events, as 24 B rows
+const MAGIC_PING = 0x4d454350;  // "MECP": the clock block alone, no rows at all
 const FX_STRIDE = 24;           // kind, wid, id, x, y, z, r, flags (+3 pad)
-const HEADER = 24;              // magic, tick, eight u16 counts
+const CLOCK = 16;               // magic, tick, echo, tps, loss - both frames
+const HEADER = 32;              // clock + eight u16 counts
 // A unit row is as wide as its *kind* needs (`Netcode.ROWS`): the classes are
 // mech 74 B, apc 46 B, base 30 B, wreck/bunker 25 B, infantry/civilian/corpse
 // 20 B, and the header carries one count per class in that order.
@@ -29,10 +30,21 @@ export class Net {
     this.onFx = null;
     this.onMessage = null;
     this.seq = 0;               // snapshots received, lets the HUD throttle work
-    this.tick = 0;              // the last applied snapshot's tick: the server
-                                // wants it back (`st`) to know how far behind
-                                // this pilot is, and skip frames instead of
-                                // queueing them (`Server.Client.want`)
+    this.tick = 0;              // the newest server tick this client has *seen*
+                                // (a snapshot or a clock block): reported back as
+                                // `st`, echoed by the server, and what the frame
+                                // clock is judged on
+    this.echo = -1;             // the `st` the server last echoed: RTT is timed
+                                // from the moment that value first went out
+    this.lastAckSent = -1;
+    this.ackSentAt = 0;
+    this.rttMs = NaN;           // smoothed round trip, ms (see `_clock`)
+    this.tps = 0;               // the server's own tick rate, last second
+    this.loss = 0;              // % of this pilot's snapshots the server did not
+                                // send, last second (a hold reads 100)
+    this.lastSnap = -1;         // tick of the newest snapshot: a clock block
+                                // arriving well after one means a hold
+    this.held = false;          // the server is only sending clock blocks
     this.ready = false;
   }
 
@@ -67,7 +79,7 @@ export class Net {
     });
   }
 
-  // A round leaving or landing, off the binary fx frame: 12 B a row, twelve
+  // A round leaving or landing, off the binary fx frame: 24 B a row, twelve
   // hundred bytes for a whole gatling storm where JSON paid 68 B a bang.  The
   // events are rebuilt in the shape `game._fx` already speaks, so nothing
   // downstream knows the difference.
@@ -94,23 +106,62 @@ export class Net {
     if (this.onFx) this.onFx(evs);
   }
 
+  // The clock block every binary frame starts with: tick, the echo of our own
+  // ack, the server's tick rate and this pilot's loss.  Reading it is also where
+  // the round trip is measured.
+  _clock(dv) {
+    this.tick = dv.getUint32(4, true);
+    this.echo = dv.getUint32(8, true);
+    this.tps = dv.getUint16(12, true) / 100;
+    this.loss = dv.getUint16(14, true) / 100;
+    if (this.echo === this.lastAckSent && this.echo >= 0) {
+      // `(the moment that ack first went out -> now)` is the round trip plus one
+      // quantization: the server reads the ack as it arrives but can only echo
+      // it on its *next* frame, i.e. a wait uniform over one tick, half of it
+      // on average (our own side adds nothing - the stamp is taken as the input
+      // goes out).  So half a tick comes back off.  The sample may still be
+      // slightly negative on a link faster than that, which is fine: it is
+      // smoothed signed and clamped where it is drawn.
+      const sample = performance.now() - this.ackSentAt - 500 / TICK_HZ;
+      if (Number.isNaN(this.rttMs)) this.rttMs = sample;
+      else this.rttMs += (sample - this.rttMs) * 0.15;
+    }
+  }
+
+  /// The `st` to put in this frame's input: the newest tick seen, timestamped
+  /// the first time it is reported (that is the moment the round trip starts).
+  ack() {
+    if (this.tick !== this.lastAckSent) {
+      this.lastAckSent = this.tick;
+      this.ackSentAt = performance.now();
+    }
+    return this.tick;
+  }
+
   _snapshot(buf) {
     const dv = new DataView(buf);
-    this.tick = dv.getUint32(4, true);
-    // A hold frame (8 B) is what a jammed connection gets instead of a
-    // snapshot: the clock moves, the field does not.  Everything the client
-    // had - entities, projectiles, smoke, contacts - stays exactly as it was,
-    // and the ack it sends back is how the server learns it can resume.
+    this._clock(dv);
+    // A clock block (16 B) is what every non-snapshot tick carries, and the
+    // only thing a jammed connection gets: the clock moves, the field does not.
+    // Everything the client had - entities, projectiles, smoke, contacts -
+    // stays exactly as it was, and the ack it sends back is how the server
+    // learns it can resume.
     if (dv.getUint32(0, true) === MAGIC_PING) {
-      this.held = true;
+      // The clock block: the field is unchanged and the ack still goes back, so
+      // a jammed link recovers by itself.  A *run* of them with no snapshot in
+      // between is a hold - the server is skipping snapshots on purpose - and
+      // that is what the HUD colours.  A healthy link gets one every second
+      // tick, so four clocks in a row is already past the cadence.
+      if (this.lastSnap >= 0 && this.tick - this.lastSnap > 4) this.held = true;
       return;
     }
     this.held = false;
+    this.lastSnap = this.tick;
     this.seq += 1;
     let off = HEADER;
     const seen = new Set();
     for (let cls = 0; cls < ROWS.length; cls++) {
-      const n = dv.getUint16(8 + cls * 2, true);
+      const n = dv.getUint16(CLOCK + cls * 2, true);
       for (let k = 0; k < n; k++) {
         this._row(dv, off, cls, seen);
         off += ROWS[cls];
@@ -118,7 +169,7 @@ export class Net {
     }
 
     const proj = [];
-    const nProj = dv.getUint16(18, true);
+    const nProj = dv.getUint16(CLOCK + 10, true);
     for (let k = 0; k < nProj; k++) {
       proj.push({
         id: dv.getUint16(off, true),
@@ -139,7 +190,7 @@ export class Net {
     // smoke: a short-lived cloud and the canisters on their way to become one.
     // Positions are interpolated like the units, so a canister does not stutter
     // at the 15 Hz snapshot rate.
-    const nSmoke = dv.getUint16(20, true);
+    const nSmoke = dv.getUint16(CLOCK + 12, true);
     const smoke = [];
     for (let k = 0; k < nSmoke; k++) {
       const id = dv.getUint16(off, true);
@@ -163,7 +214,7 @@ export class Net {
 
     // the minimap block rides every 8th tick (`CONTACT_EVERY`), so an empty
     // list means "no new picture this frame" - keep the last one
-    const nContacts = dv.getUint16(22, true);
+    const nContacts = dv.getUint16(CLOCK + 14, true);
     if (nContacts > 0) {
       const contacts = new Array(nContacts);
       for (let k = 0; k < nContacts; k++) {

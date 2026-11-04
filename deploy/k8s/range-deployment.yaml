@@ -1,0 +1,86 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mech-range
+  namespace: mech
+  labels:
+    app.kubernetes.io/name: mech
+    app.kubernetes.io/component: range
+spec:
+  # the range is its own in-memory world too: one replica only
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mech
+      app.kubernetes.io/component: range
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mech
+        app.kubernetes.io/component: range
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 20
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: range
+          image: ghcr.io/leosongwei/mech:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8010
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: mech-config
+          env:
+            # run.py --range / MECH_RANGE=1 select the 4 km test map
+            - name: MECH_RANGE
+              value: "1"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          startupProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 2
+            timeoutSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+      volumes:
+        - name: tmp
+          emptyDir: {}

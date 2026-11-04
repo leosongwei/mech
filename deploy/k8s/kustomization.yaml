@@ -1,0 +1,16 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: mech
+
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - battle-deployment.yaml
+  - battle-service.yaml
+  - range-deployment.yaml
+  - range-service.yaml
+
+images:
+  - name: ghcr.io/leosongwei/mech
+    newTag: latest

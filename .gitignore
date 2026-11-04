@@ -17,6 +17,7 @@ assets/
 # feed is checked in as tools/gun_report.py numbers and audio.js HEAVY_REPORT)
 *.mkv
 *.mp4
+.direnv
 
 # dotnet: CLI home / nuget cache / build output.  The sandbox cannot write
 # $HOME, so every bit of dotnet's own state lives in .dotnet_tmp/ (see

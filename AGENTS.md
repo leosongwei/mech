@@ -74,8 +74,12 @@ Modes/                     # per-mode rule sets: map, setup, pipeline, spawn rul
                            #   never shoot back), Record.cs: the top-attack trace,
                            #   Interceptor.cs: the missile-defence post
 Harness/                   # headless checks, no socket: Check.cs (battle/range/diag),
+<<<<<<< HEAD
                            # InterceptCheck.cs (missile defence, target hits),
                            # NetCheck.cs (one pilot's wire, per minute)
+=======
+                           # InterceptCheck.cs (missile defence, target hits)
+>>>>>>> 0595a7a (Replace the Python backend with the C# one, move the repo to a single root layout)
 assets/                    # compiled client (webpack output, gitignored)
 tools/
   gun_report.py            # weapon-report audio analysis (numpy; the numbers in audio.js)
@@ -820,6 +824,7 @@ frontend/
   *camera* is the local view (an instant sight) sitting on the server-side
   eye.  `defs.MECH_SIGHT_Z` travels in the init payload (`mech.sight_z`) so
   `game._sightEye` mounts the eye where `mathutil.sight_eye` does.
+<<<<<<< HEAD
 * **The snapshot is a sphere around the pilot's eye, not the field**
   (`Netcode.SnapshotView`: `snapshot_bytes(world, view)`).  One frame
   per *connection* - the tier is per eye, so `Server.broadcast` builds one
@@ -904,6 +909,8 @@ frontend/
   hands the same bytes to each pilot's frame.  `hud._minimap` and the range's
   `TARGETS` counter read `net.contacts`; the base-integrity bars stay on
   `entities` (they need `hp`, and the base is never tiered out).
+=======
+>>>>>>> 0595a7a (Replace the Python backend with the C# one, move the repo to a single root layout)
 * **Debug messages** are accepted only when `MECH_DEBUG=1` (see `Net/Server.cs`),
   except `respawn`, which is always allowed. All of them are sent from the
   console as `g.net.send({t: '...', ...})`; the payloads are in
@@ -1200,7 +1207,10 @@ cd frontend && npm install && npm run build      # -> assets/
   ./dotnet.sh run -- --check hit                   # every weapon vs a parked APC
   ./dotnet.sh run -- --check intercept             # every missile vs the defence post
   ./dotnet.sh run -- --check diag --minutes 2      # what a few AI hulls are doing
+<<<<<<< HEAD
   ./dotnet.sh run -- --check net --minutes 30 --from 8   # one pilot's download, per minute
+=======
+>>>>>>> 0595a7a (Replace the Python backend with the C# one, move the repo to a single root layout)
   ```
   `MECH_PERF=1` on the battle check runs it without the per-tick event scan and
   prints the per-minute cost: on a 12 minute battle it is **1.2 ms/tick**
@@ -1208,6 +1218,7 @@ cd frontend && npm install && npm run build      # -> assets/
   ~9x, and the curve is flat where Python's climbs to 18 ms as the field matures.
   Every check ends with `ecs.validate()`, so bookkeeping that a value comparison
   would not catch (a row pointing past its buffer) fails the run.
+<<<<<<< HEAD
 * **`--check net` prices the wire** (`Harness/NetCheck.cs`): one scripted pilot
   (`Check.drive`), every payload `Server.broadcast` would have offered him, off
   the same doors (`snapshot_bytes` / `meta_payload` / `hearable`) at the same
@@ -1225,6 +1236,8 @@ cd frontend && npm install && npm run build      # -> assets/
   It measures *a* client, not every client (one `SnapshotView`, as the server
   builds it), and a scripted pilot's address decides how much lives inside his
   sphere: the numbers move with where he is.
+=======
+>>>>>>> 0595a7a (Replace the Python backend with the C# one, move the repo to a single root layout)
 * **`tools/gun_report.py`** is the weapon-report analysis (it reads a recording
   with ffmpeg and prints the third-octave spectrum per window; `--synth` renders
   the cue `HEAVY_REPORT` in `audio.js` describes).  It is the one Python script

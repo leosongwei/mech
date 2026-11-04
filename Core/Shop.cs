@@ -203,7 +203,6 @@ public static class Shop
             }
         }
 
-<<<<<<< HEAD
         // smoke: top the rack back up, one canister at a time
         if (_req_flag(req, "smoke"))
         {
@@ -220,19 +219,6 @@ public static class Shop
                     ["text"] = $"REARM SMOKE {missing}/{Defs.SMOKE_CHARGES}",
                 });
             }
-=======
-        // smoke: a fresh rack, full and off cooldown
-        if (_req_flag(req, "smoke")
-            && (pl.smoke_charges < Defs.SMOKE_REFILL_CHARGES || pl.smoke_cd > 0f))
-        {
-            int cost = Defs.SMOKE_REFILL_COST;
-            total += cost;
-            lines.Add(new Dictionary<string, object?>
-            {
-                ["kind"] = "smoke", ["delta"] = cost, ["dur"] = 0f,
-                ["text"] = $"REARM SMOKE x{Defs.SMOKE_REFILL_CHARGES}",
-            });
->>>>>>> 43dd4b6 (Replace the Python backend with the C# one, move the repo to a single root layout)
         }
 
         if (lines.Count == 0) return _quote(false, "NOTHING TO DO", lines, 0, 0f);
@@ -280,11 +266,7 @@ public static class Shop
                         e.fv("arm_hp").set(mid, a, e.fv("arm_hpmax").get(mid, a));
                 break;
             case "smoke":
-<<<<<<< HEAD
                 pl.smoke_charges = Defs.SMOKE_CHARGES;
-=======
-                pl.smoke_charges = Defs.SMOKE_REFILL_CHARGES;
->>>>>>> 43dd4b6 (Replace the Python backend with the C# one, move the repo to a single root layout)
                 pl.smoke_cd = 0f;
                 break;
         }
@@ -292,15 +274,9 @@ public static class Shop
 
     /// <summary>Quote the draft, charge it, and book the work it costs.
     ///
-<<<<<<< HEAD
     /// Every line takes seconds - a fit 2 s, a load of rounds 4 s, a smoke rack
     /// 2 s, armour 2 s per 100 hp - so nothing lands on the mech here:
     /// `Systems/Rearm.cs` applies the lines when the job has run its course.</summary>
-=======
-    /// The lines are applied by `Systems/Rearm.cs` when the job has run its
-    /// seconds - nothing lands on the mech here, except a job with no duration
-    /// at all (a smoke rack), which is done on the spot.</summary>
->>>>>>> 43dd4b6 (Replace the Python backend with the C# one, move the repo to a single root layout)
     public static (bool ok, string note, Dictionary<string, object?> q) deal(
         World world, Player pl, Dictionary<string, object?> req)
     {

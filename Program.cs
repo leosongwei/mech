@@ -15,7 +15,10 @@ bool range = false;
 string? check = null;
 int minutes = 3;
 int players = 4;
+<<<<<<< HEAD
 float fromMin = 8f;      // --check net: the minute the meter starts
+=======
+>>>>>>> 0595a7a (Replace the Python backend with the C# one, move the repo to a single root layout)
 
 for (int k = 0; k < args.Length; k++)
 {
@@ -40,9 +43,12 @@ for (int k = 0; k < args.Length; k++)
         case "--players" when k + 1 < args.Length:
             players = int.Parse(args[++k]);
             break;
+<<<<<<< HEAD
         case "--from" when k + 1 < args.Length:
             fromMin = float.Parse(args[++k]);
             break;
+=======
+>>>>>>> 0595a7a (Replace the Python backend with the C# one, move the repo to a single root layout)
         default:
             Console.Error.WriteLine($"mech: unknown argument '{args[k]}'" +
                                     " (usage: --host H --port N [--range] | --check battle|range [--minutes N])");
@@ -58,8 +64,11 @@ if (check is not null)
         "diag" => Mech.Server.Harness.Check.diag(minutes),
         "hit" => Mech.Server.Harness.InterceptCheck.hits(),
         "intercept" => Mech.Server.Harness.InterceptCheck.run(Environment.GetEnvironmentVariable("MECH_IC_ONLY")),
+<<<<<<< HEAD
         "net" => Mech.Server.Harness.NetCheck.bandwidth(minutes, fromMin),
         "tiers" => Mech.Server.Harness.Tiers.run(minutes, fromMin),
+=======
+>>>>>>> 0595a7a (Replace the Python backend with the C# one, move the repo to a single root layout)
         _ => fail($"mech: unknown check '{check}' (battle | range)"),
     };
 }

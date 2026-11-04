@@ -44,6 +44,7 @@ public sealed class Client
     public WebSocket ws;
     public int pid;
     public int dropped;
+<<<<<<< HEAD
     // this pilot's interest sphere: the tier table is per eye, so his snapshot
     // is built for him alone (`Netcode.SnapshotView`)
     public readonly Netcode.SnapshotView view = new();
@@ -87,6 +88,8 @@ public sealed class Client
         return !held;
     }
 
+=======
+>>>>>>> 0595a7a (Replace the Python backend with the C# one, move the repo to a single root layout)
     // 24 frames is under a second of snapshots+meta: a client that cannot take
     // that many has a socket that is not coming back
     private readonly Channel<(string kind, byte[] data)> q;
@@ -95,7 +98,10 @@ public sealed class Client
     {
         this.ws = ws;
         this.pid = pid;
+<<<<<<< HEAD
         heard = System.Diagnostics.Stopwatch.GetTimestamp();
+=======
+>>>>>>> 0595a7a (Replace the Python backend with the C# one, move the repo to a single root layout)
         // `FullMode.Wait` + `TryWrite` is Python's `put_nowait`: a full queue
         // refuses the frame (-> `dropped`) instead of blocking the caller
         q = Channel.CreateBounded<(string kind, byte[] data)>(new BoundedChannelOptions(24)
@@ -341,17 +347,23 @@ public static class Server
     public static void broadcast(int tick)
     {
         if (CONNECTIONS.Count == 0) return;
+<<<<<<< HEAD
         bool snap_tick = tick % SNAP_EVERY == 0;
         // the minimap block is one list for everybody and does not need 15 Hz:
         // built once here, appended to each pilot's frame on the way out
         byte[]? contacts = tick % Netcode.CONTACT_EVERY == 0
             ? Netcode.contacts_bytes(world) : null;
+=======
+        byte[]? snap = null;
+        if (tick % SNAP_EVERY == 0) snap = Netcode.snapshot_bytes(world);
+>>>>>>> 0595a7a (Replace the Python backend with the C# one, move the repo to a single root layout)
         List<Dictionary<string, object?>>? fx = null;
         if (world.events.Count > 0)
         {
             fx = new List<Dictionary<string, object?>>(world.events);
             world.events.Clear();
         }
+<<<<<<< HEAD
         foreach (var (pid, client) in CONNECTIONS.ToArray())
         {
             if (!world.players.TryGetValue(pid, out var pl)) continue;
@@ -374,10 +386,20 @@ public static class Server
             // a held pilot gets no sound and no panel either: the whole point is
             // to leave the pipe empty until his heartbeat catches up
             if (client.held) continue;
+=======
+        byte[]? fx_all = null;
+        if (fx is not null)
+            fx_all = json(new Dictionary<string, object?> { ["t"] = "fx", ["events"] = fx });
+        foreach (var (pid, client) in CONNECTIONS.ToArray())
+        {
+            if (!world.players.TryGetValue(pid, out var pl)) continue;
+            if (snap is not null) client.offer("b", snap);
+>>>>>>> 0595a7a (Replace the Python backend with the C# one, move the repo to a single root layout)
             if (fx is not null)
             {
                 // sound is per ear: a bang nobody could hear is not put on the wire
                 var mine = Netcode.hearable(fx, _ear(pl));
+<<<<<<< HEAD
                 if (mine.Count > 0)
                 {
                     // rounds ride as 12 B rows, words as a dictionary
@@ -389,6 +411,15 @@ public static class Server
                             ["t"] = "fx", ["events"] = words,
                         }));
                 }
+=======
+                if (mine.Count == fx.Count)
+                    client.offer("t", fx_all!);       // nothing dropped: the shared message
+                else if (mine.Count > 0)
+                    client.offer("t", json(new Dictionary<string, object?>
+                    {
+                        ["t"] = "fx", ["events"] = mine,
+                    }));
+>>>>>>> 0595a7a (Replace the Python backend with the C# one, move the repo to a single root layout)
             }
             if (tick % META_EVERY == 0)
                 client.offer("t", json(Netcode.meta_payload(world, pl)));
@@ -521,8 +552,11 @@ public static class Server
     // ------------------------------------------------------------------
     private static void handle(Player pl, Client client, JsonElement msg)
     {
+<<<<<<< HEAD
         // anything he says is a heartbeat: the frame clock reads this
         client.heard = System.Diagnostics.Stopwatch.GetTimestamp();
+=======
+>>>>>>> 0595a7a (Replace the Python backend with the C# one, move the repo to a single root layout)
         switch (str(msg, "t", ""))
         {
             case "in":
@@ -539,10 +573,13 @@ public static class Server
                 pl.zero_range = Math.Clamp(zr, Defs.ZERO_STEPS[0], Defs.ZERO_STEPS[^1]);
                 // Q: one-shot hot smoke, latched until Systems/Smoke.cs eats it
                 if (flag(msg, "q", false)) pl.smoke_q = true;
+<<<<<<< HEAD
                 // the snapshot this client has applied: the frame clock reads it
                 // (`Client.want`), so a slow connection skips frames instead of
                 // queueing them
                 client.ack = inum(msg, "st", client.ack);
+=======
+>>>>>>> 0595a7a (Replace the Python backend with the C# one, move the repo to a single root layout)
                 pl.name = trunc(str(msg, "name", pl.name), 16);
                 break;
             }

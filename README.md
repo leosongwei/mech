@@ -98,14 +98,8 @@ cd frontend && npm install && npm run build && cd ..
 ./dotnet.sh run -- --port 8011 --range         # weapon range (4 km test map)
 ```
 
-<<<<<<< HEAD
 Everything runs through `./dotnet.sh` (see **Install** above) - a bare
 `dotnet build` is never needed.
-=======
-Needs the .NET 10 SDK.  `dotnet.sh` exists because `dotnet` wants to write
-first-run state into `$HOME`; the script points all of it at `.dotnet_tmp/`
-(gitignored) so a bare `dotnet build` is never needed.
->>>>>>> 43dd4b6 (Replace the Python backend with the C# one, move the repo to a single root layout)
 
 Then open <http://127.0.0.1:8010/>.  The lobby lets you pick a callsign, a side
 (RED / BLUE / AUTO) and the weapon in each arm before you hit **DEPLOY**.
@@ -175,26 +169,31 @@ The frontend nginx proxies `/ws` to the matching backend Service. Backends run
 one replica with `Recreate` and TCP startup/readiness/liveness probes; frontends
 are stateless and probe `/healthz`. All four pods run non-root with a read-only
 root filesystem and a `/tmp` emptyDir.
-=======
-The image is multi-stage: Node 22 builds the client into `backend/assets`, then
-the runtime image installs the backend from `pyproject.toml` with `uv`. The
-server listens on `8010` and runs as a non-root user.
 
 ```bash
-docker build -t mech .
+docker network create mech
 
-# battle
-docker run --rm -p 8010:8010 mech
+docker build -f Dockerfile.backend  -t mech-backend .
+docker build -f Dockerfile.frontend -t mech-frontend .
+
+# battle: backend is internal, the browser talks to nginx only
+docker run -d --name mech-backend --network mech mech-backend
+docker run -d --name mech-web --network mech -p 8080:8080 \
+  -e BACKEND_HOST=mech-backend -e BACKEND_PORT=8010 mech-frontend
 
 # range (4 km test map)
-docker run --rm -e MECH_RANGE=1 -p 8011:8010 mech
+docker run -d --name mech-range-backend --network mech \
+  -e MECH_RANGE=1 mech-backend
+docker run -d --name mech-range-web --network mech -p 8081:8080 \
+  -e BACKEND_HOST=mech-range-backend -e BACKEND_PORT=8010 mech-frontend
 ```
 
-`MECH_DEBUG` is off in the image; turn the console helpers on deliberately with
-`-e MECH_DEBUG=1`. `MECH_LOG_LEVEL=DEBUG` enables the per-weapon log lines.
-There is no persistent state, so a restart is a fresh battle. Do not add
-uvicorn workers or run more than one replica: the world is a module-level
-single-instance object, and every extra process is a separate battle.
+Then open <http://127.0.0.1:8080/>. `MECH_DEBUG` is off in the image; turn the
+console helpers on deliberately with `-e MECH_DEBUG=1` on the backend.
+`MECH_LOG_LEVEL=DEBUG` enables the per-weapon log lines. There is no persistent
+state, so a restart is a fresh battle. Do not add uvicorn workers or run more
+than one backend replica: the world is a module-level single-instance object,
+and every extra process is a separate battle. The frontend is stateless.
 
 ## Kubernetes
 
@@ -229,23 +228,22 @@ kubectl -n mech rollout restart deploy/mech-range-backend deploy/mech-range-fron
 ```
 
 If the GHCR packages are private, add an `imagePullSecrets` entry to the
-=======
-kubectl -n mech port-forward svc/mech-battle 8010:8010
-kubectl -n mech port-forward svc/mech-range 8011:8011
 ```
 
-The Services are ClusterIP only: expose them through your own reverse proxy or
-gateway (it must pass WebSocket Upgrade and long-lived connections), or use
-`port-forward` for local play. `deploy/k8s/configmap.yaml` holds `MECH_DEBUG`
-and `MECH_LOG_LEVEL`; set `MECH_DEBUG=1` there only for a test deployment.
+The Services are ClusterIP only: expose the frontend Service through your own
+reverse proxy or gateway (it must pass WebSocket Upgrade and long-lived
+connections), or use `port-forward` for local play. `deploy/k8s/configmap.yaml`
+holds the backend's `MECH_DEBUG` and `MECH_LOG_LEVEL`; set `MECH_DEBUG=1` there
+only for a test deployment.
 
 `.github/workflows/container.yml` builds and pushes
-`ghcr.io/leosongwei/mech` to GHCR on `main` and `v*` tags (pull requests build
-without pushing). The manifests use `:latest`, so restart the Deployments after
-a new push:
+`ghcr.io/leosongwei/mech-backend` and `ghcr.io/leosongwei/mech-frontend` to GHCR
+on `main` and `v*` tags (pull requests build without pushing). The manifests use
+`:latest`, so restart the Deployments after a new push:
 
 ```bash
-kubectl -n mech rollout restart deploy/mech-battle deploy/mech-range
+kubectl -n mech rollout restart deploy/mech-battle-backend deploy/mech-battle-frontend
+kubectl -n mech rollout restart deploy/mech-range-backend deploy/mech-range-frontend
 ```
 
 If the GHCR package is private, add an `imagePullSecrets` entry to the

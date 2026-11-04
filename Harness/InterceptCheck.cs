@@ -7,7 +7,7 @@
 // approaches instead of argued about:
 //
 //   radar  d^2 <= K * v_closing, K = sqrt(radar_strength * rcs) / RADAR_V_REF
-//   fuse   the 30 mm bursts within 2.5 m of the round (Systems/Proximity.cs)
+//   fuse   the 30 mm bursts within 2.5 m of the round (Systems/FirstHit.cs)
 //   kill   10 hp against the burst's blast (ED 18 / ER 8): the fuse's own
 //          trigger is 11.4, so a burst that fires is a kill
 //

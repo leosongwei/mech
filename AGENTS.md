@@ -49,7 +49,7 @@ Core/
   Seeker.cs                # an IR round's lock: what it stares at, and what it re-locks on
   Combat.cs                # damage resolution: the only writer of `hp` (apply/hit/splash)
   Shop.cs                  # the rearm panel: quote, buy, the time a job costs
-  SphereTable.cs           # the tick's hit spheres (was `projectiles.sphere_table`'s tuple)
+  SphereTable.cs           # the tick's hit spheres: centres/radii/prev/disp + a block index
 Net/
   Netcode.cs               # init payload, binary snapshots, JSON meta, per-ear sound filter
   Server.cs                # ASP.NET Core: websockets, static files, 30 Hz game loop
@@ -57,7 +57,14 @@ Systems/                   # mechanics shared by every mode, each exposes run(wo
                            #   Gunnery.cs: the sight leads, the hull and the arms slew after it
                            #   Sight.cs: the one line of sight (terrain + smoke), clear/why
                            #   Smoke.cs: hot smoke canisters, opaque puffs, blocks(a, b)
-                           #   Proximity.cs: 30mm airburst fuse, people *and* missiles
+                           #   Sweep.cs: the tick's hit spheres, its broad phase, and the one
+                           #             "segment vs moving sphere" solve (the spheres system)
+                           #   Flights.cs: one system per kind of round (bullet / rocket /
+                           #             saclos / top) plus Expire, which ends a flight
+                           #   FirstHit.cs: what each leg ran into, one system per shape
+                           #             (ground / structures / units) plus the airburst fuse
+                           #   Impact.cs: the one reader of `first_hit_record` and the only
+                           #             thing that ends a round
                            #   Blasts.cs: an explosion is an entity; the only area damage
                            #   Mortality.cs: `hp <= 0` -> wreck, burst, kill money, victory
                            #   Rearm.cs: the bought job at the base, `work_remaining_time`
@@ -184,6 +191,11 @@ frontend/
   (battle: `ai`), `gunnery, locking, smoke, weapons, movement, projectiles,
   proximity, blasts, mortality, economy, debris`, then the mode's post-systems
   (battle: `waves`).
+  A round's tick then runs `spheres, expire, flight_ballistic, flight_rocket,
+  flight_saclos, flight_top, first_hit_ground, first_hit_structures,
+  first_hit_units, first_hit_fuse, impact` - one system per kind of round and one
+  per shape a leg can run into (see "Identity is a component" and
+  `first_hit_record` below).
   `gunnery` sits between the crews saying where they are looking and anything
   reading a barrel, so `yaw` / `pitch` are the *laid gun* by the time a weapon
   fires or the client draws.  The last three are the damage chain and their
@@ -256,6 +268,35 @@ frontend/
   floor under the cycle: `defs.AI_LAUNCH_GAP` (15 s) for a lock round, or eight
   tubes are gone in four seconds and the machine is toothless for the rest of
   the match. SACLOS is not on that clock — its price is holding the sight.
+* **A round's ending is one record, and one judge.**  Every round carries
+  `first_hit_record` - `first_hit_t` (a fraction of this tick's leg,
+  `Defs.FIRST_HIT_ARMED` = 2 while nothing has been hit), `first_hit_pos`,
+  `first_hit_kind` (`Defs.HIT_UNIT` / `GROUND` / `BUILDING` / `TRUNK` / `FUSE` /
+  `EXPIRE` / `VANISH`), `first_hit_unit`, `first_hit_mod` and the `first_hit_gap`
+  a fuse measured.  Each collision system offers its own answer through
+  `if (t < first_hit_t)` and `Systems/Impact.cs` is the one reader and the only
+  thing that ends a round: so the order the collision systems run in decides the
+  cost of a compare and nothing else.  The record is per tick - the round's own
+  flight system re-arms it, which is the same moment it writes `proj_prev`:
+  `(proj_prev, pos)` is the leg and the record is where along it the round stops.
+  This is what makes "a fuse fuses at t=0.4 but the ground is at t=0.7" answer
+  itself: before the record existed, `projectiles` destroyed the round on the
+  ground and `proximity` never got to look at it.
+* **A round's kind is a tag, and `proj_kind` is its `etype`.**  `Defs.KIND_TAGS`
+  maps `kind` to the component (`bullet` / `unguided_missile` / `saclos` /
+  `top_attack`), `World.spawn_round` builds the archetype from it once, and each
+  flight system queries the kind it knows (`Flights.Ballistic` over `bullet`,
+  ...) - so a new kind is a tag plus a system, never another branch in shared
+  code.  `proj_kind` stays on the round as the wire byte and the `Defs.WEAPONS`
+  key, exactly the role `etype` plays on a hull; `world.projectiles()` is still
+  `query("proj_kind")`, i.e. the union of the four archetypes.
+* **A round's lifetime is a contact at t=0.**  `Flights.Expire` counts `proj_age`
+  and `proj_life` for every round before anything moves, and a round that runs out
+  of battery or wire writes a contact at t=0 (`HIT_EXPIRE` when
+  `wd.expire_burst`, `HIT_VANISH` otherwise) - that is the whole of "the round
+  dies where it stands", and it is why a flight system's first line is
+  `if (first_hit_t <= 1) continue`.  The same line in a collision system is a
+  pure cost optimisation; these two are not the same thing.
 * **The sight is one line, so the lead is solved for the slowest round.**
   `ai._engage` picks the aim speed as the minimum `mathutil.mean_speed` over
   the arms that reach the target, not the primary weapon's muzzle figure: a
@@ -364,22 +405,25 @@ frontend/
 * **Players** are plain Python objects (`world.Player`) attached to a mech
   entity through `owner`; `pl.mech` is -1 while dead. Income and respawns live
   in `Economy.cs`; wreck/corpse cleanup in `Debris.cs`.
-* **Proximity fuse** (`Proximity.cs`) — the 30mm round bursts on
+* **Proximity fuse** (`FirstHit.Fuse`) — the 30mm round bursts on
   *personnel*: `defs.WEAPONS[...]["prox"]` is a fuse radius in metres (absent =
   impact fuse only), and `person` is the tag a man carries (riflemen, AT
   riflemen, civilians). Hulls are not tagged, so the fuse ignores them. A round
   covers 36 m per tick, so the fuse solves the leg it *flew* this tick —
-  `proj_prev` (written by `projectiles.run`) to `pos` — takes the closest
-  approach to an enemy man and, if that is inside the radius, moves the round
-  there and calls `projectiles._impact` at that point. Never sample the tick
-  boundaries instead: that steps clean over a man standing 4 m off the path.
+  `proj_prev` (written by its flight system) to `pos` — takes the closest
+  approach to an enemy man and, if that is inside the radius, writes the burst
+  point into the round's `first_hit_record`; `impact` then detonates there.
+  Never sample the tick boundaries instead: that steps clean over a man standing
+  4 m off the path.
   Airburst is blast only (it is not a direct hit), and the burst is logged at
   DEBUG (`mech.prox: prox fuse: ...`, with the leg it flew and the closest
   approach) so a fuse hunt can read the burst position out of the log —
   `MECH_LOG_LEVEL=DEBUG`, see "Logging" under Build.  It fires once per round
   that fuses, so it is never an INFO line.
-* **A missile is a target, and the ECS says so** (`components.MISSILE_COMPS`).
-  `weapons.fire` picks the archetype off `defs.is_interceptable(wid)`: a
+* **A missile is a target, and the ECS says so** (`Components.MISSILE_COMPS`).
+  `World.spawn_round` - the one place a round's archetype is built - picks the
+  pool off `defs.is_interceptable(wid)`, the tag off `Defs.KIND_TAGS[wd.kind]`,
+  and the seeker's memory (`SEEKER_COMPS`) only for the kind that has a seeker: a
   `kind` `rocket`/`saclos`/`top` round is spawned with `interceptable` + `hp` +
   `hpmax` + `armor` + `last_hit` (10 points, 1/1 of plate), a bullet keeps
   `PROJ_COMPS` and pays nothing.  A guided round also carries the seeker's
@@ -390,7 +434,7 @@ frontend/
   _kill_round` is the second death channel: a killed missile leaves **nothing** -
   no warhead, no wreck, no credit (a SACLOS that still went off 300 m out would
   make shooting it down pointless).
-* **The hit-sphere table carries motion** (`projectiles.sphere_table(world, dt)`).
+* **The hit-sphere table carries motion** (`Sweep.sphere_table(world, dt)`).
   Rows are `(centres, radii, ids, modules, factions, blocks, cull, prev, disp)`
   and the sweep solves the *relative* leg: `rel = prev - p0`, `w = seg - disp`,
   `t* = clamp(rel·w/|w|²)`, `d_min = |rel - w t*|`.  A missile covers 20 m a tick
@@ -399,8 +443,10 @@ frontend/
   off at the end of the leg, i.e. a clean miss).  The two blocks are gathered at
   different moments and each says so: a **unit** has already been moved by
   `movement` (it runs earlier), so its `pos` is the end of its tick and
-  `prev = pos - vel*dt`; a **missile** has not moved yet (this system moves it),
-  so its `pos` is the start and `disp` is predicted from its velocity.  The
+  `prev = pos - vel*dt`; a **missile** has not moved yet (the flight systems move
+  it), so its `pos` is the start and `disp` is predicted from its velocity.  That
+  is why `Sweep.Spheres` is a system with a fixed place in the tick: after
+  `movement`, before the flights.  The
   broad-phase box grows by the fastest row's displacement (`reach`), or a
   missile crossing into a round's leg is never a candidate.
   **One table per tick is the shape, but not the count.**  `world.update` used to
@@ -412,19 +458,24 @@ frontend/
   for this tick — marking it `_sph_premove`, which forces `sphere_table` to
   rebuild before the sweep.  A table built before `movement` is *not* the one the
   sweep may use; that flag is the whole of the distinction.
-* **The geometry is batched, the bodies are not.**  `terrain.ground_hits_many`
-  takes a whole tick's worth of round legs at once and answers where each one
-  meets the ground, because a leg is 36 m of terrain sampling and there are
-  dozens of them — `projectiles.run` therefore flies every round first, asks once,
-  and only then resolves what each leg ran into, one round at a time — the pass
-  with the side effects (a burst, the damage, the dead round), and the credit for
-  a kill follows a fixed rule inside one tick.  `walk` in its return
-  says "this leg crossed a tree tile", which is handed back to the scalar
-  `ground_hit`: a trunk is a cylinder solved analytically, not something to
-  sample.  What is *not* worth batching is the integration itself — a few
-  batched loops over one or two rows cost more than the scalar arithmetic they
-  replace (measured, twice).
-* **The fuse settles the round it fused on.**  `Proximity.cs` fuses on
+* **The geometry is batched, the bodies are not.**  The flight systems fly every
+  round first and publish the leg each one covered (`world.sweep`), then
+  `FirstHit.Ground` asks the terrain once for the whole tick's legs
+  (`terrain.ground_hits_many`) - a leg is 36 m of terrain sampling and there are
+  dozens of them.  Each leg is then *judged* one round at a time, and the pass
+  with the side effects (a burst, the damage, the dead round) is `Impact`, a
+  single system whose order against the gatherers carries no meaning.  What is
+  *not* worth batching is the integration itself — a few batched loops over one
+  or two rows cost more than the scalar arithmetic they replace (measured,
+  twice).
+* **A leg is queried at the granularity of each shape it can meet.**  The ground
+  is a continuous field and is sampled every 9 m; a building is a whole tile and
+  is solved as a slab from the terrain to its roof (`walls`); a trunk is a
+  metre-wide cylinder and is solved as one; a unit is a sphere.  `FirstHit.Ground`
+  / `Structures` / `Units` are those three queries, and `Terrain.structure_hit`
+  is the door the second one goes through - a tile with no structure in it costs
+  one byte test, which is why the structure pass is cheap out in the field.
+* **The fuse settles the round it fused on.**  `FirstHit.Fuse` fuses on
   `person` ∪ `interceptable` and bursts at the round's position at `t*`; a
   missile found there takes `combat.splash` **immediately**, at the gap it was
   at when the fuse fired, and is handed to the burst as `skip`.  `blasts` runs a
@@ -537,11 +588,12 @@ frontend/
   The airframe is a pure function of `(pos, vel, proj_age, proj_trav, stare)`,
   where `stare` is a *point and a velocity*, not a hull id - so a stale stare
   point is guided exactly like a live one and the airframe still carries no
-  state.  It stays in `MISSILE_COMPS`; the two components that are state
-  (`tgt_mem` / `tgt_vel`) belong to the seeker and never change the wire.
-  Its `life` is a **battery**: at zero `projectiles` calls
-  `impact` and the warhead goes off where the round happens to be, which is what
-  puts the range ceiling at ~4.3 km, not the motor.  (The headless envelope
+  state.  The two components that are state (`tgt_mem` / `tgt_vel`) belong to the
+  seeker and never change the wire.
+  The round's archetype is `SEEKER_COMPS` (`MISSILE_COMPS` plus that memory); its
+  `life` is a **battery**: at zero the record gets a contact at t=0 and the
+  warhead goes off where the round happens to be, which is what puts the range
+  ceiling at ~4.3 km, not the motor.  (The headless envelope
   harness - `top_attack_trace.py` - went with the Python backend; the range's
   own `MECH_RECORD` trace and `--check range` still fly the same model.)
 * **The seeker remembers, and the guidance does not care** (`Core/Seeker.cs`).  A
@@ -726,16 +778,17 @@ frontend/
   which lands the burst on the outer face.  The client's `predictImpact`
   samples its 1/30 step every 8 m the same way - testing only the end point let
   fast rounds predict a hit behind the building.
-  `_march` is the one ray walker four systems share (AI sight, ballistic
-  elevation, hull collision, a round landing), and it is the hot loop of the
-  whole simulation: **87.6 % of its calls are ground legs of 50 m or less**, so
-  what pays off there is the cost of one sample, not the length of the ray.
+  `_march` is the sight walk (`los`, i.e. the eye of every system that hides
+  something) and it is the hot loop of the whole simulation: **87.6 % of its
+  calls are ground legs of 50 m or less**, so what pays off there is the cost of
+  one sample, not the length of the ray.
   Keep it scalar and inline (`_spans` unrolled into the loop, `sample()` caching
   the previous tile's four corner heights, the tree test hoisted out of
   `_trunk_hit`/`_canopy_hit`).  Vectorising a *single* ray is a trap: five
   samples are cheaper inline than in a dozen small array operations (tried,
   measured 10× slower).  `ground_hits_many` is the other side of the same coin -
-  many rays, one batch.
+  many rays, one batch, ground only; a round's buildings and trunks are
+  `structure_hit`, which walks the same tiles and asks each one.
 * **Trees are trunks for physics, canopies for sight.** A tree/forest tile
   holds 1-5 trees whose trunks are the only solid part of it: `_trunks(i, j)`
   (server) / `treeTrunks` in `map.js` lay them out from one hash both sides

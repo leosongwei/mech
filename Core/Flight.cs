@@ -16,7 +16,7 @@
 //     v = Flight.step(p, v, age, trav, tgt_pos, tgt_vel, wd, dt)
 //
 // It returns the new *velocity* and nothing else; the caller advances the
-// position by it (`p1 = p0 + v * dt`), exactly as `Systems/Projectiles.cs` does.
+// position by it (`p1 = p0 + v * dt`), exactly as `Systems/Flights.cs` does.
 //
 // Guidance is three phases and one aim:
 //

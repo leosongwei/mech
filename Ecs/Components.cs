@@ -64,9 +64,16 @@ public static class Components
         // what it is *called*: an index into `World.names`, 0 for a hull with no
         // name at all (a car, a man, a base - they answer to their type).
         ecs.register("name_id", Kind.U16);
-        // a round in the air that can itself be fought (`Systems/Proximity.cs`,
+        // a round in the air that can itself be fought (`Systems/FirstHit.cs`,
         // `Systems/Mortality.cs`).  A plain bullet does not carry the tag.
         ecs.register("interceptable", Kind.U8);
+        // ...and what a round *flies* as, one tag per kind (`Defs.KIND_TAGS`):
+        // the same rule a hull's etype is a tag, so a flight system queries the
+        // kind it knows instead of switching on `proj_kind`.
+        ecs.register("bullet", Kind.U8);
+        ecs.register("unguided_missile", Kind.U8);
+        ecs.register("saclos", Kind.U8);
+        ecs.register("top_attack", Kind.U8);
 
         // ---- health -----------------------------------------------------
         // One hull, one pool: `hp` is *the* health of the entity and `hp <= 0` is
@@ -179,6 +186,26 @@ public static class Components
         // flight distance and cooks off where it runs out
         ecs.register("proj_trav", Kind.F);
 
+        // ---- first_hit_record -------------------------------------------
+        // Where this tick's leg of the round ends.  Every collision system
+        // offers its own answer through `if (t < first_hit_t)` and one `Impact`
+        // reads the record, so the order the collision systems run in decides
+        // the cost of a compare and nothing else.  `FIRST_HIT_ARMED` is
+        // re-armed by the round's own flight system, which is the same moment
+        // it writes `proj_prev`: `(proj_prev, pos)` is the leg and this is
+        // where along it the round stops.
+        ecs.register("first_hit_t", Kind.F, 1, Defs.FIRST_HIT_ARMED);
+        // where it stops, written as a point by whoever got there first - the
+        // fuse bursts a fraction of a metre into a leg and an expiring round
+        // bursts where it stands, neither of which is the end of the leg
+        ecs.register("first_hit_pos", Kind.F, 3, 0.0);
+        ecs.register("first_hit_kind", Kind.U8);          // Defs.HIT_*: what it ran into
+        ecs.register("first_hit_unit", Kind.I, 1, -1);    // the hull hit, once structures get ids
+        ecs.register("first_hit_mod", Kind.U8);           // which module a hull hit charges
+        // the gap the fuse measured, because a missile fused at 2.4 m takes its
+        // splash at 2.4 m and not at the burst's own radius
+        ecs.register("first_hit_gap", Kind.F);
+
         // ---- seeker -----------------------------------------------------
         // What the IR seeker is looking at, kept on the round rather than
         // derived from a live target id, because the target does not have to
@@ -222,18 +249,30 @@ public static class Components
         "blast",
     };
 
+    /// <summary>Every round owns a place, a velocity and its `first_hit_record`.
+    /// What it *flies* as is a tag from `Defs.KIND_TAGS` (bullet /
+    /// unguided_missile / saclos / top_attack), the same rule a hull's type is a
+    /// tag; `proj_kind` stays on board as the wire byte and the `Defs.WEAPONS`
+    /// key, i.e. the round's `etype`.</summary>
     public static readonly string[] PROJ_COMPS = {
         "pos", "vel", "faction", "proj_kind", "proj_wid", "proj_life", "proj_src",
         "proj_pid", "proj_name", "proj_etype",
         "proj_age", "proj_seed", "proj_prev", "proj_trav", "target",
+        "first_hit_t", "first_hit_pos", "first_hit_kind",
+        "first_hit_unit", "first_hit_mod", "first_hit_gap",
     };
 
-    /// <summary>A missile is a *different archetype* from a bullet - the same
-    /// rule the smoke canister and the puff obey.  The seeker's memory rides
-    /// along with the pool: a guided round is the only thing on the field that
-    /// has to remember where something it can no longer see was going.</summary>
+    /// <summary>The half of a round that can be fought: a pool of health and its
+    /// own armour.  A *different archetype* from a bullet - the same rule the
+    /// smoke canister and the puff obey.</summary>
     public static readonly string[] MISSILE_COMPS = Cat(PROJ_COMPS,
-        "interceptable", "hp", "hpmax", "armor", "last_hit", "tgt_mem", "tgt_vel");
+        "interceptable", "hp", "hpmax", "armor", "last_hit");
+
+    /// <summary>The seeker's memory, and only the kind that has a seeker:
+    /// `tgt_mem` is the point it stares at and `tgt_vel` the velocity that hull
+    /// had when it was last seen (`Core/Seeker.cs`).  A rocket and a beam rider
+    /// carry no such state.</summary>
+    public static readonly string[] SEEKER_COMPS = Cat(PROJ_COMPS, "tgt_mem", "tgt_vel");
 
     public static readonly string[] CANISTER_COMPS = {
         "pos", "vel", "smoke_r", "smoke_t", "smoke_s", "canister",

@@ -239,7 +239,7 @@ public sealed class Terrain
     private float[] _cull_solid = Array.Empty<float>();
     private float[] _cull_sight = Array.Empty<float>();
     // the coarse ray-cull grid: `CULL_TILES` blocks of `CULL_TILES` tiles, and
-    // the quantities every ray walker needs (`Systems/Projectiles.cs` files its hit
+    // the quantities every ray walker needs (`Systems/Sweep.cs` files its hit
     // spheres under the same blocks)
     public int _cull_d, _cull_w;
     public float _cull_inv;
@@ -544,9 +544,6 @@ public sealed class Terrain
         return 0f;
     }
 
-    /// <summary>The height a round coming in from above is stopped at.</summary>
-    public float obstacle_at(float x, float z) => height_at(x, z) + wall_at(x, z);
-
     /// <summary>The height a line of sight is cut at.</summary>
     public float sight_at(float x, float z) => height_at(x, z) + sight_wall(x, z);
 
@@ -687,33 +684,7 @@ public sealed class Terrain
         return best;
     }
 
-    /// <summary>The wall half of `obstacle_at` for a single point: a building
-    /// tile stops at its roof, off the map at 1e6, everything else at
-    /// nothing.</summary>
-    private float _walls_arr(float x, float z)
-    {
-        int i = x >= 0f ? (int)MathF.Floor(x * INV_TILE) : -1;
-        int j = z >= 0f ? (int)MathF.Floor(z * INV_TILE) : -1;
-        bool inside_ = i >= 0 && j >= 0 && i < w && j < d;
-        int ic = Math.Clamp(i, 0, w - 1);
-        int jc = Math.Clamp(j, 0, d - 1);
-        if (!inside_) return 1e6f;
-        if (tiles[jc * w + ic] != TILE_BUILDING) return 0f;
-        float wv = walls[jc * w + ic];
-        return wv > 0f ? wv : BUILDING_H;
-    }
-
-    /// <summary>`obstacle_at` for a single point, the shape the batch door and
-    /// the bisections use.</summary>
-    private float _sample(float x, float z) => height_at(x, z) + _walls_arr(x, z);
-
-    /// <summary>`obstacle_at` for an array of points: fill `out_y[0..n-1]`.</summary>
-    public void sample_points(float[] xs, float[] zs, int n, float[] out_y)
-    {
-        for (int k = 0; k < n; k++) out_y[k] = _sample(xs[k], zs[k]);
-    }
-
-    /// <summary>`ground_hit` for a whole tick's rounds at once.</summary>
+    /// <summary>The ground of a whole tick's rounds at once.</summary>
     /// <remarks>
     /// The rounds of one tick are a hundred legs of 10-36 m, and the per-leg
     /// walk was one Python function call per sample for each of them.  Here the
@@ -735,16 +706,16 @@ public sealed class Terrain
     /// `p0` / `p1` are flat `x, y, z` per leg.
     /// </remarks>
     public void ground_hits_many(float[] p0, float[] p1, int n, float step,
-                                 bool[] hit, float[] t_hit, bool[] walk)
+                                 bool[] hit, float[] t_hit)
     {
         for (int k = 0; k < n; k++)
         {
             hit[k] = false;
-            walk[k] = false;
             t_hit[k] = 1f;
         }
         if (n == 0) return;
 
+        float xmax = w * TILE, zmax = d * TILE;
         var dxyz = new float[n * 3];
         var dist = new float[n];
         for (int k = 0; k < n; k++)
@@ -760,7 +731,9 @@ public sealed class Terrain
         var start_hit = new bool[n];
         for (int k = 0; k < n; k++)
         {
-            start_hit[k] = p0[k * 3 + 1] <= _sample(p0[k * 3], p0[k * 3 + 2]) + 1f;
+            float x0 = p0[k * 3], z0 = p0[k * 3 + 2];
+            start_hit[k] = x0 < 0f || z0 < 0f || x0 >= xmax || z0 >= zmax
+                           || p0[k * 3 + 1] <= height_at(x0, z0) + 1f;
             if (start_hit[k])
             {
                 hit[k] = true;
@@ -811,20 +784,14 @@ public sealed class Terrain
             bool inb = ci >= 0 && cj >= 0 && ci < cwi && cj < cdi;
             clear[s] = inb && ys[s] > _cull_solid[cj * cwi + ci];
         }
-        // a leg through a tree tile is the scalar walk's; so is one whose
-        // terrain sampling this cannot answer
-        for (int s = 0; s < total; s++)
-        {
-            int ti = (int)MathF.Floor(xs[s] * INV_TILE);
-            int tj = (int)MathF.Floor(zs[s] * INV_TILE);
-            bool tin = ti >= 0 && tj >= 0 && ti < w && tj < d;
-            byte tt = tin ? tiles[tj * w + ti] : (byte)0;
-            if (tt == TILE_TREE || tt == TILE_FOREST) walk[leg[s]] = true;
-        }
-
+        // off the field nothing flies on: a sample outside the map is solid, so a
+        // round fired from beyond the edge bursts where it starts instead of
+        // coasting over clamped terrain
         var blocked = new bool[total];
         for (int s = 0; s < total; s++)
-            blocked[s] = !clear[s] && ys[s] <= _sample(xs[s], zs[s]);
+            blocked[s] = !clear[s]
+                         && (xs[s] < 0f || zs[s] < 0f || xs[s] >= xmax || zs[s] >= zmax
+                             || ys[s] <= height_at(xs[s], zs[s]));
 
         int seen_leg = -1;
         for (int s = 0; s < total; s++)
@@ -833,7 +800,7 @@ public sealed class Terrain
             int L = leg[s];
             if (L == seen_leg) continue;      // the first blocked sample of a leg
             seen_leg = L;
-            if (walk[L] || start_hit[L]) continue;
+            if (start_hit[L]) continue;
             // the bracket is the previous sample *of this leg*: sample 0 of a
             // leg starts the bisection at the leg's own origin
             float lo = kk[s] > 0 ? ts[s - 1] : 0f;
@@ -844,7 +811,7 @@ public sealed class Terrain
             for (int it = 0; it < 6; it++)
             {
                 float m = (a + b) * 0.5f;
-                if (ly + dy * m > _sample(lx + dx * m, lz + dz * m)) a = m;
+                if (ly + dy * m > height_at(lx + dx * m, lz + dz * m)) a = m;
                 else b = m;
             }
             t_hit[L] = (a + b) * 0.5f;
@@ -852,31 +819,24 @@ public sealed class Terrain
         }
     }
 
-    /// <summary>Which of the two "ground + whatever stands on it" tests `_march`
-    /// opens with.</summary>
-    private enum At { obstacle, sight }
-
     /// <summary>Walk the segment and report the first point at or below `at`.</summary>
     /// <remarks>
-    /// `trunks` adds the solid cylinders a round bursts on, `canopies` the leaf
-    /// volumes that only hide - the two are never asked for together.
+    /// `canopies` adds the leaf volumes that hide things - they are the one
+    /// shape a round flies through and an eye does not.
     ///
     /// This is the hottest loop in the server (87 % of its calls are a 36 m
     /// round's leg, the rest are 1-3 km sight lines) so the tile walk lives
     /// here instead of in an iterator, and the sample height is read in one call
     /// that keeps the tile it last looked at - half the samples of an 8 m step
-    /// land in the tile the previous one did.  `at` is `obstacle_at` /
-    /// `sight_at`, which are both "ground + the wall standing on it": the enum
-    /// picks which one the opening test uses, and `sample` repeats that sum
-    /// inline for the walk and the bisection, so the numbers are the same ones
-    /// the callable would return.
+    /// land in the tile the previous one did.  `sample` repeats the
+    /// "ground + the wall standing on it" sum inline for the walk and the
+    /// bisection, so the numbers are the same ones the callable would return.
     ///
     /// Never vectorise this and never turn the tile walk into an enumerator: the
     /// samples are cheap, the machinery around them is not.
     /// </remarks>
     private (bool hit, float t, Vec3 point) _march(
-        Vec3 p0, Vec3 p1, float step, At at,
-        bool trunks = false, bool canopies = false, float[]? cull = null)
+        Vec3 p0, Vec3 p1, float step, bool canopies = false, float[]? cull = null)
     {
         float dx = p1.x - p0.x;
         float dy = p1.y - p0.y;
@@ -886,7 +846,7 @@ public sealed class Terrain
         float x0 = p0.x;
         float y0 = p0.y;
         float z0 = p0.z;
-        float at_y = at == At.sight ? sight_at(x0, z0) : obstacle_at(x0, z0);
+        float at_y = sight_at(x0, z0);
         if (y0 <= at_y + 1f) return (true, 0f, p0);
 
         float wmax = _wmax;
@@ -959,19 +919,11 @@ public sealed class Terrain
                 inside_ = true;
                 // trees are rare tiles, so the type is read once here instead
                 // of inside both solvers (which would each check it again)
-                if (trunks || canopies)
+                if (canopies)
                 {
                     byte ty = tiles[cj_ * tw + ci_];
                     if (ty == TILE_TREE || ty == TILE_FOREST)
-                    {
-                        if (trunks) tt = _trunk_hit(p0, dx, dy, dz, ci_, cj_, ta, tb);
-                        if (canopies)
-                        {
-                            var tc = _canopy_hit(p0, dx, dy, dz, ci_, cj_, ta, tb);
-                            if (tc.HasValue && (!tt.HasValue || tc.Value < tt.Value))
-                                tt = tc;
-                        }
-                    }
+                        tt = _canopy_hit(p0, dx, dy, dz, ci_, cj_, ta, tb);
                 }
             }
             else
@@ -1090,20 +1042,114 @@ public sealed class Terrain
         return false;
     }
 
-    /// <summary>The first ground contact on the segment.</summary>
-    /// <remarks>
-    /// Buildings and tree trunks count as ground: the wall of a building is a
-    /// vertical step at the tile border, so a round fired into a facade bursts
-    /// on the face - where the smoke can be seen - instead of inside the hull.
-    /// Leaves are not in the way; they only hide (`sight_at`).
-    /// </remarks>
-    public bool ground_hit(Vec3 p0, Vec3 p1, float step, out float t, out Vec3 point)
+    // a structure walk samples within one tile at this spacing: a wall is a
+    // vertical plane, so the bisection only has to bracket it, and half the
+    // ground walk's 8 m keeps the bracket inside the tile the face belongs to
+    private const float STRUCT_STEP = 4f;
+
+    /// <summary>Where the segment first runs into a *structure*: a building's
+    /// column, or a tree's trunk.
+    ///
+    /// The two shapes are solved, never sampled at the round's 8 m step, because
+    /// neither is shaped like the ground: a building is a whole tile and is a slab
+    /// from the terrain up to its roof (`walls`), a trunk is a metre-wide cylinder
+    /// (`_trunk_hit`).  Walking the tiles the leg crosses and asking each one is
+    /// both more exact than a point sample and cheaper - a tile that holds no
+    /// structure costs one byte test.
+    ///
+    /// `structure` is the door the destructible map will come through: today it is
+    /// always -1, and the building id takes its place without a caller changing.
+    /// `tile` says which shape was hit, so the caller can record a facade and a
+    /// trunk as the two different things they are.</summary>
+    public bool structure_hit(Vec3 p0, Vec3 p1, out float t, out Vec3 point,
+                              out byte tile, out int structure)
     {
-        var r = _march(p0, p1, step, At.obstacle, trunks: true, canopies: false,
-                       _cull_solid);
-        t = r.t;
-        point = r.point;
-        return r.hit;
+        float dx = p1.x - p0.x, dy = p1.y - p0.y, dz = p1.z - p0.z;
+        float len = MathF.Sqrt(dx * dx + dy * dy + dz * dz);
+        float prev = 0f;
+        foreach (var (ta, tb, i, j) in _spans(p0, dx, dz))
+        {
+            if (0 <= i && i < w && 0 <= j && j < d)
+            {
+                int k = j * w + i;
+                byte ty = tiles[k];
+                if (ty == TILE_TREE || ty == TILE_FOREST)
+                {
+                    var v = _trunk_hit(p0, dx, dy, dz, i, j, ta, tb);
+                    if (v.HasValue)
+                    {
+                        structure = -1;
+                        return _structure_at(p0, dx, dy, dz, v.Value, ty, out t, out point,
+                                             out tile);
+                    }
+                }
+                else if (ty == TILE_BUILDING)
+                {
+                    // the column this tile stands as, from its terrain up to its
+                    // roof - the number a point sample of the column would give
+                    float wall = _wall_of(k);
+                    // sample this tile's span and bisect the first sample inside
+                    // the column, so the burst lands on the face nearest the
+                    // round rather than on a step past it
+                    int n = (int)((tb - ta) * len / STRUCT_STEP + 0.5f);
+                    if (n < 1) n = 1;
+                    float a = ta;
+                    bool below = p0.y + dy * ta <= height_at(p0.x + dx * ta, p0.z + dz * ta) + wall;
+                    for (int q = 1; q <= n && !below; q++)
+                    {
+                        float tt = ta + (tb - ta) * q / n;
+                        float xx = p0.x + dx * tt;
+                        float zz = p0.z + dz * tt;
+                        a = tt;
+                        if (p0.y + dy * tt <= height_at(xx, zz) + wall)
+                        {
+                            below = true;
+                            float lo = q > 1 ? ta + (tb - ta) * (q - 1) / n : ta;
+                            float hi = tt;
+                            for (int it = 0; it < 6; it++)
+                            {
+                                float m = (lo + hi) * 0.5f;
+                                if (p0.y + dy * m > height_at(p0.x + dx * m, p0.z + dz * m)
+                                    + wall) lo = m;
+                                else hi = m;
+                            }
+                            a = (lo + hi) * 0.5f;
+                        }
+                    }
+                    if (below)
+                    {
+                        tile = ty;
+                        structure = -1;
+                        t = a;
+                        point = new Vec3(p0.x + dx * a, p0.y + dy * a, p0.z + dz * a);
+                        return true;
+                    }
+                }
+            }
+            prev = tb;
+        }
+        tile = 0;
+        structure = -1;
+        t = 1f;
+        point = p1;
+        return false;
+    }
+
+    /// <summary>The wall height of building tile `k`, in metres: a 2-6 storey
+    /// column, the type's default where the generator wrote none.</summary>
+    private float _wall_of(int k)
+    {
+        float wv = walls[k];
+        return wv > 0f ? wv : BUILDING_H;
+    }
+
+    private static bool _structure_at(Vec3 p0, float dx, float dy, float dz, float t,
+                                      byte ty, out float tout, out Vec3 point, out byte tile)
+    {
+        tile = ty;
+        tout = t;
+        point = new Vec3(p0.x + dx * t, p0.y + dy * t, p0.z + dz * t);
+        return true;
     }
 
     /// <summary>Whether `a` sees `b`: the ground, the buildings and the tree
@@ -1117,7 +1163,7 @@ public sealed class Terrain
     /// </remarks>
     public bool los(Vec3 a, Vec3 b, float step = 8f)
     {
-        var r = _march(a, b, step, At.sight, trunks: false, canopies: true, _cull_sight);
+        var r = _march(a, b, step, canopies: true, _cull_sight);
         return !r.hit;
     }
 

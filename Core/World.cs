@@ -81,6 +81,7 @@ public sealed class World
     public List<string> names = new() { "" };
     private readonly Dictionary<string, int> _name_ids = new() { [""] = 0 };
     public float dt = 1f / 30f;              // last step, for a table built mid-tick
+    public Systems.SweepScratch sweep = new();   // this tick's round legs
     public SphereTable? _sph;               // this tick's hit-sphere table
     public int _sph_tick = -1;
     public bool[]? _aim_ok;                 // rows of that table still aimed at
@@ -133,7 +134,26 @@ public sealed class World
         systems.AddRange(new Action<World, float>[]
         {
             Systems.Gunnery.run, Systems.Locking.run, Systems.Smoke.run, Systems.Weapons.run,
-            Systems.Movement.run, Systems.Projectiles.run, Systems.Proximity.run,
+            Systems.Movement.run,
+            // the tick's hit spheres: built here because `movement` has already
+            // moved the hulls (a unit's `pos` is the end of its tick, `prev` is
+            // `pos - vel*dt`) and the flight systems have not moved the missiles yet
+            // (a missile's `pos` is the start of the tick, its displacement is
+            // predicted from its velocity)
+            Systems.Sweep.Spheres.run,
+            // battery and wire, settled before anything moves
+            Systems.Flights.Expire.run,
+            // one system per kind of round, by tag: no `proj_kind` switch
+            Systems.Flights.Ballistic.run, Systems.Flights.Rocket.run,
+            Systems.Flights.Saclos.run, Systems.Flights.Top.run,
+            // what each leg ran into.  These only write `first_hit_record`, so the
+            // order they run in decides the cost of a compare and nothing else
+            Systems.FirstHit.Ground.run,
+            Systems.FirstHit.Structures.run,
+            Systems.FirstHit.Units.run,
+            Systems.FirstHit.Fuse.run,
+            // the one reader of that record, and the only thing that ends a round
+            Systems.Impact.run,
         });
         // the damage chain: a round and a burst both *write* hp where they land
         // (Combat.apply), the bursts are judged one system after the rounds that
@@ -242,6 +262,66 @@ public sealed class World
         return eid;
     }
 
+    /// <summary>Fire a round: the one place a projectile archetype is decided.
+    ///
+    /// The weapon's `kind` gives the tag (`Defs.KIND_TAGS`), `is_interceptable`
+    /// gives the pool, and the seeker's memory goes on only the kind that has a
+    /// seeker - so what a round *is* is its component set, exactly as a hull's
+    /// type is.  Asserted here for the same reason `spawn_unit` asserts `pos`: an
+    /// archetype built without `first_hit_record` would fly for ever, and one
+    /// built without a pool could not be shot down.
+    ///
+    /// The credit (`proj_pid` / `proj_name` / `proj_etype`) is frozen at the
+    /// muzzle: a round outlives the hull that fired it by a second to several, and
+    /// its id can already belong to the wreck it left.</summary>
+    public int spawn_round(int src, int faction, int wid, int kind, Vec3 pos, Vec3 vel,
+                           float life, int target)
+    {
+        var e = ecs;
+        var wd = Defs.WEAPONS[wid];
+        bool pooled = Defs.is_interceptable(wid);
+        var comps = new List<string>(pooled ? Components.MISSILE_COMPS
+                                            : Components.PROJ_COMPS);
+        if (kind == 3) comps.AddRange(Components.SEEKER_COMPS);
+        if (Defs.KIND_TAGS.TryGetValue(wd.kind, out var tags)) comps.AddRange(tags);
+        if (!comps.Contains("first_hit_t"))
+            throw new InvalidOperationException("a round must own first_hit_record");
+        if (pooled && !comps.Contains("hp"))
+            throw new InvalidOperationException("an interceptable round must own a pool");
+        int pid = e.create(comps);
+        e.fv("pos").set3(pid, pos);
+        e.fv("vel").set3(pid, vel);
+        e.uv("faction")[pid] = (byte)faction;
+        e.uv("proj_kind")[pid] = (byte)kind;
+        e.uv("proj_wid")[pid] = (byte)wid;
+        e.fv("proj_life")[pid] = life;
+        e.iv("proj_src")[pid] = src;
+        e.iv("proj_pid")[pid] = e.iv("owner").get(src, 0);
+        e.uv16("proj_name")[pid] = e.uv16("name_id").get(src, 0);
+        e.uv("proj_etype")[pid] = e.uv("etype").get(src, 0);
+        e.fv("proj_age")[pid] = 0f;
+        e.fv("proj_seed")[pid] = rng.random();
+        e.fv("proj_trav")[pid] = 0f;
+        e.iv("target")[pid] = target;
+        if (pooled)
+        {
+            e.fv("hp")[pid] = wd.aim_hp;
+            e.fv("hpmax")[pid] = wd.aim_hp;
+            e.fv("armor").set(pid, 0, wd.aim_dp);
+            e.fv("armor").set(pid, 1, wd.aim_de);
+            // the seeker leaves the launcher already knowing what it is looking
+            // at, and how fast that thing was going: from here on the round owns
+            // the lock, and its memory is what carries it through a lock cut
+            // before the first tick of flight
+            if (kind == 3 && target >= 0 && e.is_alive(target))
+            {
+                e.fv("tgt_mem").set3(pid, Seeker.roof(this, target));
+                e.fv("tgt_vel").set3(pid, e.fv("vel").get3(target));
+            }
+        }
+        return pid;
+    }
+
     public int spawn_mech(Player player)
     {
         player.smoke_charges = Defs.SMOKE_CHARGES;
@@ -338,12 +418,12 @@ public sealed class World
     ///
     /// `dt` is what turns a hull's velocity into the ground it covered this tick
     /// - the sweep solves against a moving target (see
-    /// `Systems/Projectiles.cs:sphere_table`).</summary>
+    /// `Systems/Sweep.cs:sphere_table`).</summary>
     public SphereTable sphere_table(float dt)
     {
         if (_sph is null || _sph_tick != tick || _sph_premove)
         {
-            _sph = Systems.Projectiles.sphere_table(this, dt);
+            _sph = Systems.Sweep.sphere_table(this, dt);
             _sph_tick = tick;
             _sph_premove = false;
             _aim_ok = null;      // the aim mask belongs to the table it was built for

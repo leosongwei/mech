@@ -4,7 +4,7 @@
 // ground, a building tile, a tree trunk or a unit's hit sphere - out to
 // `Defs.ZERO_RANGE`.
 // The solver then returns the launch elevation that puts the round on that
-// point, mirroring the integrator in `Systems/Projectiles.cs` (1/30 s
+// point, mirroring the integrator in `Systems/Flights.cs` (1/30 s
 // semi-implicit Euler, same gravity and, for rockets, the same thrust curve).
 //
 // Only direct fire is zeroed: bullets and unguided rockets.  SACLOS and the

@@ -6,13 +6,10 @@ lanes, two factions and physically flown projectiles.
 
 ```
 dev.sh                 # start / attach / stop the server (byobu / tmux)
-<<<<<<< HEAD
 Dockerfile.backend     # .NET 10 server image (port 8010)
 Dockerfile.frontend    # nginx + webpack client image (port 8080)
 deploy/k8s/            # kustomize manifests: battle and range, split images
 .github/workflows/     # build & push both images to GHCR
-=======
->>>>>>> 43dd4b6 (Replace the Python backend with the C# one, move the repo to a single root layout)
 dotnet.sh              # build / run helper (dotnet's own state in .dotnet_tmp/)
 MechServer.csproj      # the server; <Version> is the product version
 Program.cs             # entry point: --host / --port / --range / --check
@@ -128,6 +125,7 @@ later on the same map.
 
 ## Container
 
+<<<<<<< HEAD
 The deployment is split into two images:
 
 - **`mech-backend`** — the .NET 10 SDK publishes the ASP.NET Core server from
@@ -177,10 +175,39 @@ The frontend nginx proxies `/ws` to the matching backend Service. Backends run
 one replica with `Recreate` and TCP startup/readiness/liveness probes; frontends
 are stateless and probe `/healthz`. All four pods run non-root with a read-only
 root filesystem and a `/tmp` emptyDir.
+=======
+The image is multi-stage: Node 22 builds the client into `backend/assets`, then
+the runtime image installs the backend from `pyproject.toml` with `uv`. The
+server listens on `8010` and runs as a non-root user.
+
+```bash
+docker build -t mech .
+
+# battle
+docker run --rm -p 8010:8010 mech
+
+# range (4 km test map)
+docker run --rm -e MECH_RANGE=1 -p 8011:8010 mech
+```
+
+`MECH_DEBUG` is off in the image; turn the console helpers on deliberately with
+`-e MECH_DEBUG=1`. `MECH_LOG_LEVEL=DEBUG` enables the per-weapon log lines.
+There is no persistent state, so a restart is a fresh battle. Do not add
+uvicorn workers or run more than one replica: the world is a module-level
+single-instance object, and every extra process is a separate battle.
+
+## Kubernetes
+
+`deploy/k8s/` contains kustomize manifests for both modes: `mech-battle`
+(ClusterIP `8010`) and `mech-range` (ClusterIP `8011`, `MECH_RANGE=1`). Both run
+one replica with `Recreate`, startup/readiness/liveness probes on `/`, a
+read-only root filesystem and a `/tmp` emptyDir.
+>>>>>>> 76a725c (新增一些基础设施)
 
 ```bash
 kubectl apply -k deploy/k8s
 kubectl -n mech get pods,svc
+<<<<<<< HEAD
 kubectl -n mech port-forward svc/mech-battle-frontend 8080:8080
 kubectl -n mech port-forward svc/mech-range-frontend 8080:8080
 ```
@@ -202,6 +229,27 @@ kubectl -n mech rollout restart deploy/mech-range-backend deploy/mech-range-fron
 ```
 
 If the GHCR packages are private, add an `imagePullSecrets` entry to the
+=======
+kubectl -n mech port-forward svc/mech-battle 8010:8010
+kubectl -n mech port-forward svc/mech-range 8011:8011
+```
+
+The Services are ClusterIP only: expose them through your own reverse proxy or
+gateway (it must pass WebSocket Upgrade and long-lived connections), or use
+`port-forward` for local play. `deploy/k8s/configmap.yaml` holds `MECH_DEBUG`
+and `MECH_LOG_LEVEL`; set `MECH_DEBUG=1` there only for a test deployment.
+
+`.github/workflows/container.yml` builds and pushes
+`ghcr.io/leosongwei/mech` to GHCR on `main` and `v*` tags (pull requests build
+without pushing). The manifests use `:latest`, so restart the Deployments after
+a new push:
+
+```bash
+kubectl -n mech rollout restart deploy/mech-battle deploy/mech-range
+```
+
+If the GHCR package is private, add an `imagePullSecrets` entry to the
+>>>>>>> 76a725c (新增一些基础设施)
 Deployments.
 
 ## Controls

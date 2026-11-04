@@ -42,9 +42,12 @@ public static class Smoke
             if (!fired || eid < 0 || !e.is_alive(eid)) continue;
             if (pl.smoke_charges <= 0 || pl.smoke_cd > 0f) continue;
             if (!e.has(eid, "unit")) continue;
+<<<<<<< HEAD
             // a reload in progress (Systems/Rearm.cs) has the tubes open: a pull
             // now would be paid for once and handed back with the rack
             if (e.fv("work_remaining_time")[eid] > 0f) continue;
+=======
+>>>>>>> 43dd4b6 (Replace the Python backend with the C# one, move the repo to a single root layout)
             pl.smoke_charges -= 1;
             float? cd = world.mode_mod.smoke_cooldown;
             pl.smoke_cd = cd is null ? Defs.SMOKE_COOLDOWN : cd.Value;

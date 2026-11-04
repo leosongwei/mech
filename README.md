@@ -6,10 +6,13 @@ lanes, two factions and physically flown projectiles.
 
 ```
 dev.sh                 # start / attach / stop the server (byobu / tmux)
+<<<<<<< HEAD
 Dockerfile.backend     # .NET 10 server image (port 8010)
 Dockerfile.frontend    # nginx + webpack client image (port 8080)
 deploy/k8s/            # kustomize manifests: battle and range, split images
 .github/workflows/     # build & push both images to GHCR
+=======
+>>>>>>> 43dd4b6 (Replace the Python backend with the C# one, move the repo to a single root layout)
 dotnet.sh              # build / run helper (dotnet's own state in .dotnet_tmp/)
 MechServer.csproj      # the server; <Version> is the product version
 Program.cs             # entry point: --host / --port / --range / --check
@@ -98,8 +101,14 @@ cd frontend && npm install && npm run build && cd ..
 ./dotnet.sh run -- --port 8011 --range         # weapon range (4 km test map)
 ```
 
+<<<<<<< HEAD
 Everything runs through `./dotnet.sh` (see **Install** above) - a bare
 `dotnet build` is never needed.
+=======
+Needs the .NET 10 SDK.  `dotnet.sh` exists because `dotnet` wants to write
+first-run state into `$HOME`; the script points all of it at `.dotnet_tmp/`
+(gitignored) so a bare `dotnet build` is never needed.
+>>>>>>> 43dd4b6 (Replace the Python backend with the C# one, move the repo to a single root layout)
 
 Then open <http://127.0.0.1:8010/>.  The lobby lets you pick a callsign, a side
 (RED / BLUE / AUTO) and the weapon in each arm before you hit **DEPLOY**.

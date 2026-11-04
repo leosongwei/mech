@@ -1162,10 +1162,17 @@ public static partial class Defs
     public const float SMOKE_BURST = 2.2f;          // 1/s; how fast the burst eases out
     public const float SMOKE_TIME_JITTER = 0.20f;   // +-fraction of the flight time, per canister
     public const float SMOKE_SIZE_JITTER = 0.20f;   // +-fraction of the puff size, per canister
+<<<<<<< HEAD
     public const int SMOKE_CHARGES = 10;            // pulls a full rack holds (a life's worth)
     public const float SMOKE_COOLDOWN = 0.5f;       // seconds between pulls
     public const int SMOKE_LOAD_COST = 10;          // $ per canister loaded at the base
     public const float SMOKE_LOAD_S = 2.0f;         // seconds at the wrench for a reload
+=======
+    public const int SMOKE_CHARGES = 10;            // pulls per life (a full rack, same as a reload)
+    public const float SMOKE_COOLDOWN = 0.5f;       // seconds between pulls
+    public const int SMOKE_REFILL_COST = 250;       // $ for a fresh rack at the base
+    public const int SMOKE_REFILL_CHARGES = 10;     // pulls the refilled rack holds
+>>>>>>> 43dd4b6 (Replace the Python backend with the C# one, move the repo to a single root layout)
 
     /// <summary>Canister lattice covering the whole front hemisphere.</summary>
     /// <remarks>

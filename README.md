@@ -98,14 +98,8 @@ cd frontend && npm install && npm run build && cd ..
 ./dotnet.sh run -- --port 8011 --range         # weapon range (4 km test map)
 ```
 
-<<<<<<< HEAD
 Everything runs through `./dotnet.sh` (see **Install** above) - a bare
 `dotnet build` is never needed.
-=======
-Needs the .NET 10 SDK.  `dotnet.sh` exists because `dotnet` wants to write
-first-run state into `$HOME`; the script points all of it at `.dotnet_tmp/`
-(gitignored) so a bare `dotnet build` is never needed.
->>>>>>> 0595a7a (Replace the Python backend with the C# one, move the repo to a single root layout)
 
 Then open <http://127.0.0.1:8010/>.  The lobby lets you pick a callsign, a side
 (RED / BLUE / AUTO) and the weapon in each arm before you hit **DEPLOY**.
@@ -125,7 +119,6 @@ later on the same map.
 
 ## Container
 
-<<<<<<< HEAD
 The deployment is split into two images:
 
 - **`mech-backend`** — the .NET 10 SDK publishes the ASP.NET Core server from
@@ -177,42 +170,8 @@ are stateless and probe `/healthz`. All four pods run non-root with a read-only
 root filesystem and a `/tmp` emptyDir.
 
 ```bash
-docker network create mech
-
-docker build -f Dockerfile.backend  -t mech-backend .
-docker build -f Dockerfile.frontend -t mech-frontend .
-
-# battle: backend is internal, the browser talks to nginx only
-docker run -d --name mech-backend --network mech mech-backend
-docker run -d --name mech-web --network mech -p 8080:8080 \
-  -e BACKEND_HOST=mech-backend -e BACKEND_PORT=8010 mech-frontend
-
-# range (4 km test map)
-docker run -d --name mech-range-backend --network mech \
-  -e MECH_RANGE=1 mech-backend
-docker run -d --name mech-range-web --network mech -p 8081:8080 \
-  -e BACKEND_HOST=mech-range-backend -e BACKEND_PORT=8010 mech-frontend
-```
-
-Then open <http://127.0.0.1:8080/>. `MECH_DEBUG` is off in the image; turn the
-console helpers on deliberately with `-e MECH_DEBUG=1` on the backend.
-`MECH_LOG_LEVEL=DEBUG` enables the per-weapon log lines. There is no persistent
-state, so a restart is a fresh battle. Do not add uvicorn workers or run more
-than one backend replica: the world is a module-level single-instance object,
-and every extra process is a separate battle. The frontend is stateless.
-
-## Kubernetes
-
-`deploy/k8s/` contains kustomize manifests for both modes: `mech-battle`
-(ClusterIP `8010`) and `mech-range` (ClusterIP `8011`, `MECH_RANGE=1`). Both run
-one replica with `Recreate`, startup/readiness/liveness probes on `/`, a
-read-only root filesystem and a `/tmp` emptyDir.
->>>>>>> 76a725c (新增一些基础设施)
-
-```bash
 kubectl apply -k deploy/k8s
 kubectl -n mech get pods,svc
-<<<<<<< HEAD
 kubectl -n mech port-forward svc/mech-battle-frontend 8080:8080
 kubectl -n mech port-forward svc/mech-range-frontend 8080:8080
 ```
@@ -234,26 +193,6 @@ kubectl -n mech rollout restart deploy/mech-range-backend deploy/mech-range-fron
 ```
 
 If the GHCR packages are private, add an `imagePullSecrets` entry to the
-```
-
-The Services are ClusterIP only: expose the frontend Service through your own
-reverse proxy or gateway (it must pass WebSocket Upgrade and long-lived
-connections), or use `port-forward` for local play. `deploy/k8s/configmap.yaml`
-holds the backend's `MECH_DEBUG` and `MECH_LOG_LEVEL`; set `MECH_DEBUG=1` there
-only for a test deployment.
-
-`.github/workflows/container.yml` builds and pushes
-`ghcr.io/leosongwei/mech-backend` and `ghcr.io/leosongwei/mech-frontend` to GHCR
-on `main` and `v*` tags (pull requests build without pushing). The manifests use
-`:latest`, so restart the Deployments after a new push:
-
-```bash
-kubectl -n mech rollout restart deploy/mech-battle-backend deploy/mech-battle-frontend
-kubectl -n mech rollout restart deploy/mech-range-backend deploy/mech-range-frontend
-```
-
-If the GHCR package is private, add an `imagePullSecrets` entry to the
->>>>>>> 76a725c (新增一些基础设施)
 Deployments.
 
 ## Controls

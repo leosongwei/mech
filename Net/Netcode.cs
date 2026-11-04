@@ -167,14 +167,9 @@ public static class Netcode
             ["buyable"] = Defs.BUYABLE,
             ["rearm"] = new Dictionary<string, object?>
             {
-<<<<<<< HEAD
                 ["smoke_cost"] = Defs.SMOKE_LOAD_COST,
                 ["smoke_charges"] = Defs.SMOKE_CHARGES,
                 ["smoke_load_s"] = Defs.SMOKE_LOAD_S,
-=======
-                ["smoke_cost"] = Defs.SMOKE_REFILL_COST,
-                ["smoke_charges"] = Defs.SMOKE_REFILL_CHARGES,
->>>>>>> 43dd4b6 (Replace the Python backend with the C# one, move the repo to a single root layout)
                 ["sell_refund"] = Defs.SELL_REFUND,
                 ["repair_cost"] = Defs.REPAIR_COST_PER_HP,
                 ["swap_s"] = Defs.REARM_SWAP_S,

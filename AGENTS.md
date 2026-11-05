@@ -1625,12 +1625,15 @@ for (let k = 0; k < 6; k++) {
   as `templateParameters`, which fills the `<p class="ver">` line under the
   lobby's subtitle (on the range server too). So the number a player reads on
   the start page is the one the build actually read - a stale `assets` shows a
-  stale version, which is exactly the point. **Every feature change bumps the
-  second number (`1.5.0` -> `1.6.0` -> `1.7.0`); the third stays 0** - it is
-  reserved, not another counter, and internal refactors with no player-visible
-  effect do not bump at all. A bump is part of the change, in the same commit as
-  the `doc/product/` entry, so a build, a changelog line and a screenshot all
-  name the same version.
+  stale version, which is exactly the point. **Every change to the product bumps
+  it: a feature change bumps the second number (`1.12.2` -> `1.13.0`, the third
+  going back to 0), a change a player cannot see bumps the third
+  (`1.12.2` -> `1.12.3`).** A change to a document or a comment alone bumps
+  nothing - the number is the product's, not the repository's. A bump is part of
+  the change, in the same commit, so a build and a screenshot name the same
+  version; a feature bump also carries its `doc/product/CHANGELOG.md` entry,
+  while a patch bump has nothing to write there, because a player sees no
+  difference.
 * Tuning values (damage, rpm, range, speeds, wave interval, capture time) live
   in `Core/Defs.cs` and at the top of the mode systems (`Modes/Battle/Waves.cs`,
   `Modes/Range/Targets.cs`) — prefer changing them there over editing the code

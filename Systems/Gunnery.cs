@@ -29,49 +29,98 @@ namespace Mech.Server.Systems;
 
 public static class Gunnery
 {
+    // ------------------------------------------------------------------
+    // the columns a sight needs
+    // ------------------------------------------------------------------
+
+    /// <summary>Every mount's sight lines: where the crew looks and where the
+    /// metal points.  `has_vehicle` is the one branch a whole archetype takes - a
+    /// carrier's hull belongs to its driver, so its sight is its turret.</summary>
+    public sealed class SightColumns : Columns<SightRow>
+    {
+        // bound by `bind`, which the constructor calls: hence the `null!`
+        public float[] yaw = null!, pitch = null!;
+        public float[] sight_yaw = null!, sight_pitch = null!;
+        public float[] turret_yaw = null!;
+        public byte[] etype = null!;
+        public bool has_vehicle;
+
+        internal static readonly string[] names =
+            { "sight_yaw", "sight_pitch", "yaw", "pitch", "turret_yaw", "etype" };
+
+        public SightColumns(Group g) : base(g) { bind(g); }
+
+        public override string[] Names => names;
+
+        protected override void bind(Group g)
+        {
+            yaw = g.f("yaw"); pitch = g.f("pitch");
+            sight_yaw = g.f("sight_yaw"); sight_pitch = g.f("sight_pitch");
+            turret_yaw = g.f("turret_yaw");
+            etype = g.u8("etype");
+            has_vehicle = g.has("vehicle");
+        }
+
+        public override SightRow row(int i) => new SightRow(this, i);
+    }
+
+    /// <summary>One mount: the angles of the tick, read and written in place.</summary>
+    public readonly struct SightRow : IRow<SightColumns>
+    {
+        private readonly SightColumns _c;
+        public readonly int i;
+
+        public SightRow(SightColumns c, int i) { _c = c; this.i = i; }
+
+        public SightColumns columns => _c;
+        public int index => i;
+        public int eid => _c.ids[i];
+        public bool has_vehicle => _c.has_vehicle;
+
+        public ref float yaw => ref _c.yaw[i];
+        public ref float pitch => ref _c.pitch[i];
+        public ref float sight_yaw => ref _c.sight_yaw[i];
+        public ref float sight_pitch => ref _c.sight_pitch[i];
+        public float turret_yaw => _c.turret_yaw[i];
+        public byte etype => _c.etype[i];
+    }
+
     public static void run(World world, float dt)
     {
         var e = world.ecs;
         float hull_step = Defs.MECH_HULL_RATE * dt;
         float arm_step = Defs.MECH_ARM_RATE * dt;
-        foreach (var g in e.groups("sight_yaw", "sight_pitch", "yaw", "pitch",
-                                   "turret_yaw", "etype"))
+        foreach (var g in e.groups(SightColumns.names))
         {
-            int n = g.n;
-            var yaw = g.f("yaw");
-            var pitch = g.f("pitch");
-            var sy = g.f("sight_yaw");
-            var sp = g.f("sight_pitch");
-            if (g.has("vehicle"))
+            var c = new SightColumns(g);
+            if (c.has_vehicle)
             {
                 // a carrier's hull belongs to the driver - `yaw` is its steering
                 // state - and the crew turns nothing but the turret, which the AI
                 // turns directly: its sight *is* the turret
-                var turret = g.f("turret_yaw");
-                for (int row = 0; row < n; row++)
+                foreach (var r in c)
                 {
-                    sy[row] = turret[row];
-                    sp[row] = pitch[row];
+                    r.sight_yaw = r.turret_yaw;
+                    r.sight_pitch = r.pitch;
                 }
                 continue;
             }
             // a rifle is aimed with the man's whole body: nothing lags anything
-            var etype = g.u8("etype");
-            for (int row = 0; row < n; row++)
+            foreach (var r in c)
             {
-                if (etype[row] != Defs.ETYPE_MECH)
+                if (r.etype != Defs.ETYPE_MECH)
                 {
-                    sy[row] = yaw[row];
-                    sp[row] = pitch[row];
+                    r.sight_yaw = r.yaw;
+                    r.sight_pitch = r.pitch;
                     continue;
                 }
-                yaw[row] = MathUtil.turn_toward(yaw[row], sy[row], hull_step);
+                r.yaw = MathUtil.turn_toward(r.yaw, r.sight_yaw, hull_step);
                 // the mount's mechanical stops: the sight may look higher than
                 // the arms can elevate, and an arm sits against its stop until
                 // the sight comes back into the envelope
-                float want = Math.Clamp(sp[row], Defs.MECH_PITCH_MIN, Defs.MECH_PITCH_MAX);
-                pitch[row] = Math.Clamp(
-                    MathUtil.turn_toward(pitch[row], want, arm_step),
+                float want = Math.Clamp(r.sight_pitch, Defs.MECH_PITCH_MIN, Defs.MECH_PITCH_MAX);
+                r.pitch = Math.Clamp(
+                    MathUtil.turn_toward(r.pitch, want, arm_step),
                     Defs.MECH_PITCH_MIN, Defs.MECH_PITCH_MAX);
             }
         }

@@ -50,6 +50,10 @@ public sealed class Archetype
     public int cap;
     private readonly ECS _ecs;
 
+    /// <summary>The registry this archetype belongs to.  A columns object reaches
+    /// it through here to check its component names against the registration.</summary>
+    internal ECS ecs => _ecs;
+
     public Archetype(ECS ecs, int index, string[] key, Dictionary<string, Spec> specs)
     {
         _ecs = ecs;

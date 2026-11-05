@@ -282,7 +282,9 @@ public static class Components
         "pos", "smoke_r", "smoke_t", "smoke_s", "smoke",
     };
 
-    private static string[] Cat(string[] a, params string[] b)
+    /// <summary>A component list plus tags: the query a schema is built from
+    /// (`Systems/Flights.cs` appends the round kind to the shared list).</summary>
+    public static string[] Cat(string[] a, params string[] b)
     {
         var outv = new string[a.Length + b.Length];
         Array.Copy(a, outv, a.Length);

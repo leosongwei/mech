@@ -22,6 +22,133 @@ public static class Movement
 {
     const float TILE = Terrain.TILE;
 
+    // ------------------------------------------------------------------
+    // the columns a locomotion pass needs
+    // ------------------------------------------------------------------
+
+    /// <summary>What a leg follows: the command, the leg's own state, and the
+    /// type that decides how fast it may swing.  A wheeled hull is skipped whole -
+    /// its `leg_yaw` is its steering state, not a decoration that follows the
+    /// velocity.</summary>
+    public sealed class SteerColumns : Columns<SteerRow>
+    {
+        // bound by `bind`, which the constructor calls: hence the `null!`
+        public float[] vel_cmd = null!, leg_yaw = null!;
+        public byte[] etype = null!;
+        public bool has_vehicle;
+
+        internal static readonly string[] names = { "moves", "vel_cmd", "leg_yaw", "etype" };
+
+        public SteerColumns(Group g) : base(g) { bind(g); }
+
+        public override string[] Names => names;
+
+        protected override void bind(Group g)
+        {
+            vel_cmd = g.f("vel_cmd"); leg_yaw = g.f("leg_yaw");
+            etype = g.u8("etype");
+            has_vehicle = g.has("vehicle");
+        }
+
+        public override SteerRow row(int i) => new SteerRow(this, i);
+    }
+
+    /// <summary>One hull's legs: what it was told, where its legs point.</summary>
+    public readonly struct SteerRow : IRow<SteerColumns>
+    {
+        private readonly SteerColumns _c;
+        public readonly int i;
+
+        public SteerRow(SteerColumns c, int i) { _c = c; this.i = i; }
+
+        public SteerColumns columns => _c;
+        public int index => i;
+        public int eid => _c.ids[i];
+        public bool has_vehicle => _c.has_vehicle;
+        public byte etype => _c.etype[i];
+
+        public Vec3 vel_cmd
+        {
+            get => new(_c.vel_cmd[i * 3], _c.vel_cmd[i * 3 + 1], _c.vel_cmd[i * 3 + 2]);
+            set { _c.vel_cmd[i * 3] = value.x; _c.vel_cmd[i * 3 + 1] = value.y; _c.vel_cmd[i * 3 + 2] = value.z; }
+        }
+        public ref float leg_yaw => ref _c.leg_yaw[i];
+    }
+
+    /// <summary>Everything one tick of locomotion touches: the place, the truth,
+    /// the command, and the machine's own state (`wheel_speed`, `backout_t`,
+    /// `blocked_t`).</summary>
+    public sealed class MoverColumns : Columns<MoverRow>
+    {
+        // bound by `bind`, which the constructor calls: hence the `null!`
+        public float[] pos = null!, vel = null!, vel_cmd = null!;
+        public float[] wheel_speed = null!, backout_t = null!, blocked_t = null!;
+        public float[] leg_yaw = null!, yaw = null!, hp = null!;
+        public byte[] etype = null!;
+        public bool has_vehicle;
+
+        internal static readonly string[] names =
+        {
+            "moves", "pos", "vel", "vel_cmd", "wheel_speed", "backout_t", "blocked_t",
+            "leg_yaw", "yaw", "hp", "etype",
+        };
+
+        public MoverColumns(Group g) : base(g) { bind(g); }
+
+        public override string[] Names => names;
+
+        protected override void bind(Group g)
+        {
+            pos = g.f("pos"); vel = g.f("vel"); vel_cmd = g.f("vel_cmd");
+            wheel_speed = g.f("wheel_speed"); backout_t = g.f("backout_t");
+            blocked_t = g.f("blocked_t"); leg_yaw = g.f("leg_yaw");
+            yaw = g.f("yaw"); hp = g.f("hp");
+            etype = g.u8("etype");
+            has_vehicle = g.has("vehicle");
+        }
+
+        public override MoverRow row(int i) => new MoverRow(this, i);
+    }
+
+    /// <summary>One hull: where it stands, what it is doing, and what it was told.
+    /// `pos` and `vel` are the truth `movement` is the only writer of.</summary>
+    public readonly struct MoverRow : IRow<MoverColumns>
+    {
+        private readonly MoverColumns _c;
+        public readonly int i;
+
+        public MoverRow(MoverColumns c, int i) { _c = c; this.i = i; }
+
+        public MoverColumns columns => _c;
+        public int index => i;
+        public int eid => _c.ids[i];
+        public bool has_vehicle => _c.has_vehicle;
+        public byte etype => _c.etype[i];
+
+        public Vec3 pos
+        {
+            get => new(_c.pos[i * 3], _c.pos[i * 3 + 1], _c.pos[i * 3 + 2]);
+            set { _c.pos[i * 3] = value.x; _c.pos[i * 3 + 1] = value.y; _c.pos[i * 3 + 2] = value.z; }
+        }
+        public Vec3 vel
+        {
+            get => new(_c.vel[i * 3], _c.vel[i * 3 + 1], _c.vel[i * 3 + 2]);
+            set { _c.vel[i * 3] = value.x; _c.vel[i * 3 + 1] = value.y; _c.vel[i * 3 + 2] = value.z; }
+        }
+        public Vec3 vel_cmd
+        {
+            get => new(_c.vel_cmd[i * 3], _c.vel_cmd[i * 3 + 1], _c.vel_cmd[i * 3 + 2]);
+            set { _c.vel_cmd[i * 3] = value.x; _c.vel_cmd[i * 3 + 1] = value.y; _c.vel_cmd[i * 3 + 2] = value.z; }
+        }
+
+        public ref float wheel_speed => ref _c.wheel_speed[i];
+        public ref float backout_t => ref _c.backout_t[i];
+        public ref float blocked_t => ref _c.blocked_t[i];
+        public ref float leg_yaw => ref _c.leg_yaw[i];
+        public ref float yaw => ref _c.yaw[i];
+        public ref float hp => ref _c.hp[i];
+    }
+
     /// <summary>Whether a hull of radius `rad` cannot stand at (x, z).
     ///
     /// The point test plus four samples on the circle: a mech's collision is a
@@ -47,23 +174,19 @@ public static class Movement
     {
         float rate_mech = 2.6f * dt;
         float rate_other = 6.0f * dt;
-        foreach (var g in world.ecs.groups("moves", "vel_cmd", "leg_yaw", "etype"))
+        foreach (var g in world.ecs.groups(SteerColumns.names))
         {
-            // a wheeled hull is the exception: its `leg_yaw` is not a decoration
-            // that follows the velocity, it *is* the steering state (`_vehicle`)
-            if (g.has("vehicle")) continue;
-            int n = g.n;
-            var vel = g.f("vel_cmd");
-            var leg = g.f("leg_yaw");
-            var etype = g.u8("etype");
-            for (int row = 0; row < n; row++)
+            var c = new SteerColumns(g);
+            if (c.has_vehicle) continue;
+            foreach (var r in c)
             {
-                float vx = vel[row * 3 + 0];
-                float vz = vel[row * 3 + 2];
+                var cmd = r.vel_cmd;
+                float vx = cmd.x;
+                float vz = cmd.z;
                 if (MathF.Abs(vx) < 0.05f && MathF.Abs(vz) < 0.05f) continue;
                 float want = MathF.Atan2(vz, vx);
-                float rate = etype[row] == Defs.ETYPE_MECH ? rate_mech : rate_other;
-                leg[row] = MathUtil.turn_toward(leg[row], want, rate);
+                float rate = r.etype == Defs.ETYPE_MECH ? rate_mech : rate_other;
+                r.leg_yaw = MathUtil.turn_toward(r.leg_yaw, want, rate);
             }
         }
     }
@@ -85,22 +208,21 @@ public static class Movement
     /// A goal behind the hull is taken by turning round for it: the brake grows
     /// with the heading error, so a U-turn comes down to the radius rather than
     /// being swung at top speed.</summary>
-    static (float vx, float vz) _vehicle(float[] cmd, float[] wheel, float[] backout,
-                                         float[] blocked, float[] leg, float[] yaw_buf,
-                                         int row, float dt, float top)
+    static (float vx, float vz) _vehicle(MoverRow r, float dt, float top)
     {
-        float cx = cmd[row * 3 + 0], cz = cmd[row * 3 + 2];
-        float u = wheel[row];
-        float yaw = leg[row];
+        var cmd = r.vel_cmd;
+        float cx = cmd.x, cz = cmd.z;
+        float u = r.wheel_speed;
+        float yaw = r.leg_yaw;
         float mag = MathF.Sqrt(cx * cx + cz * cz);
         float err = 0f;
         float target = 0f;
-        if (backout[row] > 0f)
+        if (r.backout_t > 0f)
         {
             // the nose is against something: back off the way we came, wheels
             // held over so the hull is pointing somewhere else when it comes
             // back out
-            backout[row] = backout[row] - dt;
+            r.backout_t = r.backout_t - dt;
             target = -top * Defs.APC_REVERSE;
             err = Defs.APC_STEER_LOCK;
         }
@@ -117,8 +239,8 @@ public static class Movement
         {
             // throttle: thrust minus drag, so the hull pulls hardest off the line
             // and the last few km/h take as long as the first thirty
-            float r = u / Defs.APC_V_INF;
-            acc = Defs.APC_THRUST * MathF.Max(0f, 1f - r * r);
+            float ratio = u / Defs.APC_V_INF;
+            acc = Defs.APC_THRUST * MathF.Max(0f, 1f - ratio * ratio);
         }
         else
         {
@@ -133,9 +255,9 @@ public static class Movement
                                Defs.APC_LAT_ACCEL / MathF.Max(MathF.Abs(u), 0.5f));
         float steer = MathF.Max(-1f, MathF.Min(1f, err / Defs.APC_STEER_LOCK));
         yaw = MathUtil.wrap_pi(yaw + rate * steer * dt);
-        wheel[row] = u;
-        leg[row] = yaw;
-        yaw_buf[row] = yaw;
+        r.wheel_speed = u;
+        r.leg_yaw = yaw;
+        r.yaw = yaw;
         return (MathF.Cos(yaw) * u, MathF.Sin(yaw) * u);
     }
 
@@ -143,8 +265,7 @@ public static class Movement
     public static void run(World world, float dt)
     {
         var e = world.ecs;
-        var groups = e.groups("moves", "pos", "vel", "vel_cmd", "wheel_speed",
-                              "backout_t", "blocked_t", "leg_yaw", "hp", "etype");
+        var groups = e.groups(MoverColumns.names);
         if (groups.Count == 0) return;
         _turn_legs(world, dt);
 
@@ -153,36 +274,27 @@ public static class Movement
         float maxz = terrain.d * TILE - 2f * TILE;
         float inv_dt = 1f / dt;
         // `moves` is the query; every group below owns the whole unit bundle, so
-        // the buffers are taken once per group and the loop only walks rows
+        // the columns are bound once per group and the loop only walks rows
         foreach (var g in groups)
         {
-            int n = g.n;
-            var pos = g.f("pos");
-            var vel = g.f("vel");
-            var cmd = g.f("vel_cmd");
-            var wheel = g.f("wheel_speed");
-            var backout = g.f("backout_t");
-            var blocked = g.f("blocked_t");
-            var leg = g.f("leg_yaw");
-            var yaw = g.f("yaw");
-            var hp = g.f("hp");
-            var etype = g.u8("etype");
-            bool wheeled = g.has("vehicle");
-            for (int row = 0; row < n; row++)
+            var c = new MoverColumns(g);
+            bool wheeled = c.has_vehicle;
+            foreach (var r in c)
             {
-                int et = etype[row];
-                float x = pos[row * 3 + 0];
-                float y0 = pos[row * 3 + 1];
-                float z = pos[row * 3 + 2];
-                float cx = cmd[row * 3 + 0];
-                float cz = cmd[row * 3 + 2];
+                int et = r.etype;
+                var p = r.pos;
+                float x = p.x;
+                float y0 = p.y;
+                float z = p.z;
+                var cmd = r.vel_cmd;
+                float cx = cmd.x;
+                float cz = cmd.z;
                 float vx, vz;
                 if (wheeled)
                 {
                     // an APC drives itself along its own hull: forward, back and
                     // turning, never sideways
-                    (vx, vz) = _vehicle(cmd, wheel, backout, blocked, leg, yaw, row,
-                                        dt, Defs.UNIT_DEFS[et].speed);
+                    (vx, vz) = _vehicle(r, dt, Defs.UNIT_DEFS[et].speed);
                 }
                 else if (et == Defs.ETYPE_MECH)
                 {
@@ -197,16 +309,17 @@ public static class Movement
                     float f;
                     if (MathF.Abs(cx) > 1e-3f || MathF.Abs(cz) > 1e-3f)
                     {
-                        float align = MathF.Cos(MathUtil.wrap_pi(MathF.Atan2(cz, cx) - leg[row]));
+                        float align = MathF.Cos(MathUtil.wrap_pi(MathF.Atan2(cz, cx) - r.leg_yaw));
                         f = 0.45f + 0.55f * MathF.Max(0f, align);
                     }
                     else
                     {
                         f = 1f;
                     }
-                    if (hp[row] <= 0f) f *= 0.2f;
-                    float ax = vel[row * 3 + 0];
-                    float az = vel[row * 3 + 2];
+                    if (r.hp <= 0f) f *= 0.2f;
+                    var vel = r.vel;
+                    float ax = vel.x;
+                    float az = vel.z;
                     float dx = cx * f - ax;
                     float dz = cz * f - az;
                     float step = MathF.Sqrt(dx * dx + dz * dz);
@@ -250,31 +363,28 @@ public static class Movement
                         // nose against something: count it, and once the crew has
                         // been pushing for a moment back out with the wheels held
                         // over, so the next try aims somewhere else
-                        if (!stuck || backout[row] > 0f)
+                        if (!stuck || r.backout_t > 0f)
                         {
-                            blocked[row] = 0f;                // rolling again
+                            r.blocked_t = 0f;                 // rolling again
                         }
                         else
                         {
-                            blocked[row] = blocked[row] + dt;
-                            if (blocked[row] >= Defs.APC_BLOCKED)
+                            r.blocked_t = r.blocked_t + dt;
+                            if (r.blocked_t >= Defs.APC_BLOCKED)
                             {
-                                backout[row] = Defs.APC_BACKOUT;
-                                blocked[row] = 0f;
-                                wheel[row] = 0f;
+                                r.backout_t = Defs.APC_BACKOUT;
+                                r.blocked_t = 0f;
+                                r.wheel_speed = 0f;
                             }
                         }
                     }
-                    pos[row * 3 + 0] = nx;
-                    pos[row * 3 + 2] = nz;
+                    r.pos = new Vec3(nx, y0, nz);
                 }
                 // the velocity that actually came out of this tick, and the slope
                 // it drove over - a hull on the ground has a vertical velocity too
                 float ny = terrain.height_at(nx, nz);
-                vel[row * 3 + 0] = (nx - x) * inv_dt;
-                vel[row * 3 + 1] = (ny - y0) * inv_dt;
-                vel[row * 3 + 2] = (nz - z) * inv_dt;
-                pos[row * 3 + 1] = ny;
+                r.vel = new Vec3((nx - x) * inv_dt, (ny - y0) * inv_dt, (nz - z) * inv_dt);
+                r.pos = new Vec3(nx, ny, nz);
             }
         }
     }

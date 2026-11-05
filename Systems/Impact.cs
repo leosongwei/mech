@@ -46,18 +46,27 @@ public static class Impact
                     // there is settled here, at the gap the fuse measured: by the
                     // time `Blasts` judges the burst a 600 m/s round is twenty
                     // metres out of a four metre radius, so handing it to the burst
-                    // would be asking the wrong question
+                    // would be asking the wrong question - and it is spared there,
+                    // having already been paid.  A man stands where the round went
+                    // off: the burst's own blast is the whole of what an airburst
+                    // does to him, exactly as it does to everyone else in the
+                    // pattern.
                     int tid = a.i("first_hit_unit")[row];
                     float gap = a.f("first_hit_gap")[row];
                     bool human = e.has(tid, "person");
-                    if (!human && e.is_alive(tid))
+                    int spared = -1;
+                    if (!human)
                     {
-                        var by = ((int)e.uv16("proj_name")[pid], a.u8("faction")[row],
-                                  (int)e.uv("proj_etype")[row]);
-                        Combat.splash(world, tid, Defs.MOD_CHASSIS, wd, gap,
-                                      e.iv("proj_pid")[pid], $"prox {gap:F1} m", by);
+                        spared = tid;
+                        if (e.is_alive(tid))
+                        {
+                            var by = ((int)e.uv16("proj_name")[pid], a.u8("faction")[row],
+                                      (int)e.uv("proj_etype")[row]);
+                            Combat.splash(world, tid, Defs.MOD_CHASSIS, wd, gap,
+                                          e.iv("proj_pid")[pid], $"prox {gap:F1} m", by);
+                        }
                     }
-                    _detonate(world, p, wd, pid, skip: tid);
+                    _detonate(world, p, wd, pid, skip: spared);
                     break;
                 }
                 case Defs.HIT_VANISH:
@@ -76,9 +85,9 @@ public static class Impact
 
     /// <summary>A round goes off at `p`: the hull it landed on, then a burst entity.
     ///
-    /// `skip` spares a unit the burst: the proximity fuse has already settled the
-    /// target it fused on, at the moment it fused, and a missile that has flown on
-    /// twenty metres would otherwise be judged against a burst it has left.</summary>
+    /// `skip` spares a unit the burst: a missile the fuse found in the pattern has
+    /// already been settled at the moment it fused, and by the time the burst is
+    /// judged it has flown on twenty metres.</summary>
     public static void _detonate(World world, Vec3 p, WeaponDef wd, int proj_id,
                                  int direct_unit = -1, int direct_mod = 0, int skip = -1)
     {

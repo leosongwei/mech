@@ -1384,9 +1384,12 @@ once; pressing `ENTER` in game must not send another `join`.
 
 `./dev.sh range` starts a second world (`run.py --range`, i.e. `MECH_RANGE=1`)
 on <http://127.0.0.1:8011>: a 4 km test map, one 200 m hill NW, plains
-elsewhere, 12 blue APC targets (2 patrolling) that respawn 3 s after dying, one
-blue missile-defence post (`Modes/Range/Interceptor.cs`, 5 s respawn) and a
-ring of per-pilot spawn berths. **The range's own fixtures never shoot at the
+elsewhere, 12 blue APC targets (2 patrolling) that respawn 3 s after dying, a
+squad of six infantrymen 260 m in front of the berths (riflemen and AT riflemen
+alternating) that respawn in place after the same 3 s - the fixture a proximity
+fuse is for, since a man is the only thing on the range the 30 mm's airburst
+fires on - one blue missile-defence post (`Modes/Range/Interceptor.cs`, 5 s
+respawn) and a ring of per-pilot spawn berths. **The range's own fixtures never shoot at the
 ground** - the targets and the post fire at nothing, so it is the place to test
 ballistics or look at a model up close. A hull a pilot drops there himself
 (`debug_spawn`) is the exception: it is tagged `range_drone`

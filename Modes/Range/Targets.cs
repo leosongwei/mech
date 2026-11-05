@@ -19,7 +19,9 @@ namespace Mech.Server.Modes.Range;
 /// names without a dictionary lookup per tick.</summary>
 public sealed class TargetSlot
 {
-    public string role = "static";      // "static" holds a post, "moving" drives a patrol
+    // "static" holds a post, "moving" drives a patrol, "mech" is the walking
+    // hull, "infantry" is one man of the squad
+    public string role = "static";
     public int etype = Defs.ETYPE_APC;  // the hull it stands up as
     public float x, z;
     public string axis = "x";           // which axis the patrol span runs on
@@ -30,7 +32,8 @@ public sealed class TargetSlot
 }
 
 /// <summary>The range's targets: twelve APC hulks, one per post in
-/// `Terrain.RANGE_POSTS`, and one mech that drives a leg of its own.</summary>
+/// `Terrain.RANGE_POSTS`, one mech that drives a leg of its own, and a squad of
+/// six men on a line in front of the berths.</summary>
 public sealed class Targets
 {
     public const int STATIC_TARGETS = 10;
@@ -49,6 +52,15 @@ public sealed class Targets
     // does and what the pre-aim ring's acceleration term is for
     public const float MECH_PATROL_SPEED = 16.0f;
     public const float MECH_RESPAWN_DELAY = 5.0f;
+
+    /// <summary>The infantry squad: six men on a line across the firing line,
+    /// 260 m out from the berths so they are in the sight at 1x.  A man is a
+    /// 0.65 m ball, so this is the fixture the 30 mm's airburst is watched on -
+    /// a burst beside him sweeps him up without a direct hit, and one further
+    /// than 2.5 m off the flight path leaves him standing.</summary>
+    public const int INFANTRY_TARGETS = 6;
+    public const float SQUAD_DIST = 260.0f;   // m north of the spawning berths
+    public const float SQUAD_SPACING = 26.0f; // m between two men on the line
 
     public const float MARGIN = 300.0f;          // keep hulks off the map edge
     public const float MIN_PLAYER_DIST = 350.0f; // never pop one in the player's face
@@ -102,6 +114,19 @@ public sealed class Targets
             hi = MECH_PATROL.x + MECH_PATROL_HALF,
             dir = 1f, eid = -1, t = 0f,
         });
+        // A squad of men: the one fixture on the range a *fuse* is for.  They hold
+        // their posts - a killed one stands back up where it fell after the same
+        // 3 s a hull gets - and they alternate a rifle for an AT rifle to say out
+        // loud that the fuse reads the man, never what he carries.
+        for (int k = 0; k < INFANTRY_TARGETS; k++)
+            slots.Add(new TargetSlot
+            {
+                role = "infantry",
+                etype = k % 2 == 0 ? Defs.ETYPE_INF_RIFLE : Defs.ETYPE_INF_ROCKET,
+                x = Terrain.RANGE_SPAWN.x + (k - (INFANTRY_TARGETS - 1) * 0.5f) * SQUAD_SPACING,
+                z = Terrain.RANGE_SPAWN.z - SQUAD_DIST,
+                eid = -1, t = 0f,
+            });
         foreach (var slot in slots) slot.eid = _spawn(world, slot);
     }
 
@@ -150,7 +175,8 @@ public sealed class Targets
             weapons: slot.etype == Defs.ETYPE_MECH ? Defs.DEFAULT_LOADOUT : null);
         // face the player's cross so the hulls read clearly through the sight
         var (sx, sz) = world.terrain.bases[Defs.FACTION_RED];
-        float yaw = slot.role == "static" ? MathF.Atan2(sz - z, sx - x) : _leg_yaw(slot);
+        float yaw = slot.role is "static" or "infantry"
+                    ? MathF.Atan2(sz - z, sx - x) : _leg_yaw(slot);
         var e = world.ecs;
         e.fv("yaw")[eid] = yaw;
         e.fv("leg_yaw")[eid] = yaw;
@@ -205,9 +231,9 @@ public sealed class Targets
     /// <summary>Pick a fresh random spot for a destroyed slot.</summary>
     private static void _place(World world, TargetSlot slot)
     {
-        // the mech's leg is its post: it comes back where a pilot last saw it
-        // rather than walking the field to some new random straight
-        if (slot.role == "mech") { slot.dir = 1f; return; }
+        // the mech's leg and the squad's posts are fixtures: they come back where
+        // a pilot last saw them rather than walking the field to some new spot
+        if (slot.role is "mech" or "infantry") { slot.dir = 1f; return; }
         if (slot.role == "moving")
         {
             var (x, z, axis, lo, hi) = _random_patrol(world);

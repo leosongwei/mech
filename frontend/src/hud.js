@@ -3,6 +3,7 @@
 import { FACTION_COLORS } from './scene.js';
 import { ZOOM_LEVELS } from './input.js';
 import { drawIcon } from './icons.js';
+import { RWR_TONE_S } from './audio.js';
 
 const MESSAGE_FONT = '12px "Courier New", monospace';
 const MESSAGE_BOLD = `bold ${MESSAGE_FONT}`;
@@ -35,9 +36,23 @@ const LEAD_COLOR = '#f2f6f4';       // the box round a hull with a pre-aim solut
 const LEAD_RING = 7;                // px, radius of a pre-aim circle
 const RADAR_PX = 78;                // px, outer radius of the threat circle
 const RADAR_MARGIN = 22;            // px between the dial and the screen edges
-// Everything that has to stay clear of the dial - the gear button and the
-// message stack - is laid out in a column this far from the right edge.
-const RADAR_COL = RADAR_PX * 2 + RADAR_MARGIN * 2 + 8;
+const GEAR_EDGE = 8;                // px from the top and right edges to the gear
+
+// The warning dial and, beside it, the ring the threat arrows are arranged in -
+// the two are the same size and level, so they read as one instrument: the dial
+// says where the marks are, the ring says which way to look.
+export const ARROW_R = RADAR_PX;    // the arrow ring is the dial's twin
+const RING_GAP = 16;                // px between the two circles
+const RING_ALARM_W = 12.8;          // px, the rim's width while a round is inbound
+
+export function dialAt(w) {
+  return { x: w - RADAR_PX - RADAR_MARGIN, y: RADAR_PX + RADAR_MARGIN + 10 };
+}
+
+export function arrowRingAt(w) {
+  const d = dialAt(w);
+  return { x: d.x - RADAR_PX - RING_GAP - ARROW_R, y: d.y };
+}
 
 export class HUD {
   constructor(canvas) {
@@ -603,12 +618,41 @@ export class HUD {
     // discovery range - that is a number the receiver *earns* (an echo), and
     // it is drawn as one by whether a contact has a position at all
     const ring = s.radarScale || 2000;
-    const cx = w - R - RADAR_MARGIN;
-    const cy = R + RADAR_MARGIN + 10;   // up in the corner, the gear sits beside it
+    const dial = dialAt(w);
+    const cx = dial.x;
+    const cy = dial.y;
     const own = s.own;
     const threats = s.threats || [];
     const lasers = s.lasers || [];
     ctx.save();
+    // The arrow ring first, the dial's twin on the left: same radius, same
+    // height, and the 3D arrows are drawn inside it by the renderer (in these
+    // same CSS pixels).  A thin dark wash keeps them readable over a bright sky
+    // without painting a second hole in the picture.
+    const ra = arrowRingAt(w);
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = 'rgba(0,0,0,0.20)';
+    ctx.beginPath();
+    ctx.arc(ra.x, ra.y, R + 3, 0, 6.284);
+    ctx.fill();
+    // With a round on its way the rim blinks instead of glowing: one beat per
+    // tone of the missile trill (`RWR_TONE_S`), red on one and washed out on
+    // the next, so the rim and the ear count the same beats.  Red is the pure
+    // 255, 0, 0 - the same red the arrows are - and the quiet state is the
+    // dial's own rim colour.
+    const alarm = threats.some((t) => t.warn);
+    const beat = (performance.now() / 1000 / RWR_TONE_S) % 2 < 1;
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = !alarm ? 'rgba(150,190,175,0.5)'
+      : (beat ? 'rgb(255,0,0)' : 'rgba(255,96,88,0.30)');
+    // the alarm band is a thick one and it grows *inwards*: the stroke is
+    // centred half a width inside the radius, so the ring's outer edge - and
+    // with it the ring's size next to the dial's - does not move
+    const lw = alarm ? RING_ALARM_W : 1.2;
+    ctx.lineWidth = lw;
+    ctx.beginPath();
+    ctx.arc(ra.x, ra.y, R - lw * 0.5, 0, 6.284);
+    ctx.stroke();
     // a black disc under the dial: the marks have to read against any sky or
     // ground, so the receiver owns that patch of the screen
     ctx.globalAlpha = 1;
@@ -813,12 +857,13 @@ export class HUD {
   // or a list of segments - the kill feed paints the killer and the victim in
   // their own side's colour and the weapon bold, so the line cannot be a single
   // `fillText`.  Right aligned, so the width is measured before anything is
-  // drawn: the segments are drawn left to right from `w - RADAR_COL - width`.
+  // drawn: the segments are drawn left to right from the ring's left edge.
   _messages(s, w) {
     const ctx = this.ctx;
     ctx.save();
     ctx.textAlign = 'left';
-    // clear of the gear button, and of the warning circle beyond it
+    // clear of the arrow ring, and of the warning circle beyond it
+    const right = arrowRingAt(w).x - ARROW_R - 10;
     let y = 62;
     for (let i = s.messages.length - 1; i >= 0 && i > s.messages.length - 8; i--) {
       const m = s.messages[i];
@@ -830,7 +875,7 @@ export class HUD {
         ctx.font = messageFont(g);
         width += ctx.measureText(g.text).width;
       }
-      let x = w - RADAR_COL - width;
+      let x = right - width;
       // a kill line gets a dark plate behind it - it is the one message that is
       // read while the sky moves under it, and three colours of 12px monospace
       // are not readable straight off a bright cloud.  The plate is laid under
@@ -1185,16 +1230,17 @@ export class HUD {
     ctx.restore();
   }
 
-  // The gear, in the top right - pushed in from the corner so the warning
-  // circle can have it: the one HUD button, and the way into the settings
-  // panel.  It needs a free pointer (ESC), so it sits dim until the mouse is
-  // released and brightens under the cursor.
+  // The gear, in the very corner of the screen: the warning circle is round, so
+  // the square the corner leaves free is the only spot that costs nothing.  The
+  // one HUD button, and the way into the settings panel.  It needs a free
+  // pointer (ESC), so it sits dim until the mouse is released and brightens
+  // under the cursor.
   _gear(s, w, h) {
     const ctx = this.ctx;
     const mouse = s.mouse || [-1, -1];
     const S = 32;
-    const x = w - S - RADAR_COL;
-    const y = 10;
+    const x = w - S - GEAR_EDGE;
+    const y = GEAR_EDGE;
     const hv = mouse[0] >= x && mouse[0] <= x + S && mouse[1] >= y && mouse[1] <= y + S;
     this.gearRect = { x, y, w: S, h: S };
     const cx = x + S / 2;

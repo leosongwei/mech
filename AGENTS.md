@@ -102,7 +102,8 @@ frontend/
     net.js                 # websocket, snapshot decode, interpolation
     map.js                 # client copy of terrain + identical ballistics
     scene.js               # unit models built from instanced primitives
-    renderer.js            # tiled near terrain + far LOD grid, roads, instanced draws
+    renderer.js            # tiled near terrain + far LOD grid, roads, instanced draws,
+                           #   and the screen-space overlay (the threat arrows)
     hud.js                 # centre cross, arm impact markers, lock box, modules, minimap
     meshes.js              # primitive meshes (box, sphere, cone, cylinder, rock)
     particles.js           # smoke, trails, impacts
@@ -544,6 +545,44 @@ frontend/
   alarm honest": a battle is 16 km of houses, tree lines and smoke, and the RWR
   that sang through all of it rang 29 % of hull-frames at a median 5.5 km with
   none of them aimed at that hull.
+* **The dial also points, in three dimensions** (`game.js::_threatArrows`,
+  `renderer.js::screenArrow`).  Beside the dial sits a second circle of the same
+  radius (`hud.arrowRingAt`, 16 px of gap, level with it), and the nearest
+  `RWR_ARROWS` (3) rounds the receiver judges `warn` each get an arrow in it.
+  Every arrow springs from the ring's **centre**, so three bearings read as three
+  needles of one compass.  The arrow's *heading* is that round's direction **in
+  the camera's frame** - right, down, into the glass, from `viewYaw` and the
+  camera's own pitch - so turning the sight that way puts the round on the cross.
+  That frame is the point: the dial is hull-frame (up is the hull), and the sight
+  and the hull disagree exactly when a pilot is craning round for an incoming
+  round.  Two real instanced pieces - a cylinder shaft and a cone head - so a
+  round on the crosshair shows the **back** of the head (a white cone base round a
+  red shaft cap), a round to one side shows the arrow side-on, and a round behind
+  comes off the glass at the pilot.  It is drawn by the renderer's **screen-space
+  overlay** (`screenArrow` / `_drawArrows`): the world's own meshes, buffers and
+  shader, with `_ovlMat` in place of the camera's view-projection.  Three things
+  in that pass are load bearing, and each was a measurement:
+  * the perspective divides about the **ring's centre**, which is also every
+    arrow's tail: an arrow parked off to one side smears diagonally the moment it
+    has any depth to it, which reads as a sheared layer rather than a turned
+    arrow. One matrix for the whole overlay, so three arrows are **one pass** -
+    two `_submit` calls, one per mesh, however many arrows there are;
+  * the depth buffer is **cleared and tested** for the pass, with `uFar` = 2 so
+    the mesh shader's log depth becomes a plain `log2(w)`: pieces live at
+    w ∈ [1, 1.1] and overlap each other (a cone's base pokes through its own
+    sides when it is seen end-on), so painter's order alone draws a mess;
+  * the light is the **world's sun folded into the same frame** by `overlaySun`,
+    so an arrow is lit by the sun the machine under it is lit by; `uOutline`
+    doubles as the piece selector (1 cylinder, 2 cone) because the shader paints
+    that cone's base cap white.
+  `hud.js` owns the layout (`dialAt`, `arrowRingAt`, `ARROW_R`): the ring is the
+  strip the gear vacated when it moved into the screen's corner, and the message
+  stack stops 10 px short of it.  With a round inbound the rim **blinks** - pure
+  red against a washed-out red, one alternation per tone of the missile trill
+  (`audio.RWR_TONE_S`, 0.083 s), so the eye and the ear count the same beats -
+  and the band it is drawn with (`RING_ALARM_W`, 12.8 px) grows *inwards*:
+  the stroke is centred half a width inside the radius, which keeps the ring's
+  outer edge - and so its size next to the dial - where it was.
 * **AI missile defence** (`systems/ai.py::_missile_step`) runs inline in
   `ai.run` before the ground fight and preempts it: a crew that has a round
   coming for it lays the sight on the lead point (`mu.solve_lead`, which honours
@@ -1257,9 +1296,11 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
   louder round. The mix can sum past 0 dB on purpose, so the master bus runs
   through a limiter (`audio.limiter`) instead of clamping at the destination:
   scale a cue's gains up rather than adding another layer elsewhere.
-* The **gear** in the top-right corner is the only HUD click target: it needs a
-  free pointer (`ESC`) and opens the settings panel (`hud._settings`), the
-  master volume plus the debug buttons. `input.onHudClick` fires for canvas
+* The **gear** takes the screen's corner itself (`hud._gear`, `GEAR_EDGE` 8 px
+  from the right and top edges - the warning dial is round, so the square the
+  corner leaves free costs nothing) and it is the only HUD click target: it
+  needs a free pointer (`ESC`) and opens the settings panel (`hud._settings`),
+  the master volume plus the debug buttons. `input.onHudClick` fires for canvas
   clicks while the pointer is free and returns `true` when the HUD took the
   click; everything else keeps its old meaning (a click re-grabs the pointer).
 * **Icons** are Material Symbols glyphs drawn from a font, not hand-built

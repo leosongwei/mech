@@ -507,48 +507,71 @@ frontend/
   i.e. `S >= 1.73e14` - four seconds being the window in which a pilot can lay
   a 30 mm burst inside the fuse's 0.26 deg cone at that range.  Both sides read the
   same numbers: `netcode.static_payload` sends a `radar` block (`v_ref`, the
-  largest `rcs`).  The dial's **face is a constant 2 km** (`RWR_RANGE` in
-  `game.js`), the same in every machine, so a mark's radius reads as metres;
-  `radarRing` (the hull's own discovery range, 1368 m for a mech) no longer sets
-  the scale - it decides whether a contact has a *position* at all.  Every gate
-  is **gated on line of sight** (`map.sightBlocked`: terrain, canopies, smoke -
-  the same door the AI's lookout, the IR lock and the pre-aim box go through),
-  for the bearing-only contacts and for laser designators both, because without
-  it every missile on a 16 km map that merely closed on the hull rang the alarm:
-  measured, 29 % of hull-frames were ringing at a median threat range of 5.5 km,
-  0 % of them aimed at that hull.  (The *seen* contact is exempt - an echo is the
-  radar's own return, a ridge does not stop it - which is why a hull behind a
-  hill still shows a dot, just with no pre-aim box.)  Four marks, four answers:
-  seen (a red **dot** at true bearing and range, plus a pre-aim box through the
-  sight rule), heard closing (a 5 Hz red **line** from the centre to the rim -
-  bearing, no range - drawn only for a round whose course reaches this hull and
-  only if the sight line is clear), a laser inside 2 km (a red **triangle** at
-  its true position with a dashed beam) and a laser further out (the same
-  triangle **pinned to the rim**: the bearing is real, the range is "2 km or
-  more").  And shot
+  largest `rcs`).  The dial's **face is a constant 3 km** (`RWR_RANGE` in
+  `game.js`), the same in every machine, so a mark's radius reads as metres - and
+  it is the snapshot's guided tier (`TIER_ROUND`), so every mark on the dial is a
+  round the wire would have carried.  `radarRing` (the hull's own discovery
+  range, 1368 m for a mech) no longer sets the scale - it decides whether a
+  contact has a *position* at all.  Every gate is **gated on line of sight**
+  (`map.sightBlocked`: terrain, canopies, smoke - the same door the AI's lookout,
+  the IR lock and the pre-aim box go through), for the bearing-only contacts and
+  for laser designators both, because without it every missile on a 16 km map
+  that merely closed on the hull rang the alarm: measured, 29 % of hull-frames
+  were ringing at a median threat range of 5.5 km, 0 % of them aimed at that
+  hull.  Four marks, four answers: seen (a red **dot** at true bearing and range,
+  plus a pre-aim box through the sight rule), heard (a 5 Hz red **line** from the
+  centre to the rim - bearing, no range - drawn for *every* round the receiver
+  holds, whatever its course), a laser inside 3 km (a red **triangle** at its
+  true position with a dashed beam) and a laser further out (the same triangle
+  **pinned to the rim**: the bearing is real, the range is "3 km or more").
+  Five judgements, three outputs (`doc/product/rwr.md`):
+  `heard` is `d² <= Λ²·K·v_c` with `Λ² = 10^(ΔL/20)` and ΔL = 12 dB
+  (`ALARM_DB` / `ALARM_GAIN`), `seen` is `d² <= K·v_c`, `steady` is a horizontal
+  bearing that is not drifting (`|θ̇| < (er + WARN_MARGIN)/K`, read over
+  `STEADY_T` from the round's own `_bearTrack` history), and the geometry is
+  **two rays out of the round with one tolerance**
+  (`er + max(WARN_MARGIN, d_h·sin(WARN_CONE))`): `warn` along the *relative*
+  velocity - the track this hull's own motion makes of it, i.e. a round aimed at
+  a lead point - and `aim` along the round's own, i.e. where it is pointed right
+  now.  `rayMiss` is the one helper both call.  One ray answers one guidance law
+  and a homing round uses both in turn: pure pursuit outside `pn_r` points its
+  nose at the hull (`aim`), terminal PN points at the lead and the track closes
+  (`warn`).  `seen ? (warn || aim)` is not redundant with adding `steady` back:
+  inside `seen`, `steady` implies `warn` (the threshold is anchored at the
+  `seen` boundary), so the two judgements there say the same thing - measured on
+  the range, a 1500 m top attack against a hull crossing at 50 m/s was rung at
+  **890 m** by `aim` against **240 m** by `warn` alone, 0.4 s before a hit that
+  landed.  A hull standing still has `warn == aim`, so every tuning run needs a
+  crossing one.  `rayMiss` measures along the *forward* part of the ray, so a
+  round that has gone past is judged by the gap to itself and stops ringing.
+  `v_c` is saturated at `v_ref` so the alarm ceiling is a constant 2728 m and can
+  never cross `RWR_RANGE`.  And shot
   down (`intercept` fx: a few sparks for everyone who can see it, and no cue of
   its own - the event still carries `pid` (the crew that fired the burst) and
   `firer` (whose round it was) so a script can read them, but a chime per round
   was the busiest sound in the game, since the battle's AI crews shoot missiles
-  down all over the map).  **Plotting is not warning**: a tracked round is
-  drawn whether or not it is coming for this hull, but only an *incoming* one
-  (`warn`) sings and turns the rim red - the course is solved on the **relative
-  velocity** (the round's against the hull's) for the nearest approach, inside
-  `er + WARN_MARGIN` (20 m of slack for a 2 m hull, a 10-20 m tick and a fuze),
-  and a guided round (SACLOS, top attack) is judged on its horizontal track
-  because its profile is a climb and a dive, not a line.  `warn` never looks at
-  `seen`: **the tone answers "will it hit me", not "can I see it"**, so a
-  bearing-only contact on a collision course sings exactly like a tracked one,
-  and a tracked round bound for somebody else stays silent.  The two gates
-  upstream of both remain and they are about the receiver *holding* the round at
-  all - 2 km and a clear sight line.  Do not drop the sight gate to "make the
-  alarm honest": a battle is 16 km of houses, tree lines and smoke, and the RWR
-  that sang through all of it rang 29 % of hull-frames at a median 5.5 km with
-  none of them aimed at that hull.
+  down all over the map).  **One boolean, two channels**: `_threats` computes
+  `radarAlarm = some(t => t.alarm)` where `t.alarm` is
+  `seen ? (warn || aim) : steady` written per round, and both the rim
+  (`hud.js`) and the trill (`_alarms`) read exactly that - which is why they can
+  count the same beats (`RWR_TONE_S`).  A round the receiver can place is judged
+  on its geometry, one it only hears on its bearing drift; `seen` is re-judged
+  every frame, so a round that slows down or turns hands judgement straight back
+  to `steady`.  That fallback is **information**, not noise: no latch, no
+  hysteresis, no smoothing, because a pilot learns to read "the trill broke" as
+  "it is turning".  Every geometric judgement here is **horizontal** - a
+  top-attack round climbs to 950 m, glides and dives, so its vertical profile
+  says "not for me" until it is overhead while its ground track never does.
+  The gates upstream of all of it are about the receiver *holding* the round at
+  all - `min(2728, RWR_RANGE)` and a clear sight line.  Do not drop the sight
+  gate to "make the alarm honest": a battle is 16 km of houses, tree lines and
+  smoke, and the RWR that sang through all of it rang 29 % of hull-frames at a
+  median 5.5 km with none of them aimed at that hull.
 * **The dial also points, in three dimensions** (`game.js::_threatArrows`,
   `renderer.js::screenArrow`).  Beside the dial sits a second circle of the same
   radius (`hud.arrowRingAt`, 16 px of gap, level with it), and the nearest
-  `RWR_ARROWS` (3) rounds the receiver judges `warn` each get an arrow in it.
+  `RWR_ARROWS` (3) rounds the alarm is raised on (the same `t.alarm` the rim
+  and the trill read) each get an arrow in it.
   Every arrow springs from the ring's **centre**, so three bearings read as three
   needles of one compass.  The arrow's *heading* is that round's direction **in
   the camera's frame** - right, down, into the glass, from `viewYaw` and the
@@ -933,7 +956,7 @@ frontend/
   | 6 km | mech, APC, the range's bunkers | `Defs.ZERO_RANGE` 4 km - the centre cross and the impact marker solve *against these rows* - and `game.LASER_RANGE` 3.4 km |
   | 6 km | smoke, canisters and puffs | `map.js sightBlocked` reads puffs out to the same 4 km |
   | 4 km | wrecks, shells | a hulk and a tracer are in the picture at the range a hull is |
-  | 3 km | guided rounds (rocket/SACLOS/top) | the receiver's own gate is `game.RWR_RANGE` 2 km and it reads *these* rows, so 2 km is the floor; 3 km keeps the launch in sight |
+  | 3 km | guided rounds (rocket/SACLOS/top) | the dial and the receiver's gate are both `game.RWR_RANGE` 3 km and it reads *these* rows, so the alarm ceiling (2728 m) has to sit inside 3 km or the wire simply stops carrying the round |
   | 3 km | infantry, civilians | they are 90 % of the field and invisible past a few hundred metres |
   | 2 km | corpses, anything else | |
   | always | the pilot's own hull, both command bases | see below |
@@ -1079,6 +1102,7 @@ menu** (top right of the HUD, needs a free pointer: press `ESC`):
 | `debug_god` | `on: true/false` | stops the AI / damage from interrupting a test; meta `god` mirrors it (the menu button reads that back) |
 | `debug_spawn` | `etype` (default `3` APC), `dist` (m, default `800`), `angle` (rad, relative to your yaw), `faction` (default the enemy), `weapons` (optional list) | spawns a unit `dist` metres ahead |
 | `debug_trees` | `dist` (m, default `200`), `angle` (rad, relative to your yaw), `radius` (tiles either side, default `2`), `forest` (default `true`) | grows a stand of trees `dist` metres ahead (`Terrain.plant`): the server repaints the tiles, rebuilds the cull grid and hands the same rectangle to the clients, which repaint their ground and props. Buildings, rocks and bases are left alone |
+| `debug_missile` | `wid` (default `4` SACLOS), `dist` (m, default `2000`), `angle` (rad, relative to your yaw), `alt` (m above your ground, default `2`), `speed` (m/s, default the weapon's `maxvel`), `miss` (m of lateral offset, default 0) | puts one round in the air on a course for your sight eye.  The launcher is nobody (`src = -1`), so a SACLOS coasts on its heading instead of riding a crew's beam - one round, one closing speed, no AI.  A top attack gets `target = me`, so its seeker locks.  `miss` aims a fixed distance to one side: the "it is going to pass" case the receiver must stay quiet on.  An `alt` of a couple of metres flies the round into the ground before it arrives |
 | `debug_tp` | `dist` (m, default `300`), `angle` (rad, relative to your yaw) | teleports the mech forward along its yaw |
 | `debug_hurt` | `module` (`0` hull / `1` torso, which charges the hull pool / `2` left arm / `3` right arm, default `1`), `amount` (default `100` = a whole hull), `base` (damage to the *enemy* command base) | wounds the player or the enemy base |
 
@@ -1090,6 +1114,8 @@ g.net.send({ t: 'debug_spawn', etype: 3, dist: 400, angle: 0.3 });  // APC 400 m
 g.net.send({ t: 'debug_hurt', module: 2, amount: 999 });            // blow off the left arm
 g.net.send({ t: 'debug_tp', dist: 1500 });                         // hop 1.5 km forward
 g.net.send({ t: 'debug_trees', dist: 150, radius: 2 });            // a tree stand in between
+g.net.send({ t: 'debug_missile', wid: 5, dist: 2000, alt: 40 });   // a top attack inbound
+g.net.send({ t: 'debug_missile', wid: 4, dist: 1800, alt: 250, miss: 400 });  // one that passes by
 g.net.send({ t: 'debug_god', on: true });                          // then confirm g.net.meta.god
 ```
 

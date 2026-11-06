@@ -1,0 +1,47 @@
+# syntax=docker/dockerfile:1
+
+# ---------------------------------------------------------------------------
+# backend: C# (.NET 10 / ASP.NET Core) websocket game loop.  No client files.
+# ---------------------------------------------------------------------------
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+WORKDIR /src
+ENV DOTNET_CLI_TELEMETRY_OPTOUT=1 \
+    DOTNET_NOLOGO=1
+
+# project layer first, so source edits do not redo the restore
+COPY MechServer.csproj ./
+RUN dotnet restore MechServer.csproj
+
+COPY . ./
+RUN dotnet publish MechServer.csproj \
+      -c Release \
+      -o /app/publish \
+      --no-restore \
+      /p:UseAppHost=false
+
+# ---------------------------------------------------------------------------
+# runtime: framework-dependent build, the same .NET 10 runtime the repo targets
+# ---------------------------------------------------------------------------
+FROM mcr.microsoft.com/dotnet/aspnet:10.0
+
+ENV MECH_DEBUG=0 \
+    MECH_PORT=8010 \
+    ASPNETCORE_HTTP_PORTS=8010 \
+    DOTNET_RUNNING_IN_CONTAINER=true
+
+# the base image may already define a non-root user; be explicit for the setup
+USER root
+WORKDIR /app
+COPY --from=build /app/publish ./
+
+RUN groupadd --gid 10001 mech \
+ && useradd --uid 10001 --gid mech --create-home mech \
+ && chown -R mech:mech /app
+ENV HOME=/home/mech
+USER mech
+
+EXPOSE 8010
+# Program.cs parses --host / --port; MECH_PORT keeps 8010 when CMD is replaced
+# by e.g. `docker run ... --range`.
+ENTRYPOINT ["dotnet", "MechServer.dll"]
+CMD ["--host", "0.0.0.0", "--port", "8010"]

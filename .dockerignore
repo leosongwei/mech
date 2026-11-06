@@ -1,0 +1,46 @@
+# git / editor
+.git
+.gitignore
+.github
+.DS_Store
+
+# python (tools only)
+.venv
+__pycache__
+*.py[cod]
+
+# node
+node_modules
+frontend/node_modules
+
+# dotnet: CLI state and build output
+.dotnet_tmp
+bin
+obj
+dotnet.sh
+
+# compiled client (webpack output)
+assets
+
+# dev shell / formatter
+.direnv
+.envrc
+flake.nix
+flake.lock
+treefmt.nix
+
+# not needed inside the images
+deploy
+doc
+plan_imgs
+tools
+dev.sh
+play.sh
+README.md
+AGENTS.md
+plan.md
+LICENSE
+
+# recordings / logs
+*.mkv
+*.log

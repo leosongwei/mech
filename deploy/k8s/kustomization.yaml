@@ -1,0 +1,22 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: mech
+
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - battle-backend-deployment.yaml
+  - battle-backend-service.yaml
+  - battle-frontend-deployment.yaml
+  - battle-frontend-service.yaml
+  - range-backend-deployment.yaml
+  - range-backend-service.yaml
+  - range-frontend-deployment.yaml
+  - range-frontend-service.yaml
+
+images:
+  - name: ghcr.io/leosongwei/mech-backend
+    newTag: latest
+  - name: ghcr.io/leosongwei/mech-frontend
+    newTag: latest

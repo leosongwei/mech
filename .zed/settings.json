@@ -1,0 +1,16 @@
+// Project settings for Zed. The C# extension downloads its own Roslyn
+// language server, but that binary is a framework-dependent apphost: it looks
+// for .NET in /usr/share/dotnet and DOTNET_ROOT, neither of which exists on
+// NixOS, so it exits with "You must install .NET to run this application."
+// The devShell ships the properly wrapped build (`roslyn-ls` in flake.nix);
+// Zed's direnv integration puts it on PATH, and this points the server at it.
+{
+  "lsp": {
+    "roslyn": {
+      "binary": {
+        "path": "Microsoft.CodeAnalysis.LanguageServer",
+        "arguments": ["--stdio", "--autoLoadProjects"]
+      }
+    }
+  }
+}

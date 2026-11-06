@@ -883,10 +883,9 @@ public static class Netcode
     /// <summary>The events whose wavefront still arrives loud enough to be heard.
     ///
     /// `ear` is the pilot's mech *now*, not where it will be when the wavefront
-    /// gets there: at 8 km the curve is nearly flat (~3 % per km), so a hull
-    /// that covered another 300 m in the meantime hears a level within a few
-    /// per cent.  `null` (no mech, no ear) drops every sound but keeps every
-    /// message.</summary>
+    /// gets there: on 1/r a 300 m error of the ear at 8 km is a 0.3 dB one, and
+    /// that wavefront is 23 s of travel away anyway.  `null` (no mech, no ear)
+    /// drops every sound but keeps every message.</summary>
     public static List<Dictionary<string, object?>> hearable(
         List<Dictionary<string, object?>> events, (float x, float y, float z)? ear)
     {

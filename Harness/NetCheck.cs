@@ -354,6 +354,6 @@ public static class NetCheck
         foreach (int id in world.ecs.query("smoke_r")) if (view.keep.Contains(id)) puf++;
         Console.WriteLine($"{min,3} | {snap,6:0.0} {fx,5:0.0} {meta,6:0.0} {total,7:0.0} {total * 8 / 1000,7:0.00} | "
                           + $"{units,5:0} {veh,3} {inf,4} {dead,4} {rnd,5:0} {puf,4:0} | {field,4:0} | "
-                          + $"{fxEv[min] / 60.0,5:0} ({100.0 * (fxEv[min] - fxKeep[min]) / Math.Max(fxEv[min], 1),3:0}% kept)");
+                          + $"{fxEv[min] / 60.0,5:0} ({100.0 * (fxEv[min] - fxKeep[min]) / Math.Max(fxEv[min], 1),3:0}% dropped)");
     }
 }

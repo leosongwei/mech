@@ -60,9 +60,9 @@ const NAME_KEY = 'mech.name';      // the callsign, remembered across reloads
 const SMOKE_RGB = [0.58, 0.52, 0.44];   // dirt brown, like the charge it is
 const SMOKE_END_SHRINK = 0.35;      // s, last moments of a puff (it is opaque)
 // A bang may stay in the air this long: the loudest thing a pilot can hear is a
-// hull going up ~17 km out, and its wavefront takes 50 s to arrive - a shorter
-// TTL would be the real cutoff and `SOUND_FLOOR` would never be reached.  The
-// server gates events by the same two numbers (`defs.SOUND_TTL`).
+// hull going up 12.5 km out, 36 s of travel, and the listening window is capped
+// by `SOUND_FLOOR` well before the TTL is reached.  The server gates events by
+// the same two numbers (`defs.SOUND_TTL`).
 const SOUND_TTL = 50;               // s, a bang still in the air after this is dropped
 const EAR_NEAR = 1;                 // m, closer than this a bang has no side to be on
 const SHAKE_BOOM_BIG = 0.225;       // near blast, big round (a quarter of the old kick)
@@ -321,7 +321,16 @@ export class Game {
   // the volume is the level at that arrival distance.  No Doppler: the pitch is
   // whatever the synth produced.
   _sound(x, y, z, level, play) {
-    this.sounds.push({ t0: performance.now() / 1000, x, y, z, level, play });
+    const t0 = performance.now() / 1000;
+    // the wavefront cannot arrive before this: the mech closes on the source at
+    // its own speed at most, so `SOUND_SPEED` plus the fastest hull is the
+    // quickest the gap can shut.  A battle holds thousands of events in the air
+    // and this is what lets the per-frame pass skip the ones that are still out
+    // there, where the distance solve is the whole cost of the loop.
+    const own = this.ownEntity();
+    const d0 = own ? Math.hypot(x - own.x, y - own.y, z - own.z) : 0;
+    this.sounds.push({ t0, x, y, z, level, play,
+                       tMin: t0 + d0 / (SOUND_SPEED + 80) });
   }
 
   // Where a bang landed in the cockpit's ears: the lateral share of its bearing
@@ -346,14 +355,18 @@ export class Game {
     const list = this.sounds;
     if (!list.length) return;
     const own = this.ownEntity();
+    // no mech, no ear: the events in flight are for a pilot who is not there to
+    // hear them, and holding fifty seconds of a battle for nobody is the one
+    // case where the list is pure work
+    if (!own) { list.length = 0; return; }
     const now = performance.now() / 1000;
     let n = 0;
     for (let i = 0; i < list.length; i++) {
       const s = list[i];
       const age = now - s.t0;
       if (age > SOUND_TTL) continue;              // nobody could still hear it
-      // no mech, no ear: the event just ages out (a dead pilot hears nothing)
-      const dist = own ? Math.hypot(s.x - own.x, s.y - own.y, s.z - own.z) : Infinity;
+      if (now < s.tMin) { list[n++] = s; continue; }   // still on its way out
+      const dist = Math.hypot(s.x - own.x, s.y - own.y, s.z - own.z);
       if (age * SOUND_SPEED >= dist) {
         const vol = s.level * attenuation(dist);
         if (vol > SOUND_FLOOR) {

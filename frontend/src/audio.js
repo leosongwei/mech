@@ -45,18 +45,43 @@ const VERB_FALLOFF = 0.55;
 export const SOUND_SPEED = 343;
 
 // Distance is three physical effects and the ear uses all three.  Geometric
-// spreading is the obvious one (-6 dB per doubling), but over a 16 km map a
-// true 1/r is 84 dB of dynamic range - everything past ~2 km would be silence,
-// which is why every game compresses it.  `SOUND_ROLLOFF` 0.6 keeps the *shape*
-// of the near field (a gun at 100 m really is quieter than one at 20 m) and
-// still leaves a hull 8 km out audible.  A muzzle is not a point source either,
-// so nothing falls off inside `SOUND_REF_DIST`.
+// spreading is the obvious one: a point source in a free field loses 6 dB per
+// doubling, `p` falling as 1/r, and from 1 m to the far corner of this map that
+// is 84 dB.  That is the law here (`SOUND_ROLLOFF` 1.0, the free field), and the
+// mix has about 50 dB of usable range, so the two are reconciled at
+// `SOUND_FLOOR`: the arriving gain the ear is allowed to miss below, 0.002, i.e.
+// a 30 mm report at 7.5 km and a hull going up at 12.5 km.  The wire is gated on
+// that same number (`defs.SOUND_FLOOR`), so an event a pilot could not hear is
+// the event the server leaves off his frame.  A muzzle is not a point source
+// either, so nothing falls off inside `SOUND_REF_DIST`.
 //
 // `defs.SOUND_*` mirrors these three numbers: the server tests an event against
 // the same curve before putting it on the wire.
 export const SOUND_REF_DIST = 25;      // m, where the level is 1.0
-export const SOUND_ROLLOFF = 0.6;      // 1.0 = inverse square, 0 = no falloff
-export const SOUND_FLOOR = 0.02;       // arriving level below this is not heard
+export const SOUND_ROLLOFF = 1.0;      // 1.0 = inverse square, the free field
+export const SOUND_FLOOR = 0.002;      // arriving level below this is not heard
+
+// A cue quieter than this plays as the far voice and nothing else.  The near
+// layers are a dozen nodes apiece (a 105 mm is five bursts and a thump), and a
+// battle six kilometres off is hundreds of them a second - measured on a live
+// client, 89 % of the voices it played were further than 4 km, i.e. the
+// quietest ones and the ones that cost the most.  At 4 km a 30 mm report
+// arrives at 0.6 * 25/4000 = 0.0038, a -48 dB cue the mix can barely carry,
+// and the air has taken most of its crack off anyway; past this line the sound
+// that survives is `_farBoom`, which is rate limited to one voice per 50 ms.
+export const NEAR_FLOOR = 0.004;
+
+// A ceiling on how many voices the mix may hold at once, whatever is firing and
+// whoever is firing it.  The battlefield is the reason: a live client measured
+// 350 sound calls a second with 89 % of them past 4 km, and every one of those
+// opens a chain of six or more nodes.  A machine that cannot keep up does not
+// merely sound thin - the audio thread falls behind its own clock, and the tab
+// goes quiet.  So a voice holds a slot for as long as it plays: a burst of forty
+// short events a second fits, forty sustained ones do not.  Past the ceiling a
+// quiet cue is dropped and a loud one still gets in, because trading the 105 mm
+// beside the pilot for a machine gun three kilometres out is the wrong bargain.
+const MAX_VOICES = 48;
+const STEAL_VOL = 0.05;   // -26 dB, this loud plays even when the mix is full
 
 // How loud a cue is at SOUND_REF_DIST.  `defs.SOUND_LEVEL` mirrors this table,
 // so a bang the server drops as inaudible is exactly one the ear could not have
@@ -125,18 +150,28 @@ export function attenuation(dist) {
 // are simply gone.  That, not the level, is what the ear reads as "far away": a
 // distant cannon is a dull thud with no crack left in it.
 //
-// The curve is two segments, and the floor is why.  A single exponential from
-// 18 kHz put a cue 6 km out below 640 Hz, and a gun cue is *made* of a
-// 1400-1900 Hz noise burst (the 105 mm's crack sits at 2.8 kHz): the air filter
-// was not dulling the far shot, it was deleting it, and no gain curve can bring
-// back a band that is no longer there.  So the near field loses its top at half
-// the old rate (5.5 kHz at 1 km instead of 10 kHz), the far field keeps falling,
-// and everything past ~6.5 km is held at 1.4 kHz - still clearly a muffled
-// thud, still something a thump layer underneath can carry.
+// The curve is the absorption model straight: `alpha(f)*d = 6 dB`, with `alpha`
+// ~ f^1.26, puts the -6 dB point at 1.06 kHz at 1 km, 450 Hz at 3 km and 262 Hz
+// at 6 km.  `_bus` spends a second corner on it past ~270 m, which is what turns
+// 12 dB/octave into the 30-40 dB the model asks for; 1 km lands at 1.06 kHz,
+// 3 km at 451.
+//
+// The near field is a *window* over that: the corner stays open (18 kHz, and
+// `_bus` skips the node) inside ~160 m and closes to the model over the next
+// 70 m, so 200 m is still the recording and 250 m is already the air.  The
+// window used to close over 220 m and did not reach the model until ~450, which
+// left 200-1000 m half open - measured 300 m out, 3 kHz was not filtered at all,
+// and that band is exactly the crack: the one range an ear calls "crisp".
+//
+// Anything shallower and the far field keeps its crack: measured on the first
+// pass (5.5 kHz at 3 km, one corner) a boom 3 km out still put 12 % of its
+// energy above 2.4 kHz, and what an ear reads as a bang at that range is body -
+// 200-500 Hz, the same band `boom` is built around.
 export function airCutoff(dist) {
-  const near = 18000 * Math.exp(-Math.min(dist, 1200) / 2400);
-  const far = near * Math.exp(-Math.max(0, dist - 1200) / 2600);
-  return Math.min(18000, Math.max(1400, far));
+  const km = Math.max(0.03, dist / 1000);
+  const f6 = 125 * Math.pow(15 / km, 0.794);
+  const window = 18000 * Math.exp(-Math.max(0, dist - 160) / 55);
+  return Math.max(260, Math.min(18000, Math.max(f6, window)));
 }
 
 // ...and the other half of the same physics: what the air takes off the top has
@@ -161,9 +196,15 @@ export function reverberation(dist) {
   return Math.max(0, Math.min(1, (dist - VERB_NEAR) / (VERB_FAR - VERB_NEAR)));
 }
 
-// The wet send's own distance law: 1 next to the cockpit, ~4.7 at 8 km.
+// The wet send's own distance law: 1 next to the cockpit, where the spreading
+// loss is still small, and capped at 3 from ~500 m out.  The cap is what keeps
+// a distant bang from arriving as nothing but its own reverb: the direct sound
+// keeps falling on 1/r while the room stops gaining, so the further out the
+// event is, the more of it is the field answering and the less of it is level.
+// It sat at 6, which with `VERB_SEND` 0.7 made the room twice the dry signal
+// from 1.3 km out - an explosion heard as a long bright wash of its own echo.
 export function reverbLift(dist) {
-  return Math.min(6, Math.pow(1 / attenuation(dist), 1 - VERB_FALLOFF));
+  return Math.min(3, Math.pow(1 / attenuation(dist), 1 - VERB_FALLOFF));
 }
 
 // The far-field layer.  A gun 6 km off is not a quiet gun - it is a different
@@ -175,14 +216,15 @@ export function reverbLift(dist) {
 // curve cannot re-arrange a spectrum: at -30 dB a gunshot is still a gunshot,
 // only inaudible.
 //
-// So `attenuation` stays what it is for the direct sound, and this layer is
-// mixed on its own law - 25^(1/4) instead of 25^(3/5) - which costs 11 dB
-// across the whole map instead of 34.  A battle 10 km away therefore sits a
-// few dB under one 3 km away rather than 20 dB under, which is the compression
-// every sim makes on purpose (a valley really is a quieter place than a
-// parade ground, but "inaudible" is a bug, not realism).
-export const FAR_LEVEL = 0.13;   // the layer's own level, before the law
-const FAR_ROLLOFF = 0.25;        // (25/d)^0.25: 11 dB over the whole map
+// So `attenuation` stays what it is for the direct sound, and this layer rides
+// on it: the same 1/r, scaled by `FAR_LEVEL`, which puts the far voice 6 dB
+// under the near one at every distance past `FAR_FULL`.  The layers stay locked
+// together because a bed that flattens out is what made a fight 12 km away read
+// as louder than one at 2.6 km: on the free-field law a distant battle is
+// simply quieter, and the far voice's job is the *spectrum* (all body, no
+// crack), not the level.
+export const FAR_LEVEL = 0.5;    // the layer's own level, under the same 1/r
+const FAR_ROLLOFF = 1.0;         // inverse square, like the direct sound
 const FAR_NEAR = 700;            // m, nothing inside this - the near cue is whole
 const FAR_FULL = 2600;           // m, fully in past this (faded, squared)
 // ...and the two things that keep it a *bed* instead of a wall.  A battle is
@@ -192,8 +234,14 @@ const FAR_FULL = 2600;           // m, fully in past this (faded, squared)
 // that matter.  So the far voices all land on one bus with a compressor on it -
 // `FAR_CEIL` is where that bed settles however many events are in it - and a
 // rate limit stops a burst of them from opening a voice each.  A far rumble is
-// not a thing the ear counts: twenty a second is already a battle.
-const FAR_CEIL = -20;            // dBFS, where the far bed settles
+// not a thing the ear counts: twenty a second is already a battle.  The ceiling
+// follows the layer: one voice at 8 km peaks near -62 dBFS, ninety of them
+// stack to about -43, so -34 is where the bed sits once a real fight is on.
+const FAR_CEIL = -34;            // dBFS, where the far bed settles
+// ...and the makeup its compressor adds back on its own: measured, a
+// -50 dBFS sine through -34 / 8:1 comes out at +16.2 dB, so a far voice would
+// arrive at 6.5x the level `FAR_LEVEL` gives it (see `farTrim`).
+const FAR_MAKEUP = 6.45;
 const FAR_MIN_GAP = 0.05;        // s, at most one far voice per this
 
 // The master bus ends in a soft clipper, and this is the headroom it gets.  A
@@ -252,12 +300,15 @@ export class GameAudio {
     this.master = null;
     this.alarms = null;
     this.verb = null;
+    this.send = null;               // the room's one fixed input (see ensure)
     this.far = null;                // the distant bed's own bus (see FAR_CEIL)
     this.farLim = null;
+    this.farTrim = null;            // the makeup `FAR_CEIL`'s compressor adds
     this.limiter = null;
     this.top = null;                // CLIP_GAIN into the shaper
     this.clip = null;               // the soft ceiling, the last node there is
     this._farT = -1e9;              // when a far voice was last opened
+    this._voiceEnd = [];            // when each live voice starts being free
     this.lockOsc = null;
     this.lockGain = null;
     this.warbles = {};
@@ -281,6 +332,21 @@ export class GameAudio {
     if (this.alarms) this.alarms.gain.value = ALARM_GAIN * this.alarmVolume;
   }
 
+  // Room for one more event?  Slots are held by the voices that are still
+  // sounding, so the ceiling is on the simultaneous count rather than on the
+  // rate - which is the shape a battle has: dozens of short cracks a second is
+  // fine, a dozen two second rumbles at once is not.
+  _admit(vol, dur) {
+    const now = this.ctx.currentTime;
+    const end = this._voiceEnd;
+    let n = 0;
+    for (let i = 0; i < end.length; i++) if (end[i] > now) end[n++] = end[i];
+    end.length = n;
+    if (n >= MAX_VOICES && vol < STEAL_VOL) return false;
+    end.push(now + dur);
+    return true;
+  }
+
   ensure() {
     if (this.ctx) return;
     const AC = window.AudioContext || window.webkitAudioContext;
@@ -294,18 +360,22 @@ export class GameAudio {
     // always partly through before it ducks, and a hard 0 dBFS clamp on that
     // sliver is a speaker buzz rather than a bang.
     //
-    // The curve is deliberately a gentle one (8:1 over an 8 dB knee).  A hard
-    // limiter does hold a dense mix down, but it also flattens the two cues the
-    // ear is listening for - measured on a 105 mm round next to the pilot, a
-    // 12:1 limiter with a 2 ms attack took it from 1.12 (clipped) to 0.63,
-    // i.e. the loudest thing on the field came out quieter than the mix it is
-    // supposed to sit on top of.  These numbers keep it at 0.84.
+    // The curve is 12:1 over a 6 dB knee, and the threshold is what decides
+    // whether the shaper ever works.  Measured with three gatlings 200 m out
+    // (90 rounds a second, all of them inside `NEAR_FLOOR`): -8 dB left the mix
+    // peaking at 0.90 with 5 % of its samples past the 0.7 knee - that is
+    // continuous soft-clip distortion, heard as a faint buzz under everything
+    // and present since the mix was built.  At -12 dB it peaks at 0.69 and
+    // touches the knee 0 % of the time, while a 105 mm next to the pilot still
+    // reads 0.76 against that 0.69 - the loudest cue on the field stays the
+    // loudest, and it stops being a fuzz pedal.  A knee keeps a single round's
+    // transient intact; the ratio is what holds a burst of them down.
     this.limiter = this.ctx.createDynamicsCompressor();
-    this.limiter.threshold.value = -8;
-    this.limiter.knee.value = 8;
-    this.limiter.ratio.value = 8;
-    this.limiter.attack.value = 0.003;
-    this.limiter.release.value = 0.2;
+    this.limiter.threshold.value = -12;
+    this.limiter.knee.value = 6;
+    this.limiter.ratio.value = 12;
+    this.limiter.attack.value = 0.002;
+    this.limiter.release.value = 0.25;
     this.top = this.ctx.createGain();
     this.top.gain.value = CLIP_GAIN;
     this.clip = this.ctx.createWaveShaper();
@@ -324,6 +394,13 @@ export class GameAudio {
     this.verb = this.ctx.createConvolver();
     this.verb.buffer = this._impulse(2.4, 2.8);
     this.verb.connect(this.master);
+    // and one fixed input to it: a convolver whose input connections change a
+    // few hundred times a second recomputes its own mix on every change, which
+    // is both work and a click.  Every voice's (per-voice, distance-lifted) send
+    // gain lands on this, so the room itself never sees the graph move.
+    this.send = this.ctx.createGain();
+    this.send.gain.value = 1;
+    this.send.connect(this.verb);
     // the far field is a bed, so it gets a bus of its own: see FAR_CEIL
     this.far = this.ctx.createGain();
     this.farLim = this.ctx.createDynamicsCompressor();
@@ -332,9 +409,26 @@ export class GameAudio {
     this.farLim.ratio.value = 8;
     this.farLim.attack.value = 0.01;
     this.farLim.release.value = 0.35;
+    // ...and then give the layer back its own level.  A DynamicsCompressor adds
+    // a makeup gain derived from its threshold and ratio, and at -34 / 8:1 that
+    // gain is +16.2 dB on everything quieter than the knee (measured with a
+    // -50 dBFS sine, which is where a far voice lives).  The bed was therefore
+    // sixteen decibels above where `FAR_LEVEL` puts it - as loud as the near cue
+    // it is meant to sit under, and, being a 95 Hz sine, the only thing left of
+    // a boom 3 km out.  `farTrim` spends the makeup back, so a lone far voice
+    // arrives at the level the design asks for and the compressor is only ever
+    // the ceiling above the knee.
+    this.farTrim = this.ctx.createGain();
+    this.farTrim.gain.value = 1 / FAR_MAKEUP;
     this.far.connect(this.farLim);
-    this.farLim.connect(this.master);
-    const len = this.ctx.sampleRate * 1.2;
+    this.farLim.connect(this.farTrim);
+    this.farTrim.connect(this.master);
+    // The shared noise is long enough that nothing has to loop it: a buffer
+    // that ends on a random sample and starts on another is a step in the
+    // waveform at the seam, and a hull burning or a 105 mm's tail is loud
+    // enough for that to be heard every 1.2 s.  Six seconds covers the longest
+    // voice on the field (a hull's 4.5 s rumble, started at a random offset).
+    const len = this.ctx.sampleRate * 6.0;
     const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
     const d = buf.getChannelData(0);
     for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
@@ -389,24 +483,44 @@ export class GameAudio {
   // `dest` is the bus the voice lands on - the master for everything the pilot
   // is meant to hear as an event, the far bus for the distant bed.
   _bus(g, pan = 0, behind = 0, dist = 0, dest = null) {
+    const made = [g];
     let out = g;
     const cut = Math.min(airCutoff(dist),
                          behind > 0.02 ? 12000 - 10000 * Math.min(1, behind) : 1e9);
-    if (cut < 17500) {
+    // A filter that would pass the whole band is a node for nothing: 16 kHz is
+    // where the air has taken its first decibel, so everything inside 180 m
+    // (and the whole near field of a gatling) skips it.  A gatling nest is
+    // ninety voices a second and each one used to carry two of these.
+    //
+    // One corner is 12 dB/octave, and past ~270 m the model asks for 30-40 dB
+    // down at a few kHz, so the corner is spent twice there: two at 451 Hz put
+    // 3 kHz 55 dB down, which is what takes a boom's crack out of it entirely.
+    // The second stage exists only where it is heard - a mid-field voice pays
+    // one biquad, and the near field pays none.
+    const stages = cut < 4000 ? 2 : cut < 16000 ? 1 : 0;
+    for (let i = 0; i < stages; i++) {
       const lp = this.ctx.createBiquadFilter();
       lp.type = 'lowpass';
-      lp.frequency.value = cut;   // 12k -> 2k behind, 18k -> 1.4 kHz far
-      lp.Q.value = 0.4;
+      lp.frequency.value = cut;   // 18k near -> 2.9 kHz at 300 m -> 451 Hz at 3 km
+      lp.Q.value = 0.5;
       out.connect(lp);
       out = lp;
+      made.push(lp);
     }
+    // what goes into the room is the air-filtered signal but still unplaced:
+    // a distant echo has crossed exactly as much atmosphere as the direct
+    // sound, so it arrives just as dull, while the lateral position is the
+    // dry sound's job (the room is wide, the event is placed)
+    const prePan = out;
     if (Math.abs(pan) > 0.01 && this.ctx.createStereoPanner) {
       const p = this.ctx.createStereoPanner();
       p.pan.value = Math.max(-1, Math.min(1, pan));
       out.connect(p);
       out = p;
+      made.push(p);
     }
     out.connect(dest || this.master);
+    return { made, prePan };
   }
 
   // Send a voice into the shared room by `wet` (0..1).  Knobbed off it is a
@@ -415,11 +529,12 @@ export class GameAudio {
   // sound is the part that is placed - which is how a real one behaves.  `dist`
   // lifts it back over the distance the dry sound just lost (`reverbLift`).
   _verbSend(node, wet, dist = 0) {
-    if (!(wet > 0) || !this.verb) return;
+    if (!(wet > 0) || !this.verb) return null;
     const g = this.ctx.createGain();
     g.gain.value = VERB_SEND * wet * reverbLift(dist);
     node.connect(g);
-    g.connect(this.verb);
+    g.connect(this.send);
+    return g;
   }
 
   // `wet` overrides the distance-driven reverb send: a burst that is meant to be
@@ -433,14 +548,36 @@ export class GameAudio {
     const src = this.ctx.createBufferSource();
     src.buffer = this.noise;
     src.playbackRate.value = 0.8 + Math.random() * 0.5;
-    // the shared noise buffer is 1.2 s long: anything wound out past it (the
-    // rumble tail of a report, a hull's burn) has to loop or it stops dead
-    src.loop = dur > 1.0;
+    // the shared noise buffer is six seconds long, which is longer than any
+    // voice on the field, so the seam is never played
+    src.loop = dur > 5.5;
     const f = this.ctx.createBiquadFilter();
     f.type = type || 'bandpass';
     f.frequency.value = freq;
     f.Q.value = q;
-    if (sweepTo) f.frequency.exponentialRampToValueAtTime(sweepTo, t + dur);
+    if (sweepTo) {
+      // `hold` keeps the filter open for the first few tens of milliseconds: an
+      // exponential sweep from 2.6 kHz to 110 Hz is already down at 500 Hz by
+      // the time a quarter of it has played, which is how a burst that starts
+      // bright still measures a low centroid.  A held opening is the transient.
+      const hold = opts && opts.hold ? opts.hold : 0;
+      if (hold > 0) f.frequency.setValueAtTime(freq, t + hold);
+      f.frequency.exponentialRampToValueAtTime(sweepTo, t + dur);
+    }
+    // an optional second corner.  `hp` is what turns a low-passed burst into a
+    // band: a real impact is flat from 100 to 500 Hz and then gone, so the low
+    // end needs a floor as much as the top needs a ceiling (-24 dB at 63 Hz in
+    // the recording, which one filter cannot give).
+    let tail = f;
+    let h = null;
+    if (opts && opts.hp) {
+      h = this.ctx.createBiquadFilter();
+      h.type = 'highpass';
+      h.frequency.value = opts.hp;
+      h.Q.value = 0.7;
+      f.connect(h);
+      tail = h;
+    }
     const g = this.ctx.createGain();
     if (opts && opts.env) {
       // a measured decay instead of one exponential ramp: [[t, gain], ...].
@@ -449,22 +586,44 @@ export class GameAudio {
       // of the report at unity and the mix exactly the wrong way round: the
       // bright 0.7x crack arriving 12 dB over the 3.4x boom.
       opts.env.forEach(([at, v], i) => {
-        const to = Math.max(v * gain, 0.0001);
+        const floor = Math.min(0.0001, gain * 0.01);
+        const to = Math.max(v * gain, floor);
         if (i === 0) g.gain.setValueAtTime(to, t + at);
         else g.gain.exponentialRampToValueAtTime(to, t + at);
       });
     } else {
-      g.gain.setValueAtTime(gain, t);
-      g.gain.exponentialRampToValueAtTime(0.0008, t + dur);
+      // a distant cue arrives quieter than the floor this used to ramp to, and
+      // an exponential ramp to a fixed 0.0008 would then grow it as it decays
+      const peak = Math.max(gain, 0.0001);
+      g.gain.setValueAtTime(peak, t);
+      g.gain.exponentialRampToValueAtTime(Math.min(0.0008, peak * 0.3), t + dur * 0.9);
     }
-    src.connect(f); f.connect(g);
+    // and the last few milliseconds go to silence, linearly: an exponential ramp
+    // can only ever approach zero, and the step from where it stops to the node
+    // being cut is a click - a battle makes hundreds a second and that is the
+    // low buzz under everything
+    g.gain.linearRampToValueAtTime(0, t + dur);
+    src.connect(f); tail.connect(g);
     // a voice on the far bus is already the sample that crossed the valley:
     // sending it into the room again put a reverb tail on every single event of
     // a battle, which is both the loudest thing in the bed and the most
     // expensive one (a convolver input per voice, ninety times a second)
     const dest = opts && opts.dest ? opts.dest : null;
-    this._bus(g, pan, behind, dist, dest);
-    if (!dest) this._verbSend(g, wet === null ? reverberation(dist) : wet, dist);
+    const busOut = this._bus(g, pan, behind, dist, dest);
+    const chain = busOut.made;
+    if (!dest) {
+      const vg = this._verbSend(busOut.prePan, wet === null ? reverberation(dist) : wet, dist);
+      if (vg) chain.push(vg);
+    }
+    // a voice is a temporary chain: the nodes are worth nothing once the source
+    // has played, and a battle opens hundreds of them a second, so the chain is
+    // torn down when the source ends instead of waiting for a collector
+    src.onended = () => {
+      src.disconnect();
+      f.disconnect();
+      if (h) h.disconnect();
+      for (const n of chain) n.disconnect();
+    };
     src.start(t, Math.random() * 0.4);
     src.stop(t + dur + 0.05);
   }
@@ -484,22 +643,32 @@ export class GameAudio {
     o.frequency.exponentialRampToValueAtTime(
       opts && opts.sweepTo ? opts.sweepTo : freq * 0.35, t + dur);
     const g = this.ctx.createGain();
+    // same floor as `_noiseBurst`: a far voice is quieter than the ramp's end,
+    // and ramping up to it would turn a decay into a swell
+    const peak = Math.max(gain, 0.0001);
     if (attack > 0) {
       // scheduled from zero, or the node's default gain of 1 is already open
       // when the oscillator starts
       g.gain.setValueAtTime(0.0001, t);
-      g.gain.exponentialRampToValueAtTime(gain, t + attack);
+      g.gain.exponentialRampToValueAtTime(peak, t + attack);
     } else {
-      g.gain.setValueAtTime(gain, t);
+      g.gain.setValueAtTime(peak, t);
     }
-    g.gain.exponentialRampToValueAtTime(0.001, t + attack + dur);
+    g.gain.exponentialRampToValueAtTime(Math.min(0.001, peak * 0.3), t + attack + dur * 0.9);
+    g.gain.linearRampToValueAtTime(0, t + attack + dur);
     o.connect(g);
     const dest = opts && opts.dest ? opts.dest : null;
-    this._bus(g, pan, behind, dist, dest);
+    const busOut = this._bus(g, pan, behind, dist, dest);
+    const chain = busOut.made;
     if (!dest) {
-      this._verbSend(g, opts && opts.wet !== undefined ? opts.wet
+      const vg = this._verbSend(busOut.prePan, opts && opts.wet !== undefined ? opts.wet
         : reverberation(dist) * 0.6, dist);
+      if (vg) chain.push(vg);
     }
+    o.onended = () => {
+      o.disconnect();
+      for (const n of chain) n.disconnect();
+    };
     o.start(t); o.stop(t + attack + dur + 0.02);
   }
 
@@ -524,20 +693,31 @@ export class GameAudio {
     const law = Math.pow(SOUND_REF_DIST / Math.max(SOUND_REF_DIST, dist),
                          FAR_ROLLOFF);
     const g = FAR_LEVEL * src * weight * law * fade * fade;
-    if (!(g > 0.0015)) return;
+    // -70 dBFS: the far corner of the map is a rumble you can just about place,
+    // and a voice under this one is arithmetic the ear never gets
+    if (!(g > 0.0003)) return;
     // one voice at a time: at ninety events a second the bed is the same rumble
     // whether or not each bang opens its own
     const now = this.ctx.currentTime;
     if (now - (this._farT === undefined ? -1e9 : this._farT) < FAR_MIN_GAP) return;
     this._farT = now;
     const dest = this.far;
-    // the body: a slow sine falling 95 -> 42 Hz, swelling rather than slamming,
-    // because a wavefront that crossed six kilometres has no transient left
-    this._thump(95, tall, Math.min(0.9, g), 0, pan, behind,
-                { sweepTo: 42, attack: 0.04, dest });
-    // the dull edge an octave up, so it reads as a report instead of a hum
-    this._noiseBurst(tall * 0.8, 340, 0.8, Math.min(0.7, g * 0.8), 'lowpass',
-                     120, 0, null, pan, behind, { dest });
+    // The body is noise, not a tone.  It used to be a 95 -> 42 Hz sine and
+    // nothing else above it: a pure tone carries no air, so an explosion 3 km
+    // out arrived as a clean electronic sweep - the one thing in the mix with a
+    // pitch, and the reason a distant bang read as a bell rather than as a
+    // boom.  A rumble that crossed six kilometres is broadband at the bottom,
+    // soft in its attack (there is no transient left) and slow to die.
+    this._noiseBurst(tall * 1.6, 260, 0.5, Math.min(0.9, g), 'lowpass', 60, 0, null,
+                     pan, behind, { dest, env: [[0, 0.3], [0.06, 1], [0.35, 0.6],
+                                                [0.9, 0.24], [tall * 1.4, 0.01]] });
+    // and the sub under it at a tenth of that: felt on a system that reproduces
+    // 30-60 Hz, out of the way on one that does not, and never the layer the
+    // event is *made* of (a sine is one bin of the spectrum and this one is
+    // audited: at a third it held 40-60 % of a distant event's energy, i.e. the
+    // event was a tone again)
+    this._thump(58, tall, Math.min(0.9, g * 0.1), 0, pan, behind,
+                { sweepTo: 34, attack: 0.06, dest });
   }
 
   // `vol` is the source level (`SOUND_LEVEL`) already multiplied by the
@@ -548,6 +728,18 @@ export class GameAudio {
   shot(wid, kind, vol = 1, dist = 0, pan = 0, behind = 0, heavy = false) {
     this.ensure();
     if (!this.ctx) return;
+    const guided = kind === 'rocket' || kind === 'saclos' || kind === 'top';
+    const farW = heavy ? 1.6 : guided ? 0.4 : 1.0;
+    if (vol < NEAR_FLOOR) {
+      this._farBoom(dist, vol / attenuation(dist), farW, pan, behind,
+                    heavy ? 0.9 : 0.5);
+      return;
+    }
+    // the slot a voice holds is how long it sounds: a gatling's crack is over in
+    // a tenth of a second and a nest of them is thirty a second, so charging
+    // them a cannon's 0.8 s would fill the ceiling with clicks and start
+    // dropping the explosions three kilometres out
+    if (!this._admit(vol, heavy ? 2.0 : kind === 'bullet' ? 0.2 : 0.8)) return;
     if (heavy) {
       // Measured off a recorded M1 (plan_imgs/m1fire.mkv, four rounds, analysed
       // per window - the table is `HEAVY_REPORT` above):
@@ -578,29 +770,87 @@ export class GameAudio {
                   { delay: 0.03, sweepTo: 42, attack: 0.02,
                     wet: 0.25 + 0.55 * wet });
     } else if (kind === 'bullet') {
-      this._noiseBurst(0.11, 1400 + Math.random() * 500, 1.2, 0.28 * vol, 'bandpass', 400,
-                       dist, null, pan, behind);
+      // One voice for every automatic weapon - the 30 mm autocannon, the 12.7 mm
+      // gatling and the rifle: a 1.4 kHz band sweeping into the bore's thump.
+      // A 3 kHz crack was tried and measured brighter (a gatling's transient is
+      // really up there), but in the cockpit it is the wrong cue: these fire
+      // twenty rounds a second each and they sit *under* the 105 mm, where a
+      // bright transient turns the whole field into a hiss.
+      this._noiseBurst(0.11, 1400 + Math.random() * 500, 1.2, 0.28 * vol, 'bandpass',
+                       400, dist, null, pan, behind);
       this._thump(120, 0.09, 0.25 * vol, dist, pan, behind);
     } else if (kind === 'rocket' || kind === 'saclos' || kind === 'top') {
-      this._noiseBurst(0.75, 700, 0.7, 0.32 * vol, 'lowpass', 220, dist, null, pan, behind);
-      this._thump(80, 0.35, 0.2 * vol, dist, pan, behind);
+      // Three layers, because a launch is three sounds at once and any one of
+      // them alone reads wrong: the hiss of propellant leaving the tube (a band
+      // swept down from 1.9 kHz), the body of the gas cloud, and the shove the
+      // launcher gives the hull.  The body is the one that was missing - a cue
+      // with only the hiss and the thump measured a 1.1 kHz centroid and read
+      // thin, and a Su-34's S-8 salvo puts most of what a launch *adds* at
+      // 315-500 Hz (46 % of the energy during the salvo), so that band is what
+      // gives the rocket its weight.
+      this._noiseBurst(0.6, 1500, 1.2, 0.08 * vol, 'bandpass', 650, dist, null, pan, behind);
+      this._noiseBurst(0.5, 520, 0.95, 0.95 * vol, 'bandpass', 330, dist, null, pan, behind);
+      this._thump(95, 0.3, 0.05 * vol, dist, pan, behind);
     } else {
       this._noiseBurst(0.08, 1800, 1.5, 0.2 * vol, 'bandpass', 600, dist, null, pan, behind);
     }
     // and, far enough out to have lost its crack on the way, the voice that
     // survived the trip.  A guided launch is a whoosh and carries nothing like
     // as far as a gun, hence the weight.
-    const guided = kind === 'rocket' || kind === 'saclos' || kind === 'top';
-    this._farBoom(dist, vol / attenuation(dist), heavy ? 1.6 : guided ? 0.4 : 1.0,
-                  pan, behind, heavy ? 0.9 : 0.5);
+    this._farBoom(dist, vol / attenuation(dist), farW, pan, behind,
+                  heavy ? 0.9 : 0.5);
   }
 
   boom(vol = 1, big = false, dist = 0, pan = 0, behind = 0) {
     this.ensure();
     if (!this.ctx) return;
-    this._noiseBurst(big ? 1.1 : 0.5, big ? 420 : 600, 0.8, Math.min(1, 0.5 * vol),
-                     'lowpass', 90, dist, null, pan, behind);
-    this._thump(big ? 55 : 85, big ? 0.9 : 0.4, Math.min(1, 0.5 * vol), dist, pan, behind);
+    if (vol < NEAR_FLOOR) {
+      this._farBoom(dist, vol / attenuation(dist), big ? 1.3 : 1.0, pan, behind,
+                    big ? 1.2 : 0.6);
+      return;
+    }
+    if (!this._admit(vol, big ? 1.2 : 0.6)) return;
+    // Measured off a real 40 mm airburst recording, three impacts at the target
+    // (tools/blast_report.py carries the model; this is the microphone):
+    //
+    //   spectral centroid   758 / 765 / 924 Hz      (mean ~816)
+    //   energy above 2 kHz   11.0 / 10.6 / 14.7 %   (mean ~12)
+    //   200-500 Hz            52 / 60 / 47 %        <- where almost all of it is
+    //   below 100 Hz           1.3 / 2.6 / 2.3 %     <- almost none
+    //   -6 dB span           53 / 50 / 39 ms
+    //   -20 dB span         481 / 320 / 211 ms
+    //
+    // Two things were wrong with the cue.  It had a 100 Hz sine thump and a
+    // lowpass at 220 Hz, so its energy sat an octave and a half below a real
+    // impact's - which is the "muffled" - and it held for 420 ms with no
+    // transient, where a real one is half gone in 50 ms and only its tail
+    // reaches a third of a second.  A Friedlander source says the same thing
+    // the recording does once the charge is small: the body is a few hundred
+    // hertz, not tens.
+    //
+    // So: a highpassed crack for the 2 kHz tenth, a wide bandpass at ~380 Hz
+    // for the body (that band is the whole of what an impact sounds like), and
+    // an envelope that falls 6 dB in 45 ms and then crawls - no sine under it
+    // until the charge is a warhead.
+    //
+    // The third-octave shape the recording has, in dB below its own peak:
+    // 200-315 Hz is the top (0 to -1.7), 100-160 sits at -5, 400-630 at -3 to
+    // -6, then a trough at 800-1000 (-10.5), a second shoulder at 2-4 kHz
+    // (-6.3) and nothing left by 8 kHz (-15).  Two wide bands three octaves
+    // apart reproduce that: the gap between them *is* the trough.
+    this._noiseBurst(big ? 0.09 : 0.06, big ? 2600 : 3000, 1.3,
+                     Math.min(1, (big ? 0.55 : 0.45) * vol), 'bandpass', big ? 1600 : 1900,
+                     dist, null, pan, behind);
+    // The body is a lowpass, not a narrow band: the recording is flat from 100
+    // to 500 Hz and then falls 12 dB per octave, which is exactly a lowpass at
+    // ~450 - and a bandpass at 190 has a skirt far too shallow to make the
+    // 800-1000 Hz trough (-11 dB there, measured) come out.
+    this._noiseBurst(big ? 1.0 : 0.72, big ? 420 : 450, 0.7,
+                     Math.min(1, (big ? 0.62 : 0.55) * vol), 'lowpass', big ? 170 : 200,
+                     dist, null, pan, behind, { hp: big ? 70 : 85, env: big
+                       ? [[0, 1], [0.12, 0.5], [0.40, 0.1], [0.86, 0.01]]
+                       : [[0, 1], [0.075, 0.5], [0.26, 0.1], [0.55, 0.01]] });
+    if (big) this._thump(58, 0.3, Math.min(1, 0.2 * vol), dist, pan, behind);
     this._farBoom(dist, vol / attenuation(dist), big ? 1.3 : 1.0, pan, behind,
                   big ? 1.2 : 0.6);
   }
@@ -613,6 +863,11 @@ export class GameAudio {
   explosion(vol = 1, dist = 0, pan = 0, behind = 0) {
     this.ensure();
     if (!this.ctx) return;
+    if (vol < NEAR_FLOOR) {
+      this._farBoom(dist, vol / attenuation(dist), 1.2, pan, behind, 1.8);
+      return;
+    }
+    if (!this._admit(vol, 4.6)) return;
     const v = Math.min(1, vol);
     const wet = reverberation(dist);
     // the pressure front: a low-mid shove rather than a gunshot's bright crack
@@ -621,8 +876,12 @@ export class GameAudio {
     // the fire: a broad wall of noise, low-passed hard and swept down
     this._noiseBurst(2.8, 800, 0.5, Math.min(1, 0.9 * v), 'lowpass', 60, dist,
                      0.35 + 0.65 * wet, pan, behind);
-    // the kick under the floor: audible bass before the sine dives below it
-    this._thump(58, 2.1, Math.min(1, 0.95 * v), dist, pan, behind);
+    // the kick under the floor: audible bass before the sine dives below it.
+    // A sine is felt, so this layer belongs to a blast the pilot is *near*: from
+    // 250 m out it recedes into the rumble the far voice brings, or a hull dying
+    // 3 km away is a two-second tone and nothing else (measured: 58 Hz held 61 %
+    // of that event's energy)
+    this._thump(58, 2.1, Math.min(1, 0.95 * v) * (1 - 0.85 * wet), dist, pan, behind);
     // the tail: the valley answering back long after the fire is out
     this._noiseBurst(4.5, 240, 0.35, Math.min(1, 0.5 * v), 'lowpass', 40, dist,
                      0.55 + 0.45 * wet, pan, behind);

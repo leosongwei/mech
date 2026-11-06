@@ -289,7 +289,7 @@ public static class Tiers
         Console.WriteLine($"      so no warning is lost - what is lost is the sight of the round for its first km)");
         Console.WriteLine($"   - explosions are not rows at all: 0 blast entities exist.  A boom rides the fx");
         Console.WriteLine($"     channel ({fx / secs:0.0} events/s to this ear, {fx4 / secs:0.0} of them inside 4 km),");
-        Console.WriteLine($"     which today is filtered by *sound* level (cannon 7.2 km, a death blast 17 km) -");
+        Console.WriteLine($"     which today is filtered by *sound* level (cannon 7.5 km, a death blast 12.5 km) -");
         Console.WriteLine($"     a 4 km visual radius is a change to fx, not to the snapshot");
         Console.WriteLine();
         Console.WriteLine("   what it costs on the client side (no code change, only behaviour):");

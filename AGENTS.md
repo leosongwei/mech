@@ -981,8 +981,8 @@ frontend/
   alternative tables on the same battle.
   Not tiered: the `fx` channel.  Explosions are *not* rows - there is no blast
   entity - and an event carries both the flash and the bang, so a visual radius
-  is a change to `fx` (which today travels by sound level, 7-17 km), not to the
-  snapshot.
+  is a change to `fx` (which today travels by sound level, 7.5-12.5 km), not to
+  the snapshot.
 * **A frame every tick, and a clock block is a frame** (`Netcode.CLOCK`,
   `Server.Client.observe`).  TCP delivers everything, so a slow link cannot lose
   a frame - it can only accumulate a queue, and every frame built on top of it
@@ -1228,8 +1228,9 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
   what survived for that ear.
 * **Sound is not immediate.** Gunfire and explosions go through
   `game._sound(x, y, z, level, play)` -> `game.sounds`, a list of acoustic events
-  in the air (emit position, time, source level, 50 s TTL - a 17 km
-  blast takes that long to arrive). `_pumpSounds()` runs
+  in the air (emit position, time, source level, 50 s TTL - the loudest thing a
+  pilot can hear is 12.5 km out, 36 s of travel, and `SOUND_FLOOR` cuts the list
+  first). `_pumpSounds()` runs
   every frame and compares the wavefront radius (`SOUND_SPEED` = 343 m/s x age)
   with the distance to the mech's **current** position: the event plays (at
   `level * attenuation(dist)`) and leaves the list when the front catches up.
@@ -1237,25 +1238,38 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
   actually caught up with it - never cache the distance at emit time. Flashes,
   impacts, screen shake and the electronic cues (lock tone, RWR alarms,
   kill/denied chimes) stay immediate.
-* **Distance is four effects, not one curve.** `audio.attenuation` is inverse
-  square *compressed* (`SOUND_ROLLOFF` 0.6, reference `SOUND_REF_DIST` 25 m):
-  true 1/r over 16 km is 84 dB of dynamic range, i.e. silence, so the shape of
-  the near field is kept (a gun at 100 m is 7 dB below one at 20 m) and the far
-  field stays audible (-32 dB at 12 km). `audio.airCutoff` is the second: air
+* **Distance is four effects, not one curve.** `audio.attenuation` is the free
+  field - `(25/d)^1`, `SOUND_ROLLOFF` 1.0, reference `SOUND_REF_DIST` 25 m, i.e.
+  -6 dB per doubling and 84 dB from 1 m to the far corner of the map. The mix has
+  about 50 dB of usable range, and the two are reconciled at `SOUND_FLOOR` (0.002
+  arriving gain: a 30 mm report at 7.5 km, a hull going up at 12.5 km) - which is
+  also the wire's gate, so the acoustic law pays for itself in bandwidth.
+  `audio.airCutoff` is the second: air
   absorbs the top end far faster than the bottom (0.4 dB/km at 125 Hz, 30 dB/km
-  at 4 kHz), 18 kHz inside 300 m down to a 1.4 kHz floor past ~6.5 km - a
-  distant cannon is a dull thud, and *that*, not the level, is what the ear
-  reads as distance. It shares one filter with the "behind you" lowpass in
+  at 4 kHz), and the corner is the model's own - `alpha(f)*d = 6 dB` puts it at
+  2.9 kHz at 300 m, 1.06 kHz at 1 km, 451 Hz at 3 km, 262 Hz at 6 km, over a
+  two-corner slope past 250 m. A distant cannon is a dull thud, and *that*, not
+  the level, is what the ear reads as distance. The near field is a window over
+  it: 18 kHz (no node at all) inside 160 m, closing to the model by 250. It
+  shares the filter with the "behind you" lowpass in
   `audio._bus(g, pan, behind, dist)`. Third is the direct/reverberant split: the
   wet send is lifted by `reverbLift(dist)` so the diffuse field decays slower
-  than the direct sound (wet is ~13 dB above dry at 8 km) - far away is "echo",
-  not "turned down". `SOUND_LEVEL` (shot .6 / boom .7 / big .8 / blast 1) is how
-  loud a cue is at the reference distance.
+  than the direct sound (3x the direct level from ~300 m out, where the lift
+  saturates) - far away is "echo", not "turned down". `SOUND_LEVEL` (shot .6 /
+  boom .7 / big .8 / blast 1) is how loud a cue is at the reference distance.
 * **A level curve cannot re-arrange a spectrum, so the far field is its own
-  voice.** `audio._farBoom` is the fourth effect and the reason a fight 10 km
-  off is still audible: a slow 95->42 Hz sine plus a 340->120 Hz lowpassed edge,
-  mixed on `(25/d)^0.25` (`FAR_ROLLOFF`, 11 dB across the whole map instead of
-  34) and faded in from `FAR_NEAR` 700 m to `FAR_FULL` 2.6 km. It is played at
+  voice.** `audio._farBoom` is the fourth effect: a 260->60 Hz lowpassed rumble
+  (two seconds, soft attack) with a 58->34 Hz sine at a tenth of it underneath,
+  carrying the body of a distant report that the air has already taken off the
+  near cue.  The body is *noise*: a pure sine carries no air, and a boom 3 km out
+  that is one tone reads as a bell - measured, a 95->42 Hz sine held 50-60 % of
+  the event's energy in a single bin. It rides the *same* 1/r (`FAR_ROLLOFF` 1.0)
+  scaled by `FAR_LEVEL` 0.5, so it sits a constant 6 dB under the direct sound
+  and fades in from `FAR_NEAR` 700 m to `FAR_FULL` 2.6 km. Locking the two layers
+  to one law is what keeps a fight 12 km away quieter than one at 2.6 km: a bed
+  on its own flatter curve once made the far corner as loud as the middle of the
+  map, and a machine with no bass response hears only the bed, which is how a
+  laptop and a headset came to disagree about the whole mix. It is played at
   `dist` 0 *on purpose* - it is the already-through-the-atmosphere sample, so
   the air lowpass of `_bus` must not touch it again. Weight per source: 105 mm
   1.6, 30 mm 1.0, guided launch 0.4 (a whoosh, not a thud), round impact 1.0-1.3,
@@ -1263,7 +1277,14 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
   700 m. It gets **no reverb send** - it is the valley answering already, and a
   convolver input per voice is the most expensive thing a battle does.
 * **The far field is a bed, and a bed is compressed, not summed.** `_farBoom`
-  lands on `this.far` -> `farLim`, a bus compressor at `FAR_CEIL` (-20 dBFS),
+  lands on `this.far` -> `farLim`, a bus compressor at `FAR_CEIL` (-34 dBFS: one
+  voice at 8 km peaks near -62, ninety of them stack to about -43) -> `farTrim`,
+  which spends back the **+16.2 dB of makeup** a `DynamicsCompressor` adds at
+  that threshold and ratio (measured with a -50 dBFS sine). Without the trim the
+  bed arrived 16 dB over `FAR_LEVEL` - as loud as the near cue, and the only
+  thing left of a boom 3 km out. Just as important, a compressor's makeup is a
+  function of its threshold: a bed bus wants a *level* and a ceiling, never a
+  curve of its own,
   and it is rate limited to one voice per `FAR_MIN_GAP` (50 ms). A battle is
   ~90 sound events a second and every one of them is kilometres away, so mixed
   per event straight into `master` the layer had no ceiling: measured on a
@@ -1282,26 +1303,69 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
   body of a distant report comes from the far bus; a makeup curve belongs on a
   bed, which is compressed, not on each event, which is not.
 * **The master chain ends in a soft clipper, because a compressor is not a
-  limiter.** `master` -> `limiter` (a gentle 8:1 over an 8 dB knee: a hard
-  curve holds a dense mix down but flattens the cues worth hearing) ->
-  `top` (`CLIP_GAIN`) -> `clip` (a `WaveShaper`, linear to `CLIP_KNEE` 0.7 and
-  tanh to exactly 1, `oversample` 4x) -> destination. Before it, a single 105 mm
-  round next to the pilot and a single hull exploding 300 m away both measured
-  **over 1.0** at the destination - a hard 0 dBFS clamp is broadband fizz on
-  every transient, which is what a "broken speaker" is. `CLIP_GAIN` is a
+  limiter.** `master` -> `limiter` (12:1 over a 6 dB knee, threshold -12 dBFS,
+  2 ms attack: a hard curve holds a dense mix down but flattens the cues worth
+  hearing, so the ratio carries the bursts and the knee keeps one round's
+  transient) -> `top` (`CLIP_GAIN`) -> `clip` (a `WaveShaper`, linear to
+  `CLIP_KNEE` 0.7 and tanh to exactly 1, `oversample` 4x) -> destination.  The
+  threshold is the number that decides whether the shaper ever works: measured
+  with three gatlings 200 m out, -8 dB left the mix at 0.90 peak with **5 % of
+  its samples past the knee** - continuous soft-clip distortion, the faint buzz
+  under the battle - and -12 dB reads 0.69 with 0 % past it, while a 105 mm
+  next to the pilot still peaks at 0.76.  `CLIP_GAIN` is a
   measured constant, not a taste: the DynamicsCompressor adds its own makeup
-  gain (+1.3 dB for these settings, +2.9 dB for a 12:1 / -10 dB one), so 0.86 is
-  what puts the chain back at unity. Check it with a constant cue (`denied`
-  reads 0.094 at the destination) before changing either number.
+  gain, so 0.86 is what puts the chain back at unity.
+* **A voice is a temporary chain, and the mix has a ceiling.** Every cue opens
+  six to a dozen `AudioNode`s (a source, a filter, gains, a panner, a reverb
+  send), and each one of them is torn down in the source's `onended`. Left
+  connected they wait for a collector, and a battle opens a thousand a second -
+  measured on a live client at the map centre, **1080 nodes/s before the teardown
+  and 190 after**, with the audio clock drifting 0 ms either way on this machine
+  and a weaker one falling behind its own clock (heard as a crackle, then as a
+  tab that has gone silent). Two load-shedding rules sit on top, both keyed on
+  arriving **gain** rather than on who fired: `NEAR_FLOOR` (0.004, about 3.75 km
+  of machine gun) plays a cue as `_farBoom` alone, which is rate limited to 20
+  voices/s - 89 % of what a live client played was past 4 km and every one of
+  those was a full stack - and `MAX_VOICES` 48 slots, held for as long as a voice
+  sounds, drop the quiet cues once the mix is full while anything over
+  `STEAL_VOL` (0.05) still gets in. `_pumpSounds` also stops iterating the events
+  that cannot have arrived yet (`tMin`, the wavefront's earliest possible
+  arrival) and drops the whole list when the pilot is dead - a dead ear does not
+  need fifty seconds of a battle.
 * **The server decides what a pilot's ear gets.** `defs.SOUND_*` mirror the
   client's curve (`attenuation`, `SOUND_LEVEL`, same numbers), and
   `netcode.hearable(events, ear)` drops every `shot`/`boom` whose arriving gain
-  is under `SOUND_FLOOR` (2 %: a cannon reaches ~7.2 km, a hull's death blast
-  17 km). `main.broadcast` filters per connection against that pilot's mech
+  is under `SOUND_FLOOR` (0.2 %: a cannon reaches 7.5 km, a hull's death blast
+  12.5 km). `main.broadcast` filters per connection against that pilot's mech
   position - a dead pilot has no ear and gets no sound events at all, while
   messages (kill, capture, rearm, tiles, gameover) always pass. Otherwise every
   bang on a 16 km map would be broadcast to everybody: measured, 861 events in
-  15 s at the median 6.4 km, none of them worth the packet.
+  15 s at the median 6.4 km, none of them worth the packet. The gate is an
+  absolute distance (`REF_DIST * level / FLOOR`), so it is the *floor* that
+  decides reach and the falloff law barely moves it: going from 0.6 to the free
+  field took the 30 mm from 7.2 km to 7.5 km, and measured on `MECH_SEED=11` the
+  fx line is 3.0 kB/s either way. A leaner wire wants a shorter audible radius,
+  not a truer curve.
+* **An impact is tuned against a recording, not a feeling.**
+  `tools/blast_report.py` is the physics - a Friedlander wave whose positive
+  phase T+ scales with the cube root of the charge (1 ms for a 30 mm round,
+  10 ms for a hull) - and `boom()` is aimed at a real one: a 40 mm airburst
+  demonstration recorded at the target, three impacts, analysed in third-octave
+  bands.  What that recording says, and what a cue has to reproduce: the energy
+  peaks at **200-500 Hz** (52-60 % of it), there is almost nothing below 100 Hz
+  (1-3 %), a second shoulder sits at 2-4 kHz (11-15 % of the energy above 2 kHz
+  in total), the spectral centroid is ~816 Hz, and the -6 dB span is ~72 ms with
+  a tail out to half a second.  A cue built from a 100 Hz sine and a 220 Hz
+  lowpass with a 420 ms hold measures a 200 Hz centroid and sounds like a
+  muffled thud, which is exactly how this one used to.  So `boom()` is three
+  layers: a 3 kHz crack (60 ms), a 400-500 Hz body (`lowpass` with an `hp` at
+  85 Hz - the low end needs a floor as much as the top needs a ceiling, and
+  `_noiseBurst`'s `opts.hp` is that second corner), and the tail.  Measure a
+  change the same way it was measured here: record the cue, or reach for the
+  analyser, and compare third-octave bands against `tools/blast_report.py` or
+  the recording - never by ear alone, and never at a level above the limiter's
+  knee, because the soft clip re-arranges a spectrum and every number taken
+  after it is the shaper's, not the cue's.
 * **A bang has a side, and a back.** `game._bearing(s, own, dist)` turns an
   event's bearing into `pan` (its lateral share, `-1` left .. `+1` right) and
   `behind` (how much of it is behind the view, 0..1), taken at the moment the

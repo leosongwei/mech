@@ -1246,18 +1246,20 @@ public static partial class Defs
     // line (`attenuation`, `SOUND_LEVEL`) - the client plays at exactly the level the
     // server tested.
     //
-    // Spreading is inverse square *compressed*: over a 16 km map a true 1/r is 84 dB
-    // of dynamic range, which is silence.  ROLLOFF 0.6 keeps the shape of the near
-    // field (a gun at 100 m really is quieter than one at 20 m) and still leaves a
-    // hull 8 km out audible.  A muzzle is not a point source, so nothing falls off
-    // inside REF_DIST.
+    // Spreading is the free field: a point source loses 6 dB per doubling, i.e. 84 dB
+    // from 1 m to the far corner of this map.  The client's mix has about 50 dB of
+    // usable range, so FLOOR is where the two meet - 0.002, a 30 mm report at 7.5 km
+    // and a hull going up at 12.5 km.  That is also the wire's gate, so the acoustic
+    // law is what pays for itself in bandwidth: the further an event is, the less
+    // likely it is one a pilot could hear, and the fewer frames carry it.  A muzzle is
+    // not a point source, so nothing falls off inside REF_DIST.
     public const float SOUND_REF_DIST = 25.0f;  // m, where a source is at its full level
-    public const float SOUND_ROLLOFF = 0.60f;   // 1.0 = inverse square, 0 = no falloff at all
-    public const float SOUND_FLOOR = 0.02f;     // arriving gain under this is not sent at all
+    public const float SOUND_ROLLOFF = 1.0f;    // 1.0 = inverse square, the free field
+    public const float SOUND_FLOOR = 0.002f;    // arriving gain under this is not sent at all
     public const float SOUND_SPEED = 343.0f;    // m/s in air at 20 C (mirrors audio.js)
     // How long an event may stay in the air.  The loudest cue a pilot can hear is a
-    // hull going up, good to ~17 km - which takes 50 s to arrive, so a shorter TTL
-    // would be the real cutoff and the level test above would be dead letters.
+    // hull going up at 12.5 km, which is 36 s of travel, so 50 s covers the whole
+    // audible field and the level test above is what decides.
     public const float SOUND_TTL = 50.0f;       // s (mirrors game.js)
     // how loud each cue is at SOUND_REF_DIST (mirrors audio.js SOUND_LEVEL)
     public static readonly Dictionary<string, float> SOUND_LEVEL = new()

@@ -793,7 +793,7 @@ public static class Raids
         if (all.Length == 0) return force;
         var etype = e.uv("etype");
         var pos = e.fv("pos");
-        // the enemy's hulls only, in ascending id order (the query's order)
+        // the enemy's hulls only
         int m = 0;
         var ids = new int[all.Length];
         foreach (int eid in all)
@@ -801,7 +801,6 @@ public static class Raids
         if (m == 0) return force;
         var seen = new bool[256];
         for (int q = 0; q < m; q++) seen[etype[ids[q]]] = true;
-        // ascending hull type, the order `np.unique` hands them back in
         for (int t = 0; t < 256; t++)
         {
             if (!seen[t]) continue;

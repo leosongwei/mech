@@ -9,7 +9,9 @@
 const RWR_LO = 426;
 const RWR_HI = 561;
 const WARBLE_SLOW = 0.25;
-const WARBLE_FAST = 0.083;
+// one tone of the missile trill, and the rate every other cue that counts that
+// beat reads: the arrow ring's rim blinks on the same clock
+export const RWR_TONE_S = 0.083;
 const UPLINK_VOL = 0.05;            // a lock is a warning, not an emergency
 const MISSILE_VOL = 0.06;           // the trill sits a little above it
 // Master gain for a full volume slider.  The per-cue mixes above were tuned
@@ -715,7 +717,7 @@ export class GameAudio {
   missileWarning(active) {
     this.ensure();
     if (!this.ctx) return;
-    const v = this._warble('missile', WARBLE_FAST);
+    const v = this._warble('missile', RWR_TONE_S);
     this._warbleSet(v, !!active, MISSILE_VOL, 0.3);
   }
 

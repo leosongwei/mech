@@ -276,6 +276,10 @@ public sealed class WeaponDef
     public float thrust;            // m/s^2 from the motor, 0 = none
     public float maxvel;            // m/s the motor tops out at
     public float life;              // s of flight before the round cooks off
+    // what happens when `life` runs out: true = the warhead goes off where the
+    // round stands, false = the round is gone and leaves nothing behind
+    // (`Systems/Flights.cs::Expire`; running out of *wire* always cooks off)
+    public bool expire_burst;
     public int range;               // m at which the round still carries its energy
     public int cost;                // $ for the hardware; -1 = not for sale
     public float ammo_cost;         // $ per round of a full load
@@ -494,7 +498,7 @@ public static partial class Defs
             ap = 900f, ad = 120f, ed = 60f, er = 7.0f,
             rpm = 200, mag = 8, reserve = 0, reload = 0.0f, vel = 20f, spread = 0.002f,
             bias = 0.0f, g = 9.81f, thrust = 110.0f, maxvel = 306.0f, life = 30.0f,
-            range = 4000, cost = 700, ammo_cost = 45.0f,
+            expire_burst = true, range = 4000, cost = 700, ammo_cost = 45.0f,
             mass = 20.0f, dia = 0.127f, cd0 = 0.75f, k_cl = 0.12f, cl_alpha = 16.0f,
             cl_max = 5.0f, burn = 3.4f, ignite = 0.15f, loft = RACK_TOP.elev, apex = 950.0f,
             turn_r = 700.0f, pn_n = 4.0f, pn_r = 300.0f, pn_v = 120.0f,
@@ -558,6 +562,7 @@ public static partial class Defs
             rpm = 12, mag = 16, reserve = 0, reload = 0.0f, vel = 40f, spread = 0.003f,
             bias = 0.0f, g = 0.0f, thrust = 100f, burn = 5.6f, drag = 0.0002f, maxvel = 600f,
             life = 36.0f, wob = 30.0f, wob_f = 1.5f, maxdist = 4000.0f, range = 4000,
+            expire_burst = true,
             cost = -1, ammo_cost = 0.0f, @lock = 0, lock_time = 0f, salvo = 0, semi = 0,
             color = new[] { 0.35f, 1.0f, 0.55f }, cal = 152f, rcs = 0.02f,
             rack = RACK_SACLOS, desc = "Beam riding, one round every five seconds",
@@ -601,6 +606,31 @@ public static partial class Defs
 
     /// <summary>May this weapon's rounds be locked, fused and shot down?</summary>
     public static bool is_interceptable(int wid) => Array.IndexOf(INTERCEPT_KINDS, WEAPONS[wid].kind) >= 0;
+
+    // ------------------------------------------------------- first_hit_record
+    // The round's `first_hit_t` while nothing has been hit this tick.  A leg is
+    // a fraction in [0,1]; the record is *armed* at 2 so "the round ran into
+    // nothing" needs no second flag, and a system that finds a later hit leaves
+    // the record alone.
+    public const float FIRST_HIT_ARMED = 2f;
+
+    // what the record says the round ran into.  `GROUND`/`BUILDING`/`TRUNK` are
+    // three shapes of the same outcome today (a round that stops and bursts);
+    // they are separate because a destructible building will want its own.
+    public const byte HIT_NONE = 0, HIT_UNIT = 1, HIT_GROUND = 2, HIT_BUILDING = 3,
+                      HIT_TRUNK = 4, HIT_FUSE = 5, HIT_EXPIRE = 6, HIT_VANISH = 7;
+
+    /// <summary>The tag components a weapon's rounds carry, by `kind`: identity is
+    /// a component, never a `proj_kind` switch (the same rule `UNIT_DEFS.tags`
+    /// follows).  `interceptable` is *not* here - it is `is_interceptable(wid)`,
+    /// which reads the same `kind`, and one question gets one answer.</summary>
+    public static readonly Dictionary<string, string[]> KIND_TAGS = new()
+    {
+        ["bullet"] = new[] { "bullet" },
+        ["rocket"] = new[] { "unguided_missile" },
+        ["saclos"] = new[] { "saclos" },
+        ["top"] = new[] { "top_attack" },
+    };
 
     // -------------------------------------------------------------------- radar
     // What a platform sees a missile by.  `plan.md` gave the half of the equation
@@ -710,10 +740,6 @@ public static partial class Defs
     };
 
     /// <summary>One template off `AI_LOADOUTS`, drawn with `rng.random()`.</summary>
-    /// <remarks>
-    /// The draw is part of the simulation (it comes off `world.rng`), so a list of
-    /// templates in a different order fields a different battle.
-    /// </remarks>
     public static int[] ai_loadout(Rng rng)
     {
         float r = rng.random();
@@ -759,11 +785,7 @@ public static partial class Defs
         "Asakura", "Cuaran", "Giyal", "Sol", "Ross", "Magu",
     };
 
-    /// <summary>One crew name off `AI_NAMES`.</summary>
-    /// <remarks>
-    /// Drawn like the loadout (`ai_loadout`), off `world.rng`, so the order of the
-    /// pool is part of the simulation.
-    /// </remarks>
+    /// <summary>One crew name off `AI_NAMES`, drawn like the loadout.</summary>
     public static string ai_name(Rng rng) =>
         AI_NAMES[(int)(rng.random() * AI_NAMES.Length) % AI_NAMES.Length];
 

@@ -6,7 +6,7 @@ import { Input } from './input.js';
 import { GameAudio, SOUND_FLOOR, SOUND_LEVEL, SOUND_SPEED, attenuation } from './audio.js';
 import { Renderer, makeCamera } from './renderer.js';
 import { drawUnits } from './scene.js';
-import { HUD } from './hud.js';
+import { arrowRingAt, HUD } from './hud.js';
 import { Particles } from './particles.js';
 import { clamp, dirFrom, invert4, mat4 } from './math.js';
 import { emptyDraft, isEmpty, quickDraft, quote, toMessage } from './shop.js';
@@ -24,6 +24,16 @@ const RWR_RANGE = 2000;             // m, the threat receiver's own gate
 // care whether the receiver can place the round: a bearing-only contact on a
 // collision course sings exactly like a tracked one
 const WARN_MARGIN = 20;             // m of slack over the round's own `er`
+// the threat arrows in the ring beside the warning dial: the nearest few rounds
+// that are coming for this hull get a 3D arrow pointing at where they are on
+// screen, so the pilot turns his sight onto them and shoots them down.  The ring
+// is the dial's twin (`hud.arrowRingAt`) and every arrow of the frame springs
+// from its centre, `ARROW_LEN` long, so three bearings read as three needles
+const RWR_ARROWS = 3;               // at most this many, nearest first
+const ARROW_LEN = 66;               // px, the centre of the ring to the tip
+const ARROW_HEAD = 26;              // px, the cone on the end
+const ARROW_WID = 14;               // px, the shaft's diameter
+const ARROW_RGB = [1.0, 0.29, 0.29];
 const LASER_RANGE = 3400;           // longest sight an enemy could shoot at
 const LASER_CONE = 0.05;            // rad, "his gun is pointed at me"
 const NAME_KEY = 'mech.name';      // the callsign, remembered across reloads
@@ -473,6 +483,7 @@ export class Game {
     this._leadScreen(own);
     this._alarms(own);
     this._updateLockTone(own);
+    this._threatArrows(this.glCanvas.clientWidth);
     drawUnits(this.renderer, this.net.entities, this.net.projectiles,
       this.defs.weapons, this.flashes, own ? own.id : -1);
     this.particles.render(this.renderer);
@@ -504,10 +515,10 @@ export class Game {
       zr: this.input.zeroRange,
       // hot smoke: one pull per press, cleared as soon as it is on the wire
       q: this.shopOpen ? false : this.input.qPressed,
-      // the last snapshot this client has applied: the server skips frames for
-      // a pilot who is behind (TCP delivers everything, so the only way to
-      // catch up is to send fewer, and this is how it knows)
-      st: this.net.tick | 0,
+      // the newest server tick this client has seen: the frame clock reads it,
+      // and every binary frame echoes it back (that is what RTT is timed on).
+      // `ack()` stamps the moment this value first goes out.
+      st: this.net.ack(),
     });
     this.input.qPressed = false;
   }
@@ -687,6 +698,56 @@ export class Game {
       if (sightBlocked(this.map, eye[0], eye[1], eye[2],
                        e.x, e.y + 2.5, e.z, puffs)) continue;
       this.lasers.push({ x: e.x, z: e.z, dist: d, id: e.id });
+    }
+  }
+
+  // The threat arrows: the nearest three rounds on a course that reaches this
+  // hull get a 3D arrow in the strip beside the warning dial, each pointing at
+  // where its round actually is on screen - the pilot turns his sight that way
+  // and it is there to shoot at.  Screen frame, unlike the dial's own hull
+  // frame, because the arrow's whole job is "look there": the sight and the
+  // hull disagree exactly when a pilot is craning round for an incoming round.
+  // The strip is the one the gear vacated when it moved into the corner.
+  _threatArrows(w) {
+    const th = this.threats;
+    const own = this.ownEntity();
+    if (!own || !th || !th.length) return;
+    // the camera's own three axes, taken from the same yaw and pitch the frame
+    // is built with (shake aside - an arrow is not kicked by the gun): an arrow
+    // is the round's direction as the pilot *sees* it, so a round on the
+    // crosshair points away from him and shows its butt
+    const f = dirFrom(this.input.viewYaw,
+      clamp(this.input.pitch + this.input.freePitch * 0.8, -1.35, 1.35));
+    const rl = Math.hypot(f[0], f[2]) || 1;
+    const r = [-f[2] / rl, 0, f[0] / rl];              // screen right
+    const u = [r[1] * f[2] - r[2] * f[1], r[2] * f[0] - r[0] * f[2],
+      r[0] * f[1] - r[1] * f[0]];                      // screen up
+    // the same sun the machine is lit by, folded into this frame
+    const s = this.renderer.sun;
+    this.renderer.overlaySun([
+      s[0] * r[0] + s[1] * r[1] + s[2] * r[2],
+      -(s[0] * u[0] + s[1] * u[1] + s[2] * u[2]),
+      s[0] * f[0] + s[1] * f[1] + s[2] * f[2],
+    ]);
+    const eye = this._sightEye(own);
+    // every arrow springs from the ring's centre, which is also the overlay's
+    // projection origin: three rounds at three bearings are three needles of one
+    // compass, not three rows of a list
+    const at = arrowRingAt(w);
+    this.renderer.overlayOrigin(at.x, at.y);
+    let n = 0;
+    for (const t of th) {
+      if (!t.warn) continue;
+      if (n === RWR_ARROWS) break;
+      const vx = t.x - eye[0], vy = t.y - eye[1], vz = t.z - eye[2];
+      const l = Math.hypot(vx, vy, vz) || 1;
+      this.renderer.screenArrow(
+        (vx * r[0] + vy * r[1] + vz * r[2]) / l,
+        -(vx * u[0] + vy * u[1] + vz * u[2]) / l,
+        (vx * f[0] + vy * f[1] + vz * f[2]) / l,
+        ARROW_LEN, ARROW_HEAD, ARROW_WID,
+        ARROW_RGB[0], ARROW_RGB[1], ARROW_RGB[2], 0.96);
+      n++;
     }
   }
 
@@ -966,10 +1027,18 @@ export class Game {
       };
       for (const a of arms) {
         // the lead is solved against the hull's real velocity, which is what
-        // the wire carries (`vel`); `mv*` is the same number smoothed
+        // the wire carries (`vel`); `mv*` is the same number smoothed.  The
+        // pull is `ax` / `az`, the acceleration `net.js` measures off two
+        // velocity samples: a hull still accelerating into the shot, or
+        // braking out of one, is further on (or shorter) than its speed alone
+        // says by the time the round arrives.  A measurement older than half a
+        // second says nothing about now - a hull that was tiered out or held
+        // off the wire is ringed at its velocity alone.
+        const fresh = e.avt !== undefined && this.net.tick - e.avt <= 15;
         const p = leadPoint(a.wd, this.zeroRange, zero.max_elev,
           a.m[0], a.m[1], a.m[2], eye[0], eye[1], eye[2], t.x, t.y, t.z,
-          e.mvx === undefined ? e.vx : e.mvx, e.mvz === undefined ? e.vz : e.mvz);
+          e.mvx === undefined ? e.vx : e.mvx, e.mvz === undefined ? e.vz : e.mvz,
+          0, fresh ? e.ax : 0, fresh ? e.az : 0);
         if (p) t.marks.push({ arm: a.arm, x: p.x, y: p.y, z: p.z, tof: p.tof });
       }
       // the box stands on its own: a hull can be in view while the point to
@@ -1242,6 +1311,8 @@ export class Game {
       own,
       entities: this.net.entities,
       contacts: this.net.contacts,
+      net: { rtt: this.net.rttMs, tps: this.net.tps, loss: this.net.loss,
+             held: this.net.held },
       weapons: this.defs.weapons,
       units: this.defs.units,
       buyable: this.buyable,

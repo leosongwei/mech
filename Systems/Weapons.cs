@@ -2,7 +2,8 @@
 //
 // The system only *fires* stored intent (the trigger bits) - aiming lives in the
 // player-input / AI systems, ballistics in `Core/Ballistics.cs` and the round's
-// own flight in `Systems/Projectiles.cs`.
+// own flight in `Systems/Flights.cs`, and what a round runs into in
+// `Systems/FirstHit.cs`.
 //
 // Two headings, never one (see `aim_of` / `bore_of`): the sight is where the
 // crew is looking and answers instantly, the bore is where the metal points and
@@ -109,9 +110,7 @@ public static class Weapons
             }
         }
 
-        // ---- firing, in ascending id order --------------------------------
-        // `fire` draws the spread from `world.rng`, so the order of these pulls is
-        // part of the simulation: keep the query order, do not group it.
+        // ---- firing -------------------------------------------------------
         var trigger = e.uv("trigger");
         var trigger_prev = e.uv("trigger_prev");
         var owner = e.iv("owner");
@@ -285,51 +284,11 @@ public static class Weapons
             float dp = (zero is null ? pitch + wd.bias : zero.Value)
                        + world.rng.gauss(0f, sp);
             var d = MathUtil.dir_from(dy, dp);
-            // a missile is its own archetype: it carries a pool of health and its
-            // own armour, so it can be fused, holed and killed
-            // (`Components.MISSILE_COMPS`)
-            int pid;
-            if (Defs.is_interceptable(wid))
-            {
-                pid = e.create(Components.MISSILE_COMPS);
-                float hp = wd.aim_hp;
-                e.fv("hp")[pid] = hp;
-                e.fv("hpmax")[pid] = hp;
-                e.fv("armor").set(pid, 0, wd.aim_dp);
-                e.fv("armor").set(pid, 1, wd.aim_de);
-                // the seeker leaves the launcher already knowing what it is looking
-                // at, and how fast that thing was going: from here on the round owns
-                // the lock (`Core/Seeker.cs`), and its memory is what carries it
-                // through a lock cut before the first tick of flight.  Only the
-                // guided kind has a seeker; a beam rider and a rocket ride their own
-                // guidance.
-                if (kind == 3 && target >= 0 && e.is_alive(target))
-                {
-                    e.fv("tgt_mem").set3(pid, Seeker.roof(world, target));
-                    e.fv("tgt_vel").set3(pid, e.fv("vel").get3(target));
-                }
-            }
-            else
-            {
-                pid = e.create(Components.PROJ_COMPS);
-            }
-            e.fv("pos").set3(pid, origin);
-            e.fv("vel").set3(pid, d.x * wd.vel, d.y * wd.vel, d.z * wd.vel);
-            e.uv("faction")[pid] = e.uv("faction")[eid];
-            e.uv("proj_kind")[pid] = (byte)kind;
-            e.uv("proj_wid")[pid] = (byte)wid;
-            e.fv("proj_life")[pid] = life;
-            e.iv("proj_src")[pid] = eid;
-            // the credit travels with the round, not with the hull that fired it: a
-            // cannon round can outlive the machine by a second and a rocket by
-            // several, and a kill it lands is still the pilot's
-            e.iv("proj_pid")[pid] = e.iv("owner")[eid];
-            e.uv16("proj_name")[pid] = e.uv16("name_id")[eid];
-            e.uv("proj_etype")[pid] = e.uv("etype")[eid];
-            e.fv("proj_age")[pid] = 0f;
-            e.fv("proj_seed")[pid] = world.rng.random();
-            e.fv("proj_trav")[pid] = 0f;
-            e.iv("target")[pid] = target;
+            // the round's component set - which pool, which tag, whether it
+            // carries a seeker - is decided once, in the factory
+            world.spawn_round(eid, e.uv("faction")[eid], wid, kind,
+                              origin, new Vec3(d.x * wd.vel, d.y * wd.vel, d.z * wd.vel),
+                              life, target);
         }
         world.emit("shot", ("x", origin.x), ("y", origin.y), ("z", origin.z),
                    ("wid", wid), ("eid", eid), ("arm", arm));

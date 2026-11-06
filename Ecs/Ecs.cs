@@ -50,6 +50,10 @@ public sealed class Archetype
     public int cap;
     private readonly ECS _ecs;
 
+    /// <summary>The registry this archetype belongs to.  A columns object reaches
+    /// it through here to check its component names against the registration.</summary>
+    internal ECS ecs => _ecs;
+
     public Archetype(ECS ecs, int index, string[] key, Dictionary<string, Spec> specs)
     {
         _ecs = ecs;
@@ -258,6 +262,9 @@ public abstract class View
 
     protected void Refresh()
     {
+        // the LUT rebuilds on the first access after the archetype set changed.
+        // It writes on a read path, which is fine while the tick is one thread;
+        // a `run()` that wants to be parallel gets this made eager first.
         if (_gen != _ecs._gen)
         {
             _lut = _ecs.buffers(_name);
@@ -493,7 +500,7 @@ public sealed class ECS
     /// just left may be reused at once - this is how a system sees the list).</summary>
     public readonly List<int> destroyed = new();
 
-    private int[] _qbuf = new int[64];
+    private readonly List<Archetype> _match = new();   // query()'s per-call match set
     private int[] _stamp = Array.Empty<int>();
     private int _stamp_gen;
 
@@ -617,40 +624,37 @@ public sealed class ECS
     public bool is_alive(int eid) => eid >= 0 && eid < _high && alive[eid];
 
     // -- queries ----------------------------------------------------------
-    /// <summary>Ids of the entities owning all of `names`, ascending.
-    ///
-    /// Ascending matters: it is the order the old slot scan produced, and the
-    /// order systems consume the world in - a system that draws random numbers
-    /// per entity must see the same order every tick.</summary>
+    /// <summary>Ids of the entities owning all of `names`, one archetype block
+    /// after another.</summary>
     public int[] query(params string[] names)
     {
         if (names.Length == 0)
         {
-            var all = new int[_high];
             int m = 0;
+            for (int k = 0; k < _high; k++) if (alive[k]) m++;
+            var all = new int[m];
+            m = 0;
             for (int k = 0; k < _high; k++) if (alive[k]) all[m++] = k;
-            return all[..m];
+            return all;
         }
+        _match.Clear();
         int total = 0;
         for (int k = 0; k < archetypes.Count; k++)
         {
             var a = archetypes[k];
             if (a.n == 0 || !owns(a, names)) continue;
+            _match.Add(a);
             total += a.n;
         }
         if (total == 0) return Array.Empty<int>();
-        if (_qbuf.Length < total) _qbuf = new int[Math.Max(total, _qbuf.Length * 2)];
+        var outIds = new int[total];
         int w = 0;
-        for (int k = 0; k < archetypes.Count; k++)
+        for (int k = 0; k < _match.Count; k++)
         {
-            var a = archetypes[k];
-            if (a.n == 0 || !owns(a, names)) continue;
-            Array.Copy(a.ids, 0, _qbuf, w, a.n);
+            var a = _match[k];
+            Array.Copy(a.ids, 0, outIds, w, a.n);
             w += a.n;
         }
-        if (w != total) total = w;
-        var outIds = _qbuf[..total];
-        Array.Sort(outIds);
         return outIds;
     }
 
@@ -688,9 +692,8 @@ public sealed class ECS
         return outv;
     }
 
-    /// <summary>(rows, archetype index) for ascending ids - the order preserving
-    /// door, for the systems whose iteration order must not change because it
-    /// draws the random numbers.</summary>
+    /// <summary>(rows, archetype index) for a flat id list: the door for a loop
+    /// that keeps an id list and wants buffer access off one resolution.</summary>
     public void locate(int[] ids, out int[] rows, out int[] arch)
     {
         rows = new int[ids.Length];
@@ -713,10 +716,8 @@ public sealed class ECS
 
     /// <summary>The non-empty archetypes owning all of `names`, buffers hoisted.
     ///
-    /// Iterating these is archetype-major: fine for anything that integrates
-    /// entities independently (movement, countdowns), but it reorders the
-    /// world, so a system that draws random numbers per entity must keep using
-    /// `query` + `locate` instead.</summary>
+    /// Iterating these walks rows `0..n-1` with no per-row component test: the
+    /// pass becomes a handful of array calls.</summary>
     public List<Group> groups(params string[] names)
     {
         var outv = new List<Group>();

@@ -6,20 +6,23 @@
 // here is little-endian, row-major and named exactly like the Python side.
 //
 //   init       one JSON text frame, `static_payload` + who you are
-//   snapshot   one binary frame: 24 B header, then unit rows in five widths
-//              (`ROWS`: mech 74, apc 46, base 30, wreck/bunker 25, infantry
-//              20 B), 32 B projectile rows, 32 B smoke rows, and - every
-//              `CONTACT_EVERY` ticks - the minimap's 6 B contact rows.  The
-//              header is magic, tick and **eight** u16 counts (one per unit
-//              class, then projectiles, smoke, contacts); the rows start there.
+//   clock      the 16 B block every binary frame opens with: magic, tick, the
+//              echo of the pilot's own ack, the server's tick rate (`tps`x100)
+//              and this pilot's loss over the last second (`loss`x0.01 %)
+//   snapshot   that clock, then eight u16 counts (one per unit class, then
+//              projectiles, smoke, contacts) - 32 B - then unit rows in five
+//              widths (`ROWS`: mech 74, apc 46, base 30, wreck/bunker 25,
+//              infantry 20 B), 32 B projectile rows, 32 B smoke rows, and -
+//              every `CONTACT_EVERY` ticks - the minimap's 6 B contact rows.
 //              It was 14 B with three counts and one 80 B row for everything
 //              until the wire stopped dumping columns and started sending what
 //              each kind of entity is read for.
-//   ping       magic + tick, 8 B: what a congested pilot gets instead of a
-//              snapshot (`MAGIC_PING`).  It exists so the clock - and with it
-//              the ack the server judges him by - keeps moving while the pipe
+//   ping       the clock block alone, 16 B (`MAGIC_PING`): what a congested
+//              pilot gets instead of a snapshot, and what every tick between
+//              two snapshots carries.  It exists so the clock - and with it the
+//              ack the server judges him by - keeps moving while the pipe
 //              drains.  The client leaves its whole field untouched on one.
-//   fx         the round events (`shot`, `boom`) as 12 B rows under `MAGIC_FX`
+//   fx         the round events (`shot`, `boom`) as 24 B rows under `MAGIC_FX`
 //              - 6 B header + count - plus a JSON text frame for the rare ones
 //              (a kill line, a capture, a seeker losing its lock), filtered per
 //              ear by `hearable`
@@ -37,12 +40,14 @@ namespace Mech.Server;
 public static class Netcode
 {
     public const uint MAGIC = 0x4D454348;      // "MECH"
-    // A hold frame: magic + tick, 8 bytes, no rows at all.  It is what a jammed
-    // connection gets instead of a snapshot, so the client's clock (and the ack
-    // the server judges him by) keeps moving while the pipe drains.
     public const uint MAGIC_FX = 0x4D454346;    // "MECF": the round events, as rows
     public const uint MAGIC_PING = 0x4D454350;  // "MECP"
-    public const int HEADER = 24;              // magic, tick, eight u16 counts
+    // Both binary frames start with the same 16 B clock block: magic, tick, the
+    // echo of the pilot's own ack (what RTT is measured on), the server's tick
+    // rate and this pilot's loss over the last second.  A snapshot carries the
+    // clock block and then its eight counts; a hold frame *is* the block.
+    public const int CLOCK = 16;
+    public const int HEADER = CLOCK + 16;      // clock + eight u16 counts
     // A unit row is as wide as the *kind* of unit needs, not as wide as the
     // richest one: the five classes below are the five layouts the client
     // actually reads (see the offsets at `snapshot_bytes`).  It used to be one
@@ -287,13 +292,26 @@ public static class Netcode
         return buf;
     }
 
-    /// <summary>Magic + tick, nothing else: the frame a congested pilot gets.</summary>
-    public static byte[] ping_bytes(int tick)
+    /// <summary>The clock block, written at the front of both binary frames:
+    /// magic, tick, `echo` (the pilot's newest ack, sent back so he can time a
+    /// round trip without a synchronised clock), `tps` and `loss` in hundredths
+    /// of a percent.  `loss` is per pilot - it is *his* skipped snapshots.</summary>
+    private static void _clock(Span<byte> s, uint magic, int tick, int echo,
+                               int tps_x100, int loss_x10000)
     {
-        var buf = GC.AllocateUninitializedArray<byte>(8);
-        var s = buf.AsSpan();
-        _w32(s, 0, MAGIC_PING);
+        _w32(s, 0, magic);
         _w32(s, 4, (uint)tick);
+        _w32(s, 8, (uint)echo);
+        _w16(s, 12, tps_x100);
+        _w16(s, 14, loss_x10000);
+    }
+
+    /// <summary>The clock block on its own: what a congested pilot gets instead
+    /// of a snapshot, and what makes a healthy link's frame rate 30/s.</summary>
+    public static byte[] ping_bytes(int tick, int echo, int tps_x100, int loss_x10000)
+    {
+        var buf = GC.AllocateUninitializedArray<byte>(CLOCK);
+        _clock(buf.AsSpan(), MAGIC_PING, tick, echo, tps_x100, loss_x10000);
         return buf;
     }
 
@@ -303,9 +321,8 @@ public static class Netcode
     private static ushort _u16(int v) =>
         v <= 0 ? (ushort)0 : v >= 65535 ? (ushort)65535 : (ushort)v;
 
-    // A component a wreck, a corpse or a round need not own: Python's
-    // `columns()` fills the default in where the entity has no buffer, so these
-    // do the same instead of throwing on the archetype that lacks it.
+    // A component a wreck, a corpse or a round need not own: these answer the
+    // registered default instead of throwing on the archetype that lacks it.
     private static float _f(Archetype a, int row, string name, int c = 0) =>
         a.has(name) ? a.get_f(name, row, c) : 0f;
     private static int _i(Archetype a, int row, string name) =>
@@ -393,6 +410,10 @@ public static class Netcode
     {
         public float x, z;
         public int mech = -1;
+        // the clock block's per-pilot fields, filled by `Client` before a frame
+        // is built: the ack to echo back, and this pilot's loss last second
+        public int echo = -1;
+        public int loss_x10000;
         // the whole field, tiers off: the baseline a harness prices the
         // filtered frame against (nothing on the live server sets it)
         public bool all;
@@ -545,12 +566,11 @@ public static class Netcode
         for (int c = 0; c < ROWS; c++) total += ku[c].Count * stride_of(c);
         var buf = GC.AllocateUninitializedArray<byte>(total);
         var s = buf.AsSpan();
-        _w32(s, 0, MAGIC);
-        _w32(s, 4, (uint)world.tick);
-        for (int c = 0; c < ROWS; c++) _w16(s, 8 + c * 2, ku[c].Count);
-        _w16(s, 18, kp.Count);
-        _w16(s, 20, ks.Count);
-        _w16(s, 22, nc);
+        _clock(s, MAGIC, world.tick, v.echo, Server.TPS_X100, v.loss_x10000);
+        for (int c = 0; c < ROWS; c++) _w16(s, CLOCK + c * 2, ku[c].Count);
+        _w16(s, CLOCK + 10, kp.Count);
+        _w16(s, CLOCK + 12, ks.Count);
+        _w16(s, CLOCK + 14, nc);
 
         int off = HEADER;
         var ammo = e.iv("ammo");
@@ -587,8 +607,8 @@ public static class Netcode
             _w16(s, off + 50, _u16(_f(a, r, "arm_hp", 0)));
             _w16(s, off + 52, _u16(_f(a, r, "arm_hp", 1)));
             // the two-slot counters (`ammo` / `mag` are ints, `weapon` a byte,
-            // two arms each) go through the views: the default they answer for
-            // a hull that has no arms is exactly what `columns()` fills
+            // two arms each) go through the views, which answer the default for
+            // a hull that has no arms
             _w16(s, off + 54, _u16(ammo.get(eid, 0)));
             _w16(s, off + 56, _u16(ammo.get(eid, 1)));
             _w16(s, off + 58, _u16(mag.get(eid, 0)));

@@ -7,8 +7,9 @@
     <!-- The product version.  This file is the single source of truth: the web
          client's build reads it and stamps it under the lobby's subtitle
          (`frontend/webpack.config.js`), and the server logs it at boot.  Every
-         feature change bumps the SECOND number; the third stays 0. -->
-    <Version>1.10.0</Version>
+         change to the product bumps it: a feature change the SECOND number (the
+         third going back to 0), a change a player cannot see the THIRD. -->
+    <Version>1.13.0</Version>
     <AssemblyName>MechServer</AssemblyName>
     <RootNamespace>Mech.Server</RootNamespace>
     <InvariantGlobalization>true</InvariantGlobalization>

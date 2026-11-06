@@ -263,6 +263,7 @@ out vec4 vColor;
 out vec3 vWorld;
 out float vViewZ;
 out vec3 vLocal;               // position in the primitive's unit cube
+out vec3 vLocalN;              // and its normal, before the instance turns it
 out vec3 vScale;               // the instance's size in metres
 void main(){
   vec4 wp = iM0 * aPos.x + iM1 * aPos.y + iM2 * aPos.z + iM3;
@@ -271,6 +272,7 @@ void main(){
   vColor = iColor;
   vWorld = wp.xyz;
   vLocal = aPos;
+  vLocalN = aNormal;
   vScale = vec3(length(iM0.xyz), length(iM1.xyz), length(iM2.xyz));
   vec4 clip = uViewProj * wp;
   gl_Position = clip;
@@ -284,6 +286,7 @@ in vec4 vColor;
 in vec3 vWorld;
 in float vViewZ;
 in vec3 vLocal;
+in vec3 vLocalN;
 in vec3 vScale;
 uniform vec3 uSun;
 uniform vec3 uCamPos;
@@ -292,6 +295,7 @@ uniform float uFogDensity;
 uniform float uFar;
 uniform float uUnlit;                // 1 = skip the lighting term (tracers)
 uniform float uFacade;               // 1 = paint storeys and windows on the walls
+uniform float uOutline;              // 0 off, 1 cylinder, 2 cone (overlay paint)
 out vec4 fragColor;
 
 // A plain cube read as a house: a darker plinth, a cornice under the roof and
@@ -328,6 +332,18 @@ void main(){
   float rim = pow(1.0 - max(0.0, dot(n, v)), 3.0) * 0.16;
   vec3 albedo = uFacade > 0.5 ? facade(vColor.rgb, n, vLocal, vScale) : vColor.rgb;
   vec3 c = mix(albedo * (0.40 + 0.78 * diff + rim), vColor.rgb, uUnlit);
+  // The overlay's paint: the cone's base cap is white and everything else keeps
+  // the arrow's red.  Seen down the arrow's own axis - which is exactly what an
+  // arrow for a round on the crosshair is - that cap is the whole silhouette,
+  // so a white disc says "the back of the head" at a glance, and a white cap
+  // ringed by red says the same once the arrow starts to turn.  White on the
+  // near end would be a lie, and the near end is only ever the shaft's own cap.
+  // uOutline picks the piece: 1 the cylinder, 2 the cone.
+  if (uOutline > 0.5) {
+    c = mix(c, vColor.rgb, 0.35);
+    float base = step(1.5, uOutline) * step(0.90, abs(vLocalN.y)) * step(0.49, -vLocal.y);
+    c = mix(c, vec3(0.90, 0.90, 0.88), base);
+  }
   float dist = distance(vWorld, uCamPos);
   float fog = 1.0 - exp(-dist * uFogDensity);
   c = mix(c, uFogColor, clamp(fog, 0.0, 1.0));
@@ -357,6 +373,13 @@ function program(gl, vs, fs) {
 const STRIDE_FLOATS = 20;            // mat4 + vec4 colour
 const CHUNK_TILES = 40;              // 640 m prop chunks
 const DYN_CAP = [40000, 24000, 24000, 24000, 8000, 32000, 64, 64, 2000, 600, 6000];
+const OVL_CAP = 16;                  // screen-space pieces (8 arrows of two)
+const OVL_FOCAL = 900;               // px, how far away an overlay arrow is told
+                                     // to be: an arrow pointing away from the
+                                     // pilot tapers, and one coming at him grows
+const OVL_PUSH = 60;                 // px of depth every overlay piece is pushed
+                                     // behind the glass, so its w stays above 1
+                                     // and the log depth it writes stays ordered
 
 // Optics: the radial terrain grid keeps the plain tile spacing for `a0` rings
 // (no merged quads inside that radius) and doubles its ring spacing every `g`
@@ -408,7 +431,7 @@ export class Renderer {
     this.uTerrain = this._uniforms(this.pTerrain, ['uViewProj', 'uHeight', 'uTiles', 'uMapSize', 'uTile', 'uG', 'uA0', 'uCam', 'uSun', 'uFogColor', 'uFogDensity', 'uFar', 'uNear']);
     this.uTile = this._uniforms(this.pTile, ['uViewProj', 'uHeight', 'uTiles', 'uMapSize', 'uTile', 'uOrigin', 'uCam', 'uSun', 'uFogColor', 'uFogDensity', 'uFar', 'uNear']);
     this.uRoad = this._uniforms(this.pRoad, ['uViewProj', 'uCam', 'uSun', 'uFogColor', 'uFogDensity', 'uFar']);
-    this.uMesh = this._uniforms(this.pMesh, ['uViewProj', 'uSun', 'uCamPos', 'uFogColor', 'uFogDensity', 'uFar', 'uUnlit', 'uFacade']);
+    this.uMesh = this._uniforms(this.pMesh, ['uViewProj', 'uSun', 'uCamPos', 'uFogColor', 'uFogDensity', 'uFar', 'uUnlit', 'uFacade', 'uOutline']);
     this.tileOrigin = [0, 0];
 
     // ---- primitive meshes in one VBO ---------------------------------
@@ -449,6 +472,26 @@ export class Renderer {
       gl.bufferData(gl.ARRAY_BUFFER, data.byteLength, gl.DYNAMIC_DRAW);
       return { data, count: 0, vbo, cap: 12000 };
     });
+
+    // the screen-space overlay: the threat arrows beside the warning dial are
+    // the one thing drawn in CSS pixels rather than in metres, so the two
+    // primitives they are made of get their own instance buffers and are
+    // flushed last, with the HUD's own frame in place of the camera's
+    this.ovl = [];
+    for (const m of [MESH_CYL, MESH_CONE]) {
+      const data = new Float32Array(OVL_CAP * STRIDE_FLOATS);
+      const vbo = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+      gl.bufferData(gl.ARRAY_BUFFER, data.byteLength, gl.DYNAMIC_DRAW);
+      this.ovl[m] = { data, count: 0, vbo };
+    }
+    // the light those pieces are drawn under, folded into their frame once a
+    // frame by the game (`overlaySun`); this default is the world's sun until
+    // the first frame arrives
+    this.ovlSun = [0.55, -0.72, -0.42];
+    // the point every arrow this frame is projected about (`overlayOrigin`):
+    // one divide for the whole column, which is what lets it be a single draw
+    this.ovlOrigin = [0, 0];
 
     this.propBatches = null;
     this.meshFirst = this.meshes.map((m) => m.first);
@@ -921,6 +964,142 @@ export class Renderer {
   nose(px, py, pz, yaw, pitch, sx, sy, sz, r, g, b, a) { this.push(MESH_NOSE, px, py, pz, yaw, pitch, sx, sy, sz, r, g, b, a); }
   hex(px, py, pz, yaw, pitch, sx, sy, sz, r, g, b, a) { this.push(MESH_HEX, px, py, pz, yaw, pitch, sx, sy, sz, r, g, b, a); }
 
+  // ------------------------------------------------------- screen overlay
+  // The threat arrows in the ring beside the warning dial: a cylinder shaft and
+  // a cone head, the same instanced primitives every unit in the world is made
+  // of, drawn in the HUD's own CSS pixels.  The axis is the round's own
+  // direction in the camera's frame - +x right, +y down, +z into the glass - so
+  // an arrow for a round straight ahead points away from the pilot and shows its
+  // butt, one for a round behind him comes off the glass at him, and a round
+  // above or below is read the same way.  Nothing here is a screen-plane
+  // rotation.
+  //
+  // Every arrow of a frame springs from the one point `overlayOrigin` was given
+  // - the centre of the ring - so three rounds at three bearings read as three
+  // needles of one compass rather than as a list.  That point is also the
+  // overlay's projection origin, which is what keeps an arrow with any depth to
+  // it from smearing sideways as it turns away, and it is why the whole overlay
+  // is one matrix and one draw call per piece, however many arrows there are.
+  screenArrow(dx, dy, dz, len, head, wid, r, g, b, a) {
+    const sh = this.ovl[MESH_CYL], hd = this.ovl[MESH_CONE];
+    if (!sh || !hd || sh.count + 2 > OVL_CAP) return;
+    const l = Math.hypot(dx, dy, dz) || 1;
+    const ax = dx / l, ay = dy / l, az = dz / l;
+    // the arrow's own side axis: square to it, spun round to +X when the arrow
+    // lies along the screen's down axis (the cone and the cylinder are round,
+    // so which perpendicular is picked only decides which way they roll)
+    let rx = 0, ry = 1, rz = 0;
+    if (Math.abs(ay) > 0.95) { rx = 1; ry = 0; rz = 0; }
+    let sx = ry * az - rz * ay, sy = rz * ax - rx * az, sz = rx * ay - ry * ax;
+    const sl = Math.hypot(sx, sy, sz) || 1;
+    sx /= sl; sy /= sl; sz /= sl;
+    // and the third column, which closes a right-handed frame so the normals
+    // come out the right way round
+    const tx = ay * sz - az * sy, ty = az * sx - ax * sz, tz = ax * sy - ay * sx;
+    const shaft = Math.max(1, len - head);
+    // The arrow sits `OVL_PUSH` pixels behind the glass so every one of its
+    // vertices lands at w > 1, which keeps the log depth the mesh shader writes
+    // positive and ordered; and the shaft is pushed before the head when it is
+    // the deeper of the two, because they overlap and a tie would go to whoever
+    // draws first.
+    const pieces = [
+      { m: sh, k: shaft * 0.5, l: shaft, w: wid },
+      { m: hd, k: shaft + head * 0.5, l: head, w: wid * 2.1 },
+    ];
+    if (az > 0) pieces.reverse();
+    const o = this.ovlOrigin;
+    for (const p of pieces) {
+      this._ovlPush(p.m, o[0] + ax * p.k, o[1] + ay * p.k, az * p.k + OVL_PUSH,
+        ax, ay, az, sx, sy, sz, tx, ty, tz, p.w, p.l, r, g, b, a);
+    }
+  }
+
+  // The overlay's light: the world's sun folded into the camera frame the
+  // arrows are drawn in, so an arrow is lit by the same sun as the machine it
+  // belongs to.
+  overlaySun(s) { this.ovlSun = s; }
+
+  // The point the overlay divides about, and the tail every arrow springs from
+  // - the centre of the ring.  One origin for all of them: the pieces of a
+  // frame are then one matrix and one draw call per mesh.
+  overlayOrigin(x, y) { this.ovlOrigin = [x, y]; }
+
+  // A piece's local +Y is its axis (the cylinder and the cone are both built
+  // along it), so the arrow's direction goes in that column, with the two
+  // perpendiculars either side of it - both scaled by the piece's width, since
+  // local X and local Z are the mesh's two radial axes and a round piece is as
+  // wide across one as across the other.
+  _ovlPush(batch, px, py, pz, ax, ay, az, sx, sy, sz, tx, ty, tz, wx, hy, r, g, b, a) {
+    const o = batch.count * STRIDE_FLOATS;
+    const d = batch.data;
+    d[o] = sx * wx; d[o + 1] = sy * wx; d[o + 2] = sz * wx; d[o + 3] = 0;
+    d[o + 4] = ax * hy; d[o + 5] = ay * hy; d[o + 6] = az * hy; d[o + 7] = 0;
+    d[o + 8] = tx * wx; d[o + 9] = ty * wx; d[o + 10] = tz * wx; d[o + 11] = 0;
+    d[o + 12] = px; d[o + 13] = py; d[o + 14] = pz; d[o + 15] = 1;
+    d[o + 16] = r; d[o + 17] = g; d[o + 18] = b; d[o + 19] = a === undefined ? 1 : a;
+    batch.count++;
+  }
+
+  // Flushed after the world, one arrow at a time so each gets its own
+  // projection.  The depth buffer is cleared first: these pieces overlap each
+  // other (a cone's own base pokes through its sides when it is seen end-on)
+  // and they float over terrain that must not cut them, so they are sorted
+  // against themselves and against nothing else.  `uFar` is 2, which turns the
+  // mesh shader's log depth into a plain log2 of w - monotone over the
+  // [1, 1.1] the pieces live in, where the world's 32 km scale would put every
+  // one of them at the same depth value.
+  _drawArrows() {
+    const gl = this.gl;
+    const buf = this.ovl[MESH_CYL];
+    if (!buf || !buf.count) return;
+    const o = this.ovlOrigin;
+    const D = OVL_FOCAL;
+    gl.useProgram(this.pMesh);
+    gl.uniform3fv(this.uMesh.uSun, this.ovlSun);
+    gl.uniform1f(this.uMesh.uFogDensity, 0);
+    gl.uniform1f(this.uMesh.uFar, 2);
+    gl.uniformMatrix4fv(this.uMesh.uViewProj, false, this._ovlMat(o[0], o[1]));
+    // the eye for the rim term is the ring's own, `D` pixels in front of it
+    gl.uniform3f(this.uMesh.uCamPos, o[0], o[1], -D);
+    gl.disable(gl.DEPTH_TEST);
+    gl.depthMask(true);
+    gl.clear(gl.DEPTH_BUFFER_BIT);
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthFunc(gl.LESS);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    for (const m of [MESH_CYL, MESH_CONE]) {
+      const b = this.ovl[m];
+      if (!b.count) continue;
+      gl.bindBuffer(gl.ARRAY_BUFFER, b.vbo);
+      gl.bufferSubData(gl.ARRAY_BUFFER, 0, b.data.subarray(0, b.count * STRIDE_FLOATS));
+      // the shader paints the cone's base cap white, so it needs to know which
+      // piece it is looking at
+      gl.uniform1f(this.uMesh.uOutline, m === MESH_CONE ? 2 : 1);
+      this._submit(m, b.vbo, [{ first: 0, count: b.count }]);
+      b.count = 0;
+    }
+    gl.disable(gl.BLEND);
+  }
+
+  // CSS pixels to clip space with the divide about (cx, cy): an arrow's own
+  // pixels, z = depth into the glass, w = 1 + z/D.  A vertex on the arrow's
+  // centre line comes out at exactly the pixel it was asked for, and the rest
+  // of the piece is scaled about that point - so turning an arrow towards the
+  // pilot telescopes it instead of sliding it sideways.
+  _ovlMat(cx, cy) {
+    const w = this.canvas.clientWidth || 1;
+    const h = this.canvas.clientHeight || 1;
+    const D = OVL_FOCAL;
+    const ax = 2 / w, ay = 2 / h;
+    const m = new Float32Array(16);
+    m[0] = ax; m[4] = 0; m[8] = (ax * cx - 1) / D; m[12] = -1;
+    m[5] = -ay; m[9] = (1 - ay * cy) / D; m[13] = 1;
+    m[11] = 1 / D; m[15] = 1;
+    m[2] = 0; m[3] = 0; m[6] = 0; m[7] = 0; m[10] = 0; m[14] = 0;
+    return m;
+  }
+
   // ---------------------------------------------------------------- frame
   draw(cam) {
     const gl = this.gl;
@@ -939,6 +1118,7 @@ export class Renderer {
     this._drawProps(cam);
     this._drawDynamic(cam);
     this._drawParticles();
+    this._drawArrows();
   }
 
   _drawSky(cam) {
@@ -1051,6 +1231,7 @@ export class Renderer {
     gl.uniform3fv(this.uMesh.uFogColor, this.fogColor);
     gl.uniform1f(this.uMesh.uFogDensity, this.fogDensity);
     gl.uniform1f(this.uMesh.uFar, this.far);
+    gl.uniform1f(this.uMesh.uOutline, 0);
   }
 
   _bindMesh(meshIndex, vbo, byteOffset) {

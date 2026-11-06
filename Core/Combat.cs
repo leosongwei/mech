@@ -5,7 +5,7 @@
 // the whole field, it is something a round does the moment it lands, so it lands
 // there: forward, splash and the fuse all go through `apply` in their own loop.
 //
-//     apply   <- hit    <- Projectiles._impact   (a round landing on a hull)
+//     apply   <- hit    <- Impact._detonate      (a round landing on a hull)
 //             <- splash <- Systems/Blasts.cs     (a hull inside a burst)
 //             <- debug_hurt                      (a raw number, for testing)
 //

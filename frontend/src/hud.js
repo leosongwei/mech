@@ -593,31 +593,39 @@ export class HUD {
 
   // Warning circle, in the top right corner: a bird's eye of everything the
   // threat receiver holds, drawn in the hull's own frame - straight up is where
-  // the mech is looking.  The face is a **fixed 2 km** for every machine, so a
+  // the mech is looking.  The face is a **fixed 3 km** for every machine, so a
   // mark's distance from the middle is its real distance and two pilots read
-  // the same dial.
+  // the same dial.  That number is the snapshot's guided tier (`TIER_ROUND`):
+  // a round further out than the wire carries cannot be drawn, so the face is
+  // the receiver's display ceiling rather than its sensitivity.
   //
   // Four marks, four answers, and which one you get is *what the receiver
   // knows*, not a style:
   //   * a red **dot** at the true bearing and true range - the doppler return
-  //     cleared the floor (`seen`), so the round has a position;
+  //     cleared the tracking floor (`seen`), so the round has a position;
   //   * a blinking **spoke** out from the middle on the bearing only - the
-  //     round is inside the receiver, closing, on a course that reaches this
-  //     hull and has line of sight, but its echo never cleared the floor, so
-  //     there is no range to draw.  A bearing is not a track;
+  //     round was heard but never placed, so there is no range to draw.  A
+  //     bearing is not a track, and the spoke has one look whether or not the
+  //     receiver thinks it is converging: that answer is the rim's job.
   //   * a red **triangle** at the true position with a **dashed** beam running
   //     out to it - somebody's laser sight is on this hull and he is inside
-  //     2 km;
+  //     3 km;
   //   * the same triangle **pinned to the rim** when he is further out than
-  //     that: the bearing is real, the distance is "2 km or more".
-  // The rim turns red for an *incoming* round only (`warn`).
+  //     that: the bearing is real, the distance is "3 km or more".
+  //
+  // The rim blinks on the alarm, and the alarm is computed once in
+  // `game._threats` (`radarAlarm`): a placed round (`seen`) is judged on the
+  // two horizontal rays it owns - where its track runs once this hull's motion
+  // is taken out, and where its own nose points - and a heard one on how
+  // steadily its bearing is tracking this hull.  The trill reads the same
+  // boolean, so the eye and the ear count the same beats.
   _radar(s, w, h) {
     const ctx = this.ctx;
     const R = RADAR_PX;
     // metres at the edge of the dial: a constant, not the machine's own
     // discovery range - that is a number the receiver *earns* (an echo), and
     // it is drawn as one by whether a contact has a position at all
-    const ring = s.radarScale || 2000;
+    const ring = s.radarScale || 3000;
     const dial = dialAt(w);
     const cx = dial.x;
     const cy = dial.y;
@@ -640,7 +648,7 @@ export class HUD {
     // the next, so the rim and the ear count the same beats.  Red is the pure
     // 255, 0, 0 - the same red the arrows are - and the quiet state is the
     // dial's own rim colour.
-    const alarm = threats.some((t) => t.warn);
+    const alarm = s.radarAlarm === 1;
     const beat = (performance.now() / 1000 / RWR_TONE_S) % 2 < 1;
     ctx.globalAlpha = 1;
     ctx.strokeStyle = !alarm ? 'rgba(150,190,175,0.5)'
@@ -662,7 +670,7 @@ export class HUD {
     ctx.fill();
     // dial
     ctx.globalAlpha = 0.5;
-    ctx.strokeStyle = threats.some((t) => t.warn)
+    ctx.strokeStyle = threats.some((t) => t.warn || t.aim)
       ? 'rgba(255,90,80,0.85)' : 'rgba(150,190,175,0.5)';
     ctx.lineWidth = 1.2;
     ctx.beginPath();
@@ -679,13 +687,13 @@ export class HUD {
     ctx.stroke();
     ctx.font = '9px "Courier New", monospace';
     ctx.fillStyle = 'rgba(160,200,185,0.7)';
-    // the scale under the heading tick: the face is a constant 2 km, so this
-    // label is too ("2.0 km")
+    // the scale under the heading tick: the face is a constant 3 km, so this
+    // label is too ("3.0 km")
     ctx.fillText(`${(ring / 1000).toFixed(1)} km`, cx - 11, cy - R - 8);
     // laser designators: bearing 0 is straight ahead (screen up), positive to
     // the right.  The beam is a dashed line in along the line of sight and the
     // source is a solid triangle, so it reads at a glance which marks are
-    // lasers - and a designator past the face (2 km) has its triangle pinned to
+    // lasers - and a designator past the face (3 km) has its triangle pinned to
     // the rim: the bearing is the truth, the range is "out there".
     for (const l of lasers) {
       const a = Math.atan2(l.z - own.z, l.x - own.x) - own.yaw;
@@ -717,17 +725,22 @@ export class HUD {
       ctx.stroke();
     }
     // missiles.  A round the receiver has a *position* on gets a dot at its true
-    // bearing and true range.  One it only has a bearing on gets a blinking line
-    // out from the middle along that bearing and nothing else - and only if the
-    // round is actually coming for this hull (`warn`) and can be seen through
-    // the terrain (`_threats` already dropped the ones behind a ridge): the dial
-    // is a warning, not an air-traffic display.
+    // bearing and true range.  One it only *hears* gets a blinking line out from
+    // the middle along that bearing and nothing else (`_threats` already dropped
+    // the ones behind a ridge or beyond the wire's tier).
+    //
+    // Every heard round gets that line, converging or not: the line says "there
+    // is something on this bearing", which is all a bearing is.  Whether it is
+    // coming for this hull is the rim's answer, not the line's - so the line has
+    // one look and the alarm has two (`steady` before `seen`, the `warn`/`aim`
+    // pair after).  That split is also why the alarm can be read off the rim
+    // alone with the volume down.
     const blink = (performance.now() / 1000 * 5) % 1 < 0.5;
     for (const t of threats) {
       const a = Math.atan2(t.z - own.z, t.x - own.x) - own.yaw;
       const sa = Math.sin(a), ca = -Math.cos(a);   // dial space: up is forward
       if (!t.seen) {
-        if (!t.warn || !blink) continue;
+        if (!blink) continue;
         ctx.globalAlpha = 0.9;
         ctx.strokeStyle = FAR_COLOR;
         ctx.lineWidth = 1.6;

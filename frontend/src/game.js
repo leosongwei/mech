@@ -14,16 +14,36 @@ import { emptyDraft, isEmpty, quickDraft, quote, toMessage } from './shop.js';
 const BASE_FOV = 1.05;              // 1x vertical field of view, radians
 const AIM_LINE = 60000;             // metres, "infinity" for an unzeroed reticle
 const LEAD_TARGETS = 4;             // nearest few only, the rest is clutter
-const RWR_RANGE = 2000;             // m, the threat receiver's own gate
-// the missile alarm's threshold: how near the closest point of the round's
-// course may come and still count as "this one is for me", metres *on top of*
-// the round's own blast radius - a hull is 2 m wide, a round covers 10-20 m a
-// tick, and a fuze is worth a metre or two, so a CPA of 20 m in one frame can
-// still be a hit in the next.  This number is the whole of what the tone
-// answers, and it is answered from the relative velocity vector, so it does not
-// care whether the receiver can place the round: a bearing-only contact on a
-// collision course sings exactly like a tracked one
+const RWR_RANGE = 3000;             // m, the threat dial's face and the receiver's
+                                    // display ceiling: the snapshot's guided tier
+                                    // (`Netcode.TIER_ROUND`), so every mark on the
+                                    // dial is a round the wire would have sent
+// The alarm is the same detector as the track, run 12 dB looser: one frame, no
+// track initiation, no angle association, no range solve.  So the distance at
+// which a round is *heard* is sqrt(10^0.6) = 1.995 times the distance at which
+// it is *placed* - 2728 m against 1368 m for a SACLOS, which is the whole of
+// "bearing far out, fire control up close".  `_threats` applies it as
+// `d^2 <= ALARM_GAIN * K * v_c`, and `v_c` is saturated at `v_ref` so that
+// ceiling is a constant (2728 m) and can never cross `RWR_RANGE`.
+const ALARM_DB = 12;
+const ALARM_GAIN = Math.pow(10, ALARM_DB / 20);   // 3.98, on the d^2 scale
+// The warning gate: the closest approach of a round's *horizontal* ray may come
+// this near `er + WARN_MARGIN`.  A guided round 2 km out has a lateral error it
+// is still correcting, so the tolerance opens out with range - at
+// `d_h * sin(WARN_CONE)` - and folds back to the fixed margin inside ~0.5 km.
+// 3 deg is the alarm's conservatism, not the seeker's field of view.  One
+// tolerance, two rays: the *relative* one is `warn`, the round's own is `aim`
+// (see `_threats`).
 const WARN_MARGIN = 20;             // m of slack over the round's own `er`
+const WARN_CONE = 3 * Math.PI / 180;   // rad, the gate's opening angle
+// The bearing history: a round the receiver cannot place is tracked by the
+// drift of its horizontal bearing alone.  `STEADY_T` is how much of that
+// history a verdict needs; the threshold itself is `(er + WARN_MARGIN) / K`,
+// which is the drift rate that puts the closest approach exactly at the margin
+// on the `seen` boundary (`doc/product/rwr.md` §7.3).
+const BEAR_WIN = 0.6;               // s of bearing history kept per round
+const BEAR_MAX = 96;                // safety cap on samples (a stalled tab)
+const STEADY_T = 0.2;               // s, the window a verdict is read over
 // the threat arrows in the ring beside the warning dial: the nearest few rounds
 // that are coming for this hull get a 3D arrow pointing at where they are on
 // screen, so the pilot turns his sight onto them and shoots them down.  The ring
@@ -70,6 +90,21 @@ function rememberName(name) {
   try { localStorage.setItem(NAME_KEY, name); } catch (e) { }
 }
 
+// Where a horizontal ray, out of the round along `vx`/`vz`, passes closest to
+// this hull - along the *forward* part of the ray, so a round that has already
+// gone by is measured by the gap to itself and not by the line it left behind.
+// `_threats` asks it of two vectors and gets two answers: the *relative*
+// velocity is where the round's track runs once this hull's own motion is taken
+// out (`warn`), the round's own is where its nose is pointing (`aim`).  They are
+// the same test on a hull standing still.
+function rayMiss(dx, dz, vx, vz) {
+  const v = Math.hypot(vx, vz);
+  if (v < 1e-3) return Math.hypot(dx, dz);          // hovering / straight down
+  const s = -(dx * vx + dz * vz) / v;               // metres along the ray
+  if (s <= 0) return Math.hypot(dx, dz);            // behind it: the gap as it is
+  return Math.hypot(dx + vx / v * s, dz + vz / v * s);
+}
+
 export class Game {
   constructor() {
     this.glCanvas = document.getElementById('gl');
@@ -84,6 +119,8 @@ export class Game {
     this.particles = new Particles();
     this.flashes = new Map();
     this._trailPos = new Map();
+    this._bear = new Map();     // round id -> bearing history (no position yet)
+    this._heard = new Set();    // the ids heard this frame, for pruning
     this.map = null;
     this.defs = { weapons: {}, units: {}, mech: { muzzles: {} } };
     this.messages = [];
@@ -581,34 +618,56 @@ export class Game {
   }
 
   // Self-defence radar + laser warning: everything is already in the snapshot,
-  // so the pilot's own HUD works out the threats.  The receiver answers the same
-  // question the server's AI asks (`defs.radar_k`): a doppler set only sees what
-  // is moving *towards* it, so a round gives an echo
+  // so the pilot's own HUD works out the threats.  Five judgements, three
+  // outputs (`doc/product/rwr.md`):
   //
-  //     strength * rcs / d^4 * (v_closing / v_ref)^2 >= 1   <=>   d^2 <= K * v_c
+  //   heard   d^2 <= ALARM_GAIN * K * v_c   the echo clears the alarm floor
+  //   steady  |d(bearing)/dt| < steadyRate  a horizontal track converging on me
+  //   seen    d^2 <= K * v_c                the echo clears the tracker floor
+  //   warn    rayMiss(relative) <= tol      its track runs through this hull
+  //   aim     rayMiss(own nose) <= tol      it is pointed at this hull
   //
-  // with `K = sqrt(strength * rcs) / v_ref`.  A round opening out or crossing
-  // gives a non-positive closing speed and fails the test by itself - there is
-  // no speed threshold any more.  What it is *not*: a prediction of being hit,
-  // which is why an unseen round still gets a bearing on the dial.
+  // `K = sqrt(strength * rcs) / v_ref` is the server's own equation
+  // (`defs.radar_k`): a doppler set only sees what closes on it, so
+  // `strength * rcs / d^4 * (v_c / v_ref)^2 >= 1`.  `v_c` is saturated at
+  // `v_ref`, which caps `heard` at a constant 2728 m - inside `RWR_RANGE`,
+  // which is the snapshot's guided tier, so a round the dial plots is always a
+  // round the wire carried.
+  //
+  // `warn` and `aim` are one test on two vectors, and between them they cover
+  // both ways a round comes for this hull: `warn` corrects for this hull's own
+  // motion, so it answers a round aimed at where the hull *will* be (a led
+  // beam rider, the terminal PN of a homing round); `aim` ignores that motion,
+  // so it answers a round whose nose is on the hull *now* - pure pursuit, which
+  // is what a top attack flies the whole way in from `seen`, and which curves
+  // onto a crossing hull while its straight-line track still misses by
+  // hundreds of metres.  Measured on the range: crossing at 50 m/s against a
+  // 1500 m top attack, `warn` first holds at about 240 m and `aim` at 890 m -
+  // the round hit either way, and the 650 m of silence in between was the alarm
+  // being wrong about a round that was pointed straight at the hull.
+  //
+  // Everything geometric here is *horizontal*: a top-attack round climbs to
+  // 950 m, glides, then dives, so its vertical profile says "not for me" right
+  // up until it is overhead.  Its bearing and its ground track do not.
+  //
+  // All judgements are recomputed every frame, with no latch and no
+  // hysteresis: a round that slows down or turns falls back out of `seen` and
+  // has to earn it again, and that fallback is information the pilot can learn
+  // to read (`doc/product/rwr.md` §5).
   _threats(own) {
     this.threats = [];
     this.lasers = [];
     this.radarAlarm = 0;
     this.radarRing = 0;
-    if (!own) return;
+    if (!own) { this._bear.clear(); return; }
     const radar = this.defs.radar || { v_ref: 600, rcs: 0.02 };
     const strength = (this.defs.units[own.type] || {}).radar_strength || 0;
     // `radarRing` is the discovery range against the brightest cross-section in
     // the game closing at v_ref (`defs.radar_range`) - 1368 m for a mech, 500 m
-    // for an APC.  It is *not* the dial's scale any more: the face is a fixed
-    // 2 km (`RWR_RANGE`) and what this number decides is whether a contact has a
-    // position (`seen`) or only a bearing
+    // for an APC.  It is *not* the dial's scale: the face is a constant
+    // `RWR_RANGE` and this number is the hull's own floor
     this.radarRing = Math.pow(Math.max(0, strength * radar.rcs), 0.25);
-    // the receiver's own gate: everything inside 2 km that is closing, whatever
-    // this hull's own echo floor is - a machine that cannot *resolve* a round
-    // still hears it coming, and the dial says exactly that much
-    const gate = RWR_RANGE;
+    const vRef = radar.v_ref || 600;
     const eye = [own.x, own.y + 5, own.z];
     // the round is measured against *this* hull's velocity, not the world's:
     // running at a missile lights the receiver earlier, running from it later.
@@ -616,60 +675,74 @@ export class Game {
     const ovx = own.vx || 0, ovy = own.vy || 0, ovz = own.vz || 0;
     // the smoke the sight rule cares about: deployed puffs, not canisters
     const puffs = this.net.smoke ? this.net.smoke.filter((s) => !s.canister) : null;
+    const now = performance.now() / 1000;
+    const heardIds = this._heard;
+    heardIds.clear();
     for (const p of this.net.projectiles) {
       if (p.faction === own.faction) continue;
       if (p.kind === 0) continue;                      // shells do not count
       const dx = p.x - eye[0], dy = p.y - eye[1], dz = p.z - eye[2];
       const d = Math.hypot(dx, dy, dz);
-      if (d < 1 || d > gate) continue;                 // outside the receiver
+      if (d < 1 || d > RWR_RANGE) continue;            // outside the wire's tier
       const wd = this.defs.weapons[p.wid] || {};
       const v = Math.hypot(p.vx, p.vy, p.vz);
       if (v < 1) continue;
-      // the relative vector: the round's velocity against the hull's.  Positive
-      // `vc` while it still has to cover the gap between us at that closing
-      // rate, and the collision course below is solved on the same vector.
+      // the relative vector, and the closing speed along it.  A round opening
+      // out or crossing gives `v_c <= 0`, which fails every gate below by
+      // itself - the same way the server's `radar_k` has no speed threshold
       const wx = p.vx - ovx, wy = p.vy - ovy, wz = p.vz - ovz;
-      const vc = -((dx * wx + dy * wy + dz * wz) / d);
-      if (vc <= 0) continue;                           // opening out or crossing
-      const k = Math.sqrt(Math.max(0, strength * (wd.rcs || 0))) / radar.v_ref;
-      // seen: the echo clears the receiver's floor.  Not seen: the bearing is
-      // still known and it is still closing - the dial shows it as such.
-      const seen = d * d <= k * vc;
-      // A tracked round is not automatically an *incoming* one, and an
-      // *untracked* one is not automatically harmless: `warn` is solved from
-      // the relative velocity vector alone - the closest approach of the round's
-      // course to this hull, against `er + WARN_MARGIN` - and it is what the
-      // alarm and the dial's bearing line both answer to.  `seen` never enters
-      // it.  Guided rounds (SACLOS, top attack) fly a profile, not a line - a
-      // top-attack climbs 150 m over its target and only drops onto the roof at
-      // the end - so the course that matters for them is the horizontal one,
-      // which is the ground they fly over.
-      const guided = p.kind === 2 || p.kind === 3;
-      let warn;
-      if (guided) {
-        const wh = Math.hypot(wx, wz);
-        if (wh < 1e-3) {
-          warn = Math.hypot(dx, dz) <= (wd.er || 0) + WARN_MARGIN;  // hovering
-        } else {
-          const along = (dx * wx + dz * wz) / wh;
-          warn = Math.hypot(dx - wx / wh * along, dz - wz / wh * along)
-            <= (wd.er || 0) + WARN_MARGIN;
-        }
-      } else {
-        const w = Math.hypot(wx, wy, wz);
-        const along = (dx * wx + dy * wy + dz * wz) / w;
-        warn = Math.hypot(dx - wx / w * along, dy - wy / w * along,
-          dz - wz / w * along) <= (wd.er || 0) + WARN_MARGIN;
-      }
+      const vc = Math.min(vRef, -((dx * wx + dy * wy + dz * wz) / d));
+      const k = Math.sqrt(Math.max(0, strength * (wd.rcs || 0))) / vRef;
+      // heard: the alarm's own floor, 12 dB under the tracker's
+      if (d * d > ALARM_GAIN * k * vc) continue;
       // one line of sight, the same door the AI's lookout, the IR lock and the
       // pre-aim box go through: terrain, a canopy or a screen of smoke hides a
       // round from the receiver exactly as it hides a hull
       if (sightBlocked(this.map, eye[0], eye[1], eye[2], p.x, p.y, p.z, puffs)) continue;
-      this.threats.push({ x: p.x, y: p.y, z: p.z, dist: d, kind: p.kind,
-                          seen, warn, wid: p.wid, hit_r: wd.hit_r || 0,
-                          vx: p.vx, vy: p.vy, vz: p.vz });
+
+      // steady: the horizontal bearing has not been drifting.  Recorded for
+      // every round the receiver can hear, whether or not it can place it, so a
+      // fallback out of `seen` has a history to fall back on
+      const az = Math.atan2(dz, dx);
+      heardIds.add(p.id);
+      const h = this._bearTrack(p.id, az, now);
+      const rate = this._bearRate(h);
+      const steady = Math.abs(rate) < ((wd.er || 0) + WARN_MARGIN) / k;
+
+      // seen: the echo clears the tracker's floor - bearing, slant range and
+      // closing speed, i.e. a position and a velocity vector
+      const seen = d * d <= k * vc;
+
+      // warn / aim: two rays out of the round, one tolerance.  `warn` runs the
+      // ray along the *relative* velocity - the track as this hull's own motion
+      // makes it, which is what a round aimed at a lead point produces; `aim`
+      // runs it along the round's own, which is where the round is pointed
+      // right now.  The tolerance is `er + WARN_MARGIN` up close and opens out
+      // with range as `d_h * sin(WARN_CONE)` - a guided round 2 km out has a
+      // lateral error it is still correcting
+      const dh = Math.hypot(dx, dz);
+      const tol = (wd.er || 0) + Math.max(WARN_MARGIN, dh * Math.sin(WARN_CONE));
+      const warn = rayMiss(dx, dz, wx, wz) <= tol;
+      const aim = rayMiss(dx, dz, p.vx, p.vz) <= tol;
+      // the frame's verdict for this round: placed rounds are judged on both
+      // geometries, a round only *heard* on its bearing drift - the one thing a
+      // doppler echo can say about a round it cannot yet place
+      const alarm = seen ? (warn || aim) : steady;
+      this.threats.push({ id: p.id, x: p.x, y: p.y, z: p.z, dist: d, kind: p.kind,
+                          seen, steady, warn, aim, alarm, wid: p.wid,
+                          hit_r: wd.hit_r || 0, vx: p.vx, vy: p.vy, vz: p.vz });
     }
     this.threats.sort((a, b) => a.dist - b.dist);
+    // the one boolean the dial's rim, the arrows and the tone read.  Recomputed
+    // every frame, so a round that falls out of `seen` hands judgement straight
+    // back to `steady`
+    this.radarAlarm = this.threats.some((t) => t.alarm) ? 1 : 0;
+    // a round that left the snapshot, or was hidden, forgets its bearing
+    if (this._bear.size) {
+      for (const id of this._bear.keys()) {
+        if (!heardIds.has(id)) this._bear.delete(id);
+      }
+    }
 
     // Laser warning: who has his sight *on me*.  Only a vehicle carries a
     // laser designator - a rifleman looking at the mech is not a threat the
@@ -699,6 +772,42 @@ export class Game {
                        e.x, e.y + 2.5, e.z, puffs)) continue;
       this.lasers.push({ x: e.x, z: e.z, dist: d, id: e.id });
     }
+  }
+
+  // The bearing history of one round: the last `BEAR_WIN` seconds of samples,
+  // the angle unwrapped across the ±PI seam so a drift through due west reads
+  // as a drift and not as a 6.28 rad jump.  Every round the receiver can
+  // *hear* is tracked, including the ones it can already place - a round that
+  // slows down and falls out of `seen` has to find its history still there.
+  _bearTrack(id, az, now) {
+    let h = this._bear.get(id);
+    if (!h) { h = { t: [], th: [] }; this._bear.set(id, h); }
+    const n = h.th.length;
+    const prev = n ? h.th[n - 1] : az;
+    h.th.push(prev + Math.atan2(Math.sin(az - prev), Math.cos(az - prev)));
+    h.t.push(now);
+    // trimmed by *time*, not by a frame count: the frame rate decides how many
+    // samples a window holds, and a `STEADY_T` verdict needs the window, not the
+    // count
+    while (h.t.length > 1 && now - h.t[0] > BEAR_WIN) { h.t.shift(); h.th.shift(); }
+    while (h.t.length > BEAR_MAX) { h.t.shift(); h.th.shift(); }
+    return h;
+  }
+
+  // The drift rate over the newest `STEADY_T` window.  `Infinity` means "still
+  // measuring": a history shorter than the window is not a verdict yet, and
+  // `steady` stays false until it is.  The window is read from the tail so a
+  // round that has just stopped turning clears at once - a long average would
+  // keep the old turn in the number and delay the recovery.
+  _bearRate(h) {
+    const n = h.th.length;
+    if (n < 2) return Infinity;
+    const tEnd = h.t[n - 1];
+    let i = n - 2;
+    while (i > 0 && tEnd - h.t[i] < STEADY_T) i--;
+    const dt = tEnd - h.t[i];
+    if (dt < STEADY_T || dt <= 0) return Infinity;   // still measuring
+    return (h.th[n - 1] - h.th[i]) / dt;
   }
 
   // The threat arrows: the nearest three rounds on a course that reaches this
@@ -737,7 +846,7 @@ export class Game {
     this.renderer.overlayOrigin(at.x, at.y);
     let n = 0;
     for (const t of th) {
-      if (!t.warn) continue;
+      if (!t.alarm) continue;
       if (n === RWR_ARROWS) break;
       const vx = t.x - eye[0], vy = t.y - eye[1], vz = t.z - eye[2];
       const l = Math.hypot(vx, vy, vz) || 1;
@@ -755,15 +864,17 @@ export class Game {
   // a missile inbound trills fast (0.083 s per tone), a sight settling on the
   // cockpit warbles four times slower.  Both just loop for as long as the
   // threat holds, so they are driven every frame with a hold in the audio side
-  // that keeps them from dropping out on a one-frame gap.  The dial plots every
-  // round the receiver has a track on; only the ones on a course that reaches
-  // this hull (`warn`) are worth a tone.
+  // that keeps them from dropping out on a one-frame gap.
+  //
+  // The tone and the dial's rim read the *same* boolean, `_threats`'s
+  // `radarAlarm`: they blink and trill on the same beat (`RWR_TONE_S`), and two
+  // channels answering one question is the point - a pilot may have the alarm
+  // volume down, or be looking somewhere else.  A round the receiver has placed
+  // is judged on its geometry; one it only hears is judged on its bearing
+  // drift.  Never on whether the receiver can see it: "I cannot place it" is
+  // not "it is not coming".
   _alarms(own) {
-    const t = (own && this.threats) || [];
-    // the tone answers one question: is one of these on a course that reaches
-    // me?  A contact the receiver has no range for sings exactly like one it
-    // has a track on - "I cannot see it" is not "it is not coming"
-    this.audio.missileWarning(t.some((x) => x.warn));
+    this.audio.missileWarning(!!own && this.radarAlarm === 1);
     const L = (own && this.lasers) || [];
     this.audio.laserWarning(L.length > 0);
   }
@@ -1331,6 +1442,8 @@ export class Game {
       // the corner label is the same in every machine and a mark's distance
       // from the middle is its real distance
       radarScale: RWR_RANGE,
+      // the one boolean the rim and the trill both read (`_threats`)
+      radarAlarm: this.radarAlarm || 0,
       // the hull's own echo floor - a contact inside this has a position, one
       // outside it does not (the AI and the RWR solve the same equation)
       radarRing: this.radarRing || 0,

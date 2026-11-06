@@ -705,6 +705,66 @@ public static class Server
                 info(client, $"DEBUG SPAWN {etype}");
                 break;
             }
+            case "debug_missile" when DEBUG:
+            {
+                // development helper: put a round in the air on a course for this
+                // hull.  `dist` / `angle` place it (angle relative to the pilot's
+                // own yaw), it flies at the weapon's cruise speed straight at the
+                // sight eye, and the launcher is nobody (`src = -1`): a SACLOS
+                // then coasts on its heading instead of riding a crew's beam,
+                // which is exactly what a receiver test wants - one round, one
+                // closing speed, no AI in the loop.
+                //   wid   weapon id (`Defs.WID_*`, default SACLOS)
+                //   dist  m from this hull (default 2000)
+                //   angle rad, relative to the pilot's yaw (default 0, ahead)
+                //   alt   m above this hull's own ground (default 2)
+                //   speed m/s, overriding the weapon's own cruise speed
+                //   miss  m of lateral offset, so the course passes this hull by
+                //         that much instead of through it (the "passing by" case
+                //         the receiver has to stay quiet on)
+                // A top attack gets `target = me`, so its seeker has something to
+                // lock; every other kind flies ballistic or on its heading.
+                if (!world.ecs.is_alive(pl.mech)) break;
+                int wid = inum(msg, "wid", Defs.WID_SACLOS);
+                if (wid <= 0 || wid >= Defs.WEAPONS.Length) break;
+                var wd = Defs.WEAPONS[wid];
+                float mdist = MathF.Max(30f, f32(msg, "dist", 2000f));
+                float mang = f32(msg, "angle", 0f) + pl.in_yaw;
+                var mp = world.ecs.fv("pos").get3(pl.mech);
+                float fx = mp.x + MathF.Cos(mang) * mdist;
+                float fz = mp.z + MathF.Sin(mang) * mdist;
+                float fy = MathF.Max(1.5f, mp.y + f32(msg, "alt", 2f));
+                // the sight eye, not the feet: that is what every gate on the
+                // other end solves from (`MathUtil.sight_eye`)
+                float ex = mp.x, ey = mp.y + 5f, ez = mp.z;
+                // the aim point, slid sideways by `miss`: the course then passes
+                // this hull at that lateral distance, which is the case the
+                // receiver's `warn` has to call "not for me"
+                float miss = f32(msg, "miss", 0f);
+                if (miss != 0f)
+                {
+                    float hx = ex - fx, hz = ez - fz;
+                    float hl = MathF.Sqrt(hx * hx + hz * hz);
+                    if (hl > 1e-3f)
+                    {
+                        ex += -hz / hl * miss;
+                        ez += hx / hl * miss;
+                    }
+                }
+                float dx = ex - fx, dy = ey - fy, dz = ez - fz;
+                float len = MathF.Sqrt(dx * dx + dy * dy + dz * dz);
+                if (len < 1f) break;
+                float spd = f32(msg, "speed", 0f);
+                if (spd <= 0f) spd = wd.maxvel > 0f ? wd.maxvel : wd.vel;
+                int kind = Systems.Weapons.kind_id(wd.kind);
+                int tgt = kind == 3 ? pl.mech : -1;      // only the seeker wants one
+                world.spawn_round(-1, 1 - pl.faction, wid, kind,
+                                  new Vec3(fx, fy, fz),
+                                  new Vec3(dx / len * spd, dy / len * spd, dz / len * spd),
+                                  wd.life, tgt);
+                info(client, $"DEBUG MISSILE {wd.key} {mdist:0} m out");
+                break;
+            }
             case "debug_trees" when DEBUG:
             {
                 // development helper: grow a tree stand in front of the player.

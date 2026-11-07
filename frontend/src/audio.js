@@ -28,8 +28,8 @@ const BEEP_ON = 0.09;               // one "duh"
 const BEEP_GAP = 0.06;              // the silence inside the train
 const BEEP_REST = 0.7;              // the rest after the sixth
 const BEEP_COUNT = 6;
-const UPLINK_VOL = 0.0125;          // a lock is a warning, not an emergency: a
-                                    // quarter of the missile trill's level
+const UPLINK_VOL = 0.02;            // a lock is a warning, not an emergency: a
+                                    // third of the missile trill's level
 const MISSILE_VOL = 0.06;           // the trill sits well above it
 // Master gain for a full volume slider.  The per-cue mixes above were tuned
 // 3x too quiet against the rest of the game, so the whole bus sits at 1.65 at

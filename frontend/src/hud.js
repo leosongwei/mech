@@ -985,19 +985,22 @@ export class HUD {
     ctx.fillStyle = won ? 'rgba(0,40,20,0.45)' : 'rgba(40,0,10,0.45)';
     ctx.fillRect(0, 0, w, h);
     ctx.textAlign = 'center';
+    // the verdict sits high on the screen (30 % down), clear of the cross and
+    // the guns: the match is decided but the fight goes on for its countdown
+    const y = h * 0.3;
     ctx.font = 'bold 46px "Courier New", monospace';
     ctx.fillStyle = won ? '#9dffb0' : '#ff8a8a';
-    ctx.fillText(won ? 'VICTORY' : 'DEFEAT', w / 2, h / 2 - 10);
+    ctx.fillText(won ? 'VICTORY' : 'DEFEAT', w / 2, y);
     ctx.font = '16px "Courier New", monospace';
     ctx.fillStyle = '#e8f4ee';
     // the line is about the base that *ended the match*, which from the losing
     // side is your own: a pilot who was just beaten does not want to be told his
     // enemy's base went up
     ctx.fillText(won ? 'ENEMY COMMAND BASE DESTROYED' : 'OUR COMMAND BASE DESTROYED',
-      w / 2, h / 2 + 24);
+      w / 2, y + 30);
     const t = (s.meta && s.meta.end_timer) || 0;
     ctx.font = '13px "Courier New", monospace';
-    ctx.fillText(`NEW MATCH IN ${t.toFixed(0)}s`, w / 2, h / 2 + 52);
+    ctx.fillText(`NEW MATCH IN ${t.toFixed(0)}s`, w / 2, y + 56);
     ctx.restore();
   }
 

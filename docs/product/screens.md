@@ -388,6 +388,8 @@ LOADOUT LOST - STANDARD ARMS ON RE-DEPLOY
 ## 4. 胜负界面
 
 * 全屏染色（胜=墨绿，负=暗红）+ 大字 `VICTORY` / `DEFEAT`。
+* 三行文字整体放在屏幕**上部 30 % 处**（`h * 0.3`，三行依次 +0 / +30 / +56 px），
+  让开正中的准星和两门炮身：胜负已定，倒计时里双方还要接着打一会儿。
 * 第二行看**是谁的指挥部没了**：赢的一方读 `ENEMY COMMAND BASE DESTROYED`，
   输的一方读 `OUR COMMAND BASE DESTROYED`——刚被打败的人不需要被告知对面基地爆了。
 * 第三行 `NEW MATCH IN 38s`（40 s 倒计时，结束后同一张地图重开）。

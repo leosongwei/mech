@@ -3,17 +3,34 @@
 // Threat warning tones, measured off the DCS AN/ALR-67 RWR audio set
 // (openflightschool.de, book 806 chapter 895): the *same* pair of tones,
 // 426 Hz and 561 Hz, square-ish (odd harmonics only, 3rd at -8 dB), alternated
-// back to back with no gap.  What changes between a lock and a launch is only
-// the alternation rate: 0.25 s per tone when a sight settles on you ("radar
-// uplink"), 0.083 s once a missile is on its way ("missile launch").
+// back to back with no gap.  A missile on its way is a trill of them, 0.083 s a
+// tone ("missile launch").
 const RWR_LO = 426;
 const RWR_HI = 561;
-const WARBLE_SLOW = 0.25;
 // one tone of the missile trill, and the rate every other cue that counts that
 // beat reads: the arrow ring's rim blinks on the same clock
 export const RWR_TONE_S = 0.083;
-const UPLINK_VOL = 0.05;            // a lock is a warning, not an emergency
-const MISSILE_VOL = 0.06;           // the trill sits a little above it
+// The laser warning is its own cue, and a small one: six short beeps around
+// 960 Hz - the pitch and the rhythm measured off the warning tone in *Mobile
+// Suit Gundam: Hathaway*'s action cut - then a rest, cycled.  A ground battle
+// is dense with things a pilot has to hear, and the old RWR lock warble held
+// the whole ear for as long as it lasted; this says "somebody's sight is on
+// you" and gives the ear back.
+const BEEP_HZ = 960;
+// ...and its timbre, measured off the source tone: the partials of a 960 Hz
+// fundamental, in dB below the first.  It is a stacked, buzzy thing rather than
+// a test tone, and two of them a few Hz apart are what give it the beat the
+// recording has.
+const BEEP_PARTIALS = [0, -13.4, -17.4, -14.3, -31.9, -17.2, -49.7, -33.7,
+  -34.4, -51.2];
+const BEEP_DETUNE = 7;              // Hz, the second oscillator
+const BEEP_ON = 0.09;               // one "duh"
+const BEEP_GAP = 0.06;              // the silence inside the train
+const BEEP_REST = 0.7;              // the rest after the sixth
+const BEEP_COUNT = 6;
+const UPLINK_VOL = 0.0125;          // a lock is a warning, not an emergency: a
+                                    // quarter of the missile trill's level
+const MISSILE_VOL = 0.06;           // the trill sits well above it
 // Master gain for a full volume slider.  The per-cue mixes above were tuned
 // 3x too quiet against the rest of the game, so the whole bus sits at 1.65 at
 // the default 50%; the top of the slider is twice that again, and the settings
@@ -275,6 +292,7 @@ export class GameAudio {
     this.lockOsc = null;
     this.lockGain = null;
     this.warbles = {};
+    this.beeps = {};
     this.beepTimer = 0;
     this.mode = 'none';
     this.volume = storedVolume();   // 0..1, the settings menu's master slider
@@ -809,14 +827,81 @@ export class GameAudio {
     this._warbleSet(v, !!active, MISSILE_VOL, 0.3);
   }
 
-  // laser warning: somebody's sight is on the cockpit.  Same tone pair, four
-  // times slower - unmistakable next to the missile warble.  Both alarms ride
-  // the ALARM bus, so they have a slider of their own in the settings menu.
+  // laser warning: somebody's sight is on the cockpit.  A train of six beeps,
+  // then a rest, then six again - one voice however many designators are on
+  // you, because three overlapping alarms say nothing the first one did not.
+  // Rides the ALARM bus with the missile trill, so it has the same slider.
   laserWarning(active) {
     this.ensure();
     if (!this.ctx) return;
-    const v = this._warble('uplink', WARBLE_SLOW);
-    this._warbleSet(v, !!active, UPLINK_VOL, 0.45);
+    const v = this._beep();
+    const now = this.ctx.currentTime;
+    if (active) v.hold = Math.max(v.hold, now + 0.45);
+    if (!active && v.hold <= now) {
+      if (v.on) {
+        v.on = false;
+        v.g.gain.cancelScheduledValues(now);
+        v.g.gain.setTargetAtTime(0, now, 0.02);
+      }
+      return;
+    }
+    if (!v.on) { v.on = true; v.next = 0; v.i = 0; }
+    this._beepTick(v);
+  }
+
+  _beep() {
+    let v = this.beeps.uplink;
+    if (!v) {
+      const g = this.ctx.createGain();
+      g.gain.value = 0;
+      // a soft top on the stack: the partials reach 11 kHz in the recording,
+      // which is fizz next to a battle's low end
+      const lp = this.ctx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = 5200;
+      lp.Q.value = 0.5;
+      lp.connect(g); g.connect(this.alarms);
+      // the measured partials at BEEP_HZ, and a second oscillator a few Hz
+      // above it for the beat that makes the pair sound stacked rather than
+      // tuned
+      const w = this._beepWave();
+      const oscs = [0, BEEP_DETUNE].map((det) => {
+        const o = this.ctx.createOscillator();
+        o.setPeriodicWave(w);
+        o.frequency.value = BEEP_HZ + det;
+        o.connect(lp);
+        o.start();
+        return o;
+      });
+      v = this.beeps.uplink = { oscs, g, next: 0, i: 0, on: false, hold: 0 };
+    }
+    return v;
+  }
+
+  _beepWave() {
+    if (this.beepWave) return this.beepWave;
+    const real = new Float32Array(BEEP_PARTIALS.length + 1);
+    const imag = new Float32Array(BEEP_PARTIALS.length + 1);
+    BEEP_PARTIALS.forEach((db, i) => { imag[i + 1] = Math.pow(10, db / 20); });
+    this.beepWave = this.ctx.createPeriodicWave(real, imag);
+    return this.beepWave;
+  }
+
+  // fill the train up to ~0.3 s ahead: six gated beeps off the audio clock, so
+  // a stuttering frame cannot smear the rhythm
+  _beepTick(v) {
+    const now = this.ctx.currentTime;
+    if (v.next < now) { v.next = now; v.i = 0; }
+    while (v.next < now + 0.3) {
+      const start = v.next;
+      const end = start + BEEP_ON;
+      v.g.gain.setValueAtTime(0, start);
+      v.g.gain.linearRampToValueAtTime(UPLINK_VOL, start + 0.006);
+      v.g.gain.setValueAtTime(UPLINK_VOL, end - 0.01);
+      v.g.gain.linearRampToValueAtTime(0, end);
+      v.next = end + (v.i === BEEP_COUNT - 1 ? BEEP_REST : BEEP_GAP);
+      v.i = (v.i + 1) % BEEP_COUNT;
+    }
   }
 
   setLock(state, dt) {

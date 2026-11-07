@@ -1282,17 +1282,24 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
   body of a distant report comes from the far bus; a makeup curve belongs on a
   bed, which is compressed, not on each event, which is not.
 * **The master chain ends in a soft clipper, because a compressor is not a
-  limiter.** `master` -> `limiter` (a gentle 8:1 over an 8 dB knee: a hard
-  curve holds a dense mix down but flattens the cues worth hearing) ->
-  `top` (`CLIP_GAIN`) -> `clip` (a `WaveShaper`, linear to `CLIP_KNEE` 0.7 and
-  tanh to exactly 1, `oversample` 4x) -> destination. Before it, a single 105 mm
-  round next to the pilot and a single hull exploding 300 m away both measured
-  **over 1.0** at the destination - a hard 0 dBFS clamp is broadband fizz on
-  every transient, which is what a "broken speaker" is. `CLIP_GAIN` is a
-  measured constant, not a taste: the DynamicsCompressor adds its own makeup
-  gain (+1.3 dB for these settings, +2.9 dB for a 12:1 / -10 dB one), so 0.86 is
-  what puts the chain back at unity. Check it with a constant cue (`denied`
-  reads 0.094 at the destination) before changing either number.
+  limiter.** `master` -> `limiter` (12:1 over a 6 dB knee, threshold -12 dBFS,
+  2 ms attack: a hard curve holds a dense mix down but flattens the cues worth
+  hearing, so the ratio carries the bursts and the knee keeps one round's
+  transient) -> `top` (`CLIP_GAIN`) -> `clip` (a `WaveShaper`, linear to
+  `CLIP_KNEE` 0.7 and tanh to exactly 1, `oversample` 4x) -> destination. Before
+  it, a single 105 mm round next to the pilot and a single hull exploding 300 m
+  away both measured **over 1.0** at the destination - a hard 0 dBFS clamp is
+  broadband fizz on every transient, which is what a "broken speaker" is.
+  **The threshold is the number that decides whether the shaper ever works**:
+  measured per cue (a 2048 sample window on the clipped output, 24 plays), -8 dB
+  left a hull going up at 0.93 peak with **14 % of its samples past the 0.7
+  knee** and a 105 mm beside the pilot at 0.93 / 9 % - continuous soft-clip
+  distortion, the faint buzz under the battle. At -12 dB the same cues read
+  0.78 / 0.4 % and 0.86 / 0.8 %, and their third-octave shape matches the
+  unclipped one to 0.5 dB. `CLIP_GAIN` is a measured constant, not a taste: the
+  DynamicsCompressor adds its own makeup gain, so 0.86 is what puts the chain
+  back at unity. Check it with a constant cue (`denied` reads 0.094 at the
+  destination) before changing either number.
 * **The server decides what a pilot's ear gets.** `defs.SOUND_*` mirror the
   client's curve (`attenuation`, `SOUND_LEVEL`, same numbers), and
   `netcode.hearable(events, ear)` drops every `shot`/`boom` whose arriving gain
@@ -1322,6 +1329,31 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
   louder round. The mix can sum past 0 dB on purpose, so the master bus runs
   through a limiter (`audio.limiter`) instead of clamping at the destination:
   scale a cue's gains up rather than adding another layer elsewhere.
+* **A voice is a temporary chain, and the mix has a ceiling.** A cue opens six
+  to a dozen `AudioNode`s (a source, a filter, gains, a panner, a reverb send),
+  and each one of them is torn down in the source's `onended` - `_bus` hands its
+  nodes back and `_verbSend` its send gain, exactly so the voice that owns them
+  can disconnect the lot. Left connected they wait for a collector, and a battle
+  opens hundreds a second: measured on a 4 s gatling-and-boom load, the graph
+  held **3492 nodes after the load and never let go**, against **1** once the
+  teardown runs (the ceiling during the load is the voices still sounding).
+  Two rules sit on top, both keyed on arriving **gain** rather than on who
+  fired: `MAX_VOICES` 48 slots, held for as long as a voice sounds, drop the
+  quiet cues once the mix is full while anything over `STEAL_VOL` (0.05) still
+  gets in - measured, 240 quiet cues a second hold the graph at 48 slots and
+  ~380 nodes for as long as the load lasts, then release it to 1. `_pumpSounds`
+  also skips the events that cannot have arrived yet (`tMin`, the wavefront's
+  earliest possible arrival) and drops the whole list when the pilot is dead - a
+  dead ear does not need fifty seconds of a battle. The reverb has **one fixed
+  input** (`audio.send`): a convolver whose input connections change hundreds of
+  times a second recomputes its own mix on every change.
+* **The shared noise bed is longer than any voice.** Six seconds, so nothing has
+  to loop it (`src.loop = dur > 5.5`): a buffer that ends on one random sample
+  and starts on another is a step in the waveform, and a hull's 4.5 s rumble or
+  a 105 mm's tail is loud enough for that seam to be heard. Every envelope also
+  lands **on zero**, linearly, instead of stopping at an exponential ramp's
+  -62 dB floor - a battle makes hundreds of those little steps a second and
+  they are the other half of "there is a faint buzz under everything".
 * The **gear** takes the screen's corner itself (`hud._gear`, `GEAR_EDGE` 8 px
   from the right and top edges - the warning dial is round, so the square the
   corner leaves free costs nothing) and it is the only HUD click target: it
@@ -1479,6 +1511,24 @@ is started with `MECH_LOG_LEVEL=DEBUG ./dev.sh range`; the browser script
 such a missile is in the air and reads the event stream, not the log.
 Log: `/tmp/mech-range.log`, overrides `MECH_RANGE_PORT` (8011), `MECH_RANGE_LOG`.
 Product notes: `doc/product/range.md`.
+
+**Measure a mechanism on the range, not on a battle.** Weapons, ballistics,
+damage, the seeker and the whole audio chain are all measured this way, because a
+battle is not a bench: two dozen AI crews, both lanes and the waves are firing,
+dying and driving through the same world, so a level, a node count, a hit or a
+spectrum read there is mostly a measurement of where the pilot's hull happened to
+be and of who else was shooting - a scripted load has to fight the real one for
+the limiter, and a target that dies of a stray round is not a target. The range's
+fixtures never fire, so nothing moves or sounds but what the console asks for:
+`./dev.sh range` (a 4 km map, targets that respawn, an infantry squad, a
+missile-defence post), then `g.audio` / `g.net.send({t:'debug_spawn'})` /
+`g.net.send({t:'debug_missile'})` from the console. A sound bench is a
+`setInterval`/`await sleep` loop calling `shot` / `boom` / `explosion` directly
+(or pushing events onto `g.sounds` with `play` closures); `evaluate` keeps a
+background tab's timers running but stops an `requestAnimationFrame` frame loop,
+so call `g._pumpSounds()` from the test loop
+when the frame pass is the thing under test. The battle server is where a change
+is *seen*, after the number is already right.
 
 **The range records the top attack** (`Modes/Range/Record.cs`, the range's post
 system, on by default there): one JSONL line a tick to `MECH_RECORD_PATH`

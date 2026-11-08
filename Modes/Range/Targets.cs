@@ -27,6 +27,7 @@ public sealed class TargetSlot
     public string axis = "x";           // which axis the patrol span runs on
     public float lo, hi;                // the ends of that span, metres
     public float dir = 1f;              // +1 / -1: which way the hull is being sent
+    public float speed;                 // m/s the crew is ordered; 0 = the role's own
     public int eid = -1;
     public float t;                     // s left before an empty post is stood back up
 }
@@ -52,6 +53,20 @@ public sealed class Targets
     // does and what the pre-aim ring's acceleration term is for
     public const float MECH_PATROL_SPEED = 16.0f;
     public const float MECH_RESPAWN_DELAY = 5.0f;
+
+    /// <summary>The second mech, and the one the fire control is measured on:
+    /// the same walk as `MECH_PATROL`, a kilometre long and flat out.
+    ///
+    /// A leg has to be long for a hull to be *fast* on it - a mech takes 5.4 s
+    /// and 135 m to reach its 50 m/s, so the 200 m leg never gets out of second
+    /// gear.  500 m either side of the firing line leaves ~370 m at full speed
+    /// in the middle of every pass, and a U-turn at each end that is the
+    /// harshest deceleration the machine can make.  It stands 255 m north of the
+    /// short one so a pilot has both a slow and a fast hull in the same sight,
+    /// and it is a hull like any other: kill it and it comes back in place.</summary>
+    public static readonly (float x, float z) MECH_FAST_PATROL = (1900f, 2350f);
+    public const float MECH_FAST_HALF = 500f;
+    public const float MECH_FAST_SPEED = 50f;   // m/s, the mech's own top speed
 
     /// <summary>The infantry squad: six men on a line across the firing line,
     /// 260 m out from the berths so they are in the sight at 1x.  A man is a
@@ -112,6 +127,18 @@ public sealed class Targets
             axis = "x",
             lo = MECH_PATROL.x - MECH_PATROL_HALF,
             hi = MECH_PATROL.x + MECH_PATROL_HALF,
+            dir = 1f, eid = -1, t = 0f,
+        });
+        // The fast one: a kilometre of straight at the hull's top speed.  Same
+        // slot machinery, same respawn, its own `speed`.
+        slots.Add(new TargetSlot
+        {
+            role = "mech", etype = Defs.ETYPE_MECH,
+            x = MECH_FAST_PATROL.x, z = MECH_FAST_PATROL.z,
+            axis = "x",
+            lo = MECH_FAST_PATROL.x - MECH_FAST_HALF,
+            hi = MECH_FAST_PATROL.x + MECH_FAST_HALF,
+            speed = MECH_FAST_SPEED,
             dir = 1f, eid = -1, t = 0f,
         });
         // A squad of men: the one fixture on the range a *fuse* is for.  They hold
@@ -221,7 +248,9 @@ public sealed class Targets
         // velocity after the command at `MECH_ACCEL`, so the same reversal is a
         // deceleration and an acceleration - the cleanest moving hull the range
         // has to aim at.
-        cmd.set(eid, k, d * (slot.role == "mech" ? MECH_PATROL_SPEED : PATROL_SPEED));
+        float top = slot.speed > 0f ? slot.speed
+            : slot.role == "mech" ? MECH_PATROL_SPEED : PATROL_SPEED;
+        cmd.set(eid, k, d * top);
         // a car's heading is its own state; a mech's is not, so a reversing mech
         // is also *pointed* the other way - `gunnery` swings its hull after the
         // sight at its own rate, which is what a pilot sees a mech do

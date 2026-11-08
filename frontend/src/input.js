@@ -32,6 +32,7 @@ export class Input {
     this.wheelAcc = 0;
     this.onPick = null;
     this.onToggleHelp = null;
+    this.onToggleAssist = null;     // V: the cross's snap to a pre-aim ring
     this.onSettings = null;         // ESC while the settings panel is up
     this.onHudClick = null;         // click on a HUD button, pointer not locked
     this.onShop = null;             // B: open / close the rearm panel
@@ -106,6 +107,7 @@ export class Input {
     }
     if (down && code === 'KeyB' && this.onShop) { this.onShop(); e.preventDefault(); return; }
     if (down && code === 'KeyH' && this.onToggleHelp) this.onToggleHelp();
+    if (down && code === 'KeyV' && !e.repeat && this.onToggleAssist) this.onToggleAssist();
     // one-shot keys: the browser repeats keydown while a key is held, so the
     // pull is latched and the sender clears it
     if (down && code === 'KeyQ' && !e.repeat) this.qPressed = true;

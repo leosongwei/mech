@@ -1047,6 +1047,7 @@ export class HUD {
       'ALT + MOUSE  FREE LOOK',
       'LMB / RMB    LEFT / RIGHT ARM',
       'Q            HOT SMOKE (breaks incoming missiles)',
+      'V            AIM ASSIST ON / OFF',
       'B            REARM / REPAIR PANEL (at base or own town)',
       'ENTER / ESC  CONFIRM / CANCEL THE PANEL',
       'ESC          RELEASE MOUSE',

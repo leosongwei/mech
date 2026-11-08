@@ -76,9 +76,10 @@ Modes/                     # per-mode rule sets: map, setup, pipeline, spawn rul
                            #   Raids.cs: the raiding parties - one mech per lane,
                            #   force-gradient + two-level (128 m / 16 m) pathfinding
   Range/                   #   RangeMode.cs, Targets.cs: passive APC targets plus
-                           #   one mech patrolling a 400 m leg (the only hull that
-                           #   accelerates hard - what the lead ring's second-order
-                           #   term is measured on),
+                           #   two mechs on a 200 m leg at 16 m/s and a 1 km leg at
+                           #   the hull's 50 m/s top speed - the only hulls that
+                           #   accelerate hard, which is what the lead ring's
+                           #   second-order term is measured on),
                            #   Bunkers.cs: ridge blockhouses, TestAi.cs: the ground AI
                            #   for hulls a pilot drops there (the range's own fixtures
                            #   never shoot back), Record.cs: the top-attack trace,
@@ -1136,6 +1137,23 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
   which is the lag the pilot is meant to see.  A marker whose point falls behind
   the camera draws nothing at all - the old fallback dropped it on the centre of
   the screen, where it read as "on target" for exactly the moment it is not.
+* **The eye reads the picture, the gun reads the wire.** `own.x/y/z` is the
+  *drawn* pose: an EMA (`alpha = 1-exp(-dt*14)`, a 71 ms time constant) chasing a
+  15 Hz snapshot, which is what the camera, the fx and the line of sight are
+  built from.  The fire control solves from `_firePose(own)` instead -
+  `own.px/py/pz` (the newest authority) walked on by its velocity for
+  `_fireLag()` = half a snapshot interval + RTT/2 + half a tick (60 ms on
+  loopback, hundreds on a bad link), which is when the server actually fires -
+  and reads the target the same way (`e.px/pz` + its velocity; the round's own
+  flight time is `leadPoint`'s job).  The picked ring is then solved again every
+  input frame (`_ringSolve`) rather than read off the snapshot's answer, because
+  the muzzle moves between the two; `aimSnap` holds the *pick*, and the ring's
+  world point stays the picker the HUD draws.  Measured on the range's 105 mm
+  before the split: 7 rounds at 146-597 m, all within 0.2 m vertically (the zero
+  and the launch elevation were never the question) and 0.3-4.6 m off
+  laterally - 2 hits, one of them by 4 cm, against a torso of r=1.3 with a
+  0.35 m round half-width.  With the bearing alone corrected, all seven land
+  inside the spheres.
 * `renderer.js` draws the ground twice: a radial LOD grid out to the horizon
   (far) and a **tile-aligned patch** (`TILE_PATCH` tiles around the eye, moved
   by the `uOrigin` uniform) that carries the OpenTTD look - every vertex is a
@@ -1219,7 +1237,10 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
   (`input.freeYaw`, the cross is no longer the sight) and an open panel both
   skip the snap. Width is `aimAssist ? LEAD_RING * assistRing : LEAD_RING`
   (`_ringPx`), 2x-8x, default 4x, remembered in `localStorage` beside the
-  switch - the same `key` convention as `mech.volume`.
+  switch - the same `key` convention as `mech.volume`.  In game `V` throws that
+  same switch (`input.onToggleAssist` -> `_toggleAssist`), so the pilot keeps the
+  pointer and the cross is back under his hand without the panel; the message
+  list says which way it went, and the panel's button reads the same field.
 * `map.js` must stay ballistically identical to the server: same gravity,
   same 1/30 step, same launch bias (`wd.bias`), the same "building walls are
   columns, tree trunks are cylinders" rule (`wallAt`/`obstacleAt`/`trunkHit`),

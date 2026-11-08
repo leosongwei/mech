@@ -14,6 +14,8 @@ import { emptyDraft, isEmpty, quickDraft, quote, toMessage } from './shop.js';
 const BASE_FOV = 1.05;              // 1x vertical field of view, radians
 const AIM_LINE = 60000;             // metres, "infinity" for an unzeroed reticle
 const LEAD_TARGETS = 4;             // nearest few only, the rest is clutter
+const SNAP_HZ = 15;                 // snapshots a second (`Netcode.SNAP_EVERY` = 2 ticks)
+const TICK_HZ = 30;                 // the server's clock (`Netcode.TARGET_HZ`)
 const RWR_RANGE = 3000;             // m, the threat dial's face and the receiver's
                                     // display ceiling: the snapshot's guided tier
                                     // (`Netcode.TIER_ROUND`), so every mark on the
@@ -228,6 +230,7 @@ export class Game {
       this.input.onUiClick = (x, y) =>
         (this.settingsOpen ? this._settingsClick(x, y) : this._shopClick(x, y));
       this.input.onToggleHelp = () => { this.helpOpen = !this.helpOpen; };
+      this.input.onToggleAssist = () => this._toggleAssist();
       this.input.onSettings = () => this._settingsToggle();
       this.input.onHudClick = (x, y) => this._hudClick(x, y);
       if (this.range) {
@@ -576,7 +579,7 @@ export class Game {
     this.sendAcc = 0;
     const [mx, mz] = this.input.moveVector();
     const aim = this._sightAim();
-    this.net.send({
+    const msg = {
       t: 'in',
       yaw: aim.yaw,
       pitch: aim.pitch,
@@ -596,7 +599,8 @@ export class Game {
       // and every binary frame echoes it back (that is what RTT is timed on).
       // `ack()` stamps the moment this value first goes out.
       st: this.net.ack(),
-    });
+    };
+    this.net.send(msg);
     this.input.qPressed = false;
   }
 
@@ -957,8 +961,9 @@ export class Game {
   // bore is the hull's yaw (`own.yaw`) and the arms' pitch (`own.pitch`) - both
   // from the server, both slewing after the sight.  Mid-flick the bore is
   // behind the cross, and the impact marker drawn off it has to be too.
-  _muzzle(own, arm) {
+  _muzzle(own, arm, at = null) {
     const mod = arm === 0 ? '2' : '3';
+    const [ax, ay, az] = at || [own.x, own.y, own.z];
     const off = (this.defs.mech.muzzles && this.defs.mech.muzzles[mod]) || [0, 4.3, 0.9];
     // the bore ends at the mouth of whatever is bolted to the arm - a 4.1 m
     // cannon reaches a lot further than a 1.8 m nest - and it swings with the
@@ -984,10 +989,30 @@ export class Game {
     const rx = -s, rz = c;
     const fwd = reach * Math.cos(pitch);
     return [
-      own.x + rx * off[0] + c * fwd,
-      own.y + off[1] + reach * Math.sin(pitch),
-      own.z + rz * off[0] + s * fwd,
+      ax + rx * off[0] + c * fwd,
+      ay + off[1] + reach * Math.sin(pitch),
+      az + rz * off[0] + s * fwd,
     ];
+  }
+
+  // How long after the newest snapshot the round actually leaves: half a
+  // snapshot interval (the client holds the newest one, on average, that long),
+  // one more one-way trip for the input to reach the server, and the tick the
+  // server takes to read it.  The gun is laid from the hull's pose at *that*
+  // moment, so it is the pose a fire-control solve has to start from.
+  _fireLag() {
+    const net = Number.isFinite(this.net.rttMs) ? 0.5 * this.net.rttMs / 1000 : 0;
+    return 0.5 / SNAP_HZ + net + 0.5 / TICK_HZ;
+  }
+
+  // The hull's pose at that moment: the newest authoritative position
+  // (`own.px/py/pz`, what the server says) walked on by its own velocity.
+  // `own.x/y/z` is the *drawn* pose, a smoothing time constant behind the wire
+  // - right for the camera and the fx, wrong for anything that solves where a
+  // round will go.
+  _firePose(own) {
+    const t = this._fireLag();
+    return [own.px + own.vx * t, own.py + own.vy * t, own.pz + own.vz * t];
   }
 
   // The origin every aiming readout is measured from: the eye sits in the
@@ -997,14 +1022,15 @@ export class Game {
   // the head turns, the eye is the pivot - but the hull swinging underneath
   // does: that arc is the geometry the decoupled sight exists for, and it is
   // why the machine can be felt moving under a view that has already turned.
-  _sightEye(own) {
+  _sightEye(own, at = null) {
     const mech = this.defs.mech || {};
     const oz = mech.sight_z === undefined ? -0.62 : mech.sight_z;
+    const [ax, ay, az] = at || [own.x, own.y, own.z];
     const c = Math.cos(own.yaw), s = Math.sin(own.yaw);
     return [
-      own.x + c * oz,
-      own.y + (mech.eye || 5.05),
-      own.z + s * oz,
+      ax + c * oz,
+      ay + (mech.eye || 5.05),
+      az + s * oz,
     ];
   }
 
@@ -1013,10 +1039,59 @@ export class Game {
   // control by.  The pilot's view never moves: with the assist holding a ring
   // the sight is that ring's own aim point and the view is still his mouse, so
   // the centre cross and the white one come apart by the ring the guns are on.
+  //
+  // The picked ring is solved *again* here, off the pose the round will leave
+  // from (`_firePose`), rather than read off the last snapshot's answer: the
+  // hull, the muzzle and the target all move in the 60-100 ms between the two,
+  // and at 600 m that is metres of lead.  The ring on the glass keeps the
+  // snapshot's answer - it is a picker, not the aim.
   _sightAim() {
     const a = this.aimSnap;
-    return a ? { yaw: a.yaw, pitch: a.pitch }
-      : { yaw: this.input.yaw, pitch: this.input.pitch };
+    if (!a) return { yaw: this.input.yaw, pitch: this.input.pitch };
+    const own = this.ownEntity();
+    const p = own ? this._ringSolve(own, a) : null;
+    if (!p) return { yaw: this.input.yaw, pitch: this.input.pitch };
+    a.yaw = p.yaw;
+    a.pitch = p.pitch;
+    return { yaw: p.yaw, pitch: p.pitch };
+  }
+
+  /// One ring's aim point for the instant the round leaves: `leadPoint` from
+  /// the muzzle at the fire tick, against the target at the fire tick plus the
+  /// round's flight time.  A hull is read off its authority (`px/py/pz` plus
+  /// its velocity); a missile off the record `_threats` keeps.
+  _ringSolve(own, a) {
+    const wd = this.defs.weapons[a.wid];
+    if (!wd) return null;
+    const lag = this._fireLag();
+    const e = a.e;
+    let tx, ty, tz, vx, vy, vz, ax = 0, az = 0;
+    if (e) {
+      if (!Number.isFinite(e.px)) return null;
+      const half = ((this.defs.units[e.type] || {}).height || 3) * 0.5;
+      // the pull `net.js` measured off two velocity samples, while it is fresh
+      if (e.avt !== undefined && this.net.tick - e.avt <= 15) { ax = e.ax || 0; az = e.az || 0; }
+      tx = e.px + e.vx * lag; ty = e.py + half; tz = e.pz + e.vz * lag;
+      vx = e.mvx === undefined ? e.vx : e.mvx;
+      vz = e.mvz === undefined ? e.vz : e.mvz;
+      vy = 0;
+    } else if (a.fly) {
+      const f = a.fly;
+      tx = f.x + (f.vx || 0) * lag; ty = f.y; tz = f.z + (f.vz || 0) * lag;
+      vx = f.vx || 0; vz = f.vz || 0; vy = f.vy || 0;
+    } else return null;
+    const pose = this._firePose(own);
+    const eye = this._sightEye(own, pose);
+    const m = this._muzzle(own, a.arm, pose);
+    const zero = this.init.zero || { range: 4000, max_elev: 1.05 };
+    const p = leadPoint(wd, this.zeroRange, zero.max_elev,
+      m[0], m[1], m[2], eye[0], eye[1], eye[2], tx, ty, tz, vx, vz, vy, ax, az);
+    if (!p) return null;
+    const dh = Math.hypot(p.x - eye[0], p.z - eye[2]);
+    return {
+      yaw: Math.atan2(p.z - eye[2], p.x - eye[0]),
+      pitch: clamp(Math.atan2(p.y - eye[1], Math.max(dh, 1e-3)), -0.6, 0.9),
+    };
   }
 
   _aim(own) {
@@ -1055,12 +1130,13 @@ export class Game {
       const d = Math.hypot(sp.x - eye[0], sp.y - eye[1], sp.z - eye[2]);
       if (d < z0.range) this.sightRange = d;
     }
+    const fire = this._firePose(own);
     for (let arm = 0; arm < 2; arm++) {
       const wid = own.weapon[arm];
       const wd = this.defs.weapons[wid];
       const mod = arm === 0 ? 2 : 3;
       const disabled = own.hp[mod] <= 0;
-      const m = this._muzzle(own, arm);
+      const m = this._muzzle(own, arm, fire);
       let point = null;
       let hit = false;
       let dist = 0;
@@ -1122,9 +1198,16 @@ export class Game {
     // the smoke that is actually up: a canister still in the air is a charge,
     // not a screen (the server only ever tests deployed puffs)
     const puffs = this.net.smoke.filter((s) => !s.canister);
-    // the eye both the bearing and the line of sight are taken from: the
-    // camera, because that is where the pilot's cross actually sits
+    // two poses, and the difference is the point of the whole solve.  The
+    // *eye* is what the pilot sees and the line of sight is taken from, so it
+    // is the drawn one; the *muzzle* is where the round will actually leave
+    // from, so it is the fire-tick pose (`_firePose`).  A ring solved from the
+    // drawn pose lands a metre behind a driving pilot and a metre short of a
+    // moving hull - at 600 m, both of them a miss.
+    const lag = this._fireLag();
     const eye = this._sightEye(own);
+    const pose = this._firePose(own);
+    const aimEye = this._sightEye(own, pose);
 
     const arms = [];
     for (let arm = 0; arm < 2; arm++) {
@@ -1133,7 +1216,7 @@ export class Game {
       // only rounds that fly ballistically need the lead: the SACLOS and the
       // top-attack missile steer themselves onto whatever the sight marks
       if (!wd || (wd.kind !== 'bullet' && wd.kind !== 'rocket')) continue;
-      arms.push({ arm, wd, m: this._muzzle(own, arm) });
+      arms.push({ arm, wd, m: this._muzzle(own, arm, pose) });
     }
     // A missile the radar has *seen* (`_threats`) gets the same treatment as a
     // hull: a box on the ball it is, and one ring per arm at the point the
@@ -1149,7 +1232,7 @@ export class Game {
                   rx: t.hit_r, ry: t.hit_r, marks: [] };
       for (const a of arms) {
         const p = leadPoint(a.wd, this.zeroRange, zero.max_elev,
-          a.m[0], a.m[1], a.m[2], eye[0], eye[1], eye[2], t.x, t.y, t.z,
+          a.m[0], a.m[1], a.m[2], aimEye[0], aimEye[1], aimEye[2], t.x, t.y, t.z,
           t.vx || 0, t.vz || 0, t.vy || 0);
         if (p) m.marks.push({ arm: a.arm, x: p.x, y: p.y, z: p.z, tof: p.tof });
       }
@@ -1184,7 +1267,7 @@ export class Game {
       // and IR seeker obey (backend/server/systems/sight.py).
       if (sightBlocked(this.map, eye[0], eye[1], eye[2], e.x, e.y + half, e.z, puffs)) continue;
       const t = {
-        id: e.id,
+        id: e.id, src: e,
         x: e.x, y: e.y + half, z: e.z,
         rx: c.ud.radius || 2, ry: half,
         marks: [],
@@ -1200,7 +1283,8 @@ export class Game {
         // off the wire is ringed at its velocity alone.
         const fresh = e.avt !== undefined && this.net.tick - e.avt <= 15;
         const p = leadPoint(a.wd, this.zeroRange, zero.max_elev,
-          a.m[0], a.m[1], a.m[2], eye[0], eye[1], eye[2], t.x, t.y, t.z,
+          a.m[0], a.m[1], a.m[2], aimEye[0], aimEye[1], aimEye[2],
+          e.px + e.vx * lag, e.py + half, e.pz + e.vz * lag,
           e.mvx === undefined ? e.vx : e.mvx, e.mvz === undefined ? e.vz : e.mvz,
           0, fresh ? e.ax : 0, fresh ? e.az : 0);
         if (p) t.marks.push({ arm: a.arm, x: p.x, y: p.y, z: p.z, tof: p.tof });
@@ -1230,7 +1314,7 @@ export class Game {
       // kilometre, and a mark too small to see is not a pre-aim box
       const hw = clamp(t.rx * pxm, t.ball ? 8 : 6, 70);
       const out = {
-        id: t.id,
+        id: t.id, src: t.src || null,
         x: box[0], y: box[1],
         hw,
         hh: t.ball ? hw : clamp(t.ry * pxm, 5, 70),
@@ -1313,16 +1397,15 @@ export class Game {
     }
     if (!best) return;
     best.m.active = true;
-    const eye = this._sightEye(own);
-    const dx = best.m.wx - eye[0], dz = best.m.wz - eye[2];
-    const dh = Math.hypot(dx, dz);
+    // what is held is the *pick*, not its solution: the aim is solved again
+    // every input frame (`_ringSolve`), off the pose the round will leave from.
+    // `x/y/z` stays the ring's own world point - that is what the HUD draws.
     this.aimSnap = {
       x: best.m.wx, y: best.m.wy, z: best.m.wz,
-      yaw: Math.atan2(dz, dx),
-      // the sight's own limits, so the snapped direction is one the pilot could
-      // have reached with the mouse (`input._mouse`)
-      pitch: clamp(Math.atan2(best.m.wy - eye[1], Math.max(dh, 1e-3)), -0.6, 0.9),
       arm: best.m.arm, id: best.t.id,
+      wid: own.weapon[best.m.arm],
+      e: best.t.src || null,          // a hull, or a missile's own record
+      fly: best.t.src ? null : best.t,
     };
   }
 
@@ -1404,6 +1487,14 @@ export class Game {
     this.aimAssist = !!on;
     this.aimSnap = null;
     try { localStorage.setItem(ASSIST_KEY, this.aimAssist ? '1' : '0'); } catch (e) { }
+  }
+
+  // V throws the same switch the settings panel's AIM ASSIST button does, for
+  // the pilot who wants the cross back under his own hand without dropping the
+  // pointer and clicking through the panel.
+  _toggleAssist() {
+    this._setAimAssist(!this.aimAssist);
+    this._message(`AIM ASSIST ${this.aimAssist ? 'ON' : 'OFF'}`, '#a9f0c0');
   }
 
   // How wide the ring the cross is caught by is drawn - the setting that trades

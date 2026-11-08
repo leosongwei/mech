@@ -1145,15 +1145,17 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
   `_fireLag()` = half a snapshot interval + RTT/2 + half a tick (60 ms on
   loopback, hundreds on a bad link), which is when the server actually fires -
   and reads the target the same way (`e.px/pz` + its velocity; the round's own
-  flight time is `leadPoint`'s job).  The picked ring is then solved again every
-  input frame (`_ringSolve`) rather than read off the snapshot's answer, because
-  the muzzle moves between the two; `aimSnap` holds the *pick*, and the ring's
-  world point stays the picker the HUD draws.  Measured on the range's 105 mm
-  before the split: 7 rounds at 146-597 m, all within 0.2 m vertically (the zero
-  and the launch elevation were never the question) and 0.3-4.6 m off
-  laterally - 2 hits, one of them by 4 cm, against a torso of r=1.3 with a
-  0.35 m round half-width.  With the bearing alone corrected, all seven land
-  inside the spheres.
+  flight time is `leadPoint`'s job).  What moves is the *geometry*, never the
+  pose: the muzzle's offset is still turned by the laid `own.yaw` / `own.pitch`,
+  so an arm still climbing after the sight lags exactly as it did.  The picked
+  ring is then solved again every input frame (`_ringSolve`) rather than read
+  off the snapshot's answer, because the muzzle moves between the two;
+  `aimSnap` holds the *pick*, and the ring's world point stays the picker the
+  HUD draws.  Measured on the range's 105 mm before the split: 7 rounds at
+  146-597 m, all within 0.2 m vertically (the zero and the launch elevation
+  were never the question) and 0.3-4.6 m off laterally - 2 hits, one of them
+  by 4 cm, against a torso of r=1.3 with a 0.35 m round half-width.  With the
+  bearing alone corrected, all seven land inside the spheres.
 * `renderer.js` draws the ground twice: a radial LOD grid out to the horizon
   (far) and a **tile-aligned patch** (`TILE_PATCH` tiles around the eye, moved
   by the `uOrigin` uniform) that carries the OpenTTD look - every vertex is a

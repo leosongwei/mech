@@ -9,7 +9,7 @@
          (`frontend/webpack.config.js`), and the server logs it at boot.  Every
          change to the product bumps it: a feature change the SECOND number (the
          third going back to 0), a change a player cannot see the THIRD. -->
-    <Version>1.16.0</Version>
+    <Version>1.17.0</Version>
     <AssemblyName>MechServer</AssemblyName>
     <RootNamespace>Mech.Server</RootNamespace>
     <InvariantGlobalization>true</InvariantGlobalization>

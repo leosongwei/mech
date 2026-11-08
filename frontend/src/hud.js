@@ -33,7 +33,9 @@ const ARM_COLORS = ['#5fe6ff', '#ffb04a'];
 const ARM_NAMES = ['L', 'R'];
 const FAR_COLOR = '#ff4a4a';        // distance past the fire control's reach
 const LEAD_COLOR = '#f2f6f4';       // the box round a hull with a pre-aim solution
-const LEAD_RING = 7;                // px, radius of a pre-aim circle
+export const LEAD_RING = 7;         // px, radius of a pre-aim circle; the aim
+                                    // assist widens it (`game._ringPx`)
+export const LEAD_RING_GAP = 8;     // px, between a target's two rings laid side by side
 const RADAR_PX = 78;                // px, outer radius of the threat circle
 const RADAR_MARGIN = 22;            // px between the dial and the screen edges
 const GEAR_EDGE = 8;                // px from the top and right edges to the gear
@@ -117,6 +119,7 @@ export class HUD {
 
     if (s.own) {
       this._leads(s);
+      this._aimCross(s);
       this._centreCross(s, w, h);
       this._crosshairs(s, w, h);
       this._lock(s);
@@ -164,6 +167,11 @@ export class HUD {
   // circle on the point it has to be pointed at to hit it, joined to the box by
   // a line in the arm's own colour.  The circles differ - a rocket is in the air
   // far longer than a shell - so the pilot reads the ring, not the hull.
+  //
+  // With the aim assist on the circles are `LEAD_RING_ASSIST` wide and are the
+  // thing the cross is caught by, so they double as pickers: a target's two
+  // rings are laid side by side (`game._leadLayout`) and the one the cross is
+  // inside of is drawn at full weight.
   _leads(s) {
     const leads = s.leads;
     if (!leads || !leads.length) return;
@@ -176,6 +184,7 @@ export class HUD {
       ctx.strokeRect(t.x - t.hw, t.y - t.hh, t.hw * 2, t.hh * 2);
       for (const m of t.marks) {
         const col = ARM_COLORS[m.arm];
+        const r = m.ring || LEAD_RING;
         // the line leaves the box at its edge, so it reads as "this hull, that
         // far ahead" instead of scribbling across the target
         const dx = m.x - t.x, dy = m.y - t.y;
@@ -186,13 +195,15 @@ export class HUD {
           t.hh / Math.max(Math.abs(uy), 1e-6));
         ctx.globalAlpha = 0.55;
         ctx.strokeStyle = col;
+        ctx.lineWidth = 1.2;
         ctx.beginPath();
         ctx.moveTo(t.x + ux * edge, t.y + uy * edge);
-        ctx.lineTo(m.x - ux * LEAD_RING, m.y - uy * LEAD_RING);
+        ctx.lineTo(m.x - ux * r, m.y - uy * r);
         ctx.stroke();
-        ctx.globalAlpha = 0.95;
+        ctx.globalAlpha = m.active ? 1 : 0.95;
+        ctx.lineWidth = m.active ? 2 : 1.2;
         ctx.beginPath();
-        ctx.arc(m.x, m.y, LEAD_RING, 0, 6.284);
+        ctx.arc(m.x, m.y, r, 0, 6.284);
         ctx.stroke();
         ctx.fillStyle = col;
         ctx.beginPath();
@@ -200,6 +211,28 @@ export class HUD {
         ctx.fill();
       }
     }
+    ctx.restore();
+  }
+
+  // The white cross the assist needs: the centre cross is where the pilot
+  // looks, this one is where the guns are actually laid.  The two come apart
+  // exactly when the assist has caught a ring - the sight snaps, the view does
+  // not - so it is drawn only while that is happening, in the centre cross's
+  // own weight and white, a size smaller, and square: an `x` on the middle of
+  // the screen and a `+` where the guns are, never two of the same mark.
+  _aimCross(s) {
+    if (!s.aim) return;
+    const ctx = this.ctx;
+    const x = s.aim[0], y = s.aim[1];
+    const r = 5;
+    ctx.save();
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1.5;
+    ctx.globalAlpha = 0.9;
+    ctx.beginPath();
+    ctx.moveTo(x, y - r); ctx.lineTo(x, y + r);
+    ctx.moveTo(x - r, y); ctx.lineTo(x + r, y);
+    ctx.stroke();
     ctx.restore();
   }
 
@@ -1291,15 +1324,17 @@ export class HUD {
   }
 
   // ------------------------------------------------------------- settings
-  // The gear opens the options panel: the master volume and, when the server was
-  // started with MECH_DEBUG=1, the debug knobs.  Same mouse machinery as the
-  // rearm panel; the game maps the clicks back through hitUi/volRect.
+  // The gear opens the options panel: the master volume, the aiming rule and,
+  // when the server was started with MECH_DEBUG=1, the debug knobs.  Same mouse
+  // machinery as the rearm panel; the game maps the clicks back through
+  // hitUi/volRect.
   _settings(s, w, h) {
     const ctx = this.ctx;
     const mouse = s.mouse || [-1, -1];
     const dbg = !!s.debug;
     const vol = s.volume === undefined ? 1 : s.volume;
     const alarm = s.alarmVolume === undefined ? 1 : s.alarmVolume;
+    const assist = !!s.assistOn;
     const god = !!(s.meta && s.meta.god);
     const pw = Math.min(560, w * 0.84);
     const fs = Math.max(11, Math.min(15, pw * 0.03));
@@ -1309,6 +1344,8 @@ export class HUD {
     // the panel is as tall as its content, so the debug block costs nothing
     // when the server shipped without it
     let contentH = fs * 2.6 + fs * 1.5 + rowH * 2 + fs * 1.4 * 2 + closeH;
+    contentH += fs * 1.5 + rowH + fs * 1.4;
+    if (assist) contentH += rowH + fs * 1.4;
     if (dbg) contentH += fs * 1.5 + rowH + fs * 1.4;
     const ph = Math.min(h * 0.92, contentH + pad * 2);
     const px = (w - pw) / 2;
@@ -1359,8 +1396,12 @@ export class HUD {
     ctx.fillStyle = 'rgba(180,210,195,0.75)';
     ctx.fillText('SOUND', cx, y + fs * 0.45);
     y += fs * 1.5;
-    const slider = (id, label, value, fill) => {
+    // one row per slider: a step-down, an absolute bar and a step-up; the bar is
+    // `this.<id>Rect` so the game can read a click back as a position on it, and
+    // `lo` / `hi` are the two ends of the bar (the game maps them the same way)
+    const slider = (id, text, value, fill, ends) => {
       const step = fs * 3;
+      const e = ends || { lo: 0, hi: 1 };
       btn(`${id}-`, cx + fs * 1.9, y, step, rowH, ['-'], { disabled: value <= 0 });
       const barX = cx + fs * 1.9 + step + fs * 0.5;
       const barW = cw - fs * 1.9 - step * 2 - fs;
@@ -1370,13 +1411,13 @@ export class HUD {
       ctx.textAlign = 'center';
       ctx.font = `bold ${fs * 0.95}px "Courier New", monospace`;
       ctx.fillStyle = '#e8fff2';
-      ctx.fillText(`${label} ${Math.round(value * 100)}%`, barX + barW / 2, y + rowH / 2);
+      ctx.fillText(text, barX + barW / 2, y + rowH / 2);
       btn(`${id}+`, barX + barW + fs * 0.5, y, step, rowH, ['+'], { disabled: value >= 1 });
-      this[`${id}Rect`] = { x: barX, w: barW };
+      this[`${id}Rect`] = { x: barX, w: barW, lo: e.lo, hi: e.hi };
       y += rowH + fs * 1.4;
     };
     drawIcon(ctx, 'volume_up', cx + fs * 0.9, y + rowH / 2, fs * 1.5, 'rgba(190,226,204,0.8)');
-    slider('vol', 'MASTER', vol, 'rgba(124,224,160,0.45)');
+    slider('vol', `MASTER ${Math.round(vol * 100)}%`, vol, 'rgba(124,224,160,0.45)');
     // the alarm row has no glyph of its own (the font subset is exactly the
     // icons in icons.json), so it gets a warning triangle in the same slot
     const ix = cx + fs * 0.9, iy = y + rowH / 2, ir = fs * 0.85;
@@ -1388,7 +1429,31 @@ export class HUD {
     ctx.lineTo(ix - ir, iy + ir * 0.8);
     ctx.closePath();
     ctx.stroke();
-    slider('alarm', 'ALARM', alarm, 'rgba(255,176,74,0.45)');
+    slider('alarm', `ALARM ${Math.round(alarm * 100)}%`, alarm, 'rgba(255,176,74,0.45)');
+
+    // ---- aiming: the rule the pre-aim rings obey, one switch
+    ctx.textAlign = 'left';
+    ctx.font = `bold ${fs * 0.85}px "Courier New", monospace`;
+    ctx.fillStyle = 'rgba(180,210,195,0.75)';
+    ctx.fillText('AIM', cx, y + fs * 0.45);
+    y += fs * 1.5;
+    btn('assist', cx, y, cw, rowH,
+      [assist ? 'AIM ASSIST ON' : 'AIM ASSIST OFF',
+        assist ? 'the cross snaps to a pre-aim ring' : 'the cross is free'],
+      { active: assist });
+    y += rowH + fs * 1.4;
+    // how wide the ring the cross is caught by is, as a multiple of the plain
+    // one: the wider it is the harder the assist grabs, and the coarser it aims
+    if (assist) {
+      const sx = cx + fs * 0.9, sy = y + rowH / 2, sr = fs * 0.8;
+      ctx.strokeStyle = 'rgba(124,224,160,0.85)';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.arc(sx, sy, sr, 0, 6.284);
+      ctx.stroke();
+      slider('ring', `RING ${s.ringScale.toFixed(1)}x`, (s.ringScale - 2) / 6,
+        'rgba(124,224,160,0.45)', { lo: 2, hi: 8 });
+    }
 
     // ---- debug: only when the server says the messages are accepted
     if (dbg) {

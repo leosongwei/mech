@@ -1196,6 +1196,30 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
   12 m/s^2. Measured against the range's patrolling mech at 1.4 s: 1.35 -> 0.67 m
   mean, 6.35 -> 2.45 m on the turns. A constant-curvature arc was measured too
   and is *worse* (6.98 against 4.71) - a mech's pull rotates while it turns.
+* **Aiming has two headings on the wire, and the assist is the switch between
+  them.** `_sightAim` is what the client sends as `yaw` / `pitch`: the view
+  (`input.yaw` / `pitch`) or, with the aim assist on and a pre-aim ring under
+  the centre cross, that ring's own aim point (`aimSnap`). The camera and the
+  centre cross keep reading `input.viewYaw`, so a snap never moves the pilot's
+  head - it moves the sight, and the hull and the arms slew after it as usual.
+  So the client carries **two crosses**: `×` at the middle of the screen (the
+  view, `_centreCross`) and a white `+` at the projection of the aim point
+  (`_aimCross`), drawn only while a snap holds. Every consumer of the sight -
+  the range readout, the arms' markers, the guided rounds' marker - reads
+  `_sightAim`, which is what keeps them consistent with what the server does.
+  The rings are laid out and picked in **screen space** (`_leadLayout`): a
+  target's two rings, which would always overlap at the assist's width, are
+  drawn side by side (`OO`, `LEAD_RING_GAP` between them) and the pair's whole
+  stadium is the catch area, because the point a pilot aims at - the hull's own
+  box - lands in the sliver between them. A laid-out ring is a **picker**, not a
+  position: `mark.x` / `y` is where it is drawn, `mark.wx` / `wy` / `wz` is the
+  aim point it stands for and the one the sight is snapped to, which is why the
+  `+` sits between the two rings instead of in either of them. Selection is the
+  nearest hull first (`lead.dist`), then the nearer of its two rings. ALT
+  (`input.freeYaw`, the cross is no longer the sight) and an open panel both
+  skip the snap. Width is `aimAssist ? LEAD_RING * assistRing : LEAD_RING`
+  (`_ringPx`), 2x-8x, default 4x, remembered in `localStorage` beside the
+  switch - the same `key` convention as `mech.volume`.
 * `map.js` must stay ballistically identical to the server: same gravity,
   same 1/30 step, same launch bias (`wd.bias`), the same "building walls are
   columns, tree trunks are cylinders" rule (`wallAt`/`obstacleAt`/`trunkHit`),

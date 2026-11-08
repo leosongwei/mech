@@ -6,7 +6,7 @@ import { Input } from './input.js';
 import { GameAudio, SOUND_FLOOR, SOUND_LEVEL, SOUND_SPEED, attenuation } from './audio.js';
 import { Renderer, makeCamera } from './renderer.js';
 import { drawUnits } from './scene.js';
-import { arrowRingAt, HUD } from './hud.js';
+import { arrowRingAt, HUD, LEAD_RING, LEAD_RING_GAP } from './hud.js';
 import { Particles } from './particles.js';
 import { clamp, dirFrom, invert4, mat4 } from './math.js';
 import { emptyDraft, isEmpty, quickDraft, quote, toMessage } from './shop.js';
@@ -57,6 +57,13 @@ const ARROW_RGB = [1.0, 0.29, 0.29];
 const LASER_RANGE = 3400;           // longest sight an enemy could shoot at
 const LASER_CONE = 0.05;            // rad, "his gun is pointed at me"
 const NAME_KEY = 'mech.name';      // the callsign, remembered across reloads
+const ASSIST_KEY = 'mech.aimassist';    // the aiming rule, remembered too
+const RING_KEY = 'mech.aimring';        // how wide the ring it snaps to is drawn
+// the ring the assist catches the cross with is a multiple of the plain pre-aim
+// circle: wide grabs from further off, narrow asks the pilot to mean it
+const RING_MIN = 2;
+const RING_MAX = 8;
+const RING_DEFAULT = 4;
 const SMOKE_RGB = [0.58, 0.52, 0.44];   // dirt brown, like the charge it is
 const SMOKE_END_SHRINK = 0.35;      // s, last moments of a puff (it is opaque)
 // A bang may stay in the air this long: the loudest thing a pilot can hear is a
@@ -88,6 +95,22 @@ function savedName() {
 
 function rememberName(name) {
   try { localStorage.setItem(NAME_KEY, name); } catch (e) { }
+}
+// The aiming rule ships switched on: the assist is what makes the pre-aim rings
+// usable on a moving hull, and a pilot who wants the cross free turns it off.
+function savedAssist() {
+  try {
+    return localStorage.getItem(ASSIST_KEY) !== '0';
+  } catch (e) {
+    return true;
+  }
+}
+function savedRing() {
+  try {
+    const v = parseFloat(localStorage.getItem(RING_KEY));
+    if (isFinite(v)) return clamp(v, RING_MIN, RING_MAX);
+  } catch (e) { }
+  return RING_DEFAULT;
 }
 
 // Where a horizontal ray, out of the round along `vx`/`vz`, passes closest to
@@ -151,6 +174,9 @@ export class Game {
     this.debug = false;             // server started with MECH_DEBUG=1
     this.shopDraft = emptyDraft();  // edits waiting for CONFIRM
     this.shopDrop = -1;             // which arm's weapon list is pulled down
+    this.aimAssist = savedAssist(); // the cross snaps to a pre-aim ring, on by default
+    this.assistRing = savedRing();  // × the plain circle, how wide that ring is
+    this.aimSnap = null;            // the ring it caught this snapshot, if any
   }
 
   async boot() {
@@ -549,10 +575,11 @@ export class Game {
     if (this.sendAcc < 1 / 30) return;
     this.sendAcc = 0;
     const [mx, mz] = this.input.moveVector();
+    const aim = this._sightAim();
     this.net.send({
       t: 'in',
-      yaw: this.input.yaw,
-      pitch: this.input.pitch,
+      yaw: aim.yaw,
+      pitch: aim.pitch,
       mx, mz,
       fl: this.shopOpen ? false : this.input.fireL,
       fr: this.shopOpen ? false : this.input.fireR,
@@ -981,16 +1008,29 @@ export class Game {
     ];
   }
 
+  // Where the crew is *actually* looking - the value the wire carries as `yaw` /
+  // `pitch`, which is what the server turns the machine and lays the fire
+  // control by.  The pilot's view never moves: with the assist holding a ring
+  // the sight is that ring's own aim point and the view is still his mouse, so
+  // the centre cross and the white one come apart by the ring the guns are on.
+  _sightAim() {
+    const a = this.aimSnap;
+    return a ? { yaw: a.yaw, pitch: a.pitch }
+      : { yaw: this.input.yaw, pitch: this.input.pitch };
+  }
+
   _aim(own) {
     this.crosshairs = [null, null];
     this.sightRange = null;
     if (!own) return;
     // two headings, and they are different things.  `dir` is the sight: the
     // cross, the range readout, the seeker ring, the beam a SACLOS missile
-    // rides.  The arms are laid along the bore (`own.yaw` / `own.pitch`), which
+    // rides - the view, or the ring the aim assist has caught (`_sightAim`).
+    // The arms are laid along the bore (`own.yaw` / `own.pitch`), which
     // trails the sight while the machine catches up - that is what each arm's
     // marker is predicted from below
-    const dir = dirFrom(this.input.yaw, this.input.pitch);
+    const sight = this._sightAim();
+    const dir = dirFrom(sight.yaw, sight.pitch);
     const byaw = own.yaw;
     const bpitch = own.pitch;
     const bdir = dirFrom(byaw, bpitch);
@@ -1174,10 +1214,12 @@ export class Game {
   // put the pre-aim solutions on the screen as it stands this frame
   _leadScreen(own) {
     this.leads = [];
+    this.aimSnap = null;
     if (!own || !this.leadWorld.length) return;
     const fov = clamp(BASE_FOV / this.zoom, 0.02, BASE_FOV);
     const tanHalf = Math.tan(fov * 0.5);
     const eyeY = own.y + ((this.defs.mech && this.defs.mech.eye) || 5.05);
+    const ring = this._ringPx();
     for (const t of this.leadWorld) {
       const box = this.hud._project(t.x, t.y, t.z);
       if (!box) continue;
@@ -1192,14 +1234,96 @@ export class Game {
         x: box[0], y: box[1],
         hw,
         hh: t.ball ? hw : clamp(t.ry * pxm, 5, 70),
+        dist,
         marks: [],
       };
       for (const m of t.marks) {
         const scr = this.hud._project(m.x, m.y, m.z);
-        if (scr) out.marks.push({ arm: m.arm, x: scr[0], y: scr[1], tof: m.tof });
+        // the mark keeps both ends: where the ring is drawn (a picker, with the
+        // assist on) and the point it stands for - the one the sight is snapped
+        // to, so a ring moved aside is still the honest answer it always was
+        if (scr) out.marks.push({ arm: m.arm, x: scr[0], y: scr[1], tof: m.tof,
+          ring, wx: m.x, wy: m.y, wz: m.z });
       }
       this.leads.push(out);
     }
+    this._leadLayout(own);
+  }
+
+  // The drawn radius of a pre-aim circle, px: the plain one, or the assist's
+  // multiple of it (`assistRing`, the setting's slider).
+  _ringPx() {
+    return LEAD_RING * (this.aimAssist ? this.assistRing : 1);
+  }
+
+  // The assist's two jobs, both in screen space because both are about what the
+  // pilot can put the cross on.
+  //
+  // * **Layout**: a target's two rings are drawn side by side (`OO`) when they
+  //   would overlap, both the same width and never touching, so the pair reads
+  //   as one hull with two picks instead of a smudge.  The rings are pickers
+  //   from then on; the points themselves are `wx` / `wy` / `wz`.
+  // * **Selection**: whichever ring the centre cross is inside of is the one
+  //   caught - and the nearest hull wins when two of them overlap - and its own
+  //   aim point becomes the sight (`_sightAim`), so the guns are laid on the
+  //   target while the view stays where the pilot put it.
+  //
+  // A cross that is not the sight catches nothing: ALT holds the view still and
+  // pans it freely (`input.freeYaw`), and a panel takes the pointer altogether,
+  // so in both the ring under the middle of the screen is not what the guns are
+  // being pointed with.
+  _leadLayout(own) {
+    if (!this.aimAssist || !this.leads.length) return;
+    if (this.input.alt || this.input.uiOpen) return;
+    const ring = this._ringPx();
+    const sep = ring * 2 + LEAD_RING_GAP;
+    for (const t of this.leads) {
+      const [a, b] = t.marks;
+      if (!b || Math.hypot(b.x - a.x, b.y - a.y) >= sep) continue;
+      const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+      const l = a.arm === 0 ? a : b;
+      const r = a.arm === 0 ? b : a;
+      l.x = mx - sep / 2; l.y = my;
+      r.x = mx + sep / 2; r.y = my;
+    }
+    const cx = this.hud.w / 2, cy = this.hud.h / 2;
+    let best = null;
+    for (const t of this.leads) {
+      const [a, b] = t.marks;
+      if (!a) continue;
+      let hit = null;
+      if (b) {
+        // a laid-out pair is one stadium: the two circles *and* the sliver
+        // between them, which is where a pilot aiming at the hull's own box
+        // puts the cross - so the nearest circle centre of the pair is picked
+        const vx = b.x - a.x, vy = b.y - a.y;
+        const l2 = vx * vx + vy * vy || 1;
+        const u = clamp(((cx - a.x) * vx + (cy - a.y) * vy) / l2, 0, 1);
+        const dx = a.x + vx * u - cx, dy = a.y + vy * u - cy;
+        if (Math.hypot(dx, dy) <= ring) {
+          const da = Math.hypot(a.x - cx, a.y - cy);
+          const db = Math.hypot(b.x - cx, b.y - cy);
+          hit = da <= db ? a : b;
+        }
+      } else if (Math.hypot(a.x - cx, a.y - cy) <= ring) {
+        hit = a;
+      }
+      // a target that was ringed before wins over the one behind it
+      if (hit && (!best || t.dist < best.t.dist)) best = { t, m: hit };
+    }
+    if (!best) return;
+    best.m.active = true;
+    const eye = this._sightEye(own);
+    const dx = best.m.wx - eye[0], dz = best.m.wz - eye[2];
+    const dh = Math.hypot(dx, dz);
+    this.aimSnap = {
+      x: best.m.wx, y: best.m.wy, z: best.m.wz,
+      yaw: Math.atan2(dz, dx),
+      // the sight's own limits, so the snapped direction is one the pilot could
+      // have reached with the mouse (`input._mouse`)
+      pitch: clamp(Math.atan2(best.m.wy - eye[1], Math.max(dh, 1e-3)), -0.6, 0.9),
+      arm: best.m.arm, id: best.t.id,
+    };
   }
 
   // ------------------------------------------------------------ rearm shop
@@ -1274,6 +1398,22 @@ export class Game {
     if (document.pointerLockElement) document.exitPointerLock();
   }
 
+  // The aiming rule, remembered across reloads the way the volume is.  Dropping
+  // the snap with it means the guns return to the view the moment it goes off.
+  _setAimAssist(on) {
+    this.aimAssist = !!on;
+    this.aimSnap = null;
+    try { localStorage.setItem(ASSIST_KEY, this.aimAssist ? '1' : '0'); } catch (e) { }
+  }
+
+  // How wide the ring the cross is caught by is drawn - the setting that trades
+  // reach against precision.  Half multiples, kept in storage beside the rule.
+  _setRing(v) {
+    this.assistRing = clamp(Math.round(v * 2) / 2, RING_MIN, RING_MAX);
+    this.aimSnap = null;
+    try { localStorage.setItem(RING_KEY, String(this.assistRing)); } catch (e) { }
+  }
+
   _settingsClose() {
     if (!this.settingsOpen) return;
     this.settingsOpen = false;
@@ -1301,6 +1441,20 @@ export class Game {
       const step = (id === 'alarm-' ? -0.05 : id === 'alarm+' ? 0.05 : 0);
       const v = step ? this.audio.alarmVolume + step : (r && r.w ? (x - r.x) / r.w : 0);
       this.audio.setAlarmVolume(v);
+      return;
+    }
+    if (id === 'assist') {
+      this._setAimAssist(!this.aimAssist);
+      return;
+    }
+    // the ring's width: the bar is absolute between its two ends, the buttons
+    // step by half a multiple
+    if (id === 'ring' || id === 'ring-' || id === 'ring+') {
+      const r = this.hud.ringRect;
+      const step = id === 'ring-' ? -0.5 : id === 'ring+' ? 0.5 : 0;
+      const span = r ? r.hi - r.lo : RING_MAX - RING_MIN;
+      const v = step ? this.assistRing + step : r && r.w ? r.lo + (x - r.x) / r.w * span : 0;
+      this._setRing(Math.round(v * 2) / 2);
       return;
     }
     if (id === 'respawn') {
@@ -1445,6 +1599,14 @@ export class Game {
       playerFaction: faction,
       crosshairs: this.crosshairs,
       leads: this.leads,
+      // where the guns are really laid when the assist holds a ring - the
+      // centre cross is the view, this one is the aim.  Projected here, every
+      // frame, so it rides the camera like everything else on the HUD
+      aim: this.aimSnap
+        ? this.hud._project(this.aimSnap.x, this.aimSnap.y, this.aimSnap.z)
+        : null,
+      assistOn: this.aimAssist,
+      ringScale: this.assistRing,
       lock: this.lockInfo,
       lockFrac: this.lockFrac,
       // the hull's ground speed: the snapshot velocity is the one it is really

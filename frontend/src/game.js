@@ -6,7 +6,7 @@ import { Input } from './input.js';
 import { GameAudio, SOUND_FLOOR, SOUND_LEVEL, SOUND_SPEED, attenuation } from './audio.js';
 import { Renderer, makeCamera } from './renderer.js';
 import { drawUnits } from './scene.js';
-import { arrowRingAt, HUD, LEAD_RING, LEAD_RING_GAP } from './hud.js';
+import { arrowRingAt, HUD, LEAD_RING } from './hud.js';
 import { Particles } from './particles.js';
 import { clamp, dirFrom, invert4, mat4 } from './math.js';
 import { emptyDraft, isEmpty, quickDraft, quote, toMessage } from './shop.js';
@@ -179,6 +179,7 @@ export class Game {
     this.aimAssist = savedAssist(); // the cross snaps to a pre-aim ring, on by default
     this.assistRing = savedRing();  // × the plain circle, how wide that ring is
     this.aimSnap = null;            // the ring it caught this snapshot, if any
+    this._pairDir = null;           // per target: the line its two rings lie on
   }
 
   async boot() {
@@ -1228,7 +1229,7 @@ export class Game {
     for (const t of this.threats || []) {
       if (!t.seen || !(t.hit_r > 0)) continue;
       if (sightBlocked(this.map, eye[0], eye[1], eye[2], t.x, t.y, t.z, puffs)) continue;
-      const m = { ball: true, x: t.x, y: t.y, z: t.z,
+      const m = { id: t.id, ball: true, x: t.x, y: t.y, z: t.z,
                   rx: t.hit_r, ry: t.hit_r, marks: [] };
       for (const a of arms) {
         const p = leadPoint(a.wd, this.zeroRange, zero.max_elev,
@@ -1343,9 +1344,13 @@ export class Game {
   // The assist's two jobs, both in screen space because both are about what the
   // pilot can put the cross on.
   //
-  // * **Layout**: a target's two rings are drawn side by side (`OO`) when they
-  //   would overlap, both the same width and never touching, so the pair reads
-  //   as one hull with two picks instead of a smudge.  The rings are pickers
+  // * **Layout**: a target's two rings, when they would overlap, are pushed
+  //   apart along the line their own two solutions make until they are tangent
+  //   at the middle of it.  Each ring stays on its own arm's side, and the pair
+  //   rides the true points instead of a fixed screen direction: it is the line
+  //   between the two solutions that decides where they sit, so a fast target -
+  //   an incoming round's lead swings metres between two frames - cannot make
+  //   the pair jump from one arrangement to the other.  The rings are pickers
   //   from then on; the points themselves are `wx` / `wy` / `wz`.
   // * **Selection**: whichever ring the centre cross is inside of is the one
   //   caught - and the nearest hull wins when two of them overlap - and its own
@@ -1360,16 +1365,27 @@ export class Game {
     if (!this.aimAssist || !this.leads.length) return;
     if (this.input.alt || this.input.uiOpen) return;
     const ring = this._ringPx();
-    const sep = ring * 2 + LEAD_RING_GAP;
+    const prev = this._pairDir;
+    const next = new Map();
     for (const t of this.leads) {
       const [a, b] = t.marks;
-      if (!b || Math.hypot(b.x - a.x, b.y - a.y) >= sep) continue;
+      if (!b) continue;
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const d = Math.hypot(dx, dy);
+      // a pair that already clears itself is drawn where its solutions are
+      if (d >= ring * 2) continue;
+      // the line the pair lies on: the two solutions themselves.  Below a
+      // fraction of a pixel their difference is noise, and the last frame's
+      // direction is the honest answer - it is the one the pilot is reading
+      let ux = 1, uy = 0;
+      if (d > ring * 0.05) { ux = dx / d; uy = dy / d; }
+      else if (prev && prev.has(t.id)) [ux, uy] = prev.get(t.id);
+      next.set(t.id, [ux, uy]);
       const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
-      const l = a.arm === 0 ? a : b;
-      const r = a.arm === 0 ? b : a;
-      l.x = mx - sep / 2; l.y = my;
-      r.x = mx + sep / 2; r.y = my;
+      a.x = mx - ux * ring; a.y = my - uy * ring;
+      b.x = mx + ux * ring; b.y = my + uy * ring;
     }
+    this._pairDir = next;
     const cx = this.hud.w / 2, cy = this.hud.h / 2;
     let best = null;
     for (const t of this.leads) {
@@ -1377,9 +1393,10 @@ export class Game {
       if (!a) continue;
       let hit = null;
       if (b) {
-        // a laid-out pair is one stadium: the two circles *and* the sliver
-        // between them, which is where a pilot aiming at the hull's own box
-        // puts the cross - so the nearest circle centre of the pair is picked
+        // a laid-out pair is one stadium: the two circles and the band round
+        // the point they touch, which is where a pilot aiming at the hull's own
+        // box puts the cross - so the nearer circle centre of the pair is
+        // picked
         const vx = b.x - a.x, vy = b.y - a.y;
         const l2 = vx * vx + vy * vy || 1;
         const u = clamp(((cx - a.x) * vx + (cy - a.y) * vy) / l2, 0, 1);

@@ -35,7 +35,6 @@ const FAR_COLOR = '#ff4a4a';        // distance past the fire control's reach
 const LEAD_COLOR = '#f2f6f4';       // the box round a hull with a pre-aim solution
 export const LEAD_RING = 7;         // px, radius of a pre-aim circle; the aim
                                     // assist widens it (`game._ringPx`)
-export const LEAD_RING_GAP = 8;     // px, between a target's two rings laid side by side
 const RADAR_PX = 78;                // px, outer radius of the threat circle
 const RADAR_MARGIN = 22;            // px between the dial and the screen edges
 const GEAR_EDGE = 8;                // px from the top and right edges to the gear
@@ -170,8 +169,9 @@ export class HUD {
   //
   // With the aim assist on the circles are `LEAD_RING_ASSIST` wide and are the
   // thing the cross is caught by, so they double as pickers: a target's two
-  // rings are laid side by side (`game._leadLayout`) and the one the cross is
-  // inside of is drawn at full weight.
+  // rings are pushed apart into a tangent pair on the line of their own two
+  // solutions (`game._leadLayout`), and the one the cross is inside of is drawn
+  // at full weight.
   _leads(s) {
     const leads = s.leads;
     if (!leads || !leads.length) return;

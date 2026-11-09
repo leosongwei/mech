@@ -1228,21 +1228,25 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
   the range readout, the arms' markers, the guided rounds' marker - reads
   `_sightAim`, which is what keeps them consistent with what the server does.
   The rings are laid out and picked in **screen space** (`_leadLayout`): a
-  target's two rings, which would always overlap at the assist's width, are
-  drawn side by side (`OO`, `LEAD_RING_GAP` between them) and the pair's whole
-  stadium is the catch area, because the point a pilot aims at - the hull's own
-  box - lands in the sliver between them. A laid-out ring is a **picker**, not a
-  position: `mark.x` / `y` is where it is drawn, `mark.wx` / `wy` / `wz` is the
-  aim point it stands for and the one the sight is snapped to, which is why the
-  `+` sits between the two rings instead of in either of them. Selection is the
-  nearest hull first (`lead.dist`), then the nearer of its two rings. ALT
-  (`input.freeYaw`, the cross is no longer the sight) and an open panel both
-  skip the snap. Width is `aimAssist ? LEAD_RING * assistRing : LEAD_RING`
-  (`_ringPx`), 2x-8x, default 4x, remembered in `localStorage` beside the
-  switch - the same `key` convention as `mech.volume`.  In game `V` throws that
-  same switch (`input.onToggleAssist` -> `_toggleAssist`), so the pilot keeps the
-  pointer and the cross is back under his hand without the panel; the message
-  list says which way it went, and the panel's button reads the same field.
+  target's two rings, when they would overlap at the assist's width, are pushed
+  apart along the line their own two solutions make until they are tangent at
+  its middle - each ring on its own arm's side, and the direction kept from the
+  last frame while the two points are closer than a pixel - so the pair rides
+  the true points and a fast target cannot make it swap arrangements between
+  two frames. The pair's whole stadium is the catch area, because the point a
+  pilot aims at - the hull's own box - lands round the point they touch. A
+  laid-out ring is a **picker**, not a position: `mark.x` / `y` is where it is
+  drawn, `mark.wx` / `wy` / `wz` is the aim point it stands for and the one the
+  sight is snapped to, which is why the `+` sits between the two rings instead
+  of in either of them. Selection is the nearest hull first (`lead.dist`), then
+  the nearer of its two rings. ALT (`input.freeYaw`, the cross is no longer the
+  sight) and an open panel both skip the snap. Width is
+  `aimAssist ? LEAD_RING * assistRing : LEAD_RING` (`_ringPx`), 2x-8x, default
+  4x, remembered in `localStorage` beside the switch - the same `key` convention
+  as `mech.volume`.  In game `V` throws that same switch
+  (`input.onToggleAssist` -> `_toggleAssist`), so the pilot keeps the pointer and
+  the cross is back under his hand without the panel; the message list says
+  which way it went, and the panel's button reads the same field.
 * `map.js` must stay ballistically identical to the server: same gravity,
   same 1/30 step, same launch bias (`wd.bias`), the same "building walls are
   columns, tree trunks are cylinders" rule (`wallAt`/`obstacleAt`/`trunkHit`),

@@ -3,17 +3,34 @@
 // Threat warning tones, measured off the DCS AN/ALR-67 RWR audio set
 // (openflightschool.de, book 806 chapter 895): the *same* pair of tones,
 // 426 Hz and 561 Hz, square-ish (odd harmonics only, 3rd at -8 dB), alternated
-// back to back with no gap.  What changes between a lock and a launch is only
-// the alternation rate: 0.25 s per tone when a sight settles on you ("radar
-// uplink"), 0.083 s once a missile is on its way ("missile launch").
+// back to back with no gap.  A missile on its way is a trill of them, 0.083 s a
+// tone ("missile launch").
 const RWR_LO = 426;
 const RWR_HI = 561;
-const WARBLE_SLOW = 0.25;
 // one tone of the missile trill, and the rate every other cue that counts that
 // beat reads: the arrow ring's rim blinks on the same clock
 export const RWR_TONE_S = 0.083;
-const UPLINK_VOL = 0.05;            // a lock is a warning, not an emergency
-const MISSILE_VOL = 0.06;           // the trill sits a little above it
+// The laser warning is its own cue, and a small one: six short beeps around
+// 960 Hz - the pitch and the rhythm measured off the warning tone in *Mobile
+// Suit Gundam: Hathaway*'s action cut - then a rest, cycled.  A ground battle
+// is dense with things a pilot has to hear, and the old RWR lock warble held
+// the whole ear for as long as it lasted; this says "somebody's sight is on
+// you" and gives the ear back.
+const BEEP_HZ = 960;
+// ...and its timbre, measured off the source tone: the partials of a 960 Hz
+// fundamental, in dB below the first.  It is a stacked, buzzy thing rather than
+// a test tone, and two of them a few Hz apart are what give it the beat the
+// recording has.
+const BEEP_PARTIALS = [0, -13.4, -17.4, -14.3, -31.9, -17.2, -49.7, -33.7,
+  -34.4, -51.2];
+const BEEP_DETUNE = 7;              // Hz, the second oscillator
+const BEEP_ON = 0.09;               // one "duh"
+const BEEP_GAP = 0.06;              // the silence inside the train
+const BEEP_REST = 0.7;              // the rest after the sixth
+const BEEP_COUNT = 6;
+const UPLINK_VOL = 0.02;            // a lock is a warning, not an emergency: a
+                                    // third of the missile trill's level
+const MISSILE_VOL = 0.06;           // the trill sits well above it
 // Master gain for a full volume slider.  The per-cue mixes above were tuned
 // 3x too quiet against the rest of the game, so the whole bus sits at 1.65 at
 // the default 50%; the top of the slider is twice that again, and the settings
@@ -196,6 +213,18 @@ const FAR_FULL = 2600;           // m, fully in past this (faded, squared)
 const FAR_CEIL = -20;            // dBFS, where the far bed settles
 const FAR_MIN_GAP = 0.05;        // s, at most one far voice per this
 
+// A ceiling on how many voices the mix may hold at once, whatever is firing and
+// whoever is firing it.  A live client measured 350 sound calls a second, and
+// every one of them opens a chain of six or more nodes: a machine that cannot
+// keep up does not merely sound thin, the audio thread falls behind its own
+// clock and the tab goes quiet.  So a voice holds a slot for as long as it
+// plays - a burst of short cracks fits, a dozen two second rumbles at once does
+// not - and past the ceiling a quiet cue is dropped while a loud one still gets
+// in, because trading the 105 mm beside the pilot for a machine gun three
+// kilometres out is the wrong bargain.
+const MAX_VOICES = 48;
+const STEAL_VOL = 0.05;          // -26 dB, this loud plays even when the mix is full
+
 // The master bus ends in a soft clipper, and this is the headroom it gets.  A
 // DynamicsCompressor is not a limiter: at 4 ms attack it hands a transient its
 // first few milliseconds at full gain, so a 105 mm round next to the pilot
@@ -252,15 +281,18 @@ export class GameAudio {
     this.master = null;
     this.alarms = null;
     this.verb = null;
+    this.send = null;               // the room's one fixed input (see ensure)
     this.far = null;                // the distant bed's own bus (see FAR_CEIL)
     this.farLim = null;
     this.limiter = null;
     this.top = null;                // CLIP_GAIN into the shaper
     this.clip = null;               // the soft ceiling, the last node there is
     this._farT = -1e9;              // when a far voice was last opened
+    this._voiceEnd = [];            // when each live voice starts being free
     this.lockOsc = null;
     this.lockGain = null;
     this.warbles = {};
+    this.beeps = {};
     this.beepTimer = 0;
     this.mode = 'none';
     this.volume = storedVolume();   // 0..1, the settings menu's master slider
@@ -281,6 +313,21 @@ export class GameAudio {
     if (this.alarms) this.alarms.gain.value = ALARM_GAIN * this.alarmVolume;
   }
 
+  // Room for one more event?  Slots are held by the voices that are still
+  // sounding, so the ceiling is on the simultaneous count rather than on the
+  // rate - which is the shape a battle has: dozens of short cracks a second is
+  // fine, a dozen two second rumbles at once is not.
+  _admit(vol, dur) {
+    const now = this.ctx.currentTime;
+    const end = this._voiceEnd;
+    let n = 0;
+    for (let i = 0; i < end.length; i++) if (end[i] > now) end[n++] = end[i];
+    end.length = n;
+    if (n >= MAX_VOICES && vol < STEAL_VOL) return false;
+    end.push(now + dur);
+    return true;
+  }
+
   ensure() {
     if (this.ctx) return;
     const AC = window.AudioContext || window.webkitAudioContext;
@@ -294,18 +341,21 @@ export class GameAudio {
     // always partly through before it ducks, and a hard 0 dBFS clamp on that
     // sliver is a speaker buzz rather than a bang.
     //
-    // The curve is deliberately a gentle one (8:1 over an 8 dB knee).  A hard
-    // limiter does hold a dense mix down, but it also flattens the two cues the
-    // ear is listening for - measured on a 105 mm round next to the pilot, a
-    // 12:1 limiter with a 2 ms attack took it from 1.12 (clipped) to 0.63,
-    // i.e. the loudest thing on the field came out quieter than the mix it is
-    // supposed to sit on top of.  These numbers keep it at 0.84.
+    // The curve is the ceiling the mix is measured against.  A threshold that
+    // sits below where a dense mix actually lives is the difference between a
+    // peak catcher and a fuzz pedal: measured with three gatlings 200 m out
+    // (90 rounds a second), -8 dB left the mix peaking at 0.90 with 5 % of its
+    // samples past the 0.7 knee - continuous soft-clip distortion, heard as a
+    // faint buzz under everything.  At -12 dB it peaks at 0.69 and touches the
+    // knee 0 % of the time, while a 105 mm next to the pilot still reads 0.76
+    // against that 0.69.  A knee keeps a single round's transient intact; the
+    // ratio is what holds a burst of them down.
     this.limiter = this.ctx.createDynamicsCompressor();
-    this.limiter.threshold.value = -8;
-    this.limiter.knee.value = 8;
-    this.limiter.ratio.value = 8;
-    this.limiter.attack.value = 0.003;
-    this.limiter.release.value = 0.2;
+    this.limiter.threshold.value = -12;
+    this.limiter.knee.value = 6;
+    this.limiter.ratio.value = 12;
+    this.limiter.attack.value = 0.002;
+    this.limiter.release.value = 0.25;
     this.top = this.ctx.createGain();
     this.top.gain.value = CLIP_GAIN;
     this.clip = this.ctx.createWaveShaper();
@@ -324,6 +374,13 @@ export class GameAudio {
     this.verb = this.ctx.createConvolver();
     this.verb.buffer = this._impulse(2.4, 2.8);
     this.verb.connect(this.master);
+    // and one fixed input to it: a convolver whose input connections change a
+    // few hundred times a second recomputes its own mix on every change, which
+    // is both work and a click.  Every voice's (per-voice, distance-lifted) send
+    // gain lands on this, so the room itself never sees the graph move.
+    this.send = this.ctx.createGain();
+    this.send.gain.value = 1;
+    this.send.connect(this.verb);
     // the far field is a bed, so it gets a bus of its own: see FAR_CEIL
     this.far = this.ctx.createGain();
     this.farLim = this.ctx.createDynamicsCompressor();
@@ -334,7 +391,12 @@ export class GameAudio {
     this.farLim.release.value = 0.35;
     this.far.connect(this.farLim);
     this.farLim.connect(this.master);
-    const len = this.ctx.sampleRate * 1.2;
+    // The shared noise is long enough that nothing has to loop it: a buffer
+    // that ends on a random sample and starts on another is a step in the
+    // waveform at the seam, and a hull burning or a 105 mm's tail is loud
+    // enough for that to be heard every 1.2 s.  Six seconds covers the longest
+    // voice on the field (a hull's 4.5 s rumble, started at a random offset).
+    const len = this.ctx.sampleRate * 6.0;
     const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
     const d = buf.getChannelData(0);
     for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
@@ -387,8 +449,11 @@ export class GameAudio {
   // and `FAR_CEIL`), so the body of a distant report comes from the far voice,
   // which is a bed and is compressed as one.
   // `dest` is the bus the voice lands on - the master for everything the pilot
-  // is meant to hear as an event, the far bus for the distant bed.
+  // is meant to hear as an event, the far bus for the distant bed.  The nodes
+  // it opens are handed back, so the voice that owns them can disconnect them
+  // when it ends.
   _bus(g, pan = 0, behind = 0, dist = 0, dest = null) {
+    const made = [g];
     let out = g;
     const cut = Math.min(airCutoff(dist),
                          behind > 0.02 ? 12000 - 10000 * Math.min(1, behind) : 1e9);
@@ -399,14 +464,17 @@ export class GameAudio {
       lp.Q.value = 0.4;
       out.connect(lp);
       out = lp;
+      made.push(lp);
     }
     if (Math.abs(pan) > 0.01 && this.ctx.createStereoPanner) {
       const p = this.ctx.createStereoPanner();
       p.pan.value = Math.max(-1, Math.min(1, pan));
       out.connect(p);
       out = p;
+      made.push(p);
     }
     out.connect(dest || this.master);
+    return made;
   }
 
   // Send a voice into the shared room by `wet` (0..1).  Knobbed off it is a
@@ -415,11 +483,12 @@ export class GameAudio {
   // sound is the part that is placed - which is how a real one behaves.  `dist`
   // lifts it back over the distance the dry sound just lost (`reverbLift`).
   _verbSend(node, wet, dist = 0) {
-    if (!(wet > 0) || !this.verb) return;
+    if (!(wet > 0) || !this.verb) return null;
     const g = this.ctx.createGain();
     g.gain.value = VERB_SEND * wet * reverbLift(dist);
     node.connect(g);
-    g.connect(this.verb);
+    g.connect(this.send);
+    return g;
   }
 
   // `wet` overrides the distance-driven reverb send: a burst that is meant to be
@@ -433,9 +502,9 @@ export class GameAudio {
     const src = this.ctx.createBufferSource();
     src.buffer = this.noise;
     src.playbackRate.value = 0.8 + Math.random() * 0.5;
-    // the shared noise buffer is 1.2 s long: anything wound out past it (the
-    // rumble tail of a report, a hull's burn) has to loop or it stops dead
-    src.loop = dur > 1.0;
+    // the shared noise buffer is six seconds long, which is longer than any
+    // voice on the field, so the seam is never played
+    src.loop = dur > 5.5;
     const f = this.ctx.createBiquadFilter();
     f.type = type || 'bandpass';
     f.frequency.value = freq;
@@ -449,22 +518,43 @@ export class GameAudio {
       // of the report at unity and the mix exactly the wrong way round: the
       // bright 0.7x crack arriving 12 dB over the 3.4x boom.
       opts.env.forEach(([at, v], i) => {
-        const to = Math.max(v * gain, 0.0001);
+        const floor = Math.min(0.0001, gain * 0.01);
+        const to = Math.max(v * gain, floor);
         if (i === 0) g.gain.setValueAtTime(to, t + at);
         else g.gain.exponentialRampToValueAtTime(to, t + at);
       });
     } else {
-      g.gain.setValueAtTime(gain, t);
-      g.gain.exponentialRampToValueAtTime(0.0008, t + dur);
+      // a cue that arrives quiet is quieter than the floor this used to ramp
+      // to, and an exponential ramp to a fixed 0.0008 would then grow it as it
+      // decays
+      const peak = Math.max(gain, 0.0001);
+      g.gain.setValueAtTime(peak, t);
+      g.gain.exponentialRampToValueAtTime(Math.min(0.0008, peak * 0.3), t + dur * 0.9);
     }
+    // and the last few milliseconds go to silence, linearly: an exponential
+    // ramp can only ever approach zero, and the step from where it stops to the
+    // node being cut is a click - a battle makes hundreds a second and that is
+    // the low buzz under everything
+    g.gain.linearRampToValueAtTime(0, t + dur);
     src.connect(f); f.connect(g);
     // a voice on the far bus is already the sample that crossed the valley:
     // sending it into the room again put a reverb tail on every single event of
     // a battle, which is both the loudest thing in the bed and the most
     // expensive one (a convolver input per voice, ninety times a second)
     const dest = opts && opts.dest ? opts.dest : null;
-    this._bus(g, pan, behind, dist, dest);
-    if (!dest) this._verbSend(g, wet === null ? reverberation(dist) : wet, dist);
+    const chain = this._bus(g, pan, behind, dist, dest);
+    if (!dest) {
+      const vg = this._verbSend(g, wet === null ? reverberation(dist) : wet, dist);
+      if (vg) chain.push(vg);
+    }
+    // a voice is a temporary chain: the nodes are worth nothing once the source
+    // has played, and a battle opens hundreds of them a second, so the chain is
+    // torn down when the source ends instead of waiting for a collector
+    src.onended = () => {
+      src.disconnect();
+      f.disconnect();
+      for (const n of chain) n.disconnect();
+    };
     src.start(t, Math.random() * 0.4);
     src.stop(t + dur + 0.05);
   }
@@ -484,22 +574,31 @@ export class GameAudio {
     o.frequency.exponentialRampToValueAtTime(
       opts && opts.sweepTo ? opts.sweepTo : freq * 0.35, t + dur);
     const g = this.ctx.createGain();
+    // same floor as `_noiseBurst`: a quiet voice is quieter than the ramp's
+    // end, and ramping up to it would turn a decay into a swell
+    const peak = Math.max(gain, 0.0001);
     if (attack > 0) {
       // scheduled from zero, or the node's default gain of 1 is already open
       // when the oscillator starts
       g.gain.setValueAtTime(0.0001, t);
-      g.gain.exponentialRampToValueAtTime(gain, t + attack);
+      g.gain.exponentialRampToValueAtTime(peak, t + attack);
     } else {
-      g.gain.setValueAtTime(gain, t);
+      g.gain.setValueAtTime(peak, t);
     }
-    g.gain.exponentialRampToValueAtTime(0.001, t + attack + dur);
+    g.gain.exponentialRampToValueAtTime(Math.min(0.001, peak * 0.3), t + attack + dur * 0.9);
+    g.gain.linearRampToValueAtTime(0, t + attack + dur);
     o.connect(g);
     const dest = opts && opts.dest ? opts.dest : null;
-    this._bus(g, pan, behind, dist, dest);
+    const chain = this._bus(g, pan, behind, dist, dest);
     if (!dest) {
-      this._verbSend(g, opts && opts.wet !== undefined ? opts.wet
+      const vg = this._verbSend(g, opts && opts.wet !== undefined ? opts.wet
         : reverberation(dist) * 0.6, dist);
+      if (vg) chain.push(vg);
     }
+    o.onended = () => {
+      o.disconnect();
+      for (const n of chain) n.disconnect();
+    };
     o.start(t); o.stop(t + attack + dur + 0.02);
   }
 
@@ -548,6 +647,11 @@ export class GameAudio {
   shot(wid, kind, vol = 1, dist = 0, pan = 0, behind = 0, heavy = false) {
     this.ensure();
     if (!this.ctx) return;
+    // the slot a voice holds is how long it sounds: a gatling's crack is over in
+    // a tenth of a second and a nest of them is thirty a second, so charging
+    // them a cannon's 0.8 s would fill the ceiling with clicks and start
+    // dropping the explosions three kilometres out
+    if (!this._admit(vol, heavy ? 2.0 : kind === 'bullet' ? 0.2 : 0.8)) return;
     if (heavy) {
       // Measured off a recorded M1 (plan_imgs/m1fire.mkv, four rounds, analysed
       // per window - the table is `HEAVY_REPORT` above):
@@ -598,6 +702,7 @@ export class GameAudio {
   boom(vol = 1, big = false, dist = 0, pan = 0, behind = 0) {
     this.ensure();
     if (!this.ctx) return;
+    if (!this._admit(vol, big ? 1.2 : 0.6)) return;
     this._noiseBurst(big ? 1.1 : 0.5, big ? 420 : 600, 0.8, Math.min(1, 0.5 * vol),
                      'lowpass', 90, dist, null, pan, behind);
     this._thump(big ? 55 : 85, big ? 0.9 : 0.4, Math.min(1, 0.5 * vol), dist, pan, behind);
@@ -613,6 +718,7 @@ export class GameAudio {
   explosion(vol = 1, dist = 0, pan = 0, behind = 0) {
     this.ensure();
     if (!this.ctx) return;
+    if (!this._admit(vol, 4.6)) return;
     const v = Math.min(1, vol);
     const wet = reverberation(dist);
     // the pressure front: a low-mid shove rather than a gunshot's bright crack
@@ -721,14 +827,81 @@ export class GameAudio {
     this._warbleSet(v, !!active, MISSILE_VOL, 0.3);
   }
 
-  // laser warning: somebody's sight is on the cockpit.  Same tone pair, four
-  // times slower - unmistakable next to the missile warble.  Both alarms ride
-  // the ALARM bus, so they have a slider of their own in the settings menu.
+  // laser warning: somebody's sight is on the cockpit.  A train of six beeps,
+  // then a rest, then six again - one voice however many designators are on
+  // you, because three overlapping alarms say nothing the first one did not.
+  // Rides the ALARM bus with the missile trill, so it has the same slider.
   laserWarning(active) {
     this.ensure();
     if (!this.ctx) return;
-    const v = this._warble('uplink', WARBLE_SLOW);
-    this._warbleSet(v, !!active, UPLINK_VOL, 0.45);
+    const v = this._beep();
+    const now = this.ctx.currentTime;
+    if (active) v.hold = Math.max(v.hold, now + 0.45);
+    if (!active && v.hold <= now) {
+      if (v.on) {
+        v.on = false;
+        v.g.gain.cancelScheduledValues(now);
+        v.g.gain.setTargetAtTime(0, now, 0.02);
+      }
+      return;
+    }
+    if (!v.on) { v.on = true; v.next = 0; v.i = 0; }
+    this._beepTick(v);
+  }
+
+  _beep() {
+    let v = this.beeps.uplink;
+    if (!v) {
+      const g = this.ctx.createGain();
+      g.gain.value = 0;
+      // a soft top on the stack: the partials reach 11 kHz in the recording,
+      // which is fizz next to a battle's low end
+      const lp = this.ctx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = 5200;
+      lp.Q.value = 0.5;
+      lp.connect(g); g.connect(this.alarms);
+      // the measured partials at BEEP_HZ, and a second oscillator a few Hz
+      // above it for the beat that makes the pair sound stacked rather than
+      // tuned
+      const w = this._beepWave();
+      const oscs = [0, BEEP_DETUNE].map((det) => {
+        const o = this.ctx.createOscillator();
+        o.setPeriodicWave(w);
+        o.frequency.value = BEEP_HZ + det;
+        o.connect(lp);
+        o.start();
+        return o;
+      });
+      v = this.beeps.uplink = { oscs, g, next: 0, i: 0, on: false, hold: 0 };
+    }
+    return v;
+  }
+
+  _beepWave() {
+    if (this.beepWave) return this.beepWave;
+    const real = new Float32Array(BEEP_PARTIALS.length + 1);
+    const imag = new Float32Array(BEEP_PARTIALS.length + 1);
+    BEEP_PARTIALS.forEach((db, i) => { imag[i + 1] = Math.pow(10, db / 20); });
+    this.beepWave = this.ctx.createPeriodicWave(real, imag);
+    return this.beepWave;
+  }
+
+  // fill the train up to ~0.3 s ahead: six gated beeps off the audio clock, so
+  // a stuttering frame cannot smear the rhythm
+  _beepTick(v) {
+    const now = this.ctx.currentTime;
+    if (v.next < now) { v.next = now; v.i = 0; }
+    while (v.next < now + 0.3) {
+      const start = v.next;
+      const end = start + BEEP_ON;
+      v.g.gain.setValueAtTime(0, start);
+      v.g.gain.linearRampToValueAtTime(UPLINK_VOL, start + 0.006);
+      v.g.gain.setValueAtTime(UPLINK_VOL, end - 0.01);
+      v.g.gain.linearRampToValueAtTime(0, end);
+      v.next = end + (v.i === BEEP_COUNT - 1 ? BEEP_REST : BEEP_GAP);
+      v.i = (v.i + 1) % BEEP_COUNT;
+    }
   }
 
   setLock(state, dt) {

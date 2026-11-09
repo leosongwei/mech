@@ -76,9 +76,10 @@ Modes/                     # per-mode rule sets: map, setup, pipeline, spawn rul
                            #   Raids.cs: the raiding parties - one mech per lane,
                            #   force-gradient + two-level (128 m / 16 m) pathfinding
   Range/                   #   RangeMode.cs, Targets.cs: passive APC targets plus
-                           #   one mech patrolling a 400 m leg (the only hull that
-                           #   accelerates hard - what the lead ring's second-order
-                           #   term is measured on),
+                           #   two mechs on a 200 m leg at 16 m/s and a 1 km leg at
+                           #   the hull's 50 m/s top speed - the only hulls that
+                           #   accelerate hard, which is what the lead ring's
+                           #   second-order term is measured on),
                            #   Bunkers.cs: ridge blockhouses, TestAi.cs: the ground AI
                            #   for hulls a pilot drops there (the range's own fixtures
                            #   never shoot back), Record.cs: the top-attack trace,
@@ -1136,6 +1137,25 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
   which is the lag the pilot is meant to see.  A marker whose point falls behind
   the camera draws nothing at all - the old fallback dropped it on the centre of
   the screen, where it read as "on target" for exactly the moment it is not.
+* **The eye reads the picture, the gun reads the wire.** `own.x/y/z` is the
+  *drawn* pose: an EMA (`alpha = 1-exp(-dt*14)`, a 71 ms time constant) chasing a
+  15 Hz snapshot, which is what the camera, the fx and the line of sight are
+  built from.  The fire control solves from `_firePose(own)` instead -
+  `own.px/py/pz` (the newest authority) walked on by its velocity for
+  `_fireLag()` = half a snapshot interval + RTT/2 + half a tick (60 ms on
+  loopback, hundreds on a bad link), which is when the server actually fires -
+  and reads the target the same way (`e.px/pz` + its velocity; the round's own
+  flight time is `leadPoint`'s job).  What moves is the *geometry*, never the
+  pose: the muzzle's offset is still turned by the laid `own.yaw` / `own.pitch`,
+  so an arm still climbing after the sight lags exactly as it did.  The picked
+  ring is then solved again every input frame (`_ringSolve`) rather than read
+  off the snapshot's answer, because the muzzle moves between the two;
+  `aimSnap` holds the *pick*, and the ring's world point stays the picker the
+  HUD draws.  Measured on the range's 105 mm before the split: 7 rounds at
+  146-597 m, all within 0.2 m vertically (the zero and the launch elevation
+  were never the question) and 0.3-4.6 m off laterally - 2 hits, one of them
+  by 4 cm, against a torso of r=1.3 with a 0.35 m round half-width.  With the
+  bearing alone corrected, all seven land inside the spheres.
 * `renderer.js` draws the ground twice: a radial LOD grid out to the horizon
   (far) and a **tile-aligned patch** (`TILE_PATCH` tiles around the eye, moved
   by the `uOrigin` uniform) that carries the OpenTTD look - every vertex is a
@@ -1196,6 +1216,33 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
   12 m/s^2. Measured against the range's patrolling mech at 1.4 s: 1.35 -> 0.67 m
   mean, 6.35 -> 2.45 m on the turns. A constant-curvature arc was measured too
   and is *worse* (6.98 against 4.71) - a mech's pull rotates while it turns.
+* **Aiming has two headings on the wire, and the assist is the switch between
+  them.** `_sightAim` is what the client sends as `yaw` / `pitch`: the view
+  (`input.yaw` / `pitch`) or, with the aim assist on and a pre-aim ring under
+  the centre cross, that ring's own aim point (`aimSnap`). The camera and the
+  centre cross keep reading `input.viewYaw`, so a snap never moves the pilot's
+  head - it moves the sight, and the hull and the arms slew after it as usual.
+  So the client carries **two crosses**: `×` at the middle of the screen (the
+  view, `_centreCross`) and a white `+` at the projection of the aim point
+  (`_aimCross`), drawn only while a snap holds. Every consumer of the sight -
+  the range readout, the arms' markers, the guided rounds' marker - reads
+  `_sightAim`, which is what keeps them consistent with what the server does.
+  The rings are laid out and picked in **screen space** (`_leadLayout`): a
+  target's two rings, which would always overlap at the assist's width, are
+  drawn side by side (`OO`, `LEAD_RING_GAP` between them) and the pair's whole
+  stadium is the catch area, because the point a pilot aims at - the hull's own
+  box - lands in the sliver between them. A laid-out ring is a **picker**, not a
+  position: `mark.x` / `y` is where it is drawn, `mark.wx` / `wy` / `wz` is the
+  aim point it stands for and the one the sight is snapped to, which is why the
+  `+` sits between the two rings instead of in either of them. Selection is the
+  nearest hull first (`lead.dist`), then the nearer of its two rings. ALT
+  (`input.freeYaw`, the cross is no longer the sight) and an open panel both
+  skip the snap. Width is `aimAssist ? LEAD_RING * assistRing : LEAD_RING`
+  (`_ringPx`), 2x-8x, default 4x, remembered in `localStorage` beside the
+  switch - the same `key` convention as `mech.volume`.  In game `V` throws that
+  same switch (`input.onToggleAssist` -> `_toggleAssist`), so the pilot keeps the
+  pointer and the cross is back under his hand without the panel; the message
+  list says which way it went, and the panel's button reads the same field.
 * `map.js` must stay ballistically identical to the server: same gravity,
   same 1/30 step, same launch bias (`wd.bias`), the same "building walls are
   columns, tree trunks are cylinders" rule (`wallAt`/`obstacleAt`/`trunkHit`),
@@ -1282,17 +1329,24 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
   body of a distant report comes from the far bus; a makeup curve belongs on a
   bed, which is compressed, not on each event, which is not.
 * **The master chain ends in a soft clipper, because a compressor is not a
-  limiter.** `master` -> `limiter` (a gentle 8:1 over an 8 dB knee: a hard
-  curve holds a dense mix down but flattens the cues worth hearing) ->
-  `top` (`CLIP_GAIN`) -> `clip` (a `WaveShaper`, linear to `CLIP_KNEE` 0.7 and
-  tanh to exactly 1, `oversample` 4x) -> destination. Before it, a single 105 mm
-  round next to the pilot and a single hull exploding 300 m away both measured
-  **over 1.0** at the destination - a hard 0 dBFS clamp is broadband fizz on
-  every transient, which is what a "broken speaker" is. `CLIP_GAIN` is a
-  measured constant, not a taste: the DynamicsCompressor adds its own makeup
-  gain (+1.3 dB for these settings, +2.9 dB for a 12:1 / -10 dB one), so 0.86 is
-  what puts the chain back at unity. Check it with a constant cue (`denied`
-  reads 0.094 at the destination) before changing either number.
+  limiter.** `master` -> `limiter` (12:1 over a 6 dB knee, threshold -12 dBFS,
+  2 ms attack: a hard curve holds a dense mix down but flattens the cues worth
+  hearing, so the ratio carries the bursts and the knee keeps one round's
+  transient) -> `top` (`CLIP_GAIN`) -> `clip` (a `WaveShaper`, linear to
+  `CLIP_KNEE` 0.7 and tanh to exactly 1, `oversample` 4x) -> destination. Before
+  it, a single 105 mm round next to the pilot and a single hull exploding 300 m
+  away both measured **over 1.0** at the destination - a hard 0 dBFS clamp is
+  broadband fizz on every transient, which is what a "broken speaker" is.
+  **The threshold is the number that decides whether the shaper ever works**:
+  measured per cue (a 2048 sample window on the clipped output, 24 plays), -8 dB
+  left a hull going up at 0.93 peak with **14 % of its samples past the 0.7
+  knee** and a 105 mm beside the pilot at 0.93 / 9 % - continuous soft-clip
+  distortion, the faint buzz under the battle. At -12 dB the same cues read
+  0.78 / 0.4 % and 0.86 / 0.8 %, and their third-octave shape matches the
+  unclipped one to 0.5 dB. `CLIP_GAIN` is a measured constant, not a taste: the
+  DynamicsCompressor adds its own makeup gain, so 0.86 is what puts the chain
+  back at unity. Check it with a constant cue (`denied` reads 0.094 at the
+  destination) before changing either number.
 * **The server decides what a pilot's ear gets.** `defs.SOUND_*` mirror the
   client's curve (`attenuation`, `SOUND_LEVEL`, same numbers), and
   `netcode.hearable(events, ear)` drops every `shot`/`boom` whose arriving gain
@@ -1322,6 +1376,31 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
   louder round. The mix can sum past 0 dB on purpose, so the master bus runs
   through a limiter (`audio.limiter`) instead of clamping at the destination:
   scale a cue's gains up rather than adding another layer elsewhere.
+* **A voice is a temporary chain, and the mix has a ceiling.** A cue opens six
+  to a dozen `AudioNode`s (a source, a filter, gains, a panner, a reverb send),
+  and each one of them is torn down in the source's `onended` - `_bus` hands its
+  nodes back and `_verbSend` its send gain, exactly so the voice that owns them
+  can disconnect the lot. Left connected they wait for a collector, and a battle
+  opens hundreds a second: measured on a 4 s gatling-and-boom load, the graph
+  held **3492 nodes after the load and never let go**, against **1** once the
+  teardown runs (the ceiling during the load is the voices still sounding).
+  Two rules sit on top, both keyed on arriving **gain** rather than on who
+  fired: `MAX_VOICES` 48 slots, held for as long as a voice sounds, drop the
+  quiet cues once the mix is full while anything over `STEAL_VOL` (0.05) still
+  gets in - measured, 240 quiet cues a second hold the graph at 48 slots and
+  ~380 nodes for as long as the load lasts, then release it to 1. `_pumpSounds`
+  also skips the events that cannot have arrived yet (`tMin`, the wavefront's
+  earliest possible arrival) and drops the whole list when the pilot is dead - a
+  dead ear does not need fifty seconds of a battle. The reverb has **one fixed
+  input** (`audio.send`): a convolver whose input connections change hundreds of
+  times a second recomputes its own mix on every change.
+* **The shared noise bed is longer than any voice.** Six seconds, so nothing has
+  to loop it (`src.loop = dur > 5.5`): a buffer that ends on one random sample
+  and starts on another is a step in the waveform, and a hull's 4.5 s rumble or
+  a 105 mm's tail is loud enough for that seam to be heard. Every envelope also
+  lands **on zero**, linearly, instead of stopping at an exponential ramp's
+  -62 dB floor - a battle makes hundreds of those little steps a second and
+  they are the other half of "there is a faint buzz under everything".
 * The **gear** takes the screen's corner itself (`hud._gear`, `GEAR_EDGE` 8 px
   from the right and top edges - the warning dial is round, so the square the
   corner leaves free costs nothing) and it is the only HUD click target: it
@@ -1479,6 +1558,24 @@ is started with `MECH_LOG_LEVEL=DEBUG ./dev.sh range`; the browser script
 such a missile is in the air and reads the event stream, not the log.
 Log: `/tmp/mech-range.log`, overrides `MECH_RANGE_PORT` (8011), `MECH_RANGE_LOG`.
 Product notes: `doc/product/range.md`.
+
+**Measure a mechanism on the range, not on a battle.** Weapons, ballistics,
+damage, the seeker and the whole audio chain are all measured this way, because a
+battle is not a bench: two dozen AI crews, both lanes and the waves are firing,
+dying and driving through the same world, so a level, a node count, a hit or a
+spectrum read there is mostly a measurement of where the pilot's hull happened to
+be and of who else was shooting - a scripted load has to fight the real one for
+the limiter, and a target that dies of a stray round is not a target. The range's
+fixtures never fire, so nothing moves or sounds but what the console asks for:
+`./dev.sh range` (a 4 km map, targets that respawn, an infantry squad, a
+missile-defence post), then `g.audio` / `g.net.send({t:'debug_spawn'})` /
+`g.net.send({t:'debug_missile'})` from the console. A sound bench is a
+`setInterval`/`await sleep` loop calling `shot` / `boom` / `explosion` directly
+(or pushing events onto `g.sounds` with `play` closures); `evaluate` keeps a
+background tab's timers running but stops an `requestAnimationFrame` frame loop,
+so call `g._pumpSounds()` from the test loop
+when the frame pass is the thing under test. The battle server is where a change
+is *seen*, after the number is already right.
 
 **The range records the top attack** (`Modes/Range/Record.cs`, the range's post
 system, on by default there): one JSONL line a tick to `MECH_RECORD_PATH`

@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mech-config
+  namespace: mech
+  labels:
+    app.kubernetes.io/name: mech
+data:
+  # debug_spawn / god / teleport are off unless this is deliberately set to "1"
+  MECH_DEBUG: "0"
+  MECH_LOG_LEVEL: "INFO"

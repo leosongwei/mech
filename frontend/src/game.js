@@ -6,7 +6,7 @@ import { Input } from './input.js';
 import { GameAudio, SOUND_FLOOR, SOUND_LEVEL, SOUND_SPEED, attenuation } from './audio.js';
 import { Renderer, makeCamera } from './renderer.js';
 import { drawUnits } from './scene.js';
-import { arrowRingAt, HUD, LEAD_RING } from './hud.js';
+import { arrowRingAt, HUD, LEAD_PAIR_SEP, LEAD_RING } from './hud.js';
 import { Particles } from './particles.js';
 import { clamp, dirFrom, invert4, mat4 } from './math.js';
 import { emptyDraft, isEmpty, quickDraft, quote, toMessage } from './shop.js';
@@ -1323,7 +1323,7 @@ export class Game {
         marks: [],
       };
       for (const m of t.marks) {
-        const scr = this.hud._project(m.x, m.y, m.z);
+        const scr = this._ringScreen(m);
         // the mark keeps both ends: where the ring is drawn (a picker, with the
         // assist on) and the point it stands for - the one the sight is snapped
         // to, so a ring moved aside is still the honest answer it always was
@@ -1335,6 +1335,35 @@ export class Game {
     this._leadLayout(own);
   }
 
+  // Where a pre-aim ring is drawn.  Its own point when that lands in the frame,
+  // and clamped inside the frame - one ring radius of margin - when it does not:
+  // a lead is metres to hundreds of metres away from the hull (a rocket pod at
+  // 2 km flies for 4-5 s) and a zoomed sight sees a narrow slice of the world, so
+  // the answer to "where do I point this arm" is regularly off the screen.  The
+  // ring is still drawn there, in the direction it lies, because a ring dropped
+  // for being out of frame takes the pair with it: one ring left, no white line,
+  // nothing saying which arm the survivor is.  What the ring *stands for* stays
+  // the true point (`wx`/`wy`/`wz`), so the picker and the snap are unaffected.
+  //
+  // A point behind the camera has no place on the screen at all, and answers
+  // `null` - the box it belongs to is off the back of the sight by then.
+  _ringScreen(m) {
+    const scr = this.hud._project(m.x, m.y, m.z);
+    if (scr) return scr;
+    const vp = this.hud.vp;
+    if (!vp) return null;
+    const cx = vp[0] * m.x + vp[4] * m.y + vp[8] * m.z + vp[12];
+    const cy = vp[1] * m.x + vp[5] * m.y + vp[9] * m.z + vp[13];
+    const cw = vp[3] * m.x + vp[7] * m.y + vp[11] * m.z + vp[15];
+    if (cw <= 0.01) return null;
+    const w = this.hud.w, h = this.hud.h;
+    const pad = this._ringPx() + 8;
+    const x = (cx / cw * 0.5 + 0.5) * w;
+    const y = (1 - (cy / cw * 0.5 + 0.5)) * h;
+    return [clamp(x, pad, Math.max(pad, w - pad)),
+      clamp(y, pad, Math.max(pad, h - pad))];
+  }
+
   // The drawn radius of a pre-aim circle, px: the plain one, or the assist's
   // multiple of it (`assistRing`, the setting's slider).
   _ringPx() {
@@ -1344,10 +1373,15 @@ export class Game {
   // The assist's two jobs, both in screen space because both are about what the
   // pilot can put the cross on.
   //
-  // * **Layout**: a target's two rings, when they would overlap, are pushed
-  //   apart along the line their own two solutions make until they are tangent
-  //   at the middle of it.  Each ring stays on its own arm's side, and the pair
-  //   rides the true points instead of a fixed screen direction: it is the line
+  // * **Layout**: a target's two rings, when they would overlap, are laid out
+  //   as a pair on the line their own two solutions make - each ring on its own
+  //   arm's side of the middle of it, and never closer in than
+  //   `LEAD_PAIR_SEP` radii, so the pair *overlaps* instead of standing tangent
+  //   (`hud._ringCut` cuts the lens between them on a white line).  Two radii
+  //   out to the side is a long way to swing a cross to shoot one arm's lead,
+  //   and the overlap still reads as two circles: the picker is the bisector of
+  //   the two centres, which is the line they are drawn cut on.  The pair rides
+  //   the true points instead of a fixed screen direction: it is the line
   //   between the two solutions that decides where they sit, so a fast target -
   //   an incoming round's lead swings metres between two frames - cannot make
   //   the pair jump from one arrangement to the other.  The rings are pickers
@@ -1365,6 +1399,7 @@ export class Game {
     if (!this.aimAssist || !this.leads.length) return;
     if (this.input.alt || this.input.uiOpen) return;
     const ring = this._ringPx();
+    const sep = ring * LEAD_PAIR_SEP;       // the closest the two centres get
     const prev = this._pairDir;
     const next = new Map();
     for (const t of this.leads) {
@@ -1381,9 +1416,12 @@ export class Game {
       if (d > ring * 0.05) { ux = dx / d; uy = dy / d; }
       else if (prev && prev.has(t.id)) [ux, uy] = prev.get(t.id);
       next.set(t.id, [ux, uy]);
+      // the pair is cut on its white line only once it is drawn overlapping
+      t.cut = true;
+      const half = Math.max(d, sep) / 2;
       const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
-      a.x = mx - ux * ring; a.y = my - uy * ring;
-      b.x = mx + ux * ring; b.y = my + uy * ring;
+      a.x = mx - ux * half; a.y = my - uy * half;
+      b.x = mx + ux * half; b.y = my + uy * half;
     }
     this._pairDir = next;
     const cx = this.hud.w / 2, cy = this.hud.h / 2;

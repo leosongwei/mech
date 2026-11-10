@@ -1264,18 +1264,35 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
   the range readout, the arms' markers, the guided rounds' marker - reads
   `_sightAim`, which is what keeps them consistent with what the server does.
   The rings are laid out and picked in **screen space** (`_leadLayout`): a
-  target's two rings, when they would overlap at the assist's width, are pushed
-  apart along the line their own two solutions make until they are tangent at
-  its middle - each ring on its own arm's side, and the direction kept from the
-  last frame while the two points are closer than a pixel - so the pair rides
-  the true points and a fast target cannot make it swap arrangements between
-  two frames. The pair's whole stadium is the catch area, because the point a
-  pilot aims at - the hull's own box - lands round the point they touch. A
+  target's two rings, when they would overlap at the assist's width, are laid
+  out as a pair along the line their own two solutions make - each ring on its
+  own arm's side of its middle, and no closer in than `LEAD_PAIR_SEP` radii
+  (`hud.js`, 1.0), so the two **overlap** instead of standing tangent - and the
+  direction is kept from the last frame while the two points are closer than a
+  pixel - so the pair rides the true points and a fast target cannot make it
+  swap arrangements between two frames. Overlap is what makes the pair handy:
+  28 px out to the side is a long way to swing a cross to shoot one arm's lead,
+  and two circles cut by one white line still read as two. The cut is
+  `hud._ringCut`: each ring keeps only the arc outside its partner, and the
+  chord between the two crossings - the perpendicular bisector of the centres,
+  i.e. exactly the set of points they are equally far from - is drawn white
+  once for the pair. That line *is* the picker's boundary: selection is the
+  nearest hull first (`lead.dist`), then the nearer of its two centres, so the
+  white line is where the cross hands over from one arm to the other. The
+  pair's whole stadium is the catch area, because the point a pilot aims at -
+  the hull's own box - lands round the middle of it. A
   laid-out ring is a **picker**, not a position: `mark.x` / `y` is where it is
   drawn, `mark.wx` / `wy` / `wz` is the aim point it stands for and the one the
   sight is snapped to, which is why the `+` sits between the two rings instead
-  of in either of them. Selection is the nearest hull first (`lead.dist`), then
-  the nearer of its two rings. ALT (`input.freeYaw`, the cross is no longer the
+  of in either of them. `_ringScreen` is what puts it there: a mark's own
+  projection when that lands in the frame, and **clamped one ring radius inside
+  the frame** when it does not - a lead is metres to hundreds of metres from the
+  hull (a rocket pod at 2 km flies 4-5 s) and a zoomed sight is a narrow slice of
+  the world, so the answer to "where do I point this arm" goes off the screen
+  regularly; a mark dropped for being out of frame took the whole pair with it
+  (one ring left, no white line, nothing saying which arm the survivor was).
+  `null` only for a point behind the camera, where there is no place to put it.
+  ALT (`input.freeYaw`, the cross is no longer the
   sight) and an open panel both skip the snap. Width is
   `aimAssist ? LEAD_RING * assistRing : LEAD_RING` (`_ringPx`), 2x-8x, default
   4x, remembered in `localStorage` beside the switch - the same `key` convention

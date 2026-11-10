@@ -108,11 +108,37 @@ public static class Components
         ecs.register("work_remaining_time", Kind.F);
 
         // ---- ai ---------------------------------------------------------
+        // Identity, never a type switch: `ai_crew` is put on at spawn by the one
+        // `ECS.create` call (`World.spawn_unit(crew:)`) and is what every AI
+        // system queries; a pilot's hull does not own it, so it is out of every
+        // pass by construction.  The platform tags say how the crew aims, the
+        // mission tags say what it is doing (`Systems/AI/Support/Tags.cs`).
+        ecs.register("ai_crew", Kind.U8);
+        ecs.register("mech_ai", Kind.U8);                // a mech crew: sight on the roof, two arms
+        ecs.register("foot_ai", Kind.U8);                // a man: he turns his whole body onto it
+        ecs.register("crew_engage", Kind.U8);            // this crew fights ground targets
+        ecs.register("front_mission", Kind.U8);          // ...and its mission is the lane
         ecs.register("target", Kind.I, 1, -1);
-        ecs.register("ai_state", Kind.U8);
+        ecs.register("ai_state", Kind.U8);               // Systems/AI/Support/Tags.cs::AiState
         ecs.register("ai_timer", Kind.F);
-        ecs.register("path_i", Kind.I, 1, 0);
+        ecs.register("path_i", Kind.I, 1, 0);            // the driver's cursor along `nav_route`
         ecs.register("lane", Kind.U8);
+        // the missile alarm: a round is coming for this hull, so the gun is the
+        // intercept's this tick (`Systems/AI/Intercept.cs` and `Engage*`)
+        ecs.register("ai_cover", Kind.U8);
+        ecs.register("ai_threat", Kind.I, 1, -1);        // the round being fired at
+        // the objective a mission is working towards (a town index, 255 = the
+        // enemy command base)
+        ecs.register("ai_goal", Kind.U8, 1, 255);
+        // ---- intent: what the crew wants, never how it is achieved ----------
+        // The crews write these four and nothing else that moves; the drivers
+        // (`Systems/Movement/`) turn them into `vel_cmd`, wheel speed and
+        // position.  `nav_route` is an index into `world.routes` (`Core/Nav.cs`),
+        // -1 = steer at the point `nav_x` / `nav_z` instead.
+        ecs.register("nav_route", Kind.I, 1, -1);
+        ecs.register("nav_x", Kind.F);
+        ecs.register("nav_z", Kind.F);
+        ecs.register("nav_speed", Kind.F);
         // where an AI last *saw* its target: with the sight broken (smoke, a
         // crest, the hull ducking behind a building) it keeps shooting at that
         // spot for a few seconds instead of giving up
@@ -126,8 +152,6 @@ public static class Components
         // carry the `raider` tag, which is what takes them out of the lane AI's
         // hands (`Modes/Battle/Raids.cs`) and what `raids.run` queries.
         ecs.register("raider", Kind.U8);
-        ecs.register("raid_goal", Kind.U8, 1, 255);      // index into world.towns, 255 = the enemy base
-        ecs.register("raid_i", Kind.I, 1, 0);
         ecs.register("raid_party", Kind.U8);             // which launch a hull belongs to
         ecs.register("raid_stuck", Kind.F);              // seconds spent pushing at something
         ecs.register("raid_t", Kind.F);                  // seconds left of the HOLD phase
@@ -229,6 +253,8 @@ public static class Components
         "weapon", "ammo", "mag", "cool", "reload_t",
         "trigger", "trigger_prev", "work_remaining_time", "target", "ai_state", "ai_timer",
         "path_i", "lane", "spot_x", "spot_y", "spot_z", "spot_t", "flags",
+        "ai_cover", "ai_threat", "ai_goal",
+        "nav_route", "nav_x", "nav_z", "nav_speed",
     };
 
     /// <summary>The extra pair of pools a modular hull (the mech) carries, added

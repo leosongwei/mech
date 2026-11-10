@@ -114,7 +114,7 @@ public static class Weapons
         var trigger = e.uv("trigger");
         var trigger_prev = e.uv("trigger_prev");
         var owner = e.iv("owner");
-        // the AI's own target (`Systems/Ai.cs` writes it): what a lock weapon on a
+        // the AI's own target (`Systems/AI/Sense.cs` writes it): what a lock weapon on a
         // hull nobody is driving takes its lock from
         var ai_target = e.iv("target");
         e.locate(ids, out int[] rows, out int[] archs);

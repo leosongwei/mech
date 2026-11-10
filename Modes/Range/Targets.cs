@@ -198,8 +198,10 @@ public sealed class Targets
         // a mech is drawn its standard pair: an AI crew would draw one off
         // `Defs.AI_LOADOUTS`, and this hull never fires, but a bare hull with no
         // arms would not look like the machine a pilot is practising against
+        // a target is a puppet: no `ai_crew`, so no AI pass can ever reach it
         int eid = world.spawn_unit(slot.etype, Defs.FACTION_BLUE, x, z,
-            weapons: slot.etype == Defs.ETYPE_MECH ? Defs.DEFAULT_LOADOUT : null);
+            weapons: slot.etype == Defs.ETYPE_MECH ? Defs.DEFAULT_LOADOUT : null,
+            crew: false);
         // face the player's cross so the hulls read clearly through the sight
         var (sx, sz) = world.terrain.bases[Defs.FACTION_RED];
         float yaw = slot.role is "static" or "infantry"

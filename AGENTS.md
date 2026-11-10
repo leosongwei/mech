@@ -44,6 +44,7 @@ Core/
   MathUtil.cs              # angles, lead solving, hit spheres, muzzle geometry
   Profiler.cs              # white-box probes (MECH_PROBE=1), off and free by default
   Grid.cs                  # 128 m cell index over the units, refiled every tick (AI broadphase)
+  Nav.cs                   # routes (the poly lines a driver follows) + the way point maths
   Ballistics.cs            # fire control: sight setting elevation (player) / sight-point solve (AI)
   Flight.cs                # aerodynamics + guidance of a winged round (the top-attack missile)
   Seeker.cs                # an IR round's lock: what it stares at, and what it re-locks on
@@ -54,6 +55,14 @@ Net/
   Netcode.cs               # init payload, binary snapshots, JSON meta, per-ear sound filter
   Server.cs                # ASP.NET Core: websockets, static files, 30 Hz game loop
 Systems/                   # mechanics shared by every mode, each exposes run(world, dt)
+                           #   AI/        the crews (see "AI is intent, movement is the machine"):
+                           #     Sense.cs, Threats.cs, Intercept.cs, Engage{Mech,Vehicle,Foot}.cs,
+                           #     Wander.cs (one file = one run), Strategies/{Front,Raid}.cs
+                           #     (mission state machines), Support/{Tags,Crew,Policy,Engage,
+                           #     ThreatTable}.cs (columns, vocabulary, shared fire control),
+                           #     Support/Pipeline.cs (the block a mode registers)
+                           #   Movement/  one driver per chassis: Foot.cs / Mech.cs / Vehicle.cs,
+                           #     Support/{Drive,Integrate}.cs.  The only writer of `vel`/`pos`.
                            #   Gunnery.cs: the sight leads, the hull and the arms slew after it
                            #   Sight.cs: the one line of sight (terrain + smoke), clear/why
                            #   Smoke.cs: hot smoke canisters, opaque puffs, blocks(a, b)
@@ -73,16 +82,12 @@ Modes/                     # per-mode rule sets: map, setup, pipeline, spawn rul
   Modes.cs                 #   the registry `Modes.get(name)`
   Battle/                  #   BattleMode.cs: setup, bases, respawn A/B/C, kills feed
                            #   Waves.cs: town capture + reinforcement waves
-                           #   Raids.cs: the raiding parties - one mech per lane,
-                           #   force-gradient + two-level (128 m / 16 m) pathfinding
   Range/                   #   RangeMode.cs, Targets.cs: passive APC targets plus
                            #   two mechs on a 200 m leg at 16 m/s and a 1 km leg at
                            #   the hull's 50 m/s top speed - the only hulls that
                            #   accelerate hard, which is what the lead ring's
                            #   second-order term is measured on),
-                           #   Bunkers.cs: ridge blockhouses, TestAi.cs: the ground AI
-                           #   for hulls a pilot drops there (the range's own fixtures
-                           #   never shoot back), Record.cs: the top-attack trace,
+                           #   Bunkers.cs: ridge blockhouses, Record.cs: the top-attack trace,
                            #   Interceptor.cs: the missile-defence post
 Harness/                   # headless checks, no socket: Check.cs (battle/range/diag),
                            # InterceptCheck.cs (missile defence, target hits),
@@ -261,8 +266,34 @@ frontend/
   arm the variable. A pilot's mech always passes `player.loadout`, and the
   range's defence post passes its own, so both are untouched by the table. The
   draw comes off `world.rng`.
-* **An AI crew fires the arms it has.** `ai._aim_and_fire` used to pull the
-  right trigger only for `kind in ("rocket", "saclos")`; it now fires any arm
+* **AI is intent, movement is the machine.**  A crew says *where* and *how fast* -
+  `nav_route` (an index into `world.routes`, `Core/Nav.cs`), or a point
+  `nav_x`/`nav_z`, plus `nav_speed` - and nothing else that moves.  The drivers
+  (`Systems/Movement/`: one file per chassis, `Foot` / `Mech` / `Vehicle`, with
+  `Support/Drive.cs` for the intent-to-way-point step and `Support/Integrate.cs` for
+  `vel_cmd -> vel -> pos`) own `pos`, `vel`, `vel_cmd`, `leg_yaw`, `wheel_speed`,
+  `backout_t`, `blocked_t` and the route cursor `path_i`.  Corner speed, the
+  acceptance radius and the obstacle fan are *the machine's*: an 11 m turning radius
+  cannot hold 100 km/h round a right angle, so `Nav.route_speed` / `Nav.arrive_radius`
+  are called by `Vehicle.run` and never by a crew.  A pilot writes `vel_cmd` from the
+  stick; an AI crew never touches it.  What a driver does for *every* hull of its
+  chassis is the machine's own behaviour - the leg swing, the mech's ramp, the
+  bicycle model, the integration - so only the `nav_* -> vel_cmd` step is gated on
+  `ai_crew`.  Leave a pilot's `leg_yaw` lying where it spawned and his hull tops out
+  at the leg-alignment floor: `0.45 * 50 m/s`, i.e. 81 km/h, in whatever direction
+  the alignment happens to be bad - which reads as "some directions are slower".  The plan and its reasoning:
+  `doc/plans/AI_plan.md`.
+* **A crew is a component.**  `World.spawn_unit(crew: true)` puts `ai_crew` on a hull
+  plus its platform tag (`mech_ai` for a mech's crew, `foot_ai` for a man's; a
+  carrier already carries `vehicle`), and a mission adds its own (`front_mission`,
+  `raider`, `crew_engage`).  A pilot's machine and every fixture/puppet is built
+  with `crew: false` and is out of every AI query by construction - there is no
+  per-row `owner` test left anywhere.  `Systems/AI/` is one file per system (`run`),
+  the shared columns and vocabulary in `Support/`, the mission state machines in
+  `Strategies/`, and `Support/Pipeline.cs` is the block a mode registers
+  (`battle()` / `range()` / `defence()`).
+* **An AI crew fires the arms it has.** `Systems/AI/Engage*.cs` used to pull the
+  right trigger only for `kind in ("rocket", "saclos")`; it fires any arm
   whose own `range` covers the target (still 2.2 km for those two, `ai_range`
   for everything else), and `weapons.run` gives a `lock` weapon on an
   ownerless hull the lock the crew already holds — the AI's `target`
@@ -300,13 +331,13 @@ frontend/
   `if (first_hit_t <= 1) continue`.  The same line in a collision system is a
   pure cost optimisation; these two are not the same thing.
 * **The sight is one line, so the lead is solved for the slowest round.**
-  `ai._engage` picks the aim speed as the minimum `mathutil.mean_speed` over
+  `Systems/AI/Support/Engage.cs` picks the aim speed as the minimum `mean_speed` over
   the arms that reach the target, not the primary weapon's muzzle figure: a
   beam rider averages ~340 m/s at 1 km against the cannon's 1080, and leading
   it with the cannon's number put every missile tens of metres behind a moving
   hull (measured: 16 launches, no kills on movers; after: 3–4 kills per 16).
   `mean_speed` is the boost-and-coast profile off `vel` / `thrust` / `maxvel` /
-  `burn`, so a new missile needs no entry in `Systems/Ai.cs`.
+  `burn`, so a new missile needs no entry in the AI.
 * **A launcher of tubes is described once, in `defs.rack`.** `rack(cols, rows,
   count, bore=, length=, centre=, ...)` hands back a plain dict — the lattice,
   the tube diameter and length, the pitch, the mouth (`centre + length/2`) and
@@ -352,7 +383,7 @@ frontend/
   same target comes back) and then distance-sorts the few candidates in it.
   Rebuild before querying anything that has moved since; in the tick's pipeline
   only `player_input` runs ahead of `ai`, and it moves nothing.
-* **Raiders** (`Modes/Battle/Raids.cs`) are the one unit that plans.  Every
+* **Raiders** (`Systems/AI/Strategies/Raid.cs`) are the one unit that plans.  Every
   `RAID_INTERVAL` a side sends `RAID_SIZE` mechs out, **one per lane, the lanes
   drawn at random**, and each of them is briefed separately (a plan belongs to a
   hull, keyed `(faction, party, lane)` on the world - two raiders two minutes
@@ -373,7 +404,8 @@ frontend/
   is `ai_state`: MARCH, then ASSAULT (stand in the 170 m ring - `waves._capture`
   does the taking), then HOLD for `RAID_HOLD` (a raider in the ring is what
   keeps the enemy from taking the cut back), then the next weak spot.  The
-  `raider` tag is what takes them out of `ai._advance`; the guns stay `ai.run`'s.
+  `raider` tag is what takes them out of the lane policy; the guns stay the engage
+  systems', and the plan reaches the machine as a route (`Nav.add`) plus `nav_speed`.
   Raiders die like any other hull - 58% of them in a measured round - which is
   why the plan dict is pruned when a party is gone.  (The Python tool that drew
   the gradient, the planned routes and where the hulls died went with the Python
@@ -384,7 +416,8 @@ frontend/
   `restart_respawn`, `mech_spawn`, `respawn_delay`). Adding a mode means adding
   a folder, never another `if` in a shared system. Battle runs `ai` + `waves`
   (capture and reinforcement waves); range runs `targets`, the missile post, and
-  `ai` only over the hulls a pilot spawned there (`Modes/Range/TestAi.cs`).
+  the shared AI block, whose queries only reach hulls that carry `ai_crew` - i.e. the
+  ones a pilot dropped there with `debug_spawn`.
 * **A death is planned from where it happened.** `World.kill` records
   `Player.death_pos` and asks the mode for `respawn_delay`; the mode's
   `mech_spawn` later turns that position into a place. Battle's version
@@ -607,8 +640,8 @@ frontend/
   and the band it is drawn with (`RING_ALARM_W`, 12.8 px) grows *inwards*:
   the stroke is centred half a width inside the radius, which keeps the ring's
   outer edge - and so its size next to the dial - where it was.
-* **AI missile defence** (`systems/ai.py::_missile_step`) runs inline in
-  `ai.run` before the ground fight and preempts it: a crew that has a round
+* **AI missile defence** (`Systems/AI/Intercept.cs` + the platform's `Engage*.cs`)
+  runs in the AI block before the ground fight and preempts it: a crew that has a round
   coming for it lays the sight on the lead point (`mu.solve_lead`, which honours
   the target's vertical velocity - a climbing ATGM is not a hull) and pulls the
   trigger only when the *bore* is within `atan((prox + hit_r)/d)` (0.15° at
@@ -625,11 +658,13 @@ frontend/
   approach < `CPA_HIT` (40 m) for everything else; a `t_cpa` gate would say
   nothing (a round is 1.1-2.6 s from its closest approach the moment it is
   first seen).
-  `ai.intercept(world, dt)` is the same step as a standalone pass, for a mode
-  whose hulls do not fight.
+  `Intercept.run` decides only *which* round; laying the gun on it is the platform's
+  engage system, so a crew has exactly one trigger writer (`ai_cover` is the byte
+  that tells it which job this tick's gun has).  `Pipeline.defence()` is that block
+  on its own, for a mode whose hulls do not fight.
 * **The range has a missile-defence post** (`Modes/Range/Interceptor.cs`): one
-  blue AI mech at `(1550, 2250)` with a 30 mm only, running `ai.intercept` and
-  none of the ground AI - it never shoots at the pilot and never drives, and it
+  blue AI mech at `(1550, 2250)` with a 30 mm only - a crew with a radar and no
+  `crew_engage`, so it lays its intercept and never picks a ground fight, and it
   comes back 5 s after being destroyed.  `--check intercept` fires every
   missile type at it and prints the outcome per round, read out of the server
   log (`missile N took X (prox Y m) - hp A -> B`, `intercept: ... round N shot
@@ -771,14 +806,15 @@ frontend/
   lookout and a missile's seeker all lose the hull behind a screen - exactly as
   they lose one behind a stand of trees. It travels in its own snapshot block.
 * **Lanes** — `world.lanes` counts from the red base, `world.lanes_rev` from
-  the blue base. Every per-faction lookup (spawn point, path index, "front
-  line") must use the faction's own copy; mixing them mirrors positions across
-  the map. `path_i` is always an index into the faction's own list, and for a
-  vehicle it is **one past the end once the lane is finished** (the sticky
-  mark that sends the hull at the command base instead).  The lane is a plain
-  polyline: **the map does not round its corners**, because a wheeled hull
-  cannot follow a right angle whatever the map does with it. That is the AI's
-  problem and `ai._passed` is the answer — see the wheeled-hull note below.
+  the blue base. Every per-faction lookup (spawn point, "front line") must use the
+  faction's own copy; mixing them mirrors positions across the map.  Each faction's
+  copy of each lane is registered as a **route** (`World.register_routes`,
+  `Core/Nav.cs`) with the enemy command base appended, so a hull spawned with a lane
+  starts out following it and "the lane has run out" is simply its last point.
+  `path_i` is the **driver's cursor** into that route (`Nav.advance` drops the way
+  points it has passed).  The lane is a plain polyline: **the map does not round its
+  corners**, because a wheeled hull cannot follow a right angle whatever the map does
+  with it — which is the vehicle driver's problem, not a crew's (`Nav.passed`).
 * **Wheeled hulls** — an APC carries the `vehicle` tag, and that tag changes
   both halves of its movement. Locomotion (`movement._vehicle`) is a rear-axle
   bicycle model: `leg_yaw` *is* the hull state (mirrored into `yaw` for the
@@ -799,21 +835,21 @@ frontend/
   standstill, balance point `APC_V_INF`), which is what gives a heavy hull a
   brisk low end and a lazy top end: 0-25 km/h in 3.5 s, 0-100 in 20 s. Reverse
   is `APC_REVERSE` of top speed and only ever used to back off a wall.
-  The command interface is unchanged — the AI still writes a direction and a
-  speed into `vel_cmd`, and `movement` turns it into `vel` — but the AI *drives
-  the way points* (`ai._advance_route`):
+  The interface is an *intent* — the crew says which route and how fast
+  (`nav_route` / `nav_speed`) and `Systems/Movement/Vehicle.cs` drives it, which is
+  why it owns the way point maths too (`Core/Nav.cs`):
   a way point inside the acceptance radius counts as reached and is dropped, so
   the hull is already aiming at the next one while still short of the last — the
   standard acceptance radius of a way point tracker, and what lets a car take a
   dense line of sharp corners at speed by cutting across the inside of them (it
   will happily leave the road doing it; the road is not the constraint). The
-  radius **grows with the speed** (`ai._arrive_radius`: `clamp(speed * 1.1 s,
+  radius **grows with the speed** (`Nav.arrive_radius`: `clamp(speed * 1.1 s,
   10 m, 30 m)`) — a hull at 100 km/h needs tens of metres of arc to turn at all,
   while a slow one can and should hold the line tightly. A point it
   cut *wide* of is dropped too, once the hull is past the line through it
-  square to the incoming leg (`ai._passed`) — otherwise a car that missed the
+  square to the incoming leg (`Nav.passed`) — otherwise a car that missed the
   circle turns back for it for ever. Speed comes from the corners ahead within
-  `APC_CORNER_HORIZON`. A corner's speed comes from the **cut budget**
+  `APC_CORNER_HORIZON` (`Nav.route_speed`). A corner's speed comes from the **cut budget**
   (`APC_CUT`, 8 m): a fillet of radius R misses the vertex by
   `R (1/cos(angle/2) - 1)`, so the budget caps R, the hull floors it, and the
   bend is driven at `sqrt(lat_accel * R)` — a right angle lands at ~11 m/s
@@ -1542,14 +1578,15 @@ fires on - one blue missile-defence post (`Modes/Range/Interceptor.cs`, 5 s
 respawn) and a ring of per-pilot spawn berths. **The range's own fixtures never shoot at the
 ground** - the targets and the post fire at nothing, so it is the place to test
 ballistics or look at a model up close. A hull a pilot drops there himself
-(`debug_spawn`) is the exception: it is tagged `range_drone`
-(`Mode.console_spawn_extra`) and `Modes/Range/TestAi.cs` runs `ai.run(hulls=)`
-over exactly those hulls, so a spawned red mech picks its own fights with the
-blue targets - which is how an AI crew's missile arm gets watched without
-waiting for a battle.  The tag, not a fixture list, is the test: a tool's
+(`debug_spawn`) is the exception: it is spawned with `range_drone` +
+`front_mission` + `crew_engage` (`Mode.console_spawn_extra`), so the range's own AI
+block drives it and a spawned red mech picks its own fights with the blue targets -
+which is how an AI crew's missile arm gets watched without waiting for a battle.
+The fixture hulls are built with `crew: false` and carry no AI tag at all, so no
+pass can reach them.  The tag, not a fixture list, is the test: a tool's
 scripted shooter (`tools/intercept_check.py`) is spawned untagged and stays a
-puppet. The range has no lanes, so `ai._advance`
-and `ai._advance_route` fall back to walking at the enemy post. The side is the
+puppet. The range has no lanes, so a route is -1 there and the lane policy
+(`Systems/AI/Strategies/Front.cs`) gives its crews the enemy post as a point instead. The side is the
 *lobby's* choice (`fixed_faction`
 is None here; `AUTO` balances, so a second browser lands opposite the first,
 which is how the radar and the intercept are checked from the receiving end -

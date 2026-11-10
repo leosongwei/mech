@@ -1,5 +1,12 @@
 # AI 重构计划：`Systems/Ai.cs` → `Systems/AI/` + 意图层
 
+> **状态：已落地（2026-11-10，产品版本 1.18.0）。** 落地的文件与本文 §2 的目录一致。
+> 验证（同一台机器，同一条命令，与重构前的基线并排）：
+> `--check battle --minutes 12`：25/25 城镇、1.44 ms/tick（基线 1.3，+11%）；
+> `--check intercept`：19/32 发被击落（基线 18/32）；
+> `--check range --minutes 2`：投弹 20 发；`--check net`：45.0 kB/s（基线 53.7，
+> 战场演化不同，线上格式一行未改）；`--check diag` 一切正常。
+
 > 目标：把 914 行、一个 `run` 里塞满分支的 AI，拆成「ECS 化 + 多系统 + 策略层」的架子，
 > 并且把**「怎么开」还给机器**：AI 只表达意图（去哪、多快、打谁），路线跟随、弯道限速、
 > 撞墙脱困这些操稳与驾驶的事搬进按底盘拆开的移动系统。
@@ -660,12 +667,11 @@ RNG 是单线程可复现，但重构不应改变抽取顺序；若曲线明显�
 ## 13. 文档与版本
 
 * 本文件：`docs/plans/AI_plan.md`。
-* `docs/plans/roadmap.md`：「AI代码ECS化 / AI行为树」一行加一句「见 AI_plan.md」，
-  本工作完成后移到 DONE。
+* `docs/roadmap.md`：「AI代码ECS化」已移到 DONE，并指向本文件；「AI行为树」仍在 Features。
 * `AGENTS.md`：`Systems/` 那段注释里关于 `Systems/Ai.cs` 的描述（「AI crew fires the arms
   it has」「AI missile defence」等）改写为 `Systems/AI/` 的目录与流水线，并把 §3 的标签、
   §5 的顺序写成设计规则；「Wheeled hulls」那条要把**弯道限速/接受半径归到 `Movement.Vehicle`**、
   AI 只写 `nav_*` 这件事写清楚（那条注释今天正好把 `ai._advance_route` 当成机动的主人）。
-* 版本：`MechServer.csproj` 的 `<Version>` `1.17.2` → `1.17.3`（玩家看不到差异）。
+* 版本：`MechServer.csproj` 的 `<Version>` `1.17.2` → `1.18.0`（步兵开始还击，玩家看得见）。
 * `docs/product/`：只读核对。若 P5 之后突击队的行为出现玩家可感的差异（本该没有），
   则按 `docs/product/CHANGELOG.md` 的格式补一条。

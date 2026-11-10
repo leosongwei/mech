@@ -1,4 +1,4 @@
-// Battle mode: the raiders - one mech per lane, sent round the back.
+// The raiding parties: one mech per lane, sent round the back (`Systems/AI/`).
 //
 // The lanes are a grind.  Every hull in the battle walks down one of them, so the
 // fighting happens where the lanes meet and the winner is whoever feeds the front
@@ -34,13 +34,15 @@
 //     open ground (`_shortcut`) into a polyline a hull can actually drive.
 //
 // The hulls themselves are ordinary mechs - they acquire, lead, fire and die
-// through `Systems/Ai.cs` like any other crew; what makes them raiders is the
-// `raider` tag, which takes them out of the lane AI's hands and puts them under
-// `_drive` here.  The mission itself is a two-state machine on `ai_state`: MARCH
-// along the route, then ASSAULT - stand in the capture ring and let
-// `Waves._capture` do the work - and when the town turns friendly the raider plans
-// again.  `Ai.run` keeps running the guns in both states, so a raider that runs
-// into something fights it instead of walking past it.
+// through the shared crew systems like any other; what makes them raiders is the
+// `raider` tag, which takes them out of the lane policy (`Strategies/Front.cs`) and
+// puts them under `_drive` here.  The mission itself is a state machine on
+// `ai_state`: ADVANCE along the route, then ASSAULT - stand in the capture ring and
+// let `Waves._capture` do the work - and when the town turns friendly the raider
+// plans again.  The guns stay the engage systems', so a raider that runs into
+// something fights it instead of walking past it, and the route itself is handed to
+// the machine (`_hand_over` -> `world.routes`), because a crew says where to go and
+// `Systems/Movement/` drives.
 //
 // Nothing here is a new kind of unit: a raider is a `combat` hull, so it holds
 // ground, can be locked, can be shot and its wreck goes up like anyone else's.  It
@@ -57,7 +59,7 @@
 
 using System.Runtime.CompilerServices;
 
-namespace Mech.Server.Modes.Battle;
+namespace Mech.Server.Systems.AI;
 
 /// <summary>Everything a round's raiding parties keep between ticks, keyed by the
 /// world it belongs to (Python keeps the same four fields on the world).</summary>
@@ -69,11 +71,15 @@ public sealed class RaidState
     public readonly Dictionary<(int faction, int party, int lane), List<(float x, float z)>> raid_paths = new();
     /// <summary>(faction, party, lane) -> seconds until the next planning attempt.</summary>
     public readonly Dictionary<(int faction, int party, int lane), float> raid_retry = new();
+    /// <summary>(faction, party, lane) -> the `world.routes` entry the driver follows
+    /// (`Core/Nav.cs`): the plan's poly line, handed to the machine as an intent so
+    /// the crew never steers a hull.</summary>
+    public readonly Dictionary<(int faction, int party, int lane), int> raid_route = new();
     /// <summary>launch counter: the party number is this modulo 256.</summary>
     public int raid_serial;
 }
 
-public static class Raids
+public static class Raid
 {
     public const float RAID_INTERVAL = 120.0f;   // s between two parties, per faction
     public const float RAID_FIRST = 60.0f;       // s into the round the first one leaves
@@ -81,9 +87,6 @@ public static class Raids
     public const int RAID_SIZE = 2;              // raiders per party: one per lane, lanes drawn at random
     public const int RAID_MAX = 6;               // hulls on the mission before the base stops sending
 
-    public const int STATE_MARCH = 0;            // driving the route
-    public const int STATE_ASSAULT = 1;          // standing in the town ring, taking it
-    public const int STATE_HOLD = 2;             // the town is ours: stay in the ring and keep it
     public const float RAID_HOLD = 90.0f;        // s a raider holds the town it took before moving on
 
     public const float THREAT_KM = 0.15f;        // score added per km of march (two empty towns, pick the near one)
@@ -140,14 +143,13 @@ public static class Raids
     public const float STUCK_SKIP = 2.0f;        // s against something before the way point is abandoned
     public const float STUCK_REPLAN = 6.0f;      // s before the route itself is judged wrong
 
-    public const int NO_TOWN = 255;              // `raid_goal`: there is nothing to take, so go for the base
+    public const int NO_TOWN = 255;              // `ai_goal`: there is nothing to take, so go for the base
 
     /// <summary>The components a raider carries on top of its type's bundle: the
     /// mission tag and the plan it is executing (`Ecs/Components.cs`).</summary>
     public static readonly string[] _COMPS =
-        { "raider", "raid_goal", "raid_i", "raid_party", "raid_stuck", "raid_t" };
+        { "raider", "crew_engage", "raid_party", "raid_stuck", "raid_t" };
 
-    private static readonly float[] _PROBE = { 0.8f, 2.0f, 4.0f };   // m: the steps the obstacle fan must find clear
     private static readonly (int di, int dj)[] _NEIGH =
         { (1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1) };
     private static readonly float _ROOT2 = MathF.Sqrt(2f);
@@ -242,11 +244,11 @@ public static class Raids
                                            extra: _COMPS);
                 e.uv("raider")[eid] = 1;
                 e.uv("raid_party")[eid] = (byte)party;
-                e.uv("raid_goal")[eid] = NO_TOWN;
-                e.iv("raid_i")[eid] = 0;
+                e.uv("ai_goal")[eid] = NO_TOWN;
+                e.iv("path_i")[eid] = 0;
                 e.fv("raid_stuck")[eid] = 0f;
                 e.fv("raid_t")[eid] = RAID_HOLD;
-                e.uv("ai_state")[eid] = STATE_MARCH;
+                e.uv("ai_state")[eid] = AiState.ADVANCE;
                 if (n == 0)
                 {
                     _replan(world, eid, nav, force);
@@ -287,6 +289,34 @@ public static class Raids
             foreach (var k in st.raid_retry.Keys) if (!live.Contains(k)) dead.Add(k);
             foreach (var k in dead) st.raid_retry.Remove(k);
         }
+        if (st.raid_route.Count > 0)
+        {
+            var dead = new List<(int, int, int)>();
+            foreach (var k in st.raid_route.Keys) if (!live.Contains(k)) dead.Add(k);
+            foreach (var k in dead)
+            {
+                Nav.free(world, st.raid_route[k]);   // the poly line goes back to the table
+                st.raid_route.Remove(k);
+            }
+        }
+    }
+
+    /// <summary>Hand a poly line to the machine: register it in `world.routes` and
+    /// point this hull's `nav_route` at it (`Core/Nav.cs`, `Systems/Movement/`).
+    ///
+    /// This is the whole of "the crew does not steer": the plan stays a mission's
+    /// business, the driving stays the machine's, and the only thing that crosses
+    /// is an index.</summary>
+    private static void _hand_over(World world, int eid, (int faction, int party, int lane) k,
+                                   List<(float x, float z)> pts)
+    {
+        var e = world.ecs;
+        var st = state_of(world);
+        if (st.raid_route.TryGetValue(k, out int old) && old >= 0) Nav.free(world, old);
+        int id = Nav.add(world, pts);
+        st.raid_route[k] = id;
+        e.iv("nav_route")[eid] = id;
+        e.iv("path_i")[eid] = 0;
     }
 
     /// <summary>A free spot in the ring around (x, z); the same rule the waves use.</summary>
@@ -331,13 +361,14 @@ public static class Raids
             var town = world.towns[goal];
             end = (town.x, town.z);
         }
-        st.raid_paths[k] = _route(world.terrain, nav, start, end,
-                                  goal == NO_TOWN ? null : _handover(start, end));
-        e.uv("raid_goal")[eid] = (byte)goal;
-        e.iv("raid_i")[eid] = 0;
+        var pts = _route(world.terrain, nav, start, end,
+                         goal == NO_TOWN ? null : _handover(start, end));
+        st.raid_paths[k] = pts;
+        _hand_over(world, eid, k, pts);
+        e.uv("ai_goal")[eid] = (byte)goal;
         e.fv("raid_stuck")[eid] = 0f;
         e.fv("raid_t")[eid] = RAID_HOLD;
-        e.uv("ai_state")[eid] = STATE_MARCH;
+        e.uv("ai_state")[eid] = AiState.ADVANCE;
     }
 
     /// <summary>Plan a way out of whatever this hull has driven into, on the street
@@ -362,12 +393,12 @@ public static class Raids
         int row = slot.row;
         var pos = b.f("pos");
         float px = pos[row * 3], pz = pos[row * 3 + 2];
-        int goal = b.u8("raid_goal")[row];
+        int goal = b.u8("ai_goal")[row];
         var town = _town(world, goal);
         (float x, float z) end;
         if (town is not null) end = (town.x, town.z);
         else end = world.terrain.bases[1 - b.u8("faction")[row]];
-        int i = b.i("raid_i")[row];
+        int i = b.i("path_i")[row];
         var target = i < path.Count ? path[i] : end;
         var grid = new StreetNav(world.terrain, (px, pz), target);
         var legs = _legs(world.terrain, grid, (px, pz), target);
@@ -379,7 +410,7 @@ public static class Raids
             np.AddRange(legs);
             for (int q = i + 1; q < path.Count; q++) np.Add(path[q]);
             st.raid_paths[k] = np;
-            b.i("raid_i")[row] = 0;
+            _hand_over(world, eid, k, np);
         }
         b.f("raid_stuck")[row] = 0f;
     }
@@ -400,12 +431,12 @@ public static class Raids
         var st = state_of(world);
         if (!st.raid_paths.ContainsKey(key(world, eid))) return true;
         int state = e.uv("ai_state")[eid];
-        if (state == STATE_HOLD) return e.fv("raid_t")[eid] <= 0f;
-        int goal = e.uv("raid_goal")[eid];
+        if (state == AiState.HOLD) return e.fv("raid_t")[eid] <= 0f;
+        int goal = e.uv("ai_goal")[eid];
         if (goal == NO_TOWN) return false;
         var town = _town(world, goal);
         if (town is null) return true;
-        return state == STATE_MARCH && town.owner == e.uv("faction")[eid];
+        return state == AiState.ADVANCE && town.owner == e.uv("faction")[eid];
     }
 
     public static void _drive(World world, float dt)
@@ -433,10 +464,12 @@ public static class Raids
 
     /// <summary>One tick of the mission: march the route, then hold the town.
     ///
-    /// The velocity is the only thing this writes - the guns are `Ai.run`'s, which
-    /// is why a raider that meets something shoots back with a full crew instead
-    /// of driving past it.  Standing still in the ring is what takes a town
-    /// (`Waves._capture`), so ASSAULT is "get inside the ring and stop".</summary>
+    /// What this writes is an *intent* - the machine follows the route it was handed
+    /// (`_hand_over`), stops where the crew says to stop, and the guns stay the
+    /// engage systems' business, so a raider that runs into something shoots back
+    /// with a full crew instead of walking past it.  Standing still in the ring is
+    /// what takes a town (`Waves._capture`), so ASSAULT is "get inside the ring and
+    /// stop".</summary>
     public static void _one(World world, int eid, List<(float x, float z)> path, float dt)
     {
         var e = world.ecs;
@@ -445,10 +478,8 @@ public static class Raids
         var b = slot.a;
         int row = slot.row;
         var pos = b.f("pos");
-        // what the hull is *told* to do; `Movement` turns it into `vel`
-        var vel = b.f("vel_cmd");
         float px = pos[row * 3], pz = pos[row * 3 + 2];
-        int goal = b.u8("raid_goal")[row];
+        int goal = b.u8("ai_goal")[row];
         var town = _town(world, goal);
         int faction = b.u8("faction")[row];
         float tx, tz, stop;
@@ -465,29 +496,23 @@ public static class Raids
 
         _watch_stuck(b, row, dt);
 
+        int i = b.i("path_i")[row];
         int state = b.u8("ai_state")[row];
-        float ax, az;
-        if (state == STATE_MARCH)
+        if (state == AiState.ADVANCE)
         {
-            int i = b.i("raid_i")[row];
-            while (i < path.Count && _behind(px, pz, path, i)) i++;
-            b.i("raid_i")[row] = i;
+            // the driver owns the cursor: the mission only has to notice that it
+            // has walked off the end of the route
             if (i < path.Count)
             {
-                ax = path[i].x;
-                az = path[i].z;
+                b.f("nav_speed")[row] = speed;
+                return;
             }
-            else
+            if (_d(tx, tz, px, pz) <= stop)
             {
-                ax = tx; az = tz;
-                if (_d(tx, tz, px, pz) <= stop)
-                {
-                    // the route is done and the ring is underfoot: take the town
-                    b.u8("ai_state")[row] = STATE_ASSAULT;
-                    vel[row * 3] = 0f;
-                    vel[row * 3 + 2] = 0f;
-                    return;
-                }
+                // the route is done and the ring is underfoot: take the town
+                b.u8("ai_state")[row] = AiState.ASSAULT;
+                b.f("nav_speed")[row] = 0f;
+                return;
             }
         }
         else
@@ -495,36 +520,27 @@ public static class Raids
             // ASSAULT and HOLD are the same move - stay in the ring - and differ
             // only in what ends them: the capture (a town that is ours) starts the
             // hold, and the hold runs out into the next target.
-            if (state == STATE_ASSAULT && town is not null && town.owner == faction)
+            if (state == AiState.ASSAULT && town is not null && town.owner == faction)
             {
-                b.u8("ai_state")[row] = STATE_HOLD;
+                b.u8("ai_state")[row] = AiState.HOLD;
                 b.f("raid_t")[row] = RAID_HOLD;
             }
-            else if (state == STATE_HOLD)
+            else if (state == AiState.HOLD)
             {
                 b.f("raid_t")[row] -= dt;
             }
             if (_d(tx, tz, px, pz) <= stop)
             {
-                vel[row * 3] = 0f;
-                vel[row * 3 + 2] = 0f;
+                b.f("nav_speed")[row] = 0f;
                 return;
             }
-            ax = tx;
-            az = tz;
         }
-
-        float dx = ax - px, dz = az - pz;
-        float d = MathF.Sqrt(dx * dx + dz * dz);
-        if (d < 1e-3f)
-        {
-            vel[row * 3] = 0f;
-            vel[row * 3 + 2] = 0f;
-            return;
-        }
-        var (sx, sz) = _steer(world.terrain, px, pz, dx / d, dz / d, pos[row * 3 + 1]);
-        vel[row * 3] = sx * speed;
-        vel[row * 3 + 2] = sz * speed;
+        // outside the ring (or the route is done and the ring is still far): walk at
+        // the middle of it and let the machine find the way
+        b.i("nav_route")[row] = -1;
+        b.f("nav_x")[row] = tx;
+        b.f("nav_z")[row] = tz;
+        b.f("nav_speed")[row] = speed;
     }
 
     /// <summary>Count the seconds a hull spends pushing at something it cannot pass.
@@ -555,75 +571,8 @@ public static class Raids
         if (stuck[row] >= STUCK_SKIP)
         {
             stuck[row] -= STUCK_SKIP;
-            b.i("raid_i")[row] += 1;
+            b.i("path_i")[row] += 1;
         }
-    }
-
-    /// <summary>True when way point `i` is behind the hull and can be dropped.
-    ///
-    /// Inside the acceptance radius, or already past the line through the point
-    /// square to the leg arriving from the previous one - the same rule the wheeled
-    /// route follower uses (`Ai._passed`), so a hull that overshot in a fight does
-    /// not turn back for a corner it will never need.</summary>
-    public static bool _behind(float px, float pz, List<(float x, float z)> path, int i)
-    {
-        var (wx, wz) = path[i];
-        if ((px - wx) * (px - wx) + (pz - wz) * (pz - wz) <= ARRIVE * ARRIVE) return true;
-        if (i <= 0) return false;
-        var prev = path[i - 1];
-        float lx = wx - prev.x, lz = wz - prev.z;
-        return (lx * lx + lz * lz) > 1e-9f && ((px - wx) * lx + (pz - wz) * lz) > 0f;
-    }
-
-    /// <summary>The direction to walk: the straight line, or the first clear fan
-    /// offset.
-    ///
-    /// Clearance is tested *along the first few metres*, not at one point in front:
-    /// `Movement` moves a hull one 1.6 m step at a time and refuses any step where
-    /// the hull does not fit, so a fan that only looks 4 m out will happily steer
-    /// through a house whose far side is open - and the hull grinds against the
-    /// corner for ever.  The reverse bearings are in the fan as well, because the
-    /// way out of a court is usually the way in.</summary>
-    public static (float dx, float dz) _steer(Terrain terrain, float px, float pz,
-                                              float dx, float dz, float y)
-    {
-        if (_clear_run(terrain, px, pz, dx, dz, y)) return (dx, dz);
-        float base_a = MathF.Atan2(dz, dx);
-        foreach (float off in _fan)
-        {
-            float a = base_a + off;
-            float nx = MathF.Cos(a), nz = MathF.Sin(a);
-            if (_clear_run(terrain, px, pz, nx, nz, y)) return (nx, nz);
-        }
-        return (dx, dz);
-    }
-
-    private static readonly float[] _fan =
-        { 0.5f, -0.5f, 1.0f, -1.0f, 1.6f, -1.6f, 2.2f, -2.2f, MathF.PI };
-
-    /// <summary>Whether a mech can drive at least a couple of metres this way.</summary>
-    public static bool _clear_run(Terrain terrain, float x, float z, float dx, float dz, float y)
-    {
-        foreach (float step in _PROBE)
-            if (!_clear(terrain, x + dx * step, z + dz * step, y)) return false;
-        return true;
-    }
-
-    /// <summary>Whether a hull of mech size fits at (x, z) - the samples `Movement`
-    /// uses.
-    ///
-    /// A raised spot is not an obstacle for a mech (it has legs), but a step so high
-    /// that the hull would be inside the ground is, so the ground height is checked
-    /// against a mech's own step as well.</summary>
-    public static bool _clear(Terrain terrain, float x, float z, float y)
-    {
-        float rad = Defs.UNIT_DEFS[Defs.ETYPE_MECH].radius * 0.6f;
-        if (terrain.blocked(x, z) || terrain.blocked(x + rad, z) ||
-            terrain.blocked(x - rad, z) || terrain.blocked(x, z + rad) ||
-            terrain.blocked(x, z - rad))
-            return false;
-        if (terrain.trunk_blocked(x, z, rad)) return false;
-        return MathF.Abs(terrain.height_at(x, z) - y) < 4f;
     }
 
     // ------------------------------------------------------------------
@@ -634,7 +583,7 @@ public static class Raids
     ///
     /// `cost` is the static half of the route cost - one for open ground, more for
     /// woods or buildings - and `open` is what A* is allowed to stand on at all.
-    /// Python has these two attributes duplicated on `Nav` and `StreetNav`; here
+    /// Python has these two attributes duplicated on `FieldNav` and `StreetNav`; here
     /// they are one base class, and the two subclasses differ only in how they fill
     /// them (a 128 m strategic node is a mean over 8x8 tiles, a street node is one
     /// tile).
@@ -665,9 +614,9 @@ public static class Raids
     /// It is rebuilt per plan, not per tick: the map does not change (the debug
     /// tree knob repaints tiles, and the next plan is the earliest anything could
     /// know).</summary>
-    public sealed class Nav : GridNav
+    public sealed class FieldNav : GridNav
     {
-        public Nav(Terrain terrain, float[] force)
+        public FieldNav(Terrain terrain, float[] force)
         {
             int k = (int)(NAV_CELL / Terrain.TILE);
             int nw = terrain.w / k, nd = terrain.d / k;
@@ -762,10 +711,10 @@ public static class Raids
         }
     }
 
-    public static (Nav nav, float[] force) _nav(World world, int faction)
+    public static (FieldNav nav, float[] force) _nav(World world, int faction)
     {
         var force = _gradient(world, faction);
-        return (new Nav(world.terrain, force), force);
+        return (new FieldNav(world.terrain, force), force);
     }
 
     /// <summary>The enemy force gradient: how much of his army would see a hull

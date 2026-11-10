@@ -10,8 +10,7 @@
 * 加钱的消息显示在钱旁边
 * 击杀消息显示时间延长到20s
 * 单元测试
-* AI代码ECS化 —— 见 [AI_plan.md](AI_plan.md)
-  * AI行为树 
+* AI行为树
 * 野战部队
   * UGV
   * 步兵
@@ -32,6 +31,8 @@
 
 ## DONE
 
+* AI代码ECS化 —— `Systems/AI/` + 意图层 `Systems/Movement/`，计划与实测见
+  [plans/AI_plan.md](plans/AI_plan.md)
 * ECS
 * 目前音效衰减太少，需要调试 - done
   * 耳机听感不太好

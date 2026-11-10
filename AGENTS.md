@@ -749,11 +749,19 @@ frontend/
   gone; so is `DEATH_BLAST_ETYPES` and the four-way `_leave_debris`.
 * **A kill is announced, but only to somebody who has a stake in it.**
   `mortality._feed` writes the one line the HUD's message list shows -
-  `killer killed victim with weapon`, the money appended for the pilot who
-  earned it. It stays silent for infantry (a battle kills them by the dozen)
-  and for AI fighting AI (most of the war, none of a pilot's business), so a
-  line only ever appears when a *pilot* is on one end of it - his kill, or his
-  death; every player sees every line. "The pilot is credited" is decided at
+  `killer killed victim with weapon`, and nothing else: the money is a popup
+  beside the money readout (`game._moneyGain`), because that is the number it
+  changes. The line stays silent for infantry (a battle kills them by the
+  dozen) and for AI fighting AI (most of the war, none of a pilot's business),
+  so it only ever appears when a *pilot* is on one end of it - his kill, or his
+  death; every player sees every line, and the line reads for 20 s
+  (`game.KILL_LIFE_S`) where a notice about the pilot's own machine reads for 6.
+  "A pilot is on one end" is asked of two columns, because the two ends answer
+  differently: the victim's `owner`, and `last_pid` - the pilot of the round
+  that delivered the *killing blow*, -1 once a crew's round does. `last_hit`
+  is the other question ("whose money is it") and keeps a pilot's credit
+  through a crew's finishing hit, so a hull a pilot softened up and a crew
+  finished pays him and announces nobody. "The pilot is credited" is decided at
   the **muzzle**, not at the impact: `proj_pid` / `proj_name` / `proj_etype`
   are frozen onto the round when it leaves (`weapons.fire`), the same rule as
   `blast_pid`, because a round outlives the hull that fired it by a second to
@@ -763,20 +771,26 @@ frontend/
   mech draws one off `defs.AI_NAMES` at spawn and a pilot's hull carries his
   callsign; `[bot]` is appended to the ones no pilot owns. **Who killed it is
   frozen at the hit, not looked up at the death** - `combat.apply` records
-  `last_name` / `last_fac` / `last_etype` / `last_wid` next to `last_hit`, and
+  `last_pid` and `last_name` / `last_fac` / `last_etype` / `last_wid` next to
+  `last_hit`, and
   `blasts.spawn` freezes the same three onto the burst (`blast_name` /
   `blast_etype` / `blast_wid`), because the shooter can be a wreck with its id
   handed out again by the time `mortality` judges the kill. The client only
   paints the words: `game._killfeed` builds segments (`{text, fac, bold}`) and
   `hud._messages` resolves `fac` through `FACTION_COLORS` and draws a dark
   plate under the line, since 12px monospace in three colours is unreadable
-  straight off a bright cloud.
+  straight off a bright cloud. The payout is `hud._status`'s: one `+$N` per
+  `kill` event on the pilot's own pid, on the money's own line and fading out.
 * **An explosion is an entity** (`Blasts.cs`). Whoever wants one - a
   round landing, a proximity fuse, a wreck - only calls `blasts.spawn`, and the
   one implementation of area damage reads it a stage later: `blast_power` =
   `[ed, er]`, `blast_t` the fuse, `blast_friendly` (a weapon burst spares its
   own side, a wreck does not), `blast_skip` the hull already hit directly,
-  `blast_pid` the credit frozen at creation. A hull that dies this tick leaves
+  `blast_pid` the credit frozen at creation, and `blast_name` / `blast_etype` /
+  `blast_wid` the shooter it names. A wreck's burst carries the attribution of
+  the round that killed *it* (`last_pid` plus the same name / side / type /
+  weapon, passed by `mortality._kill`), so a chain reaction hashes to the
+  shooter the feed already named. A hull that dies this tick leaves
   a burst that goes off on the next one, so **a chain reaction is a tick apart
   by construction** and cannot damage the hulk the dead hull has already
   become. `blast_t > dt` would be a burning area; nothing uses that yet.

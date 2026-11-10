@@ -78,8 +78,19 @@ public static class Mortality
                    ("faction", faction));
 
         int credit = e.has(eid, "last_hit") ? e.iv("last_hit")[eid] : -1;
-        bool feed = _feed(world, eid, d, credit);
-        _award(world, eid, credit, faction, d, feed);
+        // the killing blow's own attribution, frozen on the dying hull: a hull that
+        // comes apart takes a second one with it, and that burst announces the
+        // shooter this one already had - one round, one name, one pilot
+        int kpid = e.has(eid, "last_pid") ? e.iv("last_pid")[eid] : -1;
+        int kfac = e.uv("last_fac")[eid];
+        bool named = e.uv16("last_name")[eid] > 0
+                     && (kfac == Defs.FACTION_RED || kfac == Defs.FACTION_BLUE);
+        var kby = named
+            ? ((int)e.uv16("last_name")[eid], kfac, (int)e.uv("last_etype")[eid])
+            : ((int, int, int)?)null;
+        int kwid = named ? e.uv("last_wid")[eid] : -1;
+        _feed(world, eid);
+        _award(world, eid, credit, faction, d);
         _plan_respawn(world, eid, pos);
         if (dd is not null && dd.ends_match)
         {
@@ -95,9 +106,13 @@ public static class Mortality
         if (blast is not null)
         {
             // no sides spared: what stands within thirty metres of a hull that just
-            // came apart is in the wrong place whatever colour it is painted
-            Blasts.spawn(world, pos, (blast[0], blast[1]), friendly: true, pid: credit,
-                         faction: faction);
+            // came apart is in the wrong place whatever colour it is painted.  The
+            // burst is the *killer's* (`kpid` + `kby`, not the money's `credit`),
+            // because a chain reaction has to hash to the same shooter the line
+            // named - a burst that credits a pilot and names nobody announces a
+            // hull as killed by an unnamed `APC`
+            Blasts.spawn(world, pos, (blast[0], blast[1]), friendly: true, pid: kpid,
+                         faction: named ? kfac : faction, by: kby, wid: kwid);
         }
     }
 
@@ -143,7 +158,7 @@ public static class Mortality
     }
 
     /// <summary>Kill money, for a pilot on the other side - a hull is worth its `reward`.</summary>
-    private static void _award(World world, int eid, int pid, int faction, UnitDef? d, bool feed)
+    private static void _award(World world, int eid, int pid, int faction, UnitDef? d)
     {
         if (pid < 0 || !world.players.TryGetValue(pid, out var killer)) return;
         if (killer.faction == faction
@@ -158,12 +173,10 @@ public static class Mortality
         if (!world.ecs.has(eid, "person")) killer.kills += 1;
         killer.score += reward;
         int owner = world.ecs.iv("owner")[eid];
-        // `feed` says whether the kill line already carries the money (`_feed`); when
-        // it does not - the pilot shot an infantryman, which is not announced - the
-        // client still owes him the sound of the till
+        // the pilot's own cue: `+$reward` pops up beside the money readout, whether
+        // or not the kill was announced (an infantryman is not)
         world.emit("kill", ("pid", pid), ("victim", owner >= 0 ? owner : -1),
-                   ("reward", reward), ("etype", (int)world.ecs.uv("etype")[eid]),
-                   ("feed", feed ? 1 : 0));
+                   ("reward", reward), ("etype", (int)world.ecs.uv("etype")[eid]));
     }
 
     /// <summary>How the kill feed calls a hull: its name, or its type if it has none.</summary>
@@ -182,28 +195,30 @@ public static class Mortality
     /// pilot's business.  All that is left is a kill with a pilot on one end of it:
     /// his own, or the one that took his hull away from him.
     ///
-    /// Returns whether a line went out, which is what tells `_award` the money is
-    /// already on it.</summary>
-    private static bool _feed(World world, int eid, UnitDef? d, int credit)
+    /// "A pilot on one end" is read off two columns, because the two ends are asked
+    /// of different things: the victim's own `owner`, and the pilot of the round
+    /// that delivered the *killing blow* (`last_pid`, -1 for a crew's round).  The
+    /// pilot a hull is still paid to (`last_hit`) was the last pilot to take a point
+    /// off it, which may have been minutes before a crew finished the job.</summary>
+    private static void _feed(World world, int eid)
     {
         var e = world.ecs;
-        if (e.has(eid, "person") || !e.has(eid, "last_name")) return false;
+        if (e.has(eid, "person") || !e.has(eid, "last_name")) return;
+        int pid = e.has(eid, "last_pid") ? e.iv("last_pid")[eid] : -1;
         int owner = e.has(eid, "owner") ? e.iv("owner")[eid] : -1;
-        if (credit < 0 && owner < 0) return false;      // two crews, no pilot anywhere in it
+        if (pid < 0 && owner < 0) return;               // two crews, no pilot anywhere in it
         int faction = e.uv("faction")[eid];
         int kfac = e.uv("last_fac")[eid];
         if ((kfac != Defs.FACTION_RED && kfac != Defs.FACTION_BLUE) || kfac == faction)
-            return false;                               // uncrewed burst, or an accident inside the family
+            return;                       // uncrewed burst, or an accident inside the family
         string killer = _named(world, e.uv16("last_name")[eid], e.uv("last_etype")[eid],
-                               bot: credit < 0);
+                               bot: pid < 0);
         int wid = e.uv("last_wid")[eid];
         var wd = wid >= 0 && wid < Defs.WEAPONS.Length ? Defs.WEAPONS[wid] : null;
         world.emit("killfeed", ("killer", killer), ("kfac", kfac),
                    ("victim", _named(world, e.uv16("name_id")[eid], e.uv("etype")[eid],
                                      bot: owner < 0)),
-                   ("vfac", faction), ("w", wd?.name ?? ""), ("pid", credit),
-                   ("reward", d?.reward ?? 0));
-        return true;
+                   ("vfac", faction), ("w", wd?.name ?? ""));
     }
 
     /// <summary>Where it died decides how long the walk back is - the mode says how long.</summary>

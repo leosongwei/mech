@@ -104,6 +104,11 @@ public static class Combat
         // (`Systems/Mortality.cs::_kill`), which reads this column to award the
         // kill money and to address the shot-down cue of a missile (`_kill_round`)
         if (pid >= 0 && bufs.has("last_hit")) bufs.i("last_hit")[row] = pid;
+        // ...and the pilot the killing blow itself belonged to, which is another
+        // question: a crew that finishes a hull a pilot softened up takes
+        // `last_pid` to -1 while `last_hit` still holds the pilot, so a kill
+        // nobody was flying is announced as nobody's
+        if (bufs.has("last_pid")) bufs.i("last_pid")[row] = pid;
         // ...and who to *name*, which is not the same question: an AI crew's round
         // carries no pilot (`pid` is -1 for every one of them) but the crew, or the
         // car, still has to be called something on the feed

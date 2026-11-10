@@ -89,6 +89,11 @@ public static class Components
         ecs.register("armor", Kind.F, 2, 0.0);
         // who put the last *lethal* hit in - the credit for a kill.
         ecs.register("last_hit", Kind.I, 1, -1);
+        // the pilot of the round that took the last point off, whoever fired it:
+        // -1 once a crew's round lands the point that counts.  `last_hit` keeps a
+        // pilot's credit through a crew's finishing hit; this column is the
+        // killing blow itself, and it is what the kill feed is announced on.
+        ecs.register("last_pid", Kind.I, 1, -1);
         // ...and what killed it, frozen at the hit rather than looked up at the
         // death: the shooter may be a wreck by then, its id handed out again.
         ecs.register("last_name", Kind.U16);            // the killer's name id, 0 = none
@@ -248,7 +253,7 @@ public static class Components
         "pos", "vel", "vel_cmd", "wheel_speed", "backout_t", "blocked_t",
         "yaw", "pitch", "leg_yaw", "turret_yaw",
         "sight_yaw", "sight_pitch", "etype", "faction", "name_id",
-        "owner", "hp", "hpmax", "armor", "last_hit",
+        "owner", "hp", "hpmax", "armor", "last_hit", "last_pid",
         "last_name", "last_fac", "last_etype", "last_wid",
         "weapon", "ammo", "mag", "cool", "reload_t",
         "trigger", "trigger_prev", "work_remaining_time", "target", "ai_state", "ai_timer",

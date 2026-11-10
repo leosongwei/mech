@@ -1020,6 +1020,22 @@ export class HUD {
     ctx.font = 'bold 20px "Courier New", monospace';
     ctx.fillStyle = '#a9f0c0';
     ctx.fillText(`$${m.money || 0}`, 16, 252);
+    // a payout says itself beside the number it changed (`game._moneyGain`):
+    // the money's own line, to the right of it, oldest first and each one
+    // fading where it stands.  The stack on the right is the words - this is
+    // the till.
+    if (s.moneyPops && s.moneyPops.length) {
+      let px = 16 + ctx.measureText(`$${m.money || 0}`).width + 12;
+      ctx.font = 'bold 15px "Courier New", monospace';
+      ctx.fillStyle = '#a9f0c0';
+      for (const p of s.moneyPops) {
+        const text = `+$${p.amount}`;
+        ctx.globalAlpha = Math.max(0, Math.min(1, p.life / 0.8));
+        ctx.fillText(text, px, 252);
+        px += ctx.measureText(text).width + 10;
+      }
+      ctx.globalAlpha = 1;
+    }
     ctx.font = '12px "Courier New", monospace';
     ctx.fillStyle = 'rgba(210,235,220,0.8)';
     ctx.fillText(`KILLS ${m.kills || 0}   DEATHS ${m.deaths || 0}   SCORE ${m.score || 0}`, 16, 270);

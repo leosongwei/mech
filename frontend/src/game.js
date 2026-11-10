@@ -20,6 +20,13 @@ const RWR_RANGE = 3000;             // m, the threat dial's face and the receive
                                     // display ceiling: the snapshot's guided tier
                                     // (`Netcode.TIER_ROUND`), so every mark on the
                                     // dial is a round the wire would have sent
+// How long a line lives on the message stack: a kill is read *after* the fight
+// it belongs to (a battle writes one every few seconds), a notice about the
+// machine in the pilot's hands is read as it happens.
+const KILL_LIFE_S = 20;
+const MSG_LIFE_S = 6;
+// and how long `+$N` sits beside the money readout before it fades
+const MONEY_POP_S = 2.5;
 // The alarm is the same detector as the track, run 12 dB looser: one frame, no
 // track initiation, no angle association, no range solve.  So the distance at
 // which a round is *heard* is sqrt(10^0.6) = 1.995 times the distance at which
@@ -149,6 +156,7 @@ export class Game {
     this.map = null;
     this.defs = { weapons: {}, units: {}, mech: { muzzles: {} } };
     this.messages = [];
+    this.moneyPops = [];        // `+$N` payouts, drawn beside the money readout
     this.hitFlash = 0;
     this.shake = 0;
     this.sendAcc = 0;
@@ -317,15 +325,24 @@ export class Game {
   }
 
   _message(text, color) {
-    this.messages.push({ text, color, life: 6 });
+    this.messages.push({ text, color, life: MSG_LIFE_S });
     if (this.messages.length > 40) this.messages.shift();
+  }
+
+  // A payout, said where the money is: a hull is worth its bounty and the number
+  // that grew is the one in the corner, so the line goes beside it and fades
+  // there.  Nothing about a kill is a `_message`: the kill feed is the words and
+  // this is the till.
+  _moneyGain(amount) {
+    if (!(amount > 0)) return;
+    this.moneyPops.push({ amount, life: MONEY_POP_S });
+    if (this.moneyPops.length > 6) this.moneyPops.shift();
   }
 
   // A kill line, the way every shooter writes one: `killer killed victim with
   // weapon`, the two hulls in their own side's colour, the weapon bold.  The
-  // money only appears on the pilot's own kills - it is what he was paid, not
-  // what the field was paid.  The server composes the words (it is the only
-  // side that knows who a nameless hull was), the client only paints them.
+  // server composes the words (it is the only side that knows who a nameless
+  // hull was), the client only paints them; the money is `_moneyGain`'s.
   _killfeed(ev) {
     const segs = [
       { text: ev.killer, fac: ev.kfac, bold: true },
@@ -334,10 +351,7 @@ export class Game {
     ];
     if (ev.w) segs.push({ text: ' with ', color: '#93a89c' },
                         { text: ev.w.toLowerCase(), color: '#e8f4ee', bold: true });
-    if (ev.pid === this.init.pid && ev.reward > 0) {
-      segs.push({ text: ` +$${ev.reward}`, color: '#a9f0c0', bold: true });
-    }
-    this.messages.push({ segs, life: 6 });
+    this.messages.push({ segs, life: KILL_LIFE_S });
     if (this.messages.length > 40) this.messages.shift();
   }
 
@@ -459,12 +473,10 @@ export class Game {
       } else if (ev.k === 'killfeed') {
         this._killfeed(ev);
       } else if (ev.k === 'kill') {
-        if (ev.pid === this.init.pid) {
-          // the kill feed already said the words: the event only owes the pilot
-          // a bare number when the line was suppressed (an infantryman is not
-          // announced).  No tone - the kill feed line is the whole announce.
-          if (!ev.feed) this._message(`+$${ev.reward}`, '#a9f0c0');
-        }
+        // the till, and only the till: the words are the kill feed's line, and a
+        // kill it stays silent about (an infantryman) is money all the same.  No
+        // tone - a payout is read, not heard.
+        if (ev.pid === this.init.pid) this._moneyGain(ev.reward);
       } else if (ev.k === 'seeker') {
         // an IR missile lost its lock: its line of sight is full of smoke or a
         // ridge.  The pilot is told nothing - a blind seeker is not something
@@ -529,6 +541,8 @@ export class Game {
     this.zeroRange = this.input.zeroRange;
     for (const m of this.messages) m.life -= dt;
     this.messages = this.messages.filter((m) => m.life > 0);
+    for (const p of this.moneyPops) p.life -= dt;
+    this.moneyPops = this.moneyPops.filter((p) => p.life > 0);
     this.hitFlash = Math.max(0, this.hitFlash - dt * 1.6);
     this.shake = Math.max(0, this.shake - dt * 2.2);
 
@@ -1772,6 +1786,7 @@ export class Game {
       smoke: m.smoke === undefined ? null : m.smoke,
       smokeCd: m.smoke_cd || 0,
       messages: this.messages,
+      moneyPops: this.moneyPops,
       winner: m.winner !== undefined ? m.winner : this.winner,
       dead: !own,
       atBase,

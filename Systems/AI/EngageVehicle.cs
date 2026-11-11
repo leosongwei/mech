@@ -40,23 +40,22 @@ public static class EngageVehicle
     {
         var aim = Engage.ground_aim(world, c, r.index);
         if (!aim.valid) { r.trigger = 0; return; }
-        float want_yaw = lay(r, aim.point, dt);
-        Engage.trigger(world, c, r.index, want_yaw, r.turret_yaw, aim.dist, laid: true,
-                       second_arm: true);
+        lay(r, aim[aim.master].point, dt);
+        // a carrier's mount *is* its turret: `Gunnery` mirrors its sight off it, so
+        // the bore and the laid line are one and the same
+        Engage.trigger(world, c, r.index, aim, r.turret_yaw, r.pitch, second_arm: true);
     }
 
     private static void intercept(World world, VehicleColumns c, CrewRow r, float dt)
     {
         var aim = Engage.intercept_aim(world, r.index, c, r);
-        int arm = Crew.fused_arm(r);
-        if (!aim.valid || arm < 0) { r.trigger = 0; return; }
-        float want_yaw = lay(r, aim.point, dt);
-        Engage.trigger_intercept(world, r.index, c, want_yaw, r.turret_yaw, laid: true, arm,
-                                 aim.dist, c.weapon[r.index * 2 + arm]);
+        if (!aim.valid) { r.trigger = 0; return; }
+        lay(r, aim[aim.master].point, dt);
+        Engage.trigger(world, c, r.index, aim, r.turret_yaw, r.pitch, second_arm: true);
     }
 
-    /// <summary>Swing the turret onto a point and answer the bearing it was laid to.</summary>
-    private static float lay(CrewRow r, Vec3 point, float dt)
+    /// <summary>Swing the turret onto a point.</summary>
+    private static void lay(CrewRow r, Vec3 point, float dt)
     {
         var eye = r.eye;
         var (want_yaw, want_pitch) = MathUtil.angles_to(point.x - eye.x, point.y - eye.y,
@@ -66,6 +65,5 @@ public static class EngageVehicle
         r.turret_yaw = MathUtil.turn_toward(r.turret_yaw, want_yaw, TURRET_RATE * dt);
         r.pitch = MathF.Max(-0.4f, MathF.Min(0.7f,
             r.pitch + (want_pitch - r.pitch) * MathF.Min(1f, 6f * dt)));
-        return want_yaw;
     }
 }

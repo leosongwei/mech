@@ -84,8 +84,6 @@ public sealed class World
     public Systems.SweepScratch sweep = new();   // this tick's round legs
     public SphereTable? _sph;               // this tick's hit-sphere table
     public int _sph_tick = -1;
-    public bool[]? _aim_ok;                 // rows of that table still aimed at
-    public bool _sph_premove;               // built before movement, not for the sweep
     public List<Town> towns;
     // every poly line a driver can be told to follow (`Core/Nav.cs`): the two
     // directions of each lane, each ending at the enemy command base, plus
@@ -259,6 +257,7 @@ public sealed class World
             comps.Add("ai_crew");
             if (arms) comps.Add("mech_ai");
             else if (d.tags.Contains("person")) comps.Add("foot_ai");
+            comps.AddRange(Components.CREW_FCS_COMPS);
         }
         if (extra != null) comps.AddRange(extra);
         int eid = e.create(comps);
@@ -494,58 +493,12 @@ public sealed class World
     /// `Systems/Sweep.cs:sphere_table`).</summary>
     public SphereTable sphere_table(float dt)
     {
-        if (_sph is null || _sph_tick != tick || _sph_premove)
+        if (_sph is null || _sph_tick != tick)
         {
             _sph = Systems.Sweep.sphere_table(this, dt);
             _sph_tick = tick;
-            _sph_premove = false;
-            _aim_ok = null;      // the aim mask belongs to the table it was built for
         }
         return _sph;
-    }
-
-    /// <summary>The hit spheres as they stood at the *start* of this tick, and
-    /// which of those rows still describe a hull standing where they say.
-    ///
-    /// `sphere_table` is built during `projectiles`, i.e. after `movement` has
-    /// moved everything, so the table it leaves behind is the end-of-tick state -
-    /// which is precisely the state the next tick's aim cast reads, because `ai`
-    /// and `weapons` run before `movement`.  Nothing is rebuilt for it.
-    ///
-    /// A row still counts when its id is a live hull owning `unit` (not a
-    /// missile, which the same table carries for the sweep) and the hull is
-    /// standing within ten metres of where the row put it - an id freed by a
-    /// death and handed out again to something else must not be shot at.</summary>
-    public (SphereTable table, bool[]? ok) aim_spheres()
-    {
-        if (_sph is null || _sph_tick < tick - 1)
-        {
-            sphere_table(dt);
-            _sph_premove = true;     // built before movement: not the sweep's
-        }
-        if (_aim_ok is null)
-        {
-            var ids = _sph!.ids;
-            int n = _sph.n;
-            var ok = ecs.has_arr(ids[..n], "unit");
-            bool any = false;
-            for (int k = 0; k < ok.Length; k++) if (ok[k]) { any = true; break; }
-            if (any)
-            {
-                var p = ecs.fv("pos");
-                for (int k = 0; k < n; k++)
-                {
-                    if (!ok[k]) continue;
-                    var pos = p.get3(ids[k]);
-                    float dx = MathF.Abs(pos.x - _sph.centres[k * 3]);
-                    float dy = MathF.Abs(pos.y - _sph.centres[k * 3 + 1]);
-                    float dz = MathF.Abs(pos.z - _sph.centres[k * 3 + 2]);
-                    if (MathF.Max(dx, MathF.Max(dy, dz)) >= 10f) ok[k] = false;
-                }
-            }
-            _aim_ok = ok;
-        }
-        return (_sph!, _aim_ok);
     }
 
     /// <summary>The index of `name` in `names`, adding it the first time.</summary>
@@ -648,14 +601,10 @@ public sealed class World
     {
         time += dt;
         tick += 1;
-        this.dt = dt;                // `aim_spheres` builds a table of its own
+        this.dt = dt;                // a table built mid-tick integrates with it
         // per-tick scratch: a system that spawns the replacement of a dead slot
         // must not see last tick's deaths
         ecs.destroyed.Clear();
-        // the previous tick's hit-sphere table is *not* thrown away: it holds the
-        // end-of-tick state, which is exactly where every hull stands now, and
-        // `aim_spheres` hands it to the aim casts that run before movement
-        // (`sphere_table` stamps the tick it was built for)
         //
         // refile every hull under the cell it stands in before anyone queries:
         // the build is one counting sort, the systems below ask "who is near me"
@@ -676,7 +625,6 @@ public sealed class World
         var e = ecs;
         _sph = null;
         _sph_tick = -1;
-        _aim_ok = null;
         threats = null;
         _threat_tick = -1;
         foreach (var eid in e.query()) e.destroy(eid);

@@ -1103,9 +1103,14 @@ export class Game {
       m[0], m[1], m[2], eye[0], eye[1], eye[2], tx, ty, tz, vx, vz, vy, ax, az);
     if (!p) return null;
     const dh = Math.hypot(p.x - eye[0], p.z - eye[2]);
+    const mech = this.defs.mech || {};
+    // the mount's own stops (`defs.mech.pitch_min/max`, the arms' envelope): a
+    // solution the gun cannot be laid at is not one to snap the sight onto
+    const lo = mech.pitch_min === undefined ? -0.45 : mech.pitch_min;
+    const hi = mech.pitch_max === undefined ? 0.75 : mech.pitch_max;
     return {
       yaw: Math.atan2(p.z - eye[2], p.x - eye[0]),
-      pitch: clamp(Math.atan2(p.y - eye[1], Math.max(dh, 1e-3)), -0.6, 0.9),
+      pitch: clamp(Math.atan2(p.y - eye[1], Math.max(dh, 1e-3)), lo, hi),
     };
   }
 

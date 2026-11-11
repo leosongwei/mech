@@ -198,6 +198,54 @@ public static class Weapons
         }
     }
 
+    /// <summary>The mouth a round leaves from, and the pitch its tubes are laid at.
+    ///
+    /// One decision, in one place, because three things read it: the gun itself
+    /// (`fire`), a crew's fire control (`Systems/AI/Support/Engage.cs`, which solves the
+    /// shot from the mouth it will really leave from), and the client's own muzzle
+    /// (`scene.js` / `game._muzzle`, drawn from the same `defs.rack` spec).
+    ///
+    /// The rack's elevation comes first: a launcher bolted at its own quadrant
+    /// stands there whatever the arm does (the top attack's 42 deg is the round's own
+    /// loft), one carried on the arm adds its bias to the arm's aim, and one mounted
+    /// flat (`elev` 0, the rocket nest) is simply the arm - depression included, or a
+    /// nest could never bear on anything closer than its own range setting.  Never
+    /// clamp this as a floor (`max(pitch, elev)`): a flat rack whose `elev` is 0
+    /// would be pinned to the horizon.
+    ///
+    /// `right` / `up` are the tube the next round is in, in the rack's own lattice
+    /// (`defs.rack_tube`): a pod fires out of the cells it still has rounds in.
+    /// </summary>
+    public static Vec3 launch_geometry(World world, int eid, int arm, WeaponDef wd,
+                                       float yaw, float pitch,
+                                       out float tube_pitch, out float right, out float up)
+    {
+        var e = world.ecs;
+        var rack = wd.rack;
+        float elev = rack is not null ? rack.elev : 0f;
+        tube_pitch = rack is not null && rack.bolted ? elev : pitch + elev;
+        right = 0f;
+        up = 0f;
+        var origin = e.fv("pos").get3(eid);
+        if (e.uv("etype")[eid] != Defs.ETYPE_MECH) return origin;
+        // where the bore ends, in order of who knows best: the weapon itself (the
+        // 105 mm's barrel runs 5 m past its receiver), then its rack (a launcher of
+        // tubes ends at the mouth of the tubes), then the kind's figure.
+        float reach;
+        if (wd.reach is not null) reach = wd.reach.Value;
+        else if (rack is not null) reach = rack.mouth;
+        else if (Defs.MECH_ARM_REACH.TryGetValue(wd.kind, out float r)) reach = r;
+        else reach = 1.8f;
+        if (rack is not null)
+        {
+            // `mag` is the magazine's size, `mag[eid, arm]` the pre-shot count here -
+            // the caller takes the round off the top after this call
+            (right, up) = Defs.rack_tube(wd.mag - e.iv("mag").get(eid, arm), rack);
+        }
+        return MathUtil.muzzle_point(origin, yaw, arm == 0 ? Defs.MOD_LEFT : Defs.MOD_RIGHT,
+                                     tube_pitch, reach, right, up);
+    }
+
     /// <summary>Spawn the projectile(s) of one trigger pull.
     ///
     /// The random draws are, per round of a salvo: one `gauss` for the yaw, one
@@ -206,73 +254,38 @@ public static class Weapons
     public static void fire(World world, int eid, int arm, int wid, WeaponDef wd, int target = -1)
     {
         var e = world.ecs;
-        int etype = e.uv("etype")[eid];
-        // the fire control solves from the sight's eye, the round leaves the mouth
-        // of the barrel: two points, and with the machine lagging the sight, two
-        // headings as well
-        var (origin, _, _) = aim_of(world, eid);
         var (yaw, pitch) = bore_of(world, eid);
 
         int kind = kind_id(wd.kind);
         int n = Math.Max(1, wd.salvo);
         float life = wd.life;
 
-        // where the tubes point, which is the one thing that decides the mouth the
-        // round leaves and the heading it leaves on: a launcher bolted at its own
-        // quadrant stands there whatever the arm does (the top attack's 42 deg is
-        // the round's own loft), one carried on the arm adds its elevation bias to
-        // the arm's aim, and one mounted flat (`elev` 0, the rocket nest) is simply
-        // the arm - depression included, or a nest could never bear on anything
-        // closer than its own range setting.  Everything is drawn on this angle as
-        // well, so the mouth drawn is the mouth fired from.
-        //
-        // Never clamp this as a floor (`max(pitch, elev)`): a flat rack whose
-        // `elev` is 0 would be pinned to the horizon and could never bear on
-        // anything close.
-        var rack = wd.rack;
-        float elev = rack is not null ? rack.elev : 0f;
-        if (rack is not null && rack.bolted) pitch = elev;
-        else pitch = pitch + elev;
+        // the mouth the round leaves, and the pitch its tubes are actually laid at
+        // (`launch_geometry`: the rack's own elevation, the barrel's reach, the
+        // tube the next round is in)
+        var origin = launch_geometry(world, eid, arm, wd, yaw, pitch,
+                                     out float pitch_tube, out _, out _);
+        pitch = pitch_tube;
 
-        float right = 0f, up = 0f;
-        if (etype == Defs.ETYPE_MECH)
-        {
-            // where the bore ends, in order of who knows best: the weapon itself
-            // (the 105 mm's barrel runs 5 m past its receiver), then its rack (a
-            // launcher of tubes ends at the mouth of the tubes), then the kind's
-            // figure.
-            float reach;
-            if (wd.reach is not null) reach = wd.reach.Value;              // its own bore
-            else if (rack is not null) reach = rack.mouth;                 // the tubes' mouth
-            else if (Defs.MECH_ARM_REACH.TryGetValue(wd.kind, out float r)) reach = r;
-            else reach = 1.8f;
-            if (rack is not null)
-            {
-                // a launcher of tubes is one round per tube: the round leaves the
-                // tube its slot in the rack belongs to, so a half-empty pod fires
-                // out of its upper rows.  `mag` is still the pre-shot count here -
-                // the loop takes the round off the top of this call.
-                (right, up) = Defs.rack_tube(wd.mag - e.iv("mag").get(eid, arm), rack);
-            }
-            origin = MathUtil.muzzle_point(e.fv("pos").get3(eid), yaw,
-                                           arm == 0 ? Defs.MOD_LEFT : Defs.MOD_RIGHT,
-                                           pitch, reach, right, up);
-        }
-
-        // direct fire is zeroed: hold off for the drop so the round meets the sight
-        // line at the pilot's setting.  A pilot's gun uses that fixed range, which
-        // keeps the barrel still while the sight crosses a crest; the AI solves
-        // against the target it is aiming at, because it never has to read a
-        // reticle.  `bias` was the launcher's mechanical sighting and is absorbed
-        // by the solution; guided rounds keep it.
+        // Direct fire is zeroed: the barrel is held off for the drop so the round
+        // meets the sight line at the setting the gun carries.  Two settings, one
+        // law (`Core/FireControl.cs`): a pilot's is the range he dialled in, which
+        // keeps his reticle still while it crosses a crest; a crew has no reticle to
+        // read, so its fire control solved the elevation for the target itself and
+        // left it in `aim_elev`.  `bias` is the launcher's mechanical sighting and
+        // is absorbed by the solution; guided rounds keep it.
         float? zero = null;
         if (kind == 0 || kind == 1)
         {
             if (world.players.TryGetValue(e.iv("owner")[eid], out var pl))
                 zero = Ballistics.zero_at(origin, yaw, pitch, wd, pl.zero_range);
+            else if (e.arch_of(eid)?.keyset.Contains("aim_elev") == true)
+                zero = e.fv("aim_elev").get(eid, arm);
             else
-                zero = Ballistics.zero_pitch(world, origin, yaw, pitch, wd, ignore: eid,
-                                             faction: e.uv("faction")[eid]);
+                // an ownerless hull with no fire control is a *scripted* shooter (a
+                // harness puppet, a mode's fixture): its gun holds the default sight
+                // setting, exactly like a pilot who never touched the dial
+                zero = Ballistics.zero_at(origin, yaw, pitch, wd, Defs.ZERO_DEFAULT);
         }
 
         for (int k = 0; k < n; k++)

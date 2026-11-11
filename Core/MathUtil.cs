@@ -139,6 +139,16 @@ public static class MathUtil
         return g;
     }
 
+    /// <summary>m: the biggest hit sphere of a unit type - the body a trigger gate
+    /// measures a target by (`Systems/AI/Support/Engage.cs`).</summary>
+    public static float max_radius(int etype)
+    {
+        var g = sphere_geom(etype);
+        float r = 0f;
+        for (int k = 0; k < g.radius.Length; k++) r = MathF.Max(r, g.radius[k]);
+        return r;
+    }
+
     /// <summary>One hull's local sphere offsets -> world centres, in the order of
     /// `local`, written to `out` at `count` triples starting at element 0.
     ///
@@ -166,64 +176,6 @@ public static class MathUtil
         return new Vec3(pos.x - s * l.x + c * l.z,
                         pos.y + l.y,
                         pos.z + c * l.x + s * l.z);
-    }
-
-    /// <summary>Iteratively solve the intercept point for a ballistic projectile.
-    ///
-    /// All three components of the target's velocity are honoured: a hull drives
-    /// on the flat (its `vel[1]` is 0, so nothing changes for one), a missile in
-    /// the air climbs or dives and *that* is the component a gunner has to lead.
-    /// `gravity` is the drop of *our* round over the flight time, not the
-    /// target's - the fire control zeroes the barrel for it at shot time.</summary>
-    public static Vec3 solve_lead(Vec3 origin, Vec3 tpos, Vec3? tvel,
-                                  float speed, float gravity, int iters = 3)
-    {
-        float ox = origin.x, oy = origin.y, oz = origin.z;
-        float tx = tpos.x, ty = tpos.y, tz = tpos.z;
-        float vx = 0f, vy = 0f, vz = 0f;
-        if (tvel.HasValue)
-        {
-            vx = tvel.Value.x; vy = tvel.Value.y; vz = tvel.Value.z;
-        }
-        float sp = MathF.Max(speed, 1f);
-        float t = dist(origin, tpos) / sp;
-        float ax = tx, ay = ty, az = tz;
-        for (int i = 0; i < iters; i++)
-        {
-            ax = tx + vx * t;
-            az = tz + vz * t;
-            ay = ty + vy * t + 0.5f * gravity * t * t;
-            float d = MathF.Sqrt((ox - ax) * (ox - ax) + (oy - ay) * (oy - ay)
-                                 + (oz - az) * (oz - az));
-            t = d / sp;
-        }
-        return new Vec3(ax, ay, az);
-    }
-
-    /// <summary>The speed a boost-and-coast round averages over `dist` metres.
-    ///
-    /// A gun leaves at its muzzle speed and keeps it; a missile leaves at 40 m/s,
-    /// accelerates at `thrust` up to `maxvel` for the length of its `burn` and
-    /// then coasts.  Leading one with the launch speed puts the aim point
-    /// seconds in front of a running hull, and leading it with the cruise speed
-    /// puts it behind, so the gunnery solves against what the round will
-    /// actually average (a beam rider at 1 km: ~340 m/s, not the 40 it left the
-    /// tube at).</summary>
-    public static float mean_speed(WeaponDef wd, float dist)
-    {
-        float v0 = wd.vel;
-        float a = wd.thrust;
-        float vmax = wd.maxvel != 0f ? wd.maxvel : v0;
-        float burn = wd.burn;
-        if (v0 <= 0f || a <= 0f || burn <= 0f || vmax <= v0) return v0;
-        float tb = MathF.Min(burn, (vmax - v0) / a);
-        float db = v0 * tb + 0.5f * a * tb * tb;      // metres covered under power
-        if (dist <= db)
-        {
-            float t = (-v0 + MathF.Sqrt(MathF.Max(v0 * v0 + 2f * a * dist, 0f))) / a;
-            return dist / MathF.Max(t, 1e-3f);
-        }
-        return dist / MathF.Max(tb + (dist - db) / vmax, 1e-3f);
     }
 
     public static float ballistic_drop(float gravity, float flight) =>

@@ -20,6 +20,11 @@ public class CrewColumns : Columns<CrewRow>
     public float[] hp = null!, hpmax = null!;
     public float[] timer = null!, spot_x = null!, spot_y = null!, spot_z = null!;
     public float[] spot_t = null!;
+    // the fire control's own answer per arm (`Core/FireControl.cs`), and the pull
+    // measured on the target: [ax, az, prev vx, prev vz, age, target id]
+    public float[] aim_elev = null!, tacc = null!;
+    /// <summary>Bound where the platform owns arms; null for a man or a carrier.</summary>
+    public float[]? arm_hp;
     public float[] nav_x = null!, nav_z = null!, nav_speed = null!;
     public int[] mag = null!, target = null!, threat = null!, nav_route = null!;
     public byte[] etype = null!, faction = null!, weapon = null!, trigger = null!;
@@ -50,6 +55,8 @@ public class CrewColumns : Columns<CrewRow>
         timer = g.f("ai_timer");
         spot_x = g.f("spot_x"); spot_y = g.f("spot_y"); spot_z = g.f("spot_z");
         spot_t = g.f("spot_t");
+        aim_elev = g.f("aim_elev"); tacc = g.f("ai_tacc");
+        arm_hp = g.has("arm_hp") ? g.f("arm_hp") : null;
         nav_x = g.f("nav_x"); nav_z = g.f("nav_z"); nav_speed = g.f("nav_speed");
         nav_route = g.i("nav_route");
         mag = g.i("mag"); target = g.i("target"); threat = g.i("ai_threat");
@@ -59,6 +66,55 @@ public class CrewColumns : Columns<CrewRow>
     }
 
     public override CrewRow row(int i) => new CrewRow(this, i);
+
+    // ---- the target's pull, measured the way the client measures it ----------
+    //
+    // The wire gives a pilot two velocity samples and he differentiates them
+    // (`net.js`: 0.25 s EMA, a jump over 25 m/s^2 read as a teleport, a sample older
+    // than 0.5 s ignored).  A crew holds the velocity itself, so it measures the same
+    // quantity from the same kind of finite difference - and stops trusting it on the
+    // same terms, because a stale pull is a circle drawn in the air.
+
+    /// <summary>s; the EMA's time constant - `net.js` uses the same figure.</summary>
+    public const float ACCEL_TAU = 0.25f;
+    /// <summary>s; a sample older than this says nothing about now.</summary>
+    public const float ACCEL_STALE = 0.5f;
+
+    /// <summary>Measure this tick's velocity of `tid` into `ai_tacc`.  A different
+    /// target than last tick starts the average over: two hulls' velocities are not
+    /// a difference.</summary>
+    public void measure_accel(int i, int tid, Vec3 vel, float dt)
+    {
+        int b = i * 6;
+        if (tid < 0 || (int)tacc[b + 5] != tid)
+        {
+            tacc[b + 0] = 0f; tacc[b + 1] = 0f;
+            tacc[b + 2] = vel.x; tacc[b + 3] = vel.z;
+            tacc[b + 4] = 0f; tacc[b + 5] = tid;
+            return;
+        }
+        float ax = (vel.x - tacc[b + 2]) / dt;
+        float az = (vel.z - tacc[b + 3]) / dt;
+        tacc[b + 2] = vel.x; tacc[b + 3] = vel.z;
+        // a difference of two samples is a measurement of the *average* over the
+        // tick, and a teleport is not a pull: anything past 25 m/s^2 is dropped
+        if (ax * ax + az * az < 625f)
+        {
+            float k = 1f - MathF.Exp(-dt / ACCEL_TAU);
+            tacc[b + 0] += (ax - tacc[b + 0]) * k;
+            tacc[b + 1] += (az - tacc[b + 1]) * k;
+        }
+        tacc[b + 4] += dt;
+    }
+
+    /// <summary>The pull to lead on: zero unless it was measured on this target and
+    /// is still fresh.</summary>
+    public Vec3 accel_of(int i, int tid)
+    {
+        int b = i * 6;
+        if ((int)tacc[b + 5] != tid || tacc[b + 4] > ACCEL_STALE) return default;
+        return new Vec3(tacc[b + 0], 0f, tacc[b + 1]);
+    }
 }
 
 /// <summary>One crew: every accessor is the buffer element itself.</summary>

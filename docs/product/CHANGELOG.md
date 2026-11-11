@@ -11,6 +11,41 @@
 
 ---
 
+## 2026-11-10 · AI 的火控和玩家共用一条解算律，而且打得中了（1.21.0）
+
+- **玩家能感觉到的差别**：AI 班组不再"朝地面泼水"。以前它的开火门限是一个定值
+  **0.14 rad**——2 km 上等于 **280 m**，等于炮口只要大致朝着目标就扣扳机，一整场仗
+  的炮弹基本都打进土里；现在门限是**目标自己的角径**
+  （`atan((命中半径 + 弹丸半径) / 距离)`），炮口没压在车身上就不开火。
+  实测（`--check battle --minutes 12`，改前 4 场 / 改后 3 场）：炮弹
+  **5.4 万发 → 3.5 万发**，被击毁的车辆 **402 台 → 411 台**——同样的战果，每击毁一台耗弹从 **134 发降到 86 发**。曳光弹不再像泼水。
+- **它会提前量了**：以前 AI 的提前量按**最慢的那门弹的平均速度**线性外推，
+  火箭巢（发射药只把弹推出管，55 m/s，主发动机随后才点）把整条视线带偏
+  **800 m 上 164 m**；现在每一臂各解各的弹道（重力 + 推力曲线 + 1/30 s 步进 + 目标的
+  实测加速度），炮口偏移也在解里。
+- **不再对着"视点"调零**：以前 AI 的仰角是"瞄准线第一个撞上的东西"那个点解出来的——
+  打空中的导弹时要对着一片天调零，过山脊时准星会跳。现在它对**拦截点**解算，
+  仰角直接写进 `aim_elev` 开火，不再二次解。
+- **反导同理**：拦来袭导弹的门限用**引信覆盖的角度**（2.5 m，1 km 上 0.15°），
+  判据、解算与打地面目标是同一个函数。靶场实测（`--check intercept`，四种弹两组距离
+  各 4 发，共 32 发）：改之前接住 **15 发**，现在 **22–26 发**——SACLOS 与远距离火箭弹
+  的漏光基本补上了。
+- **看的地方和射的方向分开**：一条视线（写进 `sight_yaw`/`sight_pitch` 的只有**主手**，
+  现在是"最先到达的那一发"），每臂一个解、一个 `aim_elev`，所以慢弹不再被快弹带着瞄。
+- **玩家侧一个数都没变**：准星、落点标记、预瞄圈照旧（同一套公式从 `map.js` 搬进
+  `frontend/src/fcs.js`，服务端 `Core/FireControl.cs` 是它的孪生实现）。
+- 新增独立单元测试：`tests/cases/fcs.json` 的 42 条用例由**两侧**各跑一遍
+  （`tests/frontend/` 用 Node 内建的 `node:test`，`tests/backend/` 是一个 console runner，
+  零第三方包），`./run_tests.sh` 一条命令跑完并逐字段比对——实测两侧的最大差异
+  **1.5 cm / 2e-5 rad / 5e-6 s**，远在容差内。
+- 涉及文件：`Core/FireControl.cs`（新）、`Core/Ballistics.cs`、`Core/MathUtil.cs`、
+  `Core/Defs.cs`（`AI_MASTER_ARM`）、`Ecs/Components.cs`（`aim_elev` / `ai_tacc`）、
+  `Core/World.cs`、`Systems/Weapons.cs`（`launch_geometry`）、
+  `Systems/AI/Support/{Engage,Crew}.cs`、`Systems/AI/{Sense,Intercept,EngageMech,
+  EngageVehicle,EngageFoot}.cs`、`Harness/FcsCheck.cs`（新）、`Harness/Check.cs`
+  （战斗检查多一行击杀数）、`frontend/src/{fcs.js（新）,map.js,game.js}`、`tests/**`、
+  `run_tests.sh`、`docs/product/weapons.md`、`AGENTS.md`。
+
 ## 2026-11-10 · 赏金冒在资金旁边，击杀行读 20 秒，AI 打 AI 不再误报（1.20.0）
 
 - **加钱提示挪到钱旁边**：`+$180` 现在出现在左下角资金数字的右边（绿色小一号字，

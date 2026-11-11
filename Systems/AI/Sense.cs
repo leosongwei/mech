@@ -63,7 +63,10 @@ public static class Sense
                                             Defs.UNIT_DEFS[r.etype]);
                 }
                 int tid = r.target;
-                if (tid < 0) continue;
+                if (tid < 0) { c.measure_accel(r.index, -1, default, dt); continue; }
+                // the pull, measured on the velocity the ECS holds - what the client
+                // differentiates off two snapshots, `Core/FireControl.cs` leads on
+                c.measure_accel(r.index, tid, e.fv("vel").get3(tid), dt);
                 // a target that died, or that turns out to be one of ours, is
                 // dropped on the spot: the timer would otherwise keep a crew
                 // shooting at a wreck for half a second

@@ -802,6 +802,20 @@ public static partial class Defs
     // holding the sight on the target, so it fires at the rack's own rate.
     public const float AI_LAUNCH_GAP = 15.0f;
 
+    // Which arm a crew lays its *sight* on, when the two arms want different leads.
+    // One sight line can only express one intercept point, and the arms differ by
+    // seconds of flight time, so this is a product decision - and the one setting
+    // `Systems/AI/Support/Engage.cs` reads.  Every arm still gets its own solution;
+    // the ones that do not own the sight fire only while their own solution sits
+    // inside their own trigger gate.
+    public enum MasterArm
+    {
+        Slowest = 0,    // the round that takes longest: the old behaviour
+        Fastest = 1,    // the round that arrives first - what a gun is for
+        Punch = 2,      // the round that hurts most per hit
+    }
+    public const MasterArm AI_MASTER_ARM = MasterArm.Fastest;
+
     // ------------------------------------------------------------------- shop
     // A weapon is bought as "hardware + a full load of ammunition": the hardware is
     // `cost`, the rounds are `ammo_cost` each, and both are listed so the price of a

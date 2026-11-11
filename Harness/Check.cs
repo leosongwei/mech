@@ -200,6 +200,9 @@ public static class Check
         {
             if (!ev.TryGetValue("k", out var k) || k is not string kind) continue;
             counts[kind] = counts.TryGetValue(kind, out int c) ? c + 1 : 1;
+            // a unit's death burst is the only `boom` that names a side
+            if (kind == "boom" && ev.ContainsKey("faction"))
+                counts["death"] = counts.TryGetValue("death", out int d) ? d + 1 : 1;
         }
         world.events.Clear();
     }

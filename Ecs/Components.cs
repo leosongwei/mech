@@ -109,6 +109,10 @@ public static class Components
         ecs.register("reload_t", Kind.F, 2, 0.0);
         ecs.register("trigger", Kind.U8);               // bit0 left, bit1 right
         ecs.register("trigger_prev", Kind.U8);          // last tick's bits, for semi auto
+        // The elevation the crew's fire control solved for each arm, and the only
+        // thing a crew's gun fires at (`Core/FireControl.cs` -> `Weapons.fire`).
+        // A pilot has none: his gun holds the sight setting he dialled in.
+        ecs.register("aim_elev", Kind.F, 2, 0.0);
         // rearm work: seconds left at the wrench (`Systems/Rearm.cs`).
         ecs.register("work_remaining_time", Kind.F);
 
@@ -151,6 +155,11 @@ public static class Components
         ecs.register("spot_y", Kind.F);
         ecs.register("spot_z", Kind.F);
         ecs.register("spot_t", Kind.F);
+        // the pull the crew has measured on its target, and the state that
+        // measurement needs: [ax, az, prev vx, prev vz, age, target id].  The same
+        // quantity the client gets off two velocity samples (`net.js`), measured
+        // here from the velocity the ECS already holds.
+        ecs.register("ai_tacc", Kind.F, 6, 0.0);
 
         // ---- raid (battle mode) -----------------------------------------
         // A raider is a *mission*, not a type: the hulls are ordinary mechs that
@@ -267,6 +276,11 @@ public static class Components
     public static readonly string[] ARM_COMPS = { "arm_hp", "arm_hpmax" };
 
     public static readonly string[] CIV_COMPS = Cat(UNIT_COMPS, "home_x", "home_z");
+
+    /// <summary>What a crew owns on top of its hull: the fire control's answer per
+    /// arm and the target's measured pull.  A pilot's machine has neither - his
+    /// zero is the dial he set and his lead is solved on his own screen.</summary>
+    public static readonly string[] CREW_FCS_COMPS = { "aim_elev", "ai_tacc" };
 
     /// <summary>a wreck is scenery: it has a place and no velocity.</summary>
     public static readonly string[] DEBRIS_COMPS = {

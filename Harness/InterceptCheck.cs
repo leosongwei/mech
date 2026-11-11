@@ -104,9 +104,8 @@ public static class InterceptCheck
                         float pitch = MathF.Atan2(dy, MathF.Sqrt(dx * dx + dz * dz));
                         e.fv("sight_yaw")[shooter] = yaw;
                         e.fv("sight_pitch")[shooter] = pitch;
-                        var eye = MathUtil.sight_eye(p, e.fv("yaw")[shooter]);
-                        float? zero = Ballistics.zero_pitch(world, eye, yaw, pitch, wd, shooter, Defs.FACTION_RED);
-                        if (zero is not null) e.fv("sight_pitch")[shooter] = zero.Value;
+                        // a guided round rides the *sight*, so the sight is the whole
+                        // of the aim: a scripted shooter needs no fire control
                     }
                     if (t * DT >= next && launched < 3 && e.is_alive(shooter))
                     {
@@ -175,13 +174,8 @@ public static class InterceptCheck
                 e.fv("sight_yaw")[shooter] = yaw;
                 e.fv("sight_pitch")[shooter] = pitch;
                 e.iv("target")[shooter] = postEid >= 0 && e.is_alive(postEid) ? postEid : -1;
-                // the *gun* has to be zeroed for the drop the round will take:
-                // the cross is the line, the bore is the answer (`zero_pitch` is
-                // the same solver the AI's `_engage` uses)
-                var eye = MathUtil.sight_eye(p, e.fv("yaw")[shooter]);
-                float? zero = Ballistics.zero_pitch(world, eye, yaw, pitch, wd,
-                                                    shooter, Defs.FACTION_RED);
-                if (zero is not null) e.fv("sight_pitch")[shooter] = zero.Value;
+                // a guided round follows the sight line, so laying the sight on the
+                // target *is* laying the round on it
             }
             float now = t * DT;
             if (now >= next && launched < ROUNDS && e.is_alive(shooter))

@@ -43,23 +43,21 @@ public static class EngageFoot
     {
         var aim = Engage.ground_aim(world, c, r.index);
         if (!aim.valid) { r.trigger = 0; return; }
-        float want_yaw = lay(r, aim.point, dt);
-        Engage.trigger(world, c, r.index, want_yaw, r.yaw, aim.dist, laid: true,
-                       second_arm: true);
+        lay(r, aim[aim.master].point, dt);
+        // a man's body is his mount: it is both the sight and the bore
+        Engage.trigger(world, c, r.index, aim, r.yaw, r.pitch, second_arm: true);
     }
 
     private static void intercept(World world, FootColumns c, CrewRow r, float dt)
     {
         var aim = Engage.intercept_aim(world, r.index, c, r);
-        int arm = Crew.fused_arm(r);
-        if (!aim.valid || arm < 0) { r.trigger = 0; return; }
-        float want_yaw = lay(r, aim.point, dt);
-        Engage.trigger_intercept(world, r.index, c, want_yaw, r.yaw, laid: true, arm,
-                                 aim.dist, c.weapon[r.index * 2 + arm]);
+        if (!aim.valid) { r.trigger = 0; return; }
+        lay(r, aim[aim.master].point, dt);
+        Engage.trigger(world, c, r.index, aim, r.yaw, r.pitch, second_arm: true);
     }
 
-    /// <summary>Turn the man's body onto a point and answer the bearing.</summary>
-    private static float lay(CrewRow r, Vec3 point, float dt)
+    /// <summary>Turn the man's body onto a point.</summary>
+    private static void lay(CrewRow r, Vec3 point, float dt)
     {
         var eye = r.eye;
         var (want_yaw, want_pitch) = MathUtil.angles_to(point.x - eye.x, point.y - eye.y,
@@ -67,6 +65,5 @@ public static class EngageFoot
         r.yaw = MathUtil.turn_toward(r.yaw, want_yaw, BODY_RATE * dt);
         r.pitch = MathF.Max(-0.4f, MathF.Min(0.7f,
             r.pitch + (want_pitch - r.pitch) * MathF.Min(1f, 6f * dt)));
-        return want_yaw;
     }
 }

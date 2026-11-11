@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The repo has no third-party packages and this keeps it that way: a plain
+       console program with a ~70 line runner (`Support/MiniTest.cs`) instead of
+       `Microsoft.NET.Test.Sdk` + a framework + an adapter.
+
+         dotnet run, project "tests/backend", with an optional filter or a path to
+         write the solutions table to (see tests/backend/Program.cs for the flags)
+
+       It references the server project, so a test sees the same `Defs`, the same
+       `Ballistics` and the same ECS the game does. -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>Mech.Tests</AssemblyName>
+    <RootNamespace>Mech.Tests</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../MechServer.csproj" />
+  </ItemGroup>
+
+</Project>

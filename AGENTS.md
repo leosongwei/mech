@@ -4,19 +4,19 @@ Working notes for coding agents touching **MECH**, a browser-based mech
 shooter: C# (.NET 10) archetype-ECS server, WebGL2 client, 16 km tile map, three lanes,
 RED vs BLUE.
 
-## Read `doc/product` first
+## Read `docs/product` first
 
-Everything under `doc/` is written in Chinese (the code, the comments and every
+Everything under `docs/` is written in Chinese (the code, the comments and every
 string a player sees are English - see [Conventions](#conventions)).
-`doc/product/` is the product documentation and the source of truth for
+`docs/product/` is the product documentation and the source of truth for
 everything a player can see: interaction flow, every screen, and the full unit
 and weapon parameter tables (mirrors of `Core/Defs.cs` and the mode systems).
 
-* **Before changing anything, read `doc/product/`** and check the change fits
+* **Before changing anything, read `docs/product/`** and check the change fits
   the documented rules.
 * **Every product-facing change must be registered there**: update the relevant
   page (`flow.md`, `screens.md`, `units.md`, `weapons.md`) and add a dated entry
-  at the top of `doc/product/CHANGELOG.md` in the same commit. That covers UI
+  at the top of `docs/product/CHANGELOG.md` in the same commit. That covers UI
   elements, copy, keybindings, unit/weapon numbers, spawn and rule timers,
   win conditions and debug UI.
 * Tuning changes in `Core/Defs.cs` / mode systems without the matching table update
@@ -29,8 +29,10 @@ and weapon parameter tables (mirrors of `Core/Defs.cs` and the mode systems).
 dev.sh                     # build / start / attach / stop helper (byobu or tmux)
 dotnet.sh                  # build / run helper (dotnet's own state in .dotnet_tmp/)
 MechServer.csproj          # the server; its <Version> is the product version
-Program.cs                 # entry point: --host / --port / --range / --check battle|range|hit|intercept
-doc/                       # Chinese: every document in the repo lives here
+Program.cs                 # entry point: --host / --port / --range / --check battle|range|
+                           #   hit|intercept|diag|net|fcs
+run_tests.sh               # the unit tests: ./run_tests.sh [cs|js|compare] [--filter NAME]
+docs/                      # Chinese: every document in the repo lives here
   product/                 #   player-facing rules: flow, screens, units, weapons, changelog
   plans/                   #   refactor and feature plans (e.g. speed_component.md)
   top_attack_plan.md       #   design notes next to the code they describe
@@ -41,11 +43,13 @@ Core/
   Defs.cs                  # entity types, weapons, unit stats, mech geometry
   World.cs                 # World/Player: terrain, players, spawning, tick, queries
   Terrain.cs               # 1000x1000 tiles of 16 m -> 16 km square map
-  MathUtil.cs              # angles, lead solving, hit spheres, muzzle geometry
+  MathUtil.cs              # angles, hit spheres, muzzle geometry
   Profiler.cs              # white-box probes (MECH_PROBE=1), off and free by default
   Grid.cs                  # 128 m cell index over the units, refiled every tick (AI broadphase)
   Nav.cs                   # routes (the poly lines a driver follows) + the way point maths
-  Ballistics.cs            # fire control: sight setting elevation (player) / sight-point solve (AI)
+  Ballistics.cs            # elevation for a range (`zero_at`), flight path (`flight_at`)
+  FireControl.cs           # THE fire control law: shot + track -> point/angles/elevation
+                           #   (both hosts; `frontend/src/fcs.js` is its twin)
   Flight.cs                # aerodynamics + guidance of a winged round (the top-attack missile)
   Seeker.cs                # an IR round's lock: what it stares at, and what it re-locks on
   Combat.cs                # damage resolution: the only writer of `hp` (apply/hit/splash)
@@ -91,7 +95,15 @@ Modes/                     # per-mode rule sets: map, setup, pipeline, spawn rul
                            #   Interceptor.cs: the missile-defence post
 Harness/                   # headless checks, no socket: Check.cs (battle/range/diag),
                            # InterceptCheck.cs (missile defence, target hits),
+                           # FcsCheck.cs (crew vs pilot on the same scenarios),
                            # NetCheck.cs (one pilot's wire, per minute)
+tests/                     # unit tests, run by run_tests.sh - no server, no socket
+  cases/fcs.json           #   the fire control's contract: inputs only, both hosts read it
+  frontend/                #   node:test (built in).  support/tol.mjs = the tolerances,
+                           #   fcs/ = the cases, the runner and emit.mjs
+  backend/                 #   a console runner (Support/MiniTest.cs = [Test] + reflection
+                           #   + Assert + Tol) referencing ../../MechServer.csproj
+  compare.mjs              #   the two solutions tables, field by field
 assets/                    # compiled client (webpack output, gitignored)
 tools/
   gun_report.py            # weapon-report audio analysis (numpy; the numbers in audio.js)
@@ -106,7 +118,8 @@ frontend/
     game.js                # client loop, input -> server, camera, fx, settings menu
     icons.js               # icons.json -> glyph strings, FontFace loader, drawIcon()
     net.js                 # websocket, snapshot decode, interpolation
-    map.js                 # client copy of terrain + identical ballistics
+    map.js                 # client copy of terrain + the sight ray (`fcs.js` re-exported)
+    fcs.js                 # the fire control law, twin of Core/FireControl.cs
     scene.js               # unit models built from instanced primitives
     renderer.js            # tiled near terrain + far LOD grid, roads, instanced draws,
                            #   and the screen-space overlay (the threat arrows)
@@ -153,7 +166,7 @@ frontend/
   keeping because the alternative was five subsystems each quietly rebuilding a
   velocity of their own: `Seeker.track` handed proportional navigation a hull's
   *command* (50 m/s the instant a pilot nudged the stick) and the top attack
-  missed a stationary hull by 8-36 m (`doc/plans/speed_component.md`).
+  missed a stationary hull by 8-36 m (`docs/plans/speed_component.md`).
 * **Wheeled locomotion state is three scalars, not a component.** `wheel_speed`
   (m/s along the hull, negative in reverse), `backout_t`, `blocked_t` belong to
   `movement._vehicle` alone: not on the wire, never written by a mode or an AI.
@@ -282,7 +295,7 @@ frontend/
   `ai_crew`.  Leave a pilot's `leg_yaw` lying where it spawned and his hull tops out
   at the leg-alignment floor: `0.45 * 50 m/s`, i.e. 81 km/h, in whatever direction
   the alignment happens to be bad - which reads as "some directions are slower".  The plan and its reasoning:
-  `doc/plans/AI_plan.md`.
+  `docs/plans/AI_plan.md`.
 * **A crew is a component.**  `World.spawn_unit(crew: true)` puts `ai_crew` on a hull
   plus its platform tag (`mech_ai` for a mech's crew, `foot_ai` for a man's; a
   carrier already carries `vehicle`), and a mission adds its own (`front_mission`,
@@ -330,14 +343,51 @@ frontend/
   dies where it stands", and it is why a flight system's first line is
   `if (first_hit_t <= 1) continue`.  The same line in a collision system is a
   pure cost optimisation; these two are not the same thing.
-* **The sight is one line, so the lead is solved for the slowest round.**
-  `Systems/AI/Support/Engage.cs` picks the aim speed as the minimum `mean_speed` over
-  the arms that reach the target, not the primary weapon's muzzle figure: a
-  beam rider averages ~340 m/s at 1 km against the cannon's 1080, and leading
-  it with the cannon's number put every missile tens of metres behind a moving
-  hull (measured: 16 launches, no kills on movers; after: 3–4 kills per 16).
-  `mean_speed` is the boost-and-coast profile off `vel` / `thrust` / `maxvel` /
-  `burn`, so a new missile needs no entry in the AI.
+* **One fire-control law, two settings** (`Core/FireControl.cs`, mirrored line for
+  line by `frontend/src/fcs.js`).  `solve(in Shot, in Track)` takes the muzzle, the
+  eye, the gun, and a *track* (the target's position, the velocity it is really
+  moving at, the pull measured on it, the height to aim at, its biggest hit
+  sphere) and answers the point to lay the sight on, the angles, the elevation the
+  tube leaves at and the time of flight.  The one difference between the two
+  callers is the **zero**: a pilot's is the range on his dial
+  (`pl.zero_range`, CTRL+wheel, 0.5-4 km, `Defs.ZERO_DEFAULT` at spawn), which
+  keeps his reticle still while it crosses a crest; a crew has no reticle, so its
+  zero is the range of the point it is engaging, solved from the same start.  The
+  law is a pure function of its inputs - no `World`, no ECS, no `Rng`, and no
+  `wd.spread` - which is what makes it testable (`tests/`, `run_tests.sh`).
+* **Every arm solves its own shot; one arm owns the sight.**  A 30 mm and a rocket
+  nest differ by 3x in flight time, so `Engage.ground_aim` solves per arm from that
+  arm's own muzzle (`Weapons.launch_geometry` - the rack's elevation, the barrel's
+  reach, the tube the next round is in), writes each arm's launch elevation into
+  `aim_elev` (`Weapons.fire` reads it and adds dispersion only), and lays
+  `sight_yaw` / `sight_pitch` on the **master arm**'s intercept point
+  (`Defs.AI_MASTER_ARM`: the round that arrives first).  The hull and the arms
+  slew after that one line (`Systems/Gunnery.cs`), so what the crew is looking at
+  and where the tubes point are two different things, and the arms that do not own
+  the sight fire only while their own bore is inside their own gate.  There is no
+  "aim speed" for the AI any more: leading a moving hull for a beam rider used to
+  mean picking the *slowest* arm's average speed (the old `mean_speed`, which read 55 m/s
+  for the rocket nest because the launch charge is nothing next to the motor) and
+  the whole sight line was dragged with it.
+* **The trigger is a geometric gate, never a taste.**  The bearing must be inside
+  the angle the target covers at that range,
+  `atan((radius + hit_r) / dist)` - a round that misses a hull by a metre still
+  counts, a round that misses a missile by a metre is a miss.  The old fixed
+  0.14 rad was 280 m of error at 2 km, i.e. a crew hosing the dirt: four 12
+  minute `--check battle` runs before and three after, the same destruction (402 deaths before,
+  411 after) on **54k rounds instead of 35k** - 134 rounds per kill down to 86.
+  The *elevation* side is the machine's own tolerance (`Engage.PITCH_TOL` 0.02 rad),
+  because the elevation a round leaves at is `aim_elev`, already solved - no
+  unguided round leaves along the arm's pitch, and the two kinds that do carry
+  their own guidance, straight down the sight line.
+* **The client solves the same law for the HUD** (`frontend/src/fcs.js`:
+  `leadPoint`, `zeroAt`, `solveElevation`, `flightTo`, `solve`).  `map.js`
+  re-exports them, so `game.js` keeps reading `leadPoint` / `zeroAt` for the
+  rings, the impact marker and the range readout.  The two hosts cannot share
+  code (C# and JS), so they share a case table instead: `tests/cases/fcs.json`
+  is read by both runners and `./run_tests.sh` compares the answers, which is
+  how the 120 lines stay one function.  Aim height is `height * 0.5` on both
+  sides - the hull's geometric centre, and the only aim height there is.
 * **A launcher of tubes is described once, in `defs.rack`.** `rack(cols, rows,
   count, bore=, length=, centre=, ...)` hands back a plain dict — the lattice,
   the tube diameter and length, the pitch, the mouth (`centre + length/2`) and
@@ -484,15 +534,11 @@ frontend/
   `movement`, before the flights.  The
   broad-phase box grows by the fastest row's displacement (`reach`), or a
   missile crossing into a round's leg is never a candidate.
-  **One table per tick is the shape, but not the count.**  `world.update` used to
-  throw the table away every tick, so `weapons` (which fires before `movement`)
-  had to rebuild every hull's spheres *at its own stage* to solve an aim; now
-  `world.aim_spheres()` is the aiming door: it hands back the table it has plus
-  `row_ok` (those ids are still live hulls owning their ball, and their `pos` is
-  within 10 m of the centre in the table), and only builds one if there is none
-  for this tick — marking it `_sph_premove`, which forces `sphere_table` to
-  rebuild before the sweep.  A table built before `movement` is *not* the one the
-  sweep may use; that flag is the whole of the distinction.
+  **One table per tick, built once by `Sweep.Spheres`, and read by the sweep
+  alone.**  Nothing aims with it any more: fire control solves against the
+  target's *component* (its `pos` and `vel`), not against the sphere table it
+  would present to a round, which is why the table has exactly one reader and
+  exactly one moment.
 * **The geometry is batched, the bodies are not.**  The flight systems fly every
   round first and publish the leg each one covered (`world.sweep`), then
   `FirstHit.Ground` asks the terrain once for the whole tick's legs
@@ -558,7 +604,7 @@ frontend/
   holds, whatever its course), a laser inside 3 km (a red **triangle** at its
   true position with a dashed beam) and a laser further out (the same triangle
   **pinned to the rim**: the bearing is real, the range is "3 km or more").
-  Five judgements, three outputs (`doc/product/rwr.md`):
+  Five judgements, three outputs (`docs/product/rwr.md`):
   `heard` is `d² <= Λ²·K·v_c` with `Λ² = 10^(ΔL/20)` and ΔL = 12 dB
   (`ALARM_DB` / `ALARM_GAIN`), `seen` is `d² <= K·v_c`, `steady` is a horizontal
   bearing that is not drifting (`|θ̇| < (er + WARN_MARGIN)/K`, read over
@@ -642,16 +688,18 @@ frontend/
   outer edge - and so its size next to the dial - where it was.
 * **AI missile defence** (`Systems/AI/Intercept.cs` + the platform's `Engage*.cs`)
   runs in the AI block before the ground fight and preempts it: a crew that has a round
-  coming for it lays the sight on the lead point (`mu.solve_lead`, which honours
-  the target's vertical velocity - a climbing ATGM is not a hull) and pulls the
-  trigger only when the *bore* is within `atan((prox + hit_r)/d)` (0.15° at
-  1 km, not the 0.14 rad a hull gets).  Only a fused arm fires (`PROX[wid] > 0`,
-  today just the 30 mm), so a 12.7 mm carrier stays out of it - data driven, not
-  a type switch.  That gate is the *AI's* rule only: a missile is a 10 hp / 1
-  armour target like any other, so **any** round landing on one kills it
-  (one 12.7 mm bullet is `AD 10`), which is why a pilot in an APC can and does
-  shoot an incoming round down with the gatling while the AI crew ignores it -
-  the fuse buys margin (2.5 m trigger, 11.4 against 10 hp), not the ability.  "Coming for me" is `seeker target == me` for a top-attack (it
+  coming for it solves the intercept with the same `FireControl.solve` it aims its
+  guns with (a round in the air is a track whose vertical velocity counts - a
+  climbing ATGM is not a hull) and pulls the trigger only when the *bore* is
+  inside `atan((radius + hit_r)/d)`, where `radius` is the **fuse**'s reach
+  (`max(prox, hit_r)`, 2.5 m, so 0.15° at 1 km) instead of a hull's body.  Only a
+  fused arm fires (`PROX[wid] > 0`, today just the 30 mm), so a 12.7 mm carrier
+  stays out of it - data driven, not a type switch.  That gate is the *AI's* rule
+  only: a missile is a 10 hp / 1 armour target like any other, so **any** round
+  landing on one kills it (one 12.7 mm bullet is `AD 10`), which is why a pilot in
+  an APC can and does shoot an incoming round down with the gatling while the AI
+  crew ignores it - the fuse buys margin (2.5 m trigger, 11.4 against 10 hp), not
+  the ability.  "Coming for me" is `seeker target == me` for a top-attack (it
   climbs 150 m and dives, so its straight line misses) - or, once that lock is
   cut, a stare point inside `CPA_MEM` (100 m) of the hull, because a blinded
   round still flies at its memory and can take the hull back - and closest
@@ -666,10 +714,13 @@ frontend/
   blue AI mech at `(1550, 2250)` with a 30 mm only - a crew with a radar and no
   `crew_engage`, so it lays its intercept and never picks a ground fight, and it
   comes back 5 s after being destroyed.  `--check intercept` fires every
-  missile type at it and prints the outcome per round, read out of the server
-  log (`missile N took X (prox Y m) - hp A -> B`, `intercept: ... round N shot
-  down at ...` - both DEBUG, the tool raises those loggers itself).  Measured:
-  34 of 36 rounds fused and shot down (two got through).
+  missile type at it - four rounds at each of two ranges per type, 32 in all -
+  and prints how many came down.  Measured: **22-26 of 32** with one fire
+  control for both jobs, against **15 of 32** for the same table before it
+  (RPG and the top attack were already mostly handled; SACLOS and the 1.2 km
+  rocket nest were not).  The run is close to a coin toss per round - a round
+  gets 3-4 bursts in a 1.5 s window - so read it for the magnitude, three runs
+  at a time.
 * **A guided round flies an airframe, it does not follow a curve** (`Core/Flight.cs`).
   The top-attack missile is a point mass with an angle of attack: guidance demands
   a lateral acceleration, `CL = m·a/(qS)` capped at `cl_max` is what the airframe
@@ -717,7 +768,7 @@ frontend/
   which the range's smoke test reads (`MECH_LOG_LEVEL=DEBUG`), and
   `re-locked on hull N`, which nothing but a reader of the log sees - the
   pilot is not told that his round changed its mind, and the client shows no
-  cue at all.  Numbered in `doc/top_attack_relock.md`.
+  cue at all.  Numbered in `docs/top_attack_relock.md`.
 * **Damage** is two halves, never one number. `defs.pen_damage(ap, ad, dp)`:
   beating the target's `dp` outright delivers the full `ad`, beating only half
   of it shaves `ad/5`, anything duller does nothing. `defs.blast_damage(ed, de,
@@ -1548,6 +1599,7 @@ cd frontend && npm install && npm run build      # -> assets/
   ./dotnet.sh run -- --check intercept             # every missile vs the defence post
   ./dotnet.sh run -- --check diag --minutes 2      # what a few AI hulls are doing
   ./dotnet.sh run -- --check net --minutes 30 --from 8   # one pilot's download, per minute
+  ./dotnet.sh run -- --check fcs                   # crew vs pilot, same scenarios
   ```
   `MECH_PERF=1` on the battle check runs it without the per-tick event scan and
   prints the per-minute cost: on a 12 minute battle it is **1.3 ms/tick**
@@ -1555,6 +1607,18 @@ cd frontend && npm install && npm run build      # -> assets/
   ~9x, and the curve is flat where Python's climbs to 18 ms as the field matures.
   Every check ends with `ecs.validate()`, so bookkeeping that a value comparison
   would not catch (a row pointing past its buffer) fails the run.
+* **`--check fcs` is the integration half of the fire control's proof**
+  (`Harness/FcsCheck.cs`): a range world with everything but two hulls and the bases
+  cleared off it, one flat 1.8 km corridor, and two ways to shoot the same target -
+  a real `ai_crew` (the whole `Engage` path) and a player's mech whose sight the
+  harness lays with `FireControl.solve` and whose dial is `pl.zero_range = 1000`.
+  The rounds go through `Weapons.fire` and fly for real, and each column is the
+  median clearance of the rounds fired plus whether the hull died.  The verdict is
+  "the crew is not more than 2 m behind the pilot", and it prints both columns so
+  the numbers can be read: measured, 800 m and 1600 m against a crossing APC and
+  a mech, a standing hull, the rocket nest and the 105 mm all land inside a metre
+  of each other.  The unit tests (`tests/`) prove the two hosts compute the same
+  function; this proves the same function flies the same round in the same world.
 * **`--check net` prices the wire** (`Harness/NetCheck.cs`): one scripted pilot
   (`Check.drive`), every payload `Server.broadcast` would have offered him, off
   the same doors (`snapshot_bytes` / `meta_payload` / `hearable`) at the same
@@ -1629,7 +1693,7 @@ is started with `MECH_LOG_LEVEL=DEBUG ./dev.sh range`; the browser script
 `tools/smoke_lock_test.js` drives a whole A/B smoke run from the console when
 such a missile is in the air and reads the event stream, not the log.
 Log: `/tmp/mech-range.log`, overrides `MECH_RANGE_PORT` (8011), `MECH_RANGE_LOG`.
-Product notes: `doc/product/range.md`.
+Product notes: `docs/product/range.md`.
 
 **Measure a mechanism on the range, not on a battle.** Weapons, ballistics,
 damage, the seeker and the whole audio chain are all measured this way, because a
@@ -1835,11 +1899,11 @@ for (let k = 0; k < 6; k++) {
 * **Code is English, documentation is Chinese.** Source, comments, commit
   messages, identifiers, log lines and everything a player reads - HUD copy,
   menu labels, feed messages, error text - are written in English. Everything
-  under `doc/` (`doc/product/`, `doc/plans/` and the design notes next to them)
+  under `docs/` (`docs/product/`, `docs/plans/` and the design notes next to them)
   is written in Chinese; a Chinese document quotes UI strings and identifiers
   verbatim in English rather than translating them.
 * The rule is about the *language of the file*, never about its name: a
-  `README.md` under `doc/` is Chinese, an English `///` comment is English,
+  `README.md` under `docs/` is Chinese, an English `///` comment is English,
   and the header comment of a tool in `tools/` is English like the code it
   documents. `AGENTS.md` itself stays English - it is the agent's working
   notes, not a document.
@@ -1870,7 +1934,7 @@ for (let k = 0; k < 6; k++) {
   (`1.12.2` -> `1.12.3`).** A change to a document or a comment alone bumps
   nothing - the number is the product's, not the repository's. A bump is part of
   the change, in the same commit, so a build and a screenshot name the same
-  version; a feature bump also carries its `doc/product/CHANGELOG.md` entry,
+  version; a feature bump also carries its `docs/product/CHANGELOG.md` entry,
   while a patch bump has nothing to write there, because a player sees no
   difference.
 * Tuning values (damage, rpm, range, speeds, wave interval, capture time) live

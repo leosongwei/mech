@@ -89,6 +89,11 @@ public static class Components
         ecs.register("armor", Kind.F, 2, 0.0);
         // who put the last *lethal* hit in - the credit for a kill.
         ecs.register("last_hit", Kind.I, 1, -1);
+        // the pilot of the round that took the last point off, whoever fired it:
+        // -1 once a crew's round lands the point that counts.  `last_hit` keeps a
+        // pilot's credit through a crew's finishing hit; this column is the
+        // killing blow itself, and it is what the kill feed is announced on.
+        ecs.register("last_pid", Kind.I, 1, -1);
         // ...and what killed it, frozen at the hit rather than looked up at the
         // death: the shooter may be a wreck by then, its id handed out again.
         ecs.register("last_name", Kind.U16);            // the killer's name id, 0 = none
@@ -104,30 +109,64 @@ public static class Components
         ecs.register("reload_t", Kind.F, 2, 0.0);
         ecs.register("trigger", Kind.U8);               // bit0 left, bit1 right
         ecs.register("trigger_prev", Kind.U8);          // last tick's bits, for semi auto
+        // The elevation the crew's fire control solved for each arm, and the only
+        // thing a crew's gun fires at (`Core/FireControl.cs` -> `Weapons.fire`).
+        // A pilot has none: his gun holds the sight setting he dialled in.
+        ecs.register("aim_elev", Kind.F, 2, 0.0);
         // rearm work: seconds left at the wrench (`Systems/Rearm.cs`).
         ecs.register("work_remaining_time", Kind.F);
 
         // ---- ai ---------------------------------------------------------
+        // Identity, never a type switch: `ai_crew` is put on at spawn by the one
+        // `ECS.create` call (`World.spawn_unit(crew:)`) and is what every AI
+        // system queries; a pilot's hull does not own it, so it is out of every
+        // pass by construction.  The platform tags say how the crew aims, the
+        // mission tags say what it is doing (`Systems/AI/Support/Tags.cs`).
+        ecs.register("ai_crew", Kind.U8);
+        ecs.register("mech_ai", Kind.U8);                // a mech crew: sight on the roof, two arms
+        ecs.register("foot_ai", Kind.U8);                // a man: he turns his whole body onto it
+        ecs.register("crew_engage", Kind.U8);            // this crew fights ground targets
+        ecs.register("front_mission", Kind.U8);          // ...and its mission is the lane
         ecs.register("target", Kind.I, 1, -1);
-        ecs.register("ai_state", Kind.U8);
+        ecs.register("ai_state", Kind.U8);               // Systems/AI/Support/Tags.cs::AiState
         ecs.register("ai_timer", Kind.F);
-        ecs.register("path_i", Kind.I, 1, 0);
+        ecs.register("path_i", Kind.I, 1, 0);            // the driver's cursor along `nav_route`
         ecs.register("lane", Kind.U8);
-        // where an AI last *saw* its target: with the sight broken (smoke, a
-        // crest, the hull ducking behind a building) it keeps shooting at that
-        // spot for a few seconds instead of giving up
-        ecs.register("spot_x", Kind.F);
-        ecs.register("spot_y", Kind.F);
-        ecs.register("spot_z", Kind.F);
-        ecs.register("spot_t", Kind.F);
+        // the missile alarm: a round is coming for this hull, so the gun is the
+        // intercept's this tick (`Systems/AI/Intercept.cs` and `Engage*`)
+        ecs.register("ai_cover", Kind.U8);
+        ecs.register("ai_threat", Kind.I, 1, -1);        // the round being fired at
+        // the objective a mission is working towards (a town index, 255 = the
+        // enemy command base)
+        ecs.register("ai_goal", Kind.U8, 1, 255);
+        // ---- intent: what the crew wants, never how it is achieved ----------
+        // The crews write these four and nothing else that moves; the drivers
+        // (`Systems/Movement/`) turn them into `vel_cmd`, wheel speed and
+        // position.  `nav_route` is an index into `world.routes` (`Core/Nav.cs`),
+        // -1 = steer at the point `nav_x` / `nav_z` instead.
+        ecs.register("nav_route", Kind.I, 1, -1);
+        ecs.register("nav_x", Kind.F);
+        ecs.register("nav_z", Kind.F);
+        ecs.register("nav_speed", Kind.F);
+        // What the crew *believes* about the hull it is working: [x, y, z, vx, vy,
+        // vz, age, etype].  While the sight is clear it is the truth, refreshed
+        // every tick; once the sight is cut (smoke, a crest, a house) the point
+        // walks at the velocity it was last seen with, exactly like a missile's
+        // seeker memory (`Core/Seeker.cs`), so a crew shoots at what it knows.
+        // `age` is the seconds since it was actually seen and `etype == 0` means
+        // "nothing", so one component carries the whole memory.
+        ecs.register("ai_tgt", Kind.F, 8, 0.0);
+        // the pull the crew has measured on its target, and the state that
+        // measurement needs: [ax, az, prev vx, prev vz, age, target id].  The same
+        // quantity the client gets off two velocity samples (`net.js`), measured
+        // here from the velocity the ECS already holds.
+        ecs.register("ai_tacc", Kind.F, 6, 0.0);
 
         // ---- raid (battle mode) -----------------------------------------
         // A raider is a *mission*, not a type: the hulls are ordinary mechs that
         // carry the `raider` tag, which is what takes them out of the lane AI's
         // hands (`Modes/Battle/Raids.cs`) and what `raids.run` queries.
         ecs.register("raider", Kind.U8);
-        ecs.register("raid_goal", Kind.U8, 1, 255);      // index into world.towns, 255 = the enemy base
-        ecs.register("raid_i", Kind.I, 1, 0);
         ecs.register("raid_party", Kind.U8);             // which launch a hull belongs to
         ecs.register("raid_stuck", Kind.F);              // seconds spent pushing at something
         ecs.register("raid_t", Kind.F);                  // seconds left of the HOLD phase
@@ -224,11 +263,13 @@ public static class Components
         "pos", "vel", "vel_cmd", "wheel_speed", "backout_t", "blocked_t",
         "yaw", "pitch", "leg_yaw", "turret_yaw",
         "sight_yaw", "sight_pitch", "etype", "faction", "name_id",
-        "owner", "hp", "hpmax", "armor", "last_hit",
+        "owner", "hp", "hpmax", "armor", "last_hit", "last_pid",
         "last_name", "last_fac", "last_etype", "last_wid",
         "weapon", "ammo", "mag", "cool", "reload_t",
         "trigger", "trigger_prev", "work_remaining_time", "target", "ai_state", "ai_timer",
-        "path_i", "lane", "spot_x", "spot_y", "spot_z", "spot_t", "flags",
+        "path_i", "lane", "flags",
+        "ai_cover", "ai_threat", "ai_goal",
+        "nav_route", "nav_x", "nav_z", "nav_speed",
     };
 
     /// <summary>The extra pair of pools a modular hull (the mech) carries, added
@@ -236,6 +277,13 @@ public static class Components
     public static readonly string[] ARM_COMPS = { "arm_hp", "arm_hpmax" };
 
     public static readonly string[] CIV_COMPS = Cat(UNIT_COMPS, "home_x", "home_z");
+
+    /// <summary>What a crew owns on top of its hull: the fire control's answer per
+    /// arm, the target's measured pull, and what it believes about that target.  A
+    /// pilot's machine has none of the three - his zero is the dial he set, his lead
+    /// is solved on his own screen, and the target he sees is the one the wire drew
+    /// him.</summary>
+    public static readonly string[] CREW_FCS_COMPS = { "aim_elev", "ai_tacc", "ai_tgt" };
 
     /// <summary>a wreck is scenery: it has a place and no velocity.</summary>
     public static readonly string[] DEBRIS_COMPS = {

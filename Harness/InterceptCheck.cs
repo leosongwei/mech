@@ -80,11 +80,13 @@ public static class InterceptCheck
                 // park the target on open ground, the shooter to its +x
                 var tgtPos = new Vec3(2600f, 0f, 900f);
                 tgtPos = new Vec3(tgtPos.x, world.terrain.height_at(tgtPos.x, tgtPos.z), tgtPos.z);
-                int target = world.spawn_unit(Defs.ETYPE_APC, Defs.FACTION_BLUE, tgtPos.x, tgtPos.z);
+                int target = world.spawn_unit(Defs.ETYPE_APC, Defs.FACTION_BLUE, tgtPos.x, tgtPos.z,
+                                              crew: false);
                 var sp = new Vec3(tgtPos.x + dist, 0f, tgtPos.z);
                 sp = new Vec3(sp.x, world.terrain.height_at(sp.x, sp.z), sp.z);
                 int shooter = world.spawn_unit(Defs.ETYPE_MECH, Defs.FACTION_RED, sp.x, sp.z,
-                                               weapons: new[] { Defs.WID_AC30, wid });
+                                               weapons: new[] { Defs.WID_AC30, wid },
+                                               crew: false);
                 e.iv("target")[shooter] = target;
                 var wd = Defs.WEAPONS[wid];
                 float hp0 = e.fv("hp")[target];
@@ -102,9 +104,8 @@ public static class InterceptCheck
                         float pitch = MathF.Atan2(dy, MathF.Sqrt(dx * dx + dz * dz));
                         e.fv("sight_yaw")[shooter] = yaw;
                         e.fv("sight_pitch")[shooter] = pitch;
-                        var eye = MathUtil.sight_eye(p, e.fv("yaw")[shooter]);
-                        float? zero = Ballistics.zero_pitch(world, eye, yaw, pitch, wd, shooter, Defs.FACTION_RED);
-                        if (zero is not null) e.fv("sight_pitch")[shooter] = zero.Value;
+                        // a guided round rides the *sight*, so the sight is the whole
+                        // of the aim: a scripted shooter needs no fire control
                     }
                     if (t * DT >= next && launched < 3 && e.is_alive(shooter))
                     {
@@ -144,7 +145,7 @@ public static class InterceptCheck
         // tag), so it is a puppet exactly like the Python tool's scripted one
         float sx = postPos.x + dist, sz = postPos.z;
         int shooter = world.spawn_unit(Defs.ETYPE_MECH, Defs.FACTION_RED, sx, sz,
-                                       weapons: new[] { Defs.WID_AC30, wid });
+                                       weapons: new[] { Defs.WID_AC30, wid }, crew: false);
         // a lock weapon on an ownerless hull takes the crew's `target` as its lock
         world.ecs.iv("target")[shooter] = postEid;
 
@@ -173,13 +174,8 @@ public static class InterceptCheck
                 e.fv("sight_yaw")[shooter] = yaw;
                 e.fv("sight_pitch")[shooter] = pitch;
                 e.iv("target")[shooter] = postEid >= 0 && e.is_alive(postEid) ? postEid : -1;
-                // the *gun* has to be zeroed for the drop the round will take:
-                // the cross is the line, the bore is the answer (`zero_pitch` is
-                // the same solver the AI's `_engage` uses)
-                var eye = MathUtil.sight_eye(p, e.fv("yaw")[shooter]);
-                float? zero = Ballistics.zero_pitch(world, eye, yaw, pitch, wd,
-                                                    shooter, Defs.FACTION_RED);
-                if (zero is not null) e.fv("sight_pitch")[shooter] = zero.Value;
+                // a guided round follows the sight line, so laying the sight on the
+                // target *is* laying the round on it
             }
             float now = t * DT;
             if (now >= next && launched < ROUNDS && e.is_alive(shooter))

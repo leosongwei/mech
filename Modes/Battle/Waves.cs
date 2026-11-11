@@ -14,12 +14,17 @@
 
 namespace Mech.Server.Modes.Battle;
 
+using Mech.Server.Systems.AI;
+
 public static class Waves
 {
     public const float MECH_INTERVAL = 120.0f;    // command base: one mech down every lane
     public const float INF_INTERVAL = 60.0f;      // per supplying town: one infantry squad
     public const float APC_INTERVAL = 60.0f;      // per supplying town: one APC
     public static readonly int[] INF_SQUAD = _squad();
+
+    /// <summary>What every lane hull carries on top of its type: the mission.</summary>
+    public static readonly string[] _FRONT = { AiTags.FRONT, AiTags.ENGAGE };
     public const float CAPTURE_TIME = 9.0f;
     public const float CAPTURE_RADIUS = 170.0f;
 
@@ -222,10 +227,15 @@ public static class Waves
         return (x, z);
     }
 
-    /// <summary>Spawn one unit and point it down its lane at the enemy base.</summary>
+    /// <summary>Spawn one unit and point it down its lane at the enemy base.
+    ///
+    /// The two mission tags are what make it a front-line crew at all
+    /// (`Systems/AI/Support/Tags.cs`): `front_mission` puts it under the lane
+    /// policy, `crew_engage` says it fights what it meets.  A hull built without
+    /// them is a target.</summary>
     public static int _send(World world, int etype, int faction, int lane, float x, float z)
     {
-        int eid = world.spawn_unit(etype, faction, x, z, lane: lane);
+        int eid = world.spawn_unit(etype, faction, x, z, lane: lane, extra: _FRONT);
         var e = world.ecs;
         var (ex, ez) = world.terrain.bases[1 - faction];
         float yaw = MathF.Atan2(ez - z, ex - x);

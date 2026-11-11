@@ -84,9 +84,16 @@ public sealed class World
     public Systems.SweepScratch sweep = new();   // this tick's round legs
     public SphereTable? _sph;               // this tick's hit-sphere table
     public int _sph_tick = -1;
-    public bool[]? _aim_ok;                 // rows of that table still aimed at
-    public bool _sph_premove;               // built before movement, not for the sweep
     public List<Town> towns;
+    // every poly line a driver can be told to follow (`Core/Nav.cs`): the two
+    // directions of each lane, each ending at the enemy command base, plus
+    // whatever a mission plans (a raiding party's route, a way out of a town)
+    public List<Route> routes = new();
+    // this tick's guided rounds (`Systems/AI/Support/ThreatTable.cs`): one table per
+    // tick, built by `Threats.run` and read by the alarm and the intercept aim
+    public Systems.AI.ThreatTable? threats;
+    public int _threat_tick = -1;
+    public int[] lane_routes = Array.Empty<int>();
     public List<List<(float x, float z)>> lanes;
     public List<List<(float x, float z)>> lanes_rev;
     public Dictionary<int, int> base_entity = new();
@@ -115,7 +122,45 @@ public sealed class World
             lanes_rev.Add(rev);
         }
         mode_mod.setup(this);
+        register_routes();
         _build_pipeline();
+    }
+
+    /// <summary>The poly line a hull of `faction` on `lane` marches down: the lane
+    /// in its own direction, plus the enemy command base as its last point.
+    ///
+    /// Appending the base is what removes the old "the lane has run out, head for
+    /// the base" branch from the drivers: a route always ends somewhere, and the
+    /// mark a cursor leaves past the end is simply the base.
+    ///
+    /// Registered before anything else so `lane_routes` is a stable table; a
+    /// mission's routes (`Nav.add`) take the slots after it and are recycled when
+    /// the party is gone.</summary>
+    public void register_routes()
+    {
+        routes.Clear();
+        lane_routes = new int[lanes.Count * 2];
+        for (int lane = 0; lane < lanes.Count; lane++)
+        {
+            for (int k = 0; k < 2; k++)
+            {
+                int faction = k == 0 ? Defs.FACTION_RED : Defs.FACTION_BLUE;
+                var pts = faction == Defs.FACTION_BLUE ? lanes_rev[lane] : lanes[lane];
+                var line = new List<(float x, float z)>(pts.Count + 1);
+                line.AddRange(pts);
+                line.Add(terrain.bases[1 - faction]);
+                lane_routes[lane * 2 + k] = Nav.add(this, line);
+            }
+        }
+    }
+
+    /// <summary>The lane route for a hull, or -1 on a map with no lanes (the
+    /// range): there a crew is given a point instead (`nav_x` / `nav_z`).</summary>
+    public int lane_route(int faction, int lane)
+    {
+        if (lanes.Count == 0) return -1;
+        int i = (lane % lanes.Count) * 2 + (faction == Defs.FACTION_BLUE ? 1 : 0);
+        return lane_routes.Length == 0 ? -1 : lane_routes[i];
     }
 
     // ------------------------------------------------------------------
@@ -134,7 +179,9 @@ public sealed class World
         systems.AddRange(new Action<World, float>[]
         {
             Systems.Gunnery.run, Systems.Locking.run, Systems.Smoke.run, Systems.Weapons.run,
-            Systems.Movement.run,
+            // one driver per chassis (`Systems/Movement/`): each reads the crew's
+            // intent (`nav_*`) and writes `vel_cmd`, `vel` and `pos` for its own rows
+            Systems.Movement.Foot.run, Systems.Movement.Mech.run, Systems.Movement.Vehicle.run,
             // the tick's hit spheres: built here because `movement` has already
             // moved the hulls (a unit's `pos` is the end of its tick, `prev` is
             // `pos - vel*dt`) and the flight systems have not moved the missiles yet
@@ -169,9 +216,21 @@ public sealed class World
     // ------------------------------------------------------------------
     // entity factories
     // ------------------------------------------------------------------
+    /// <summary>Build one hull.
+    ///
+    /// `crew` is who drives it: an AI crew gets the `ai_crew` tag plus its
+    /// platform tag (`mech_ai` / `foot_ai`; a wheeled hull already carries
+    /// `vehicle` from its own type), which is what puts it in the AI systems'
+    /// queries.  A hull built with `crew: false` is a puppet - a target, a scripted
+    /// shooter - and it is out of every AI pass by construction rather than by a
+    /// per-row test (`Systems/AI/Support/Tags.cs`).
+    ///
+    /// `extra` is what a *mission* adds on top of that: the `raider` tag, or the
+    /// `front_mission` + `crew_engage` pair a lane hull needs.
+    /// </summary>
     public int spawn_unit(int etype, int faction, float x, float z, int owner = -1,
                           int[]? weapons = null, float hp_scale = 1f,
-                          int lane = -1, string[]? extra = null)
+                          int lane = -1, string[]? extra = null, bool crew = true)
     {
         var e = ecs;
         var d = Defs.UNIT_DEFS[etype];
@@ -193,6 +252,13 @@ public sealed class World
         if (d.tags.Contains("moves") && !comps.Contains("vel_cmd"))
             throw new InvalidOperationException("a mover must own vel_cmd");
         comps.AddRange(d.tags);
+        if (crew)
+        {
+            comps.Add("ai_crew");
+            if (arms) comps.Add("mech_ai");
+            else if (d.tags.Contains("person")) comps.Add("foot_ai");
+            comps.AddRange(Components.CREW_FCS_COMPS);
+        }
         if (extra != null) comps.AddRange(extra);
         int eid = e.create(comps);
         float yaw = rng.random() * MathUtil.TAU;
@@ -254,6 +320,10 @@ public sealed class World
         // back to the base before setting off
         e.iv("path_i")[eid] = lane >= 0 ? lane_index_near(lane, x, z, faction) : 0;
         e.uv("ai_state")[eid] = 0;
+        // a hull given a lane starts out following it (`Core/Nav.cs`): the crew
+        // below only has to say how fast
+        if (crew && d.tags.Contains("moves") && lane >= 0)
+            e.iv("nav_route")[eid] = lane_route(faction, lane);
         if (etype == Defs.ETYPE_CIV)
         {
             e.fv("home_x")[eid] = x;
@@ -343,8 +413,10 @@ public sealed class World
         {
             x = spawn.Value.x; z = spawn.Value.z; yaw = spawn.Value.yaw;
         }
+        // a pilot's machine is nobody's crew: `crew: false` keeps it out of every
+        // AI pass by construction (`Systems/AI/Support/Tags.cs`)
         int eid = spawn_unit(Defs.ETYPE_MECH, player.faction, x, z, owner: player.pid,
-                             weapons: player.loadout);
+                             weapons: player.loadout, crew: false);
         ecs.fv("yaw")[eid] = yaw;
         ecs.fv("leg_yaw")[eid] = yaw;
         ecs.fv("sight_yaw")[eid] = yaw;
@@ -421,58 +493,12 @@ public sealed class World
     /// `Systems/Sweep.cs:sphere_table`).</summary>
     public SphereTable sphere_table(float dt)
     {
-        if (_sph is null || _sph_tick != tick || _sph_premove)
+        if (_sph is null || _sph_tick != tick)
         {
             _sph = Systems.Sweep.sphere_table(this, dt);
             _sph_tick = tick;
-            _sph_premove = false;
-            _aim_ok = null;      // the aim mask belongs to the table it was built for
         }
         return _sph;
-    }
-
-    /// <summary>The hit spheres as they stood at the *start* of this tick, and
-    /// which of those rows still describe a hull standing where they say.
-    ///
-    /// `sphere_table` is built during `projectiles`, i.e. after `movement` has
-    /// moved everything, so the table it leaves behind is the end-of-tick state -
-    /// which is precisely the state the next tick's aim cast reads, because `ai`
-    /// and `weapons` run before `movement`.  Nothing is rebuilt for it.
-    ///
-    /// A row still counts when its id is a live hull owning `unit` (not a
-    /// missile, which the same table carries for the sweep) and the hull is
-    /// standing within ten metres of where the row put it - an id freed by a
-    /// death and handed out again to something else must not be shot at.</summary>
-    public (SphereTable table, bool[]? ok) aim_spheres()
-    {
-        if (_sph is null || _sph_tick < tick - 1)
-        {
-            sphere_table(dt);
-            _sph_premove = true;     // built before movement: not the sweep's
-        }
-        if (_aim_ok is null)
-        {
-            var ids = _sph!.ids;
-            int n = _sph.n;
-            var ok = ecs.has_arr(ids[..n], "unit");
-            bool any = false;
-            for (int k = 0; k < ok.Length; k++) if (ok[k]) { any = true; break; }
-            if (any)
-            {
-                var p = ecs.fv("pos");
-                for (int k = 0; k < n; k++)
-                {
-                    if (!ok[k]) continue;
-                    var pos = p.get3(ids[k]);
-                    float dx = MathF.Abs(pos.x - _sph.centres[k * 3]);
-                    float dy = MathF.Abs(pos.y - _sph.centres[k * 3 + 1]);
-                    float dz = MathF.Abs(pos.z - _sph.centres[k * 3 + 2]);
-                    if (MathF.Max(dx, MathF.Max(dy, dz)) >= 10f) ok[k] = false;
-                }
-            }
-            _aim_ok = ok;
-        }
-        return (_sph!, _aim_ok);
     }
 
     /// <summary>The index of `name` in `names`, adding it the first time.</summary>
@@ -575,14 +601,10 @@ public sealed class World
     {
         time += dt;
         tick += 1;
-        this.dt = dt;                // `aim_spheres` builds a table of its own
+        this.dt = dt;                // a table built mid-tick integrates with it
         // per-tick scratch: a system that spawns the replacement of a dead slot
         // must not see last tick's deaths
         ecs.destroyed.Clear();
-        // the previous tick's hit-sphere table is *not* thrown away: it holds the
-        // end-of-tick state, which is exactly where every hull stands now, and
-        // `aim_spheres` hands it to the aim casts that run before movement
-        // (`sphere_table` stamps the tick it was built for)
         //
         // refile every hull under the cell it stands in before anyone queries:
         // the build is one counting sort, the systems below ask "who is near me"
@@ -603,12 +625,14 @@ public sealed class World
         var e = ecs;
         _sph = null;
         _sph_tick = -1;
-        _aim_ok = null;
+        threats = null;
+        _threat_tick = -1;
         foreach (var eid in e.query()) e.destroy(eid);
         events.Clear();
         winner = -1;
         end_timer = 0f;
         mode_mod.setup(this);
+        register_routes();
         foreach (var pl in players.Values)
         {
             pl.mech = -1;

@@ -165,6 +165,11 @@ public static class Netcode
                 ["hitspheres"] = Defs.MECH_HITSPHERES,
                 ["eye"] = Defs.MECH_EYE,
                 ["sight_z"] = Defs.MECH_SIGHT_Z,
+                // the arms' mechanical stops: the client clamps the sight it aims
+                // into the envelope the mount can actually deliver, so the lead ring
+                // is never an angle the gun cannot be laid at
+                ["pitch_min"] = Defs.MECH_PITCH_MIN,
+                ["pitch_max"] = Defs.MECH_PITCH_MAX,
                 ["muzzles"] = muzzles,
                 ["reach"] = reach,
                 ["modules"] = Defs.MODULE_NAMES,

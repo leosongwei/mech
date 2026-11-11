@@ -9,7 +9,7 @@
          (`frontend/webpack.config.js`), and the server logs it at boot.  Every
          change to the product bumps it: a feature change the SECOND number (the
          third going back to 0), a change a player cannot see the THIRD. -->
-    <Version>1.17.1</Version>
+    <Version>1.21.1</Version>
     <AssemblyName>MechServer</AssemblyName>
     <RootNamespace>Mech.Server</RootNamespace>
     <InvariantGlobalization>true</InvariantGlobalization>
@@ -17,5 +17,17 @@
     <TieredPGO>true</TieredPGO>
     <EnableDefaultCompileItems>true</EnableDefaultCompileItems>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- `tests/` is a console project of its own (`tests/backend/Mech.Tests.csproj`)
+         which references this one, and the whole tree is out of this project on
+         all three axes: its `Program.cs` would collide with this one (CS8802), and
+         the web SDK's default `Content`/`None` globs would otherwise copy the test
+         project into this build's output - including its own `bin/`, which the next
+         build finds and copies again, one level deeper each time. -->
+    <Compile Remove="tests/**/*.cs" />
+    <Content Remove="tests/**" />
+    <None Remove="tests/**" />
+  </ItemGroup>
 
 </Project>

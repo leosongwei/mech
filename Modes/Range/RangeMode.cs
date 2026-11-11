@@ -21,9 +21,9 @@ public sealed class RangeMode : Mode
         restart_respawn = 1.0f;
         rearm_anywhere = true;
         // a hull from the console is the one thing here that fights: the tag is
-        // what `TestAi` drives, and the mode's own targets and post are never
-        // tagged, so they stay as passive as they were
-        console_spawn_extra = new[] { "range_drone" };
+        // what puts such a hull into the AI block, and the mode's own targets
+        // and post carry neither tag, so they stay as passive as they were
+        console_spawn_extra = new[] { "range_drone", "front_mission", "crew_engage" };
         // no smoke_cooldown override: the battle cooldown is short enough to
         // practise a pull here
     }
@@ -46,8 +46,15 @@ public sealed class RangeMode : Mode
         Record.attach(world);
     }
 
-    public override List<Action<World, float>> pre_systems() =>
-        new() { Targets.run, Interceptor.run, TestAi.run };
+    public override List<Action<World, float>> pre_systems()
+    {
+        var into = new List<Action<World, float>> { Targets.run, Interceptor.run };
+        // the crews a pilot dropped here fight like lane hulls; the mode's own
+        // fixtures carry no `ai_crew` at all and are out of every pass by
+        // construction (`Systems/AI/Support/Tags.cs`)
+        into.AddRange(Systems.AI.Pipeline.range());
+        return into;
+    }
 
     // last: the rounds have flown and the dead have been judged, so a line carries
     // the end state of the tick

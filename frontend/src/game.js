@@ -6,7 +6,7 @@ import { Input } from './input.js';
 import { GameAudio, SOUND_FLOOR, SOUND_LEVEL, SOUND_SPEED, attenuation } from './audio.js';
 import { Renderer, makeCamera } from './renderer.js';
 import { drawUnits } from './scene.js';
-import { arrowRingAt, HUD, LEAD_RING, LEAD_RING_GAP } from './hud.js';
+import { arrowRingAt, HUD, LEAD_PAIR_SEP, LEAD_RING } from './hud.js';
 import { Particles } from './particles.js';
 import { clamp, dirFrom, invert4, mat4 } from './math.js';
 import { emptyDraft, isEmpty, quickDraft, quote, toMessage } from './shop.js';
@@ -20,6 +20,13 @@ const RWR_RANGE = 3000;             // m, the threat dial's face and the receive
                                     // display ceiling: the snapshot's guided tier
                                     // (`Netcode.TIER_ROUND`), so every mark on the
                                     // dial is a round the wire would have sent
+// How long a line lives on the message stack: a kill is read *after* the fight
+// it belongs to (a battle writes one every few seconds), a notice about the
+// machine in the pilot's hands is read as it happens.
+const KILL_LIFE_S = 20;
+const MSG_LIFE_S = 6;
+// and how long `+$N` sits beside the money readout before it fades
+const MONEY_POP_S = 2.5;
 // The alarm is the same detector as the track, run 12 dB looser: one frame, no
 // track initiation, no angle association, no range solve.  So the distance at
 // which a round is *heard* is sqrt(10^0.6) = 1.995 times the distance at which
@@ -149,6 +156,7 @@ export class Game {
     this.map = null;
     this.defs = { weapons: {}, units: {}, mech: { muzzles: {} } };
     this.messages = [];
+    this.moneyPops = [];        // `+$N` payouts, drawn beside the money readout
     this.hitFlash = 0;
     this.shake = 0;
     this.sendAcc = 0;
@@ -179,6 +187,7 @@ export class Game {
     this.aimAssist = savedAssist(); // the cross snaps to a pre-aim ring, on by default
     this.assistRing = savedRing();  // × the plain circle, how wide that ring is
     this.aimSnap = null;            // the ring it caught this snapshot, if any
+    this._pairDir = null;           // per target: the line its two rings lie on
   }
 
   async boot() {
@@ -316,15 +325,24 @@ export class Game {
   }
 
   _message(text, color) {
-    this.messages.push({ text, color, life: 6 });
+    this.messages.push({ text, color, life: MSG_LIFE_S });
     if (this.messages.length > 40) this.messages.shift();
+  }
+
+  // A payout, said where the money is: a hull is worth its bounty and the number
+  // that grew is the one in the corner, so the line goes beside it and fades
+  // there.  Nothing about a kill is a `_message`: the kill feed is the words and
+  // this is the till.
+  _moneyGain(amount) {
+    if (!(amount > 0)) return;
+    this.moneyPops.push({ amount, life: MONEY_POP_S });
+    if (this.moneyPops.length > 6) this.moneyPops.shift();
   }
 
   // A kill line, the way every shooter writes one: `killer killed victim with
   // weapon`, the two hulls in their own side's colour, the weapon bold.  The
-  // money only appears on the pilot's own kills - it is what he was paid, not
-  // what the field was paid.  The server composes the words (it is the only
-  // side that knows who a nameless hull was), the client only paints them.
+  // server composes the words (it is the only side that knows who a nameless
+  // hull was), the client only paints them; the money is `_moneyGain`'s.
   _killfeed(ev) {
     const segs = [
       { text: ev.killer, fac: ev.kfac, bold: true },
@@ -333,10 +351,7 @@ export class Game {
     ];
     if (ev.w) segs.push({ text: ' with ', color: '#93a89c' },
                         { text: ev.w.toLowerCase(), color: '#e8f4ee', bold: true });
-    if (ev.pid === this.init.pid && ev.reward > 0) {
-      segs.push({ text: ` +$${ev.reward}`, color: '#a9f0c0', bold: true });
-    }
-    this.messages.push({ segs, life: 6 });
+    this.messages.push({ segs, life: KILL_LIFE_S });
     if (this.messages.length > 40) this.messages.shift();
   }
 
@@ -458,12 +473,10 @@ export class Game {
       } else if (ev.k === 'killfeed') {
         this._killfeed(ev);
       } else if (ev.k === 'kill') {
-        if (ev.pid === this.init.pid) {
-          // the kill feed already said the words: the event only owes the pilot
-          // a bare number when the line was suppressed (an infantryman is not
-          // announced).  No tone - the kill feed line is the whole announce.
-          if (!ev.feed) this._message(`+$${ev.reward}`, '#a9f0c0');
-        }
+        // the till, and only the till: the words are the kill feed's line, and a
+        // kill it stays silent about (an infantryman) is money all the same.  No
+        // tone - a payout is read, not heard.
+        if (ev.pid === this.init.pid) this._moneyGain(ev.reward);
       } else if (ev.k === 'seeker') {
         // an IR missile lost its lock: its line of sight is full of smoke or a
         // ridge.  The pilot is told nothing - a blind seeker is not something
@@ -528,6 +541,8 @@ export class Game {
     this.zeroRange = this.input.zeroRange;
     for (const m of this.messages) m.life -= dt;
     this.messages = this.messages.filter((m) => m.life > 0);
+    for (const p of this.moneyPops) p.life -= dt;
+    this.moneyPops = this.moneyPops.filter((p) => p.life > 0);
     this.hitFlash = Math.max(0, this.hitFlash - dt * 1.6);
     this.shake = Math.max(0, this.shake - dt * 2.2);
 
@@ -1074,7 +1089,10 @@ export class Game {
       tx = e.px + e.vx * lag; ty = e.py + half; tz = e.pz + e.vz * lag;
       vx = e.mvx === undefined ? e.vx : e.mvx;
       vz = e.mvz === undefined ? e.vz : e.mvz;
-      vy = 0;
+      // a hull on a slope really is climbing: `vel.y` is on the wire and the
+      // server's fire control leads with it, so the ring does too (a hull on the
+      // flat reads 0 and nothing changes)
+      vy = e.mvy === undefined ? e.vy : e.mvy;
     } else if (a.fly) {
       const f = a.fly;
       tx = f.x + (f.vx || 0) * lag; ty = f.y; tz = f.z + (f.vz || 0) * lag;
@@ -1088,9 +1106,14 @@ export class Game {
       m[0], m[1], m[2], eye[0], eye[1], eye[2], tx, ty, tz, vx, vz, vy, ax, az);
     if (!p) return null;
     const dh = Math.hypot(p.x - eye[0], p.z - eye[2]);
+    const mech = this.defs.mech || {};
+    // the mount's own stops (`defs.mech.pitch_min/max`, the arms' envelope): a
+    // solution the gun cannot be laid at is not one to snap the sight onto
+    const lo = mech.pitch_min === undefined ? -0.45 : mech.pitch_min;
+    const hi = mech.pitch_max === undefined ? 0.75 : mech.pitch_max;
     return {
       yaw: Math.atan2(p.z - eye[2], p.x - eye[0]),
-      pitch: clamp(Math.atan2(p.y - eye[1], Math.max(dh, 1e-3)), -0.6, 0.9),
+      pitch: clamp(Math.atan2(p.y - eye[1], Math.max(dh, 1e-3)), lo, hi),
     };
   }
 
@@ -1228,7 +1251,7 @@ export class Game {
     for (const t of this.threats || []) {
       if (!t.seen || !(t.hit_r > 0)) continue;
       if (sightBlocked(this.map, eye[0], eye[1], eye[2], t.x, t.y, t.z, puffs)) continue;
-      const m = { ball: true, x: t.x, y: t.y, z: t.z,
+      const m = { id: t.id, ball: true, x: t.x, y: t.y, z: t.z,
                   rx: t.hit_r, ry: t.hit_r, marks: [] };
       for (const a of arms) {
         const p = leadPoint(a.wd, this.zeroRange, zero.max_elev,
@@ -1286,7 +1309,7 @@ export class Game {
           a.m[0], a.m[1], a.m[2], aimEye[0], aimEye[1], aimEye[2],
           e.px + e.vx * lag, e.py + half, e.pz + e.vz * lag,
           e.mvx === undefined ? e.vx : e.mvx, e.mvz === undefined ? e.vz : e.mvz,
-          0, fresh ? e.ax : 0, fresh ? e.az : 0);
+          e.mvy === undefined ? e.vy : e.mvy, fresh ? e.ax : 0, fresh ? e.az : 0);
         if (p) t.marks.push({ arm: a.arm, x: p.x, y: p.y, z: p.z, tof: p.tof });
       }
       // the box stands on its own: a hull can be in view while the point to
@@ -1322,7 +1345,7 @@ export class Game {
         marks: [],
       };
       for (const m of t.marks) {
-        const scr = this.hud._project(m.x, m.y, m.z);
+        const scr = this._ringScreen(m);
         // the mark keeps both ends: where the ring is drawn (a picker, with the
         // assist on) and the point it stands for - the one the sight is snapped
         // to, so a ring moved aside is still the honest answer it always was
@@ -1334,6 +1357,35 @@ export class Game {
     this._leadLayout(own);
   }
 
+  // Where a pre-aim ring is drawn.  Its own point when that lands in the frame,
+  // and clamped inside the frame - one ring radius of margin - when it does not:
+  // a lead is metres to hundreds of metres away from the hull (a rocket pod at
+  // 2 km flies for 4-5 s) and a zoomed sight sees a narrow slice of the world, so
+  // the answer to "where do I point this arm" is regularly off the screen.  The
+  // ring is still drawn there, in the direction it lies, because a ring dropped
+  // for being out of frame takes the pair with it: one ring left, no white line,
+  // nothing saying which arm the survivor is.  What the ring *stands for* stays
+  // the true point (`wx`/`wy`/`wz`), so the picker and the snap are unaffected.
+  //
+  // A point behind the camera has no place on the screen at all, and answers
+  // `null` - the box it belongs to is off the back of the sight by then.
+  _ringScreen(m) {
+    const scr = this.hud._project(m.x, m.y, m.z);
+    if (scr) return scr;
+    const vp = this.hud.vp;
+    if (!vp) return null;
+    const cx = vp[0] * m.x + vp[4] * m.y + vp[8] * m.z + vp[12];
+    const cy = vp[1] * m.x + vp[5] * m.y + vp[9] * m.z + vp[13];
+    const cw = vp[3] * m.x + vp[7] * m.y + vp[11] * m.z + vp[15];
+    if (cw <= 0.01) return null;
+    const w = this.hud.w, h = this.hud.h;
+    const pad = this._ringPx() + 8;
+    const x = (cx / cw * 0.5 + 0.5) * w;
+    const y = (1 - (cy / cw * 0.5 + 0.5)) * h;
+    return [clamp(x, pad, Math.max(pad, w - pad)),
+      clamp(y, pad, Math.max(pad, h - pad))];
+  }
+
   // The drawn radius of a pre-aim circle, px: the plain one, or the assist's
   // multiple of it (`assistRing`, the setting's slider).
   _ringPx() {
@@ -1343,9 +1395,18 @@ export class Game {
   // The assist's two jobs, both in screen space because both are about what the
   // pilot can put the cross on.
   //
-  // * **Layout**: a target's two rings are drawn side by side (`OO`) when they
-  //   would overlap, both the same width and never touching, so the pair reads
-  //   as one hull with two picks instead of a smudge.  The rings are pickers
+  // * **Layout**: a target's two rings, when they would overlap, are laid out
+  //   as a pair on the line their own two solutions make - each ring on its own
+  //   arm's side of the middle of it, and never closer in than
+  //   `LEAD_PAIR_SEP` radii, so the pair *overlaps* instead of standing tangent
+  //   (`hud._ringCut` cuts the lens between them on a white line).  Two radii
+  //   out to the side is a long way to swing a cross to shoot one arm's lead,
+  //   and the overlap still reads as two circles: the picker is the bisector of
+  //   the two centres, which is the line they are drawn cut on.  The pair rides
+  //   the true points instead of a fixed screen direction: it is the line
+  //   between the two solutions that decides where they sit, so a fast target -
+  //   an incoming round's lead swings metres between two frames - cannot make
+  //   the pair jump from one arrangement to the other.  The rings are pickers
   //   from then on; the points themselves are `wx` / `wy` / `wz`.
   // * **Selection**: whichever ring the centre cross is inside of is the one
   //   caught - and the nearest hull wins when two of them overlap - and its own
@@ -1360,16 +1421,31 @@ export class Game {
     if (!this.aimAssist || !this.leads.length) return;
     if (this.input.alt || this.input.uiOpen) return;
     const ring = this._ringPx();
-    const sep = ring * 2 + LEAD_RING_GAP;
+    const sep = ring * LEAD_PAIR_SEP;       // the closest the two centres get
+    const prev = this._pairDir;
+    const next = new Map();
     for (const t of this.leads) {
       const [a, b] = t.marks;
-      if (!b || Math.hypot(b.x - a.x, b.y - a.y) >= sep) continue;
+      if (!b) continue;
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const d = Math.hypot(dx, dy);
+      // a pair that already clears itself is drawn where its solutions are
+      if (d >= ring * 2) continue;
+      // the line the pair lies on: the two solutions themselves.  Below a
+      // fraction of a pixel their difference is noise, and the last frame's
+      // direction is the honest answer - it is the one the pilot is reading
+      let ux = 1, uy = 0;
+      if (d > ring * 0.05) { ux = dx / d; uy = dy / d; }
+      else if (prev && prev.has(t.id)) [ux, uy] = prev.get(t.id);
+      next.set(t.id, [ux, uy]);
+      // the pair is cut on its white line only once it is drawn overlapping
+      t.cut = true;
+      const half = Math.max(d, sep) / 2;
       const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
-      const l = a.arm === 0 ? a : b;
-      const r = a.arm === 0 ? b : a;
-      l.x = mx - sep / 2; l.y = my;
-      r.x = mx + sep / 2; r.y = my;
+      a.x = mx - ux * half; a.y = my - uy * half;
+      b.x = mx + ux * half; b.y = my + uy * half;
     }
+    this._pairDir = next;
     const cx = this.hud.w / 2, cy = this.hud.h / 2;
     let best = null;
     for (const t of this.leads) {
@@ -1377,9 +1453,10 @@ export class Game {
       if (!a) continue;
       let hit = null;
       if (b) {
-        // a laid-out pair is one stadium: the two circles *and* the sliver
-        // between them, which is where a pilot aiming at the hull's own box
-        // puts the cross - so the nearest circle centre of the pair is picked
+        // a laid-out pair is one stadium: the two circles and the band round
+        // the point they touch, which is where a pilot aiming at the hull's own
+        // box puts the cross - so the nearer circle centre of the pair is
+        // picked
         const vx = b.x - a.x, vy = b.y - a.y;
         const l2 = vx * vx + vy * vy || 1;
         const u = clamp(((cx - a.x) * vx + (cy - a.y) * vy) / l2, 0, 1);
@@ -1717,6 +1794,7 @@ export class Game {
       smoke: m.smoke === undefined ? null : m.smoke,
       smokeCd: m.smoke_cd || 0,
       messages: this.messages,
+      moneyPops: this.moneyPops,
       winner: m.winner !== undefined ? m.winner : this.winner,
       dead: !own,
       atBase,

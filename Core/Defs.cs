@@ -620,6 +620,11 @@ public static partial class Defs
     public const byte HIT_NONE = 0, HIT_UNIT = 1, HIT_GROUND = 2, HIT_BUILDING = 3,
                       HIT_TRUNK = 4, HIT_FUSE = 5, HIT_EXPIRE = 6, HIT_VANISH = 7;
 
+    /// <summary>The `proj_kind` byte a round carries (`Components.PROJ_COMPS`):
+    /// its wire value and its `Defs.WEAPONS` key.  What it *flies* as is the tag
+    /// below.</summary>
+    public const byte PROJ_BULLET = 0, PROJ_ROCKET = 1, PROJ_SACLOS = 2, PROJ_TOP = 3;
+
     /// <summary>The tag components a weapon's rounds carry, by `kind`: identity is
     /// a component, never a `proj_kind` switch (the same rule `UNIT_DEFS.tags`
     /// follows).  `interceptable` is *not* here - it is `is_interceptable(wid)`,
@@ -797,6 +802,27 @@ public static partial class Defs
     // holding the sight on the target, so it fires at the rack's own rate.
     public const float AI_LAUNCH_GAP = 15.0f;
 
+    // Which arm a crew lays its *sight* on, when the two arms want different leads.
+    // One sight line can only express one intercept point, and the arms differ by
+    // seconds of flight time, so this is a product decision - and the one setting
+    // `Systems/AI/Support/Engage.cs` reads.  Every arm still gets its own solution;
+    // the ones that do not own the sight fire only while their own solution sits
+    // inside their own trigger gate.
+    //
+    // The two muzzles of a mech are 2.86 m apart and the hull can point one way, so
+    // the arm that owns the sight is the arm that fires: `Punch` is what makes the
+    // armament matter (a rocket nest, a beam rider, a top attack and a 105 mm all
+    // outscore the 30 mm, and the gun takes its turn while the other arm reloads or
+    // waits out `AI_LAUNCH_GAP`).  `Fastest` reads "the gun, always", which is the
+    // left arm only - the whole right-hand arsenal then stands down for the battle.
+    public enum MasterArm
+    {
+        Slowest = 0,    // the round that takes longest: the old behaviour
+        Fastest = 1,    // the round that arrives first - what a gun is for
+        Punch = 2,      // the round that hurts most per hit
+    }
+    public const MasterArm AI_MASTER_ARM = MasterArm.Punch;
+
     // ------------------------------------------------------------------- shop
     // A weapon is bought as "hardware + a full load of ammunition": the hardware is
     // `cost`, the rounds are `ammo_cost` each, and both are listed so the price of a
@@ -954,7 +980,7 @@ public static partial class Defs
         },
         // one hull pool: the turret is hit geometry, not a second health bar.  `vehicle`
         // is what makes it steer instead of strafe (Systems/Movement.cs) and follow the
-        // lane as a path instead of aiming at its goal (Systems/Ai.cs).
+        // lane as a path instead of aiming at its goal (Systems/AI/).
         // 100 km/h on the governor: the fastest thing on the lanes by a wide margin, but
         // it takes its time getting there (see APC_THRUST)
         [ETYPE_APC] = new UnitDef

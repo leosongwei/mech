@@ -43,7 +43,7 @@ public sealed class BattleMode : Mode
             town.progress = 0f;
         }
         Waves.bind(world);
-        Raids.bind(world);
+        Systems.AI.Raid.bind(world);
         _spawn_bases(world);
         _spawn_civilians(world);
         _assign_home_towns(world);
@@ -56,7 +56,7 @@ public sealed class BattleMode : Mode
         // tick.  The raiding parties steer themselves first and shoot through
         // `ai.run` after - that system owns every crew's guns, including the
         // parties' (`ai_state`, `raider`).
-        return new List<Action<World, float>> { Raids.run, Systems.Ai.run };
+        return Systems.AI.Pipeline.battle();
     }
 
     public override List<Action<World, float>> post_systems()
@@ -148,7 +148,7 @@ public sealed class BattleMode : Mode
                 float ang = world.rng.random() * MathUtil.TAU;
                 world.spawn_unit(Defs.ETYPE_MECH, faction,
                                  bx + MathF.Cos(ang) * 55f, bz + MathF.Sin(ang) * 55f,
-                                 hp_scale: 1f, lane: 0);
+                                 hp_scale: 1f, lane: 0, extra: Waves._FRONT);
             }
         }
     }
@@ -162,8 +162,11 @@ public sealed class BattleMode : Mode
             {
                 float ang = world.rng.random() * MathUtil.TAU;
                 float r = world.rng.uniform(15f, 70f);
+                // a civilian is not a crew and carries no AI tag: it wanders
+                // (`Systems/AI/Wander.cs`) and its legs are the driver's
                 world.spawn_unit(Defs.ETYPE_CIV, Defs.FACTION_CIV,
-                                 town.x + MathF.Cos(ang) * r, town.z + MathF.Sin(ang) * r);
+                                 town.x + MathF.Cos(ang) * r, town.z + MathF.Sin(ang) * r,
+                                 crew: false);
             }
         }
     }

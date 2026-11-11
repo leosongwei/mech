@@ -1,10 +1,13 @@
 // A missile-defence post on the range: one AI mech that shoots down what is
 // fired at it and does nothing else.
 //
-// The range's rule is that nothing there shoots back, so this hull runs the
-// *missile* half of the AI on its own (`Systems/Ai.intercept`) and none of the
-// ground half: it never acquires a target, never advances along a lane and never
-// touches the player.  What it does have is a 30 mm with its 2.5 m airburst fuse
+// It is a crew like any other (`ai_crew` + `mech_ai`) that carries no
+// `crew_engage`, so it never picks a ground target: the range's own AI block
+// (`Systems/AI/Pipeline.cs::range`) lays its intercept and nothing else, and this
+// file only puts the hull back up after it is shot to pieces.
+//
+// The range's rule is that nothing there shoots back: this hull never acquires a
+// ground target, never advances along a lane and never touches the player.  What it does have is a 30 mm with its 2.5 m airburst fuse
 // and a mech's radar (`Defs.UNIT_DEFS[ETYPE_MECH].radar_strength`), which is
 // exactly what an incoming SACLOS, top-attack, S-8 or RPG has to get past.
 //
@@ -70,6 +73,5 @@ public sealed class Interceptor
             t -= dt;
             if (t <= 0f) spawn(world);
         }
-        Systems.Ai.intercept(world, dt);
     }
 }

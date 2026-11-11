@@ -1,0 +1,215 @@
+{
+ "_comment": "The fire control's contract. One row is one call to `solve(shot, track)` on either host: `tests/frontend/fcs/run.test.mjs` and `tests/backend/Fcs/FcsTests.cs` both read this file and `run_tests.sh` compares the two answers. Metres, seconds, radians. `muzzle`/`eye`/`pos` are world positions, `aim` is the height above the hull's origin the round should meet (height/2 - the geometric centre), `radius` is the biggest hit sphere (what the trigger gate measures a target by), `acc` is the measured pull in the ground plane and `accAge` how stale that measurement is. `tag` marks an edge case (the runner asserts `valid == false`, or with `pair`, that the answer equals its pair's).",
+ "cases": [
+  {
+   "id": "ac30_400_cross12", "tag": "", "why": "a crossing hull: lead and drop at once",
+   "shot": { "muzzle": [4.3, 3.55, -1.43], "eye": [-0.62, 5.05, 0], "zero": 1000, "maxElev": 1.05, "wd": { "kind": "bullet", "vel": 1080, "g": 9.81, "thrust": 0, "maxvel": 0, "life": 9.3, "bias": 0, "hit_r": 0.15, "range": 3200, "spread": 0.0011 } },
+   "track": { "pos": [400, 0, 0], "vel": [0, 0, 12], "acc": [0, 0], "aim": 1.4, "radius": 1.7, "accAge": 0 }
+  },
+  {
+   "id": "ac30_800_cross12", "tag": "", "why": "a crossing hull: lead and drop at once",
+   "shot": { "muzzle": [4.3, 3.55, -1.43], "eye": [-0.62, 5.05, 0], "zero": 1000, "maxElev": 1.05, "wd": { "kind": "bullet", "vel": 1080, "g": 9.81, "thrust": 0, "maxvel": 0, "life": 9.3, "bias": 0, "hit_r": 0.15, "range": 3200, "spread": 0.0011 } },
+   "track": { "pos": [800, 0, 0], "vel": [0, 0, 12], "acc": [0, 0], "aim": 1.4, "radius": 1.7, "accAge": 0 }
+  },
+  {
+   "id": "ac30_1200_cross12", "tag": "", "why": "a crossing hull: lead and drop at once",
+   "shot": { "muzzle": [4.3, 3.55, -1.43], "eye": [-0.62, 5.05, 0], "zero": 1000, "maxElev": 1.05, "wd": { "kind": "bullet", "vel": 1080, "g": 9.81, "thrust": 0, "maxvel": 0, "life": 9.3, "bias": 0, "hit_r": 0.15, "range": 3200, "spread": 0.0011 } },
+   "track": { "pos": [1200, 0, 0], "vel": [0, 0, 12], "acc": [0, 0], "aim": 1.4, "radius": 1.7, "accAge": 0 }
+  },
+  {
+   "id": "ac30_2000_cross12", "tag": "", "why": "a crossing hull: lead and drop at once",
+   "shot": { "muzzle": [4.3, 3.55, -1.43], "eye": [-0.62, 5.05, 0], "zero": 1000, "maxElev": 1.05, "wd": { "kind": "bullet", "vel": 1080, "g": 9.81, "thrust": 0, "maxvel": 0, "life": 9.3, "bias": 0, "hit_r": 0.15, "range": 3200, "spread": 0.0011 } },
+   "track": { "pos": [2000, 0, 0], "vel": [0, 0, 12], "acc": [0, 0], "aim": 1.4, "radius": 1.7, "accAge": 0 }
+  },
+  {
+   "id": "ac30_2600_cross12", "tag": "", "why": "a crossing hull: lead and drop at once",
+   "shot": { "muzzle": [4.3, 3.55, -1.43], "eye": [-0.62, 5.05, 0], "zero": 1000, "maxElev": 1.05, "wd": { "kind": "bullet", "vel": 1080, "g": 9.81, "thrust": 0, "maxvel": 0, "life": 9.3, "bias": 0, "hit_r": 0.15, "range": 3200, "spread": 0.0011 } },
+   "track": { "pos": [2600, 0, 0], "vel": [0, 0, 12], "acc": [0, 0], "aim": 1.4, "radius": 1.7, "accAge": 0 }
+  },
+  {
+   "id": "mg127_400_cross12", "tag": "", "why": "a crossing hull: lead and drop at once",
+   "shot": { "muzzle": [4.3, 3.55, -1.43], "eye": [-0.62, 5.05, 0], "zero": 1000, "maxElev": 1.05, "wd": { "kind": "bullet", "vel": 890, "g": 9.81, "thrust": 0, "maxvel": 0, "life": 11.2, "bias": 0, "hit_r": 0.15, "range": 1800, "spread": 0.00225 } },
+   "track": { "pos": [400, 0, 0], "vel": [0, 0, 12], "acc": [0, 0], "aim": 1.4, "radius": 1.7, "accAge": 0 }
+  },
+  {
+   "id": "mg127_800_cross12", "tag": "", "why": "a crossing hull: lead and drop at once",
+   "shot": { "muzzle": [4.3, 3.55, -1.43], "eye": [-0.62, 5.05, 0], "zero": 1000, "maxElev": 1.05, "wd": { "kind": "bullet", "vel": 890, "g": 9.81, "thrust": 0, "maxvel": 0, "life": 11.2, "bias": 0, "hit_r": 0.15, "range": 1800, "spread": 0.00225 } },
+   "track": { "pos": [800, 0, 0], "vel": [0, 0, 12], "acc": [0, 0], "aim": 1.4, "radius": 1.7, "accAge": 0 }
+  },
+  {
+   "id": "mg127_1200_cross12", "tag": "", "why": "a crossing hull: lead and drop at once",
+   "shot": { "muzzle": [4.3, 3.55, -1.43], "eye": [-0.62, 5.05, 0], "zero": 1000, "maxElev": 1.05, "wd": { "kind": "bullet", "vel": 890, "g": 9.81, "thrust": 0, "maxvel": 0, "life": 11.2, "bias": 0, "hit_r": 0.15, "range": 1800, "spread": 0.00225 } },
+   "track": { "pos": [1200, 0, 0], "vel": [0, 0, 12], "acc": [0, 0], "aim": 1.4, "radius": 1.7, "accAge": 0 }
+  },
+  {
+   "id": "mg127_2000_cross12", "tag": "", "why": "a crossing hull: lead and drop at once",
+   "shot": { "muzzle": [4.3, 3.55, -1.43], "eye": [-0.62, 5.05, 0], "zero": 1000, "maxElev": 1.05, "wd": { "kind": "bullet", "vel": 890, "g": 9.81, "thrust": 0, "maxvel": 0, "life": 11.2, "bias": 0, "hit_r": 0.15, "range": 1800, "spread": 0.00225 } },
+   "track": { "pos": [2000, 0, 0], "vel": [0, 0, 12], "acc": [0, 0], "aim": 1.4, "radius": 1.7, "accAge": 0 }
+  },
+  {
+   "id": "mg127_2600_cross12", "tag": "", "why": "a crossing hull: lead and drop at once",
+   "shot": { "muzzle": [4.3, 3.55, -1.43], "eye": [-0.62, 5.05, 0], "zero": 1000, "maxElev": 1.05, "wd": { "kind": "bullet", "vel": 890, "g": 9.81, "thrust": 0, "maxvel": 0, "life": 11.2, "bias": 0, "hit_r": 0.15, "range": 1800, "spread": 0.00225 } },
+   "track": { "pos": [2600, 0, 0], "vel": [0, 0, 12], "acc": [0, 0], "aim": 1.4, "radius": 1.7, "accAge": 0 }
+  },
+  {
+   "id": "g105_400_cross12", "tag": "", "why": "a crossing hull: lead and drop at once",
+   "shot": { "muzzle": [4.3, 3.55, -1.43], "eye": [-0.62, 5.05, 0], "zero": 1000, "maxElev": 1.05, "wd": { "kind": "bullet", "vel": 1800, "g": 9.81, "thrust": 0, "maxvel": 0, "life": 5.6, "bias": 0, "hit_r": 0.15, "range": 4000, "spread": 0.0003 } },
+   "track": { "pos": [400, 0, 0], "vel": [0, 0, 12], "acc": [0, 0], "aim": 1.4, "radius": 1.7, "accAge": 0 }
+  },
+  {
+   "id": "g105_800_cross12", "tag": "", "why": "a crossing hull: lead and drop at once",
+   "shot": { "muzzle": [4.3, 3.55, -1.43], "eye": [-0.62, 5.05, 0], "zero": 1000, "maxElev": 1.05, "wd": { "kind": "bullet", "vel": 1800, "g": 9.81, "thrust": 0, "maxvel": 0, "life": 5.6, "bias": 0, "hit_r": 0.15, "range": 4000, "spread": 0.0003 } },
+   "track": { "pos": [800, 0, 0], "vel": [0, 0, 12], "acc": [0, 0], "aim": 1.4, "radius": 1.7, "accAge": 0 }
+  },
+  {
+   "id": "g105_1200_cross12", "tag": "", "why": "a crossing hull: lead and drop at once",
+   "shot": { "muzzle": [4.3, 3.55, -1.43], "eye": [-0.62, 5.05, 0], "zero": 1000, "maxElev": 1.05, "wd": { "kind": "bullet", "vel": 1800, "g": 9.81, "thrust": 0, "maxvel": 0, "life": 5.6, "bias": 0, "hit_r": 0.15, "range": 4000, "spread": 0.0003 } },
+   "track": { "pos": [1200, 0, 0], "vel": [0, 0, 12], "acc": [0, 0], "aim": 1.4, "radius": 1.7, "accAge": 0 }
+  },
+  {
+   "id": "g105_2000_cross12", "tag": "", "why": "a crossing hull: lead and drop at once",
+   "shot": { "muzzle": [4.3, 3.55, -1.43], "eye": [-0.62, 5.05, 0], "zero": 1000, "maxElev": 1.05, "wd": { "kind": "bullet", "vel": 1800, "g": 9.81, "thrust": 0, "maxvel": 0, "life": 5.6, "bias": 0, "hit_r": 0.15, "range": 4000, "spread": 0.0003 } },
+   "track": { "pos": [2000, 0, 0], "vel": [0, 0, 12], "acc": [0, 0], "aim": 1.4, "radius": 1.7, "accAge": 0 }
+  },
+  {
+   "id": "g105_2600_cross12", "tag": "", "why": "a crossing hull: lead and drop at once",
+   "shot": { "muzzle": [4.3, 3.55, -1.43], "eye": [-0.62, 5.05, 0], "zero": 1000, "maxElev": 1.05, "wd": { "kind": "bullet", "vel": 1800, "g": 9.81, "thrust": 0, "maxvel": 0, "life": 5.6, "bias": 0, "hit_r": 0.15, "range": 4000, "spread": 0.0003 } },
+   "track": { "pos": [2600, 0, 0], "vel": [0, 0, 12], "acc": [0, 0], "aim": 1.4, "radius": 1.7, "accAge": 0 }
+  },
+  {
+   "id": "rocket_400_cross12", "tag": "", "why": "a crossing hull: lead and drop at once",
+   "shot": { "muzzle": [4.3, 3.55, -1.43], "eye": [-0.62, 5.05, 0], "zero": 1000, "maxElev": 1.05, "wd": { "kind": "rocket", "vel": 55, "g": 9.81, "thrust": 560, "maxvel": 610, "life": 16.4, "bias": 0.0429, "hit_r": 0.15, "range": 3200, "spread": 0.003 } },
+   "track": { "pos": [400, 0, 0], "vel": [0, 0, 12], "acc": [0, 0], "aim": 1.4, "radius": 1.7, "accAge": 0 }
+  },
+  {
+   "id": "rocket_800_cross12", "tag": "", "why": "a crossing hull: lead and drop at once",
+   "shot": { "muzzle": [4.3, 3.55, -1.43], "eye": [-0.62, 5.05, 0], "zero": 1000, "maxElev": 1.05, "wd": { "kind": "rocket", "vel": 55, "g": 9.81, "thrust": 560, "maxvel": 610, "life": 16.4, "bias": 0.0429, "hit_r": 0.15, "range": 3200, "spread": 0.003 } },
+   "track": { "pos": [800, 0, 0], "vel": [0, 0, 12], "acc": [0, 0], "aim": 1.4, "radius": 1.7, "accAge": 0 }
+  },
+  {
+   "id": "rocket_1200_cross12", "tag": "", "why": "a crossing hull: lead and drop at once",
+   "shot": { "muzzle": [4.3, 3.55, -1.43], "eye": [-0.62, 5.05, 0], "zero": 1000, "maxElev": 1.05, "wd": { "kind": "rocket", "vel": 55, "g": 9.81, "thrust": 560, "maxvel": 610, "life": 16.4, "bias": 0.0429, "hit_r": 0.15, "range": 3200, "spread": 0.003 } },
+   "track": { "pos": [1200, 0, 0], "vel": [0, 0, 12], "acc": [0, 0], "aim": 1.4, "radius": 1.7, "accAge": 0 }
+  },
+  {
+   "id": "rocket_2000_cross12", "tag": "", "why": "a crossing hull: lead and drop at once",
+   "shot": { "muzzle": [4.3, 3.55, -1.43], "eye": [-0.62, 5.05, 0], "zero": 1000, "maxElev": 1.05, "wd": { "kind": "rocket", "vel": 55, "g": 9.81, "thrust": 560, "maxvel": 610, "life": 16.4, "bias": 0.0429, "hit_r": 0.15, "range": 3200, "spread": 0.003 } },
+   "track": { "pos": [2000, 0, 0], "vel": [0, 0, 12], "acc": [0, 0], "aim": 1.4, "radius": 1.7, "accAge": 0 }
+  },
+  {
+   "id": "rocket_2600_cross12", "tag": "", "why": "a crossing hull: lead and drop at once",
+   "shot": { "muzzle": [4.3, 3.55, -1.43], "eye": [-0.62, 5.05, 0], "zero": 1000, "maxElev": 1.05, "wd": { "kind": "rocket", "vel": 55, "g": 9.81, "thrust": 560, "maxvel": 610, "life": 16.4, "bias": 0.0429, "hit_r": 0.15, "range": 3200, "spread": 0.003 } },
+   "track": { "pos": [2600, 0, 0], "vel": [0, 0, 12], "acc": [0, 0], "aim": 1.4, "radius": 1.7, "accAge": 0 }
+  },
+  {
+   "id": "ac30_800_zero500", "tag": "", "why": "Z is the sight setting - the same law at four settings",
+   "shot": { "muzzle": [4.3, 3.55, -1.43], "eye": [-0.62, 5.05, 0], "zero": 500, "maxElev": 1.05, "wd": { "kind": "bullet", "vel": 1080, "g": 9.81, "thrust": 0, "maxvel": 0, "life": 9.3, "bias": 0, "hit_r": 0.15, "range": 3200, "spread": 0.0011 } },
+   "track": { "pos": [800, 0, 0], "vel": [0, 0, 12], "acc": [0, 0], "aim": 1.4, "radius": 1.7, "accAge": 0 }
+  },
+  {
+   "id": "ac30_800_zero1000", "tag": "", "why": "Z is the sight setting - the same law at four settings",
+   "shot": { "muzzle": [4.3, 3.55, -1.43], "eye": [-0.62, 5.05, 0], "zero": 1000, "maxElev": 1.05, "wd": { "kind": "bullet", "vel": 1080, "g": 9.81, "thrust": 0, "maxvel": 0, "life": 9.3, "bias": 0, "hit_r": 0.15, "range": 3200, "spread": 0.0011 } },
+   "track": { "pos": [800, 0, 0], "vel": [0, 0, 12], "acc": [0, 0], "aim": 1.4, "radius": 1.7, "accAge": 0 }
+  },
+  {
+   "id": "ac30_800_zero2000", "tag": "", "why": "Z is the sight setting - the same law at four settings",
+   "shot": { "muzzle": [4.3, 3.55, -1.43], "eye": [-0.62, 5.05, 0], "zero": 2000, "maxElev": 1.05, "wd": { "kind": "bullet", "vel": 1080, "g": 9.81, "thrust": 0, "maxvel": 0, "life": 9.3, "bias": 0, "hit_r": 0.15, "range": 3200, "spread": 0.0011 } },
+   "track": { "pos": [800, 0, 0], "vel": [0, 0, 12], "acc": [0, 0], "aim": 1.4, "radius": 1.7, "accAge": 0 }
+  },
+  {
+   "id": "ac30_800_zero4000", "tag": "", "why": "Z is the sight setting - the same law at four settings",
+   "shot": { "muzzle": [4.3, 3.55, -1.43], "eye": [-0.62, 5.05, 0], "zero": 4000, "maxElev": 1.05, "wd": { "kind": "bullet", "vel": 1080, "g": 9.81, "thrust": 0, "maxvel": 0, "life": 9.3, "bias": 0, "hit_r": 0.15, "range": 3200, "spread": 0.0011 } },
+   "track": { "pos": [800, 0, 0], "vel": [0, 0, 12], "acc": [0, 0], "aim": 1.4, "radius": 1.7, "accAge": 0 }
+  },
+  {
+   "id": "ac30_1200_still", "tag": "", "why": "the lead's components: sideways, along the line, and vertical",
+   "shot": { "muzzle": [4.3, 3.55, -1.43], "eye": [-0.62, 5.05, 0], "zero": 1000, "maxElev": 1.05, "wd": { "kind": "bullet", "vel": 1080, "g": 9.81, "thrust": 0, "maxvel": 0, "life": 9.3, "bias": 0, "hit_r": 0.15, "range": 3200, "spread": 0.0011 } },
+   "track": { "pos": [1200, 0, 0], "vel": [0, 0, 0], "acc": [0, 0], "aim": 1.4, "radius": 1.7, "accAge": 0 }
+  },
+  {
+   "id": "ac30_1200_cross25", "tag": "", "why": "the lead's components: sideways, along the line, and vertical",
+   "shot": { "muzzle": [4.3, 3.55, -1.43], "eye": [-0.62, 5.05, 0], "zero": 1000, "maxElev": 1.05, "wd": { "kind": "bullet", "vel": 1080, "g": 9.81, "thrust": 0, "maxvel": 0, "life": 9.3, "bias": 0, "hit_r": 0.15, "range": 3200, "spread": 0.0011 } },
+   "track": { "pos": [1200, 0, 0], "vel": [0, 0, 25], "acc": [0, 0], "aim": 1.4, "radius": 1.7, "accAge": 0 }
+  },
+  {
+   "id": "ac30_1200_closing", "tag": "", "why": "the lead's components: sideways, along the line, and vertical",
+   "shot": { "muzzle": [4.3, 3.55, -1.43], "eye": [-0.62, 5.05, 0], "zero": 1000, "maxElev": 1.05, "wd": { "kind": "bullet", "vel": 1080, "g": 9.81, "thrust": 0, "maxvel": 0, "life": 9.3, "bias": 0, "hit_r": 0.15, "range": 3200, "spread": 0.0011 } },
+   "track": { "pos": [1200, 0, 0], "vel": [-30, 0, 0], "acc": [0, 0], "aim": 1.4, "radius": 1.7, "accAge": 0 }
+  },
+  {
+   "id": "ac30_1200_opening", "tag": "", "why": "the lead's components: sideways, along the line, and vertical",
+   "shot": { "muzzle": [4.3, 3.55, -1.43], "eye": [-0.62, 5.05, 0], "zero": 1000, "maxElev": 1.05, "wd": { "kind": "bullet", "vel": 1080, "g": 9.81, "thrust": 0, "maxvel": 0, "life": 9.3, "bias": 0, "hit_r": 0.15, "range": 3200, "spread": 0.0011 } },
+   "track": { "pos": [1200, 0, 0], "vel": [30, 0, 0], "acc": [0, 0], "aim": 1.4, "radius": 1.7, "accAge": 0 }
+  },
+  {
+   "id": "ac30_1200_climb", "tag": "", "why": "the lead's components: sideways, along the line, and vertical",
+   "shot": { "muzzle": [4.3, 3.55, -1.43], "eye": [-0.62, 5.05, 0], "zero": 1000, "maxElev": 1.05, "wd": { "kind": "bullet", "vel": 1080, "g": 9.81, "thrust": 0, "maxvel": 0, "life": 9.3, "bias": 0, "hit_r": 0.15, "range": 3200, "spread": 0.0011 } },
+   "track": { "pos": [1200, 0, 0], "vel": [0, 40, 0], "acc": [0, 0], "aim": 1.4, "radius": 1.7, "accAge": 0 }
+  },
+  {
+   "id": "ac30_1200_plunge", "tag": "", "why": "the lead's components: sideways, along the line, and vertical",
+   "shot": { "muzzle": [4.3, 3.55, -1.43], "eye": [-0.62, 5.05, 0], "zero": 1000, "maxElev": 1.05, "wd": { "kind": "bullet", "vel": 1080, "g": 9.81, "thrust": 0, "maxvel": 0, "life": 9.3, "bias": 0, "hit_r": 0.15, "range": 3200, "spread": 0.0011 } },
+   "track": { "pos": [1200, 0, 0], "vel": [0, -40, 0], "acc": [0, 0], "aim": 1.4, "radius": 1.7, "accAge": 0 }
+  },
+  {
+   "id": "rocket_1200_acc0", "tag": "", "why": "the baseline the stale case is measured against",
+   "shot": { "muzzle": [4.3, 3.55, -1.43], "eye": [-0.62, 5.05, 0], "zero": 1000, "maxElev": 1.05, "wd": { "kind": "rocket", "vel": 55, "g": 9.81, "thrust": 560, "maxvel": 610, "life": 16.4, "bias": 0.0429, "hit_r": 0.15, "range": 3200, "spread": 0.003 } },
+   "track": { "pos": [1200, 0, 0], "vel": [0, 0, 12], "acc": [0, 0], "aim": 3.25, "radius": 1.45, "accAge": 0 }
+  },
+  {
+   "id": "rocket_1200_acc8", "tag": "", "why": "a hull still pulling into the shot: the round is further on than its speed says",
+   "shot": { "muzzle": [4.3, 3.55, -1.43], "eye": [-0.62, 5.05, 0], "zero": 1000, "maxElev": 1.05, "wd": { "kind": "rocket", "vel": 55, "g": 9.81, "thrust": 560, "maxvel": 610, "life": 16.4, "bias": 0.0429, "hit_r": 0.15, "range": 3200, "spread": 0.003 } },
+   "track": { "pos": [1200, 0, 0], "vel": [0, 0, 12], "acc": [8, 0], "aim": 3.25, "radius": 1.45, "accAge": 0 }
+  },
+  {
+   "id": "rocket_1200_accStale", "tag": "stale_acc", "pair": "rocket_1200_acc0", "why": "a measurement older than 0.5 s says nothing about now",
+   "shot": { "muzzle": [4.3, 3.55, -1.43], "eye": [-0.62, 5.05, 0], "zero": 1000, "maxElev": 1.05, "wd": { "kind": "rocket", "vel": 55, "g": 9.81, "thrust": 560, "maxvel": 610, "life": 16.4, "bias": 0.0429, "hit_r": 0.15, "range": 3200, "spread": 0.003 } },
+   "track": { "pos": [1200, 0, 0], "vel": [0, 0, 12], "acc": [8, 0], "aim": 3.25, "radius": 1.45, "accAge": 0.6 }
+  },
+  {
+   "id": "g105_800_apc", "tag": "", "why": "aim is height/2, so the hull's size moves the answer",
+   "shot": { "muzzle": [4.3, 3.55, -1.43], "eye": [-0.62, 5.05, 0], "zero": 1000, "maxElev": 1.05, "wd": { "kind": "bullet", "vel": 1800, "g": 9.81, "thrust": 0, "maxvel": 0, "life": 5.6, "bias": 0, "hit_r": 0.15, "range": 4000, "spread": 0.0003 } },
+   "track": { "pos": [800, 0, 0], "vel": [0, 0, 12], "acc": [0, 0], "aim": 1.4, "radius": 1.7, "accAge": 0 }
+  },
+  {
+   "id": "g105_800_mech", "tag": "", "why": "aim is height/2, so the hull's size moves the answer",
+   "shot": { "muzzle": [4.3, 3.55, -1.43], "eye": [-0.62, 5.05, 0], "zero": 1000, "maxElev": 1.05, "wd": { "kind": "bullet", "vel": 1800, "g": 9.81, "thrust": 0, "maxvel": 0, "life": 5.6, "bias": 0, "hit_r": 0.15, "range": 4000, "spread": 0.0003 } },
+   "track": { "pos": [800, 0, 0], "vel": [0, 0, 12], "acc": [0, 0], "aim": 3.25, "radius": 1.45, "accAge": 0 }
+  },
+  {
+   "id": "g105_800_inf", "tag": "", "why": "aim is height/2, so the hull's size moves the answer",
+   "shot": { "muzzle": [4.3, 3.55, -1.43], "eye": [-0.62, 5.05, 0], "zero": 1000, "maxElev": 1.05, "wd": { "kind": "bullet", "vel": 1800, "g": 9.81, "thrust": 0, "maxvel": 0, "life": 5.6, "bias": 0, "hit_r": 0.15, "range": 4000, "spread": 0.0003 } },
+   "track": { "pos": [800, 0, 0], "vel": [0, 0, 12], "acc": [0, 0], "aim": 0.9, "radius": 0.65, "accAge": 0 }
+  },
+  {
+   "id": "ac30_800_right", "tag": "", "why": "the other arm's muzzle: 1.43 m the other side of the hull",
+   "shot": { "muzzle": [4.3, 3.55, 1.43], "eye": [-0.62, 5.05, 0], "zero": 1000, "maxElev": 1.05, "wd": { "kind": "bullet", "vel": 1080, "g": 9.81, "thrust": 0, "maxvel": 0, "life": 9.3, "bias": 0, "hit_r": 0.15, "range": 3200, "spread": 0.0011 } },
+   "track": { "pos": [800, 0, 0], "vel": [0, 0, 12], "acc": [0, 0], "aim": 1.4, "radius": 1.7, "accAge": 0 }
+  },
+  {
+   "id": "top_1200", "tag": "", "why": "a guided round: no zeroing, the sight line is the aim",
+   "shot": { "muzzle": [4.3, 3.55, 1.43], "eye": [-0.62, 5.05, 0], "zero": 1000, "maxElev": 1.05, "wd": { "kind": "top", "vel": 20, "g": 9.81, "thrust": 110, "maxvel": 306, "life": 30, "bias": 0, "hit_r": 0.03, "range": 4000, "spread": 0.002 } },
+   "track": { "pos": [1200, 0, 0], "vel": [0, 0, 12], "acc": [0, 0], "aim": 3.25, "radius": 1.45, "accAge": 0 }
+  },
+  {
+   "id": "saclos_1200", "tag": "", "why": "a beam rider: g=0 and a soft launch, so the drop is not the question",
+   "shot": { "muzzle": [4.3, 3.55, 1.43], "eye": [-0.62, 5.05, 0], "zero": 1000, "maxElev": 1.05, "wd": { "kind": "saclos", "vel": 40, "g": 0, "thrust": 100, "maxvel": 600, "life": 36, "bias": 0, "hit_r": 0.03, "range": 4000, "spread": 0.003 } },
+   "track": { "pos": [1200, 0, 0], "vel": [0, 0, 12], "acc": [0, 0], "aim": 3.25, "radius": 1.45, "accAge": 0 }
+  },
+  {
+   "id": "ac30_24_min", "tag": "below_min_dist", "why": "inside MIN_DIST the aim point is the machine itself",
+   "shot": { "muzzle": [4.3, 3.55, -1.43], "eye": [-0.62, 5.05, 0], "zero": 1000, "maxElev": 1.05, "wd": { "kind": "bullet", "vel": 1080, "g": 9.81, "thrust": 0, "maxvel": 0, "life": 9.3, "bias": 0, "hit_r": 0.15, "range": 3200, "spread": 0.0011 } },
+   "track": { "pos": [24, 0, 0], "vel": [0, 0, 0], "acc": [0, 0], "aim": 1.4, "radius": 1.7, "accAge": 0 }
+  },
+  {
+   "id": "ac30_2000_life", "tag": "out_of_life", "why": "a round that expires before it gets there",
+   "shot": { "muzzle": [4.3, 3.55, -1.43], "eye": [-0.62, 5.05, 0], "zero": 1000, "maxElev": 1.05, "wd": { "kind": "bullet", "vel": 1080, "g": 9.81, "thrust": 0, "maxvel": 0, "life": 1, "bias": 0, "hit_r": 0.15, "range": 3200, "spread": 0.0011 } },
+   "track": { "pos": [2000, 0, 0], "vel": [0, 0, 0], "acc": [0, 0], "aim": 1.4, "radius": 1.7, "accAge": 0 }
+  },
+  {
+   "id": "ac30_800_elev", "tag": "out_of_elev", "why": "a target above the mount's ceiling: no elevation there is legal",
+   "shot": { "muzzle": [4.3, 3.55, -1.43], "eye": [-0.62, 5.05, 0], "zero": 1000, "maxElev": 1.05, "wd": { "kind": "bullet", "vel": 1080, "g": 9.81, "thrust": 0, "maxvel": 0, "life": 9.3, "bias": 0, "hit_r": 0.15, "range": 3200, "spread": 0.0011 } },
+   "track": { "pos": [800, 2000, 0], "vel": [0, 0, 0], "acc": [0, 0], "aim": 1.4, "radius": 1.7, "accAge": 0 }
+  }
+ ]
+}

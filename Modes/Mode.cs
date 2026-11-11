@@ -22,7 +22,7 @@ public abstract class Mode
     /// <summary>Components a hull spawned from the debug console carries.  A mode
     /// whose own units must stay passive uses the tag to tell "a hull the pilot
     /// dropped here on purpose" from everything else it owns
-    /// (`Modes/Range/TestAi.cs`).</summary>
+    /// (`Systems/AI/Support/Tags.cs`).</summary>
     public string[] console_spawn_extra = Array.Empty<string>();
 
     public abstract Terrain terrain(int seed);

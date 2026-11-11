@@ -4,19 +4,19 @@ Working notes for coding agents touching **MECH**, a browser-based mech
 shooter: C# (.NET 10) archetype-ECS server, WebGL2 client, 16 km tile map, three lanes,
 RED vs BLUE.
 
-## Read `doc/product` first
+## Read `docs/product` first
 
-Everything under `doc/` is written in Chinese (the code, the comments and every
+Everything under `docs/` is written in Chinese (the code, the comments and every
 string a player sees are English - see [Conventions](#conventions)).
-`doc/product/` is the product documentation and the source of truth for
+`docs/product/` is the product documentation and the source of truth for
 everything a player can see: interaction flow, every screen, and the full unit
 and weapon parameter tables (mirrors of `Core/Defs.cs` and the mode systems).
 
-* **Before changing anything, read `doc/product/`** and check the change fits
+* **Before changing anything, read `docs/product/`** and check the change fits
   the documented rules.
 * **Every product-facing change must be registered there**: update the relevant
   page (`flow.md`, `screens.md`, `units.md`, `weapons.md`) and add a dated entry
-  at the top of `doc/product/CHANGELOG.md` in the same commit. That covers UI
+  at the top of `docs/product/CHANGELOG.md` in the same commit. That covers UI
   elements, copy, keybindings, unit/weapon numbers, spawn and rule timers,
   win conditions and debug UI.
 * Tuning changes in `Core/Defs.cs` / mode systems without the matching table update
@@ -29,8 +29,10 @@ and weapon parameter tables (mirrors of `Core/Defs.cs` and the mode systems).
 dev.sh                     # build / start / attach / stop helper (byobu or tmux)
 dotnet.sh                  # build / run helper (dotnet's own state in .dotnet_tmp/)
 MechServer.csproj          # the server; its <Version> is the product version
-Program.cs                 # entry point: --host / --port / --range / --check battle|range|hit|intercept
-doc/                       # Chinese: every document in the repo lives here
+Program.cs                 # entry point: --host / --port / --range / --check battle|range|
+                           #   hit|intercept|diag|net|fcs
+run_tests.sh               # the unit tests: ./run_tests.sh [cs|js|compare] [--filter NAME]
+docs/                      # Chinese: every document in the repo lives here
   product/                 #   player-facing rules: flow, screens, units, weapons, changelog
   plans/                   #   refactor and feature plans (e.g. speed_component.md)
   top_attack_plan.md       #   design notes next to the code they describe
@@ -41,10 +43,13 @@ Core/
   Defs.cs                  # entity types, weapons, unit stats, mech geometry
   World.cs                 # World/Player: terrain, players, spawning, tick, queries
   Terrain.cs               # 1000x1000 tiles of 16 m -> 16 km square map
-  MathUtil.cs              # angles, lead solving, hit spheres, muzzle geometry
+  MathUtil.cs              # angles, hit spheres, muzzle geometry
   Profiler.cs              # white-box probes (MECH_PROBE=1), off and free by default
   Grid.cs                  # 128 m cell index over the units, refiled every tick (AI broadphase)
-  Ballistics.cs            # fire control: sight setting elevation (player) / sight-point solve (AI)
+  Nav.cs                   # routes (the poly lines a driver follows) + the way point maths
+  Ballistics.cs            # elevation for a range (`zero_at`), flight path (`flight_at`)
+  FireControl.cs           # THE fire control law: shot + track -> point/angles/elevation
+                           #   (both hosts; `frontend/src/fcs.js` is its twin)
   Flight.cs                # aerodynamics + guidance of a winged round (the top-attack missile)
   Seeker.cs                # an IR round's lock: what it stares at, and what it re-locks on
   Combat.cs                # damage resolution: the only writer of `hp` (apply/hit/splash)
@@ -54,6 +59,15 @@ Net/
   Netcode.cs               # init payload, binary snapshots, JSON meta, per-ear sound filter
   Server.cs                # ASP.NET Core: websockets, static files, 30 Hz game loop
 Systems/                   # mechanics shared by every mode, each exposes run(world, dt)
+                           #   AI/        the crews (see "AI is intent, movement is the machine"):
+                           #     Sense.cs (one look per crew per tick -> `ai_tgt`),
+                           #     Threats.cs, Intercept.cs, Engage{Mech,Vehicle,Foot}.cs,
+                           #     Wander.cs (one file = one run), Strategies/{Front,Raid}.cs
+                           #     (mission state machines), Support/{Tags,Crew,Policy,Engage,
+                           #     ThreatTable}.cs (columns, vocabulary, shared fire control),
+                           #     Support/Pipeline.cs (the block a mode registers)
+                           #   Movement/  one driver per chassis: Foot.cs / Mech.cs / Vehicle.cs,
+                           #     Support/{Drive,Integrate}.cs.  The only writer of `vel`/`pos`.
                            #   Gunnery.cs: the sight leads, the hull and the arms slew after it
                            #   Sight.cs: the one line of sight (terrain + smoke), clear/why
                            #   Smoke.cs: hot smoke canisters, opaque puffs, blocks(a, b)
@@ -73,20 +87,24 @@ Modes/                     # per-mode rule sets: map, setup, pipeline, spawn rul
   Modes.cs                 #   the registry `Modes.get(name)`
   Battle/                  #   BattleMode.cs: setup, bases, respawn A/B/C, kills feed
                            #   Waves.cs: town capture + reinforcement waves
-                           #   Raids.cs: the raiding parties - one mech per lane,
-                           #   force-gradient + two-level (128 m / 16 m) pathfinding
   Range/                   #   RangeMode.cs, Targets.cs: passive APC targets plus
                            #   two mechs on a 200 m leg at 16 m/s and a 1 km leg at
                            #   the hull's 50 m/s top speed - the only hulls that
                            #   accelerate hard, which is what the lead ring's
                            #   second-order term is measured on),
-                           #   Bunkers.cs: ridge blockhouses, TestAi.cs: the ground AI
-                           #   for hulls a pilot drops there (the range's own fixtures
-                           #   never shoot back), Record.cs: the top-attack trace,
+                           #   Bunkers.cs: ridge blockhouses, Record.cs: the top-attack trace,
                            #   Interceptor.cs: the missile-defence post
 Harness/                   # headless checks, no socket: Check.cs (battle/range/diag),
                            # InterceptCheck.cs (missile defence, target hits),
+                           # FcsCheck.cs (crew vs pilot on the same scenarios),
                            # NetCheck.cs (one pilot's wire, per minute)
+tests/                     # unit tests, run by run_tests.sh - no server, no socket
+  cases/fcs.json           #   the fire control's contract: inputs only, both hosts read it
+  frontend/                #   node:test (built in).  support/tol.mjs = the tolerances,
+                           #   fcs/ = the cases, the runner and emit.mjs
+  backend/                 #   a console runner (Support/MiniTest.cs = [Test] + reflection
+                           #   + Assert + Tol) referencing ../../MechServer.csproj
+  compare.mjs              #   the two solutions tables, field by field
 assets/                    # compiled client (webpack output, gitignored)
 tools/
   gun_report.py            # weapon-report audio analysis (numpy; the numbers in audio.js)
@@ -101,7 +119,8 @@ frontend/
     game.js                # client loop, input -> server, camera, fx, settings menu
     icons.js               # icons.json -> glyph strings, FontFace loader, drawIcon()
     net.js                 # websocket, snapshot decode, interpolation
-    map.js                 # client copy of terrain + identical ballistics
+    map.js                 # client copy of terrain + the sight ray (`fcs.js` re-exported)
+    fcs.js                 # the fire control law, twin of Core/FireControl.cs
     scene.js               # unit models built from instanced primitives
     renderer.js            # tiled near terrain + far LOD grid, roads, instanced draws,
                            #   and the screen-space overlay (the threat arrows)
@@ -148,7 +167,7 @@ frontend/
   keeping because the alternative was five subsystems each quietly rebuilding a
   velocity of their own: `Seeker.track` handed proportional navigation a hull's
   *command* (50 m/s the instant a pilot nudged the stick) and the top attack
-  missed a stationary hull by 8-36 m (`doc/plans/speed_component.md`).
+  missed a stationary hull by 8-36 m (`docs/plans/speed_component.md`).
 * **Wheeled locomotion state is three scalars, not a component.** `wheel_speed`
   (m/s along the hull, negative in reverse), `backout_t`, `blocked_t` belong to
   `movement._vehicle` alone: not on the wire, never written by a mode or an AI.
@@ -261,8 +280,41 @@ frontend/
   arm the variable. A pilot's mech always passes `player.loadout`, and the
   range's defence post passes its own, so both are untouched by the table. The
   draw comes off `world.rng`.
-* **An AI crew fires the arms it has.** `ai._aim_and_fire` used to pull the
-  right trigger only for `kind in ("rocket", "saclos")`; it now fires any arm
+* **AI is intent, movement is the machine.**  A crew says *where* and *how fast* -
+  `nav_route` (an index into `world.routes`, `Core/Nav.cs`), or a point
+  `nav_x`/`nav_z`, plus `nav_speed` - and nothing else that moves.  The drivers
+  (`Systems/Movement/`: one file per chassis, `Foot` / `Mech` / `Vehicle`, with
+  `Support/Drive.cs` for the intent-to-way-point step and `Support/Integrate.cs` for
+  `vel_cmd -> vel -> pos`) own `pos`, `vel`, `vel_cmd`, `leg_yaw`, `wheel_speed`,
+  `backout_t`, `blocked_t` and the route cursor `path_i`.  Corner speed, the
+  acceptance radius and the obstacle fan are *the machine's*: an 11 m turning radius
+  cannot hold 100 km/h round a right angle, so `Nav.route_speed` / `Nav.arrive_radius`
+  are called by `Vehicle.run` and never by a crew.  A pilot writes `vel_cmd` from the
+  stick; an AI crew never touches it.  What a driver does for *every* hull of its
+  chassis is the machine's own behaviour - the leg swing, the mech's ramp, the
+  bicycle model, the integration - so only the `nav_* -> vel_cmd` step is gated on
+  `ai_crew`.  Leave a pilot's `leg_yaw` lying where it spawned and his hull tops out
+  at the leg-alignment floor: `0.45 * 50 m/s`, i.e. 81 km/h, in whatever direction
+  the alignment happens to be bad - which reads as "some directions are slower".
+  The obstacle fan a walker tries when the step ahead is blocked picks the **smallest
+  course change** that clears, with the hull's own `leg_yaw` as the tie-break
+  (`Drive.legs`).  Picking the first clear entry in the list instead is what a mech
+  between two clear bearings does: it alternates between them every few ticks, the
+  ramp reverses itself every time, and a hull beside its own base grinds in place for
+  the rest of the match - measured, 4-7 mechs a battle within 800 m of home before,
+  0 after (`Drive.PROBE` at 0.8/2/4 m is short enough that a house needs the
+  commitment).  The plan and its reasoning: `docs/plans/AI_plan.md`.
+* **A crew is a component.**  `World.spawn_unit(crew: true)` puts `ai_crew` on a hull
+  plus its platform tag (`mech_ai` for a mech's crew, `foot_ai` for a man's; a
+  carrier already carries `vehicle`), and a mission adds its own (`front_mission`,
+  `raider`, `crew_engage`).  A pilot's machine and every fixture/puppet is built
+  with `crew: false` and is out of every AI query by construction - there is no
+  per-row `owner` test left anywhere.  `Systems/AI/` is one file per system (`run`),
+  the shared columns and vocabulary in `Support/`, the mission state machines in
+  `Strategies/`, and `Support/Pipeline.cs` is the block a mode registers
+  (`battle()` / `range()` / `defence()`).
+* **An AI crew fires the arms it has.** `Systems/AI/Engage*.cs` used to pull the
+  right trigger only for `kind in ("rocket", "saclos")`; it fires any arm
   whose own `range` covers the target (still 2.2 km for those two, `ai_range`
   for everything else), and `weapons.run` gives a `lock` weapon on an
   ownerless hull the lock the crew already holds — the AI's `target`
@@ -299,14 +351,105 @@ frontend/
   dies where it stands", and it is why a flight system's first line is
   `if (first_hit_t <= 1) continue`.  The same line in a collision system is a
   pure cost optimisation; these two are not the same thing.
-* **The sight is one line, so the lead is solved for the slowest round.**
-  `ai._engage` picks the aim speed as the minimum `mathutil.mean_speed` over
-  the arms that reach the target, not the primary weapon's muzzle figure: a
-  beam rider averages ~340 m/s at 1 km against the cannon's 1080, and leading
-  it with the cannon's number put every missile tens of metres behind a moving
-  hull (measured: 16 launches, no kills on movers; after: 3–4 kills per 16).
-  `mean_speed` is the boost-and-coast profile off `vel` / `thrust` / `maxvel` /
-  `burn`, so a new missile needs no entry in `Systems/Ai.cs`.
+* **One fire-control law, two settings** (`Core/FireControl.cs`, mirrored line for
+  line by `frontend/src/fcs.js`).  `solve(in Shot, in Track)` takes the muzzle, the
+  eye, the gun, and a *track* (the target's position, the velocity it is really
+  moving at, the pull measured on it, the height to aim at) and answers the point
+  to lay the sight on, the angles, the elevation the tube leaves at and the time
+  of flight.  The one difference between the two
+  callers is the **zero**: a pilot's is the range on his dial
+  (`pl.zero_range`, CTRL+wheel, 0.5-4 km, `Defs.ZERO_DEFAULT` at spawn), which
+  keeps his reticle still while it crosses a crest; a crew has no reticle, so its
+  zero is the range of the point it is engaging, solved from the same start.  The
+  law is a pure function of its inputs - no `World`, no ECS, no `Rng`, and no
+  `wd.spread` - which is what makes it testable (`tests/`, `run_tests.sh`).
+  `Solution.valid` is "this trajectory exists" (a time of flight, an elevation
+  under `ZERO_MAX_ELEV`); the inner 0.15 m convergence threshold is part of the
+  law, and both hosts run the same four iterations.
+* **Every arm solves its own shot; one arm owns the sight.**  A 30 mm and a rocket
+  nest differ by 3x in flight time, so `Engage.ground_aim` solves per arm from that
+  arm's own muzzle (`Weapons.launch_geometry` - the rack's elevation, the barrel's
+  reach, the tube the next round is in), writes each arm's launch elevation into
+  `aim_elev` (`Weapons.fire` reads it and adds dispersion only), and lays
+  `sight_yaw` / `sight_pitch` on the **master arm**'s intercept point
+  (`Defs.AI_MASTER_ARM`).  The hull and the arms slew after that one line
+  (`Systems/Gunnery.cs`), so what the crew is looking at and where the tubes point
+  are two different things, and the arms that do not own the sight fire only while
+  their own bore is inside their own gate.  There is no
+  "aim speed" for the AI any more: leading a moving hull for a beam rider used to
+  mean picking the *slowest* arm's average speed (the old `mean_speed`, which read 55 m/s
+  for the rocket nest because the launch charge is nothing next to the motor) and
+  the whole sight line was dragged with it.
+* **Which arm owns the sight is which weapon the mech uses.**  The two muzzles are
+  2.86 m apart (`MECH_ARM_MUZZLE` at -/+1.43) and the hull points one way, so the
+  arm laid on the master's solution is the arm that hits: the other one's round
+  leaves on the same bearing and misses by 2.86 m, wider than an APC's 1.4 m hit
+  sphere.  That makes `Defs.AI_MASTER_ARM` the whole armament decision, and it is
+  `Punch` (`ad + ed`) - a rocket nest, a beam rider, a top attack and a 105 mm all
+  outrank the 30 mm.  `Engage.MASTER_HANDOFF` (0.5 s) is the other half: an arm
+  with no rounds left, a reload or a launch gap longer than half a second hands the
+  sight over (`Engage._can_fire`), so a 105 mm's 3 s reload and a top attack's
+  `AI_LAUNCH_GAP` are covered by the gun instead of by silence, and a crew never
+  goes quiet with a full belt in its left arm.  A beam rider is exempt: it rides
+  `aim_of`, so its arm keeps the sight whatever its clock says.  Measured
+  (`--check fcs`, the `arsenal` row, 6 loadouts x 12 s): `Fastest` read "the 30 mm,
+  always" - 0 rounds from every rocket nest, SACLOS pack and top-attack rack in the
+  game, one arm for a whole battle; `Punch` reads 40 rockets + 31 cannon rounds,
+  16 SACLOS + 37, one top attack + 58, 4 x 105 mm + 47.
+* **Every chassis has a muzzle of its own** (`Weapons.launch_geometry`, the one
+  door a round leaves through).  A mech solves its arm's offset off
+  `MECH_ARM_MUZZLE` / `reach` / the rack; an APC solves off its **turret**
+  (`Weapons.bore_of` - its `yaw` is the *hull*, which is where it drives) and
+  `reach`; a man off his own body (`FOOT_REACH` 0.7 m).  A hull's own `pos` is the
+  ground it stands on, so a muzzle left there puts `first_hit_t` at 0 on the first
+  tick (`terrain.ground_hits_many` answers the leg's start) and every round bursts
+  under the shooter's feet - measured, an APC fired 299 rounds and landed all of
+  them at 0 m.  `Harness/FcsCheck.cs` keeps a row per chassis for exactly this.
+* **The trigger is a geometric gate, never a taste.**  The bearing must be inside
+  the angle the target covers at that range,
+  `atan((radius + hit_r) / dist)` - a round that misses a hull by a metre still
+  counts, a round that misses a missile by a metre is a miss.  The old fixed
+  0.14 rad was 280 m of error at 2 km, i.e. a crew hosing the dirt: three 12
+  minute `--check battle` runs put 374-473 deaths on **14-15k rounds**, 32-38
+  rounds per kill (402 deaths on 54k rounds, 134 per kill, before the law moved).
+  The gate is measured on *that arm's* bore, which is why a mech's second arm
+  stands down while the hull is laid on the master's solution: the two muzzles
+  are 2.86 m apart and the hull can only point one way, so the second arm's round
+  misses by that much - more than an APC's 1.78 m hit sphere at any range.  That
+  is geometry, not a wiring defect: laying the *hull* on the target's centre
+  instead would put the master arm 1.43 m off, which misses a rifleman (0.65 m).
+  The *elevation* side is the machine's own tolerance (`Engage.PITCH_TOL` 0.02 rad),
+  because the elevation a round leaves at is `aim_elev`, already solved - no
+  unguided round leaves along the arm's pitch, and the two kinds that do carry
+  their own guidance, straight down the sight line.
+* **A crew's guns fire at what the crew believes** (`ai_tgt`, `Ecs/Components.cs`).
+  `Systems/AI/Sense.cs` is the only writer: one look per crew per tick through
+  `Sight.clear` at the *target's* own body (60 % of its height), and while the
+  line is clear the belief *is* the truth - position, velocity and type copied in,
+  with `measure_accel` reading the same velocity the client differentiates.  When
+  the line is cut (smoke, a crest, a canopy, a house) the copying stops and the
+  point walks at the velocity stored with it for `Crew.MEMORY` (2 s), then the
+  crew forgets the hull.  `Engage.ground_aim` reads *only* that belief - never
+  `fv("pos")` for a target - so a screen of smoke is a screen for the guns and not
+  just for the picture, and a crew leads a hull it cannot see exactly as well as a
+  seeker does (`Core/Seeker.cs` is the same idea one round out).  The scan clock
+  (`ACQUIRE` 0.45 s, jittered 0.34-0.61 s) now only decides whether to *change*
+  target: it casts `SIGHT_CASTS` lines through the grid's box, and a target it
+  already holds is re-looked at every tick.  The look costs 0.2 ms/tick of a
+  12 minute battle (1.48 against 1.3 ms before it), and the alternative was the
+  asymmetry the whole design is built to avoid.
+
+* **The client solves the same law for the HUD** (`frontend/src/fcs.js`:
+  `leadPoint`, `zeroAt`, `solveElevation`, `flightTo`, `solve`).  `map.js`
+  re-exports them, so `game.js` keeps reading `leadPoint` / `zeroAt` for the
+  rings, the impact marker and the range readout.  The two hosts cannot share
+  code (C# and JS), so they share a case table instead: `tests/cases/fcs.json`
+  is read by both runners and `./run_tests.sh` compares the answers, which is
+  how the 120 lines stay one function.  Aim height is the **target's** own
+  `height * 0.5` on both sides - the hull's geometric centre, and the only aim
+  height there is.  A crew that aimed at its own hull's centre instead was 1.7 m
+  over a rifleman's head at 400 m (`ground_aim` read `d.height` off the shooter),
+  which the 30 mm's `prox` fuse hid and an RPG could not.
 * **A launcher of tubes is described once, in `defs.rack`.** `rack(cols, rows,
   count, bore=, length=, centre=, ...)` hands back a plain dict — the lattice,
   the tube diameter and length, the pitch, the mouth (`centre + length/2`) and
@@ -352,7 +495,7 @@ frontend/
   same target comes back) and then distance-sorts the few candidates in it.
   Rebuild before querying anything that has moved since; in the tick's pipeline
   only `player_input` runs ahead of `ai`, and it moves nothing.
-* **Raiders** (`Modes/Battle/Raids.cs`) are the one unit that plans.  Every
+* **Raiders** (`Systems/AI/Strategies/Raid.cs`) are the one unit that plans.  Every
   `RAID_INTERVAL` a side sends `RAID_SIZE` mechs out, **one per lane, the lanes
   drawn at random**, and each of them is briefed separately (a plan belongs to a
   hull, keyed `(faction, party, lane)` on the world - two raiders two minutes
@@ -373,7 +516,8 @@ frontend/
   is `ai_state`: MARCH, then ASSAULT (stand in the 170 m ring - `waves._capture`
   does the taking), then HOLD for `RAID_HOLD` (a raider in the ring is what
   keeps the enemy from taking the cut back), then the next weak spot.  The
-  `raider` tag is what takes them out of `ai._advance`; the guns stay `ai.run`'s.
+  `raider` tag is what takes them out of the lane policy; the guns stay the engage
+  systems', and the plan reaches the machine as a route (`Nav.add`) plus `nav_speed`.
   Raiders die like any other hull - 58% of them in a measured round - which is
   why the plan dict is pruned when a party is gone.  (The Python tool that drew
   the gradient, the planned routes and where the hulls died went with the Python
@@ -384,7 +528,8 @@ frontend/
   `restart_respawn`, `mech_spawn`, `respawn_delay`). Adding a mode means adding
   a folder, never another `if` in a shared system. Battle runs `ai` + `waves`
   (capture and reinforcement waves); range runs `targets`, the missile post, and
-  `ai` only over the hulls a pilot spawned there (`Modes/Range/TestAi.cs`).
+  the shared AI block, whose queries only reach hulls that carry `ai_crew` - i.e. the
+  ones a pilot dropped there with `debug_spawn`.
 * **A death is planned from where it happened.** `World.kill` records
   `Player.death_pos` and asks the mode for `respawn_delay`; the mode's
   `mech_spawn` later turns that position into a place. Battle's version
@@ -451,15 +596,11 @@ frontend/
   `movement`, before the flights.  The
   broad-phase box grows by the fastest row's displacement (`reach`), or a
   missile crossing into a round's leg is never a candidate.
-  **One table per tick is the shape, but not the count.**  `world.update` used to
-  throw the table away every tick, so `weapons` (which fires before `movement`)
-  had to rebuild every hull's spheres *at its own stage* to solve an aim; now
-  `world.aim_spheres()` is the aiming door: it hands back the table it has plus
-  `row_ok` (those ids are still live hulls owning their ball, and their `pos` is
-  within 10 m of the centre in the table), and only builds one if there is none
-  for this tick — marking it `_sph_premove`, which forces `sphere_table` to
-  rebuild before the sweep.  A table built before `movement` is *not* the one the
-  sweep may use; that flag is the whole of the distinction.
+  **One table per tick, built once by `Sweep.Spheres`, and read by the sweep
+  alone.**  Nothing aims with it any more: fire control solves against the
+  target's *component* (its `pos` and `vel`), not against the sphere table it
+  would present to a round, which is why the table has exactly one reader and
+  exactly one moment.
 * **The geometry is batched, the bodies are not.**  The flight systems fly every
   round first and publish the leg each one covered (`world.sweep`), then
   `FirstHit.Ground` asks the terrain once for the whole tick's legs
@@ -525,7 +666,7 @@ frontend/
   holds, whatever its course), a laser inside 3 km (a red **triangle** at its
   true position with a dashed beam) and a laser further out (the same triangle
   **pinned to the rim**: the bearing is real, the range is "3 km or more").
-  Five judgements, three outputs (`doc/product/rwr.md`):
+  Five judgements, three outputs (`docs/product/rwr.md`):
   `heard` is `d² <= Λ²·K·v_c` with `Λ² = 10^(ΔL/20)` and ΔL = 12 dB
   (`ALARM_DB` / `ALARM_GAIN`), `seen` is `d² <= K·v_c`, `steady` is a horizontal
   bearing that is not drifting (`|θ̇| < (er + WARN_MARGIN)/K`, read over
@@ -607,34 +748,41 @@ frontend/
   and the band it is drawn with (`RING_ALARM_W`, 12.8 px) grows *inwards*:
   the stroke is centred half a width inside the radius, which keeps the ring's
   outer edge - and so its size next to the dial - where it was.
-* **AI missile defence** (`systems/ai.py::_missile_step`) runs inline in
-  `ai.run` before the ground fight and preempts it: a crew that has a round
-  coming for it lays the sight on the lead point (`mu.solve_lead`, which honours
-  the target's vertical velocity - a climbing ATGM is not a hull) and pulls the
-  trigger only when the *bore* is within `atan((prox + hit_r)/d)` (0.15° at
-  1 km, not the 0.14 rad a hull gets).  Only a fused arm fires (`PROX[wid] > 0`,
-  today just the 30 mm), so a 12.7 mm carrier stays out of it - data driven, not
-  a type switch.  That gate is the *AI's* rule only: a missile is a 10 hp / 1
-  armour target like any other, so **any** round landing on one kills it
-  (one 12.7 mm bullet is `AD 10`), which is why a pilot in an APC can and does
-  shoot an incoming round down with the gatling while the AI crew ignores it -
-  the fuse buys margin (2.5 m trigger, 11.4 against 10 hp), not the ability.  "Coming for me" is `seeker target == me` for a top-attack (it
+* **AI missile defence** (`Systems/AI/Intercept.cs` + the platform's `Engage*.cs`)
+  runs in the AI block before the ground fight and preempts it: a crew that has a round
+  coming for it solves the intercept with the same `FireControl.solve` it aims its
+  guns with (a round in the air is a track whose vertical velocity counts - a
+  climbing ATGM is not a hull) and pulls the trigger only when the *bore* is
+  inside `atan((radius + hit_r)/d)`, where `radius` is the **fuse**'s reach
+  (`max(prox, hit_r)`, 2.5 m, so 0.15° at 1 km) instead of a hull's body.  Only a
+  fused arm fires (`PROX[wid] > 0`, today just the 30 mm), so a 12.7 mm carrier
+  stays out of it - data driven, not a type switch.  That gate is the *AI's* rule
+  only: a missile is a 10 hp / 1 armour target like any other, so **any** round
+  landing on one kills it (one 12.7 mm bullet is `AD 10`), which is why a pilot in
+  an APC can and does shoot an incoming round down with the gatling while the AI
+  crew ignores it - the fuse buys margin (2.5 m trigger, 11.4 against 10 hp), not
+  the ability.  "Coming for me" is `seeker target == me` for a top-attack (it
   climbs 150 m and dives, so its straight line misses) - or, once that lock is
   cut, a stare point inside `CPA_MEM` (100 m) of the hull, because a blinded
   round still flies at its memory and can take the hull back - and closest
   approach < `CPA_HIT` (40 m) for everything else; a `t_cpa` gate would say
   nothing (a round is 1.1-2.6 s from its closest approach the moment it is
   first seen).
-  `ai.intercept(world, dt)` is the same step as a standalone pass, for a mode
-  whose hulls do not fight.
+  `Intercept.run` decides only *which* round; laying the gun on it is the platform's
+  engage system, so a crew has exactly one trigger writer (`ai_cover` is the byte
+  that tells it which job this tick's gun has).  `Pipeline.defence()` is that block
+  on its own, for a mode whose hulls do not fight.
 * **The range has a missile-defence post** (`Modes/Range/Interceptor.cs`): one
-  blue AI mech at `(1550, 2250)` with a 30 mm only, running `ai.intercept` and
-  none of the ground AI - it never shoots at the pilot and never drives, and it
+  blue AI mech at `(1550, 2250)` with a 30 mm only - a crew with a radar and no
+  `crew_engage`, so it lays its intercept and never picks a ground fight, and it
   comes back 5 s after being destroyed.  `--check intercept` fires every
-  missile type at it and prints the outcome per round, read out of the server
-  log (`missile N took X (prox Y m) - hp A -> B`, `intercept: ... round N shot
-  down at ...` - both DEBUG, the tool raises those loggers itself).  Measured:
-  34 of 36 rounds fused and shot down (two got through).
+  missile type at it - four rounds at each of two ranges per type, 32 in all -
+  and prints how many came down.  Measured: **22-26 of 32** with one fire
+  control for both jobs, against **15 of 32** for the same table before it
+  (RPG and the top attack were already mostly handled; SACLOS and the 1.2 km
+  rocket nest were not).  The run is close to a coin toss per round - a round
+  gets 3-4 bursts in a 1.5 s window - so read it for the magnitude, three runs
+  at a time.
 * **A guided round flies an airframe, it does not follow a curve** (`Core/Flight.cs`).
   The top-attack missile is a point mass with an angle of attack: guidance demands
   a lateral acceleration, `CL = m·a/(qS)` capped at `cl_max` is what the airframe
@@ -682,7 +830,7 @@ frontend/
   which the range's smoke test reads (`MECH_LOG_LEVEL=DEBUG`), and
   `re-locked on hull N`, which nothing but a reader of the log sees - the
   pilot is not told that his round changed its mind, and the client shows no
-  cue at all.  Numbered in `doc/top_attack_relock.md`.
+  cue at all.  Numbered in `docs/top_attack_relock.md`.
 * **Damage** is two halves, never one number. `defs.pen_damage(ap, ad, dp)`:
   beating the target's `dp` outright delivers the full `ad`, beating only half
   of it shaves `ad/5`, anything duller does nothing. `defs.blast_damage(ed, de,
@@ -714,11 +862,19 @@ frontend/
   gone; so is `DEATH_BLAST_ETYPES` and the four-way `_leave_debris`.
 * **A kill is announced, but only to somebody who has a stake in it.**
   `mortality._feed` writes the one line the HUD's message list shows -
-  `killer killed victim with weapon`, the money appended for the pilot who
-  earned it. It stays silent for infantry (a battle kills them by the dozen)
-  and for AI fighting AI (most of the war, none of a pilot's business), so a
-  line only ever appears when a *pilot* is on one end of it - his kill, or his
-  death; every player sees every line. "The pilot is credited" is decided at
+  `killer killed victim with weapon`, and nothing else: the money is a popup
+  beside the money readout (`game._moneyGain`), because that is the number it
+  changes. The line stays silent for infantry (a battle kills them by the
+  dozen) and for AI fighting AI (most of the war, none of a pilot's business),
+  so it only ever appears when a *pilot* is on one end of it - his kill, or his
+  death; every player sees every line, and the line reads for 20 s
+  (`game.KILL_LIFE_S`) where a notice about the pilot's own machine reads for 6.
+  "A pilot is on one end" is asked of two columns, because the two ends answer
+  differently: the victim's `owner`, and `last_pid` - the pilot of the round
+  that delivered the *killing blow*, -1 once a crew's round does. `last_hit`
+  is the other question ("whose money is it") and keeps a pilot's credit
+  through a crew's finishing hit, so a hull a pilot softened up and a crew
+  finished pays him and announces nobody. "The pilot is credited" is decided at
   the **muzzle**, not at the impact: `proj_pid` / `proj_name` / `proj_etype`
   are frozen onto the round when it leaves (`weapons.fire`), the same rule as
   `blast_pid`, because a round outlives the hull that fired it by a second to
@@ -728,20 +884,26 @@ frontend/
   mech draws one off `defs.AI_NAMES` at spawn and a pilot's hull carries his
   callsign; `[bot]` is appended to the ones no pilot owns. **Who killed it is
   frozen at the hit, not looked up at the death** - `combat.apply` records
-  `last_name` / `last_fac` / `last_etype` / `last_wid` next to `last_hit`, and
+  `last_pid` and `last_name` / `last_fac` / `last_etype` / `last_wid` next to
+  `last_hit`, and
   `blasts.spawn` freezes the same three onto the burst (`blast_name` /
   `blast_etype` / `blast_wid`), because the shooter can be a wreck with its id
   handed out again by the time `mortality` judges the kill. The client only
   paints the words: `game._killfeed` builds segments (`{text, fac, bold}`) and
   `hud._messages` resolves `fac` through `FACTION_COLORS` and draws a dark
   plate under the line, since 12px monospace in three colours is unreadable
-  straight off a bright cloud.
+  straight off a bright cloud. The payout is `hud._status`'s: one `+$N` per
+  `kill` event on the pilot's own pid, on the money's own line and fading out.
 * **An explosion is an entity** (`Blasts.cs`). Whoever wants one - a
   round landing, a proximity fuse, a wreck - only calls `blasts.spawn`, and the
   one implementation of area damage reads it a stage later: `blast_power` =
   `[ed, er]`, `blast_t` the fuse, `blast_friendly` (a weapon burst spares its
   own side, a wreck does not), `blast_skip` the hull already hit directly,
-  `blast_pid` the credit frozen at creation. A hull that dies this tick leaves
+  `blast_pid` the credit frozen at creation, and `blast_name` / `blast_etype` /
+  `blast_wid` the shooter it names. A wreck's burst carries the attribution of
+  the round that killed *it* (`last_pid` plus the same name / side / type /
+  weapon, passed by `mortality._kill`), so a chain reaction hashes to the
+  shooter the feed already named. A hull that dies this tick leaves
   a burst that goes off on the next one, so **a chain reaction is a tick apart
   by construction** and cannot damage the hulk the dead hull has already
   become. `blast_t > dt` would be a burning area; nothing uses that yet.
@@ -771,14 +933,15 @@ frontend/
   lookout and a missile's seeker all lose the hull behind a screen - exactly as
   they lose one behind a stand of trees. It travels in its own snapshot block.
 * **Lanes** — `world.lanes` counts from the red base, `world.lanes_rev` from
-  the blue base. Every per-faction lookup (spawn point, path index, "front
-  line") must use the faction's own copy; mixing them mirrors positions across
-  the map. `path_i` is always an index into the faction's own list, and for a
-  vehicle it is **one past the end once the lane is finished** (the sticky
-  mark that sends the hull at the command base instead).  The lane is a plain
-  polyline: **the map does not round its corners**, because a wheeled hull
-  cannot follow a right angle whatever the map does with it. That is the AI's
-  problem and `ai._passed` is the answer — see the wheeled-hull note below.
+  the blue base. Every per-faction lookup (spawn point, "front line") must use the
+  faction's own copy; mixing them mirrors positions across the map.  Each faction's
+  copy of each lane is registered as a **route** (`World.register_routes`,
+  `Core/Nav.cs`) with the enemy command base appended, so a hull spawned with a lane
+  starts out following it and "the lane has run out" is simply its last point.
+  `path_i` is the **driver's cursor** into that route (`Nav.advance` drops the way
+  points it has passed).  The lane is a plain polyline: **the map does not round its
+  corners**, because a wheeled hull cannot follow a right angle whatever the map does
+  with it — which is the vehicle driver's problem, not a crew's (`Nav.passed`).
 * **Wheeled hulls** — an APC carries the `vehicle` tag, and that tag changes
   both halves of its movement. Locomotion (`movement._vehicle`) is a rear-axle
   bicycle model: `leg_yaw` *is* the hull state (mirrored into `yaw` for the
@@ -799,21 +962,21 @@ frontend/
   standstill, balance point `APC_V_INF`), which is what gives a heavy hull a
   brisk low end and a lazy top end: 0-25 km/h in 3.5 s, 0-100 in 20 s. Reverse
   is `APC_REVERSE` of top speed and only ever used to back off a wall.
-  The command interface is unchanged — the AI still writes a direction and a
-  speed into `vel_cmd`, and `movement` turns it into `vel` — but the AI *drives
-  the way points* (`ai._advance_route`):
+  The interface is an *intent* — the crew says which route and how fast
+  (`nav_route` / `nav_speed`) and `Systems/Movement/Vehicle.cs` drives it, which is
+  why it owns the way point maths too (`Core/Nav.cs`):
   a way point inside the acceptance radius counts as reached and is dropped, so
   the hull is already aiming at the next one while still short of the last — the
   standard acceptance radius of a way point tracker, and what lets a car take a
   dense line of sharp corners at speed by cutting across the inside of them (it
   will happily leave the road doing it; the road is not the constraint). The
-  radius **grows with the speed** (`ai._arrive_radius`: `clamp(speed * 1.1 s,
+  radius **grows with the speed** (`Nav.arrive_radius`: `clamp(speed * 1.1 s,
   10 m, 30 m)`) — a hull at 100 km/h needs tens of metres of arc to turn at all,
   while a slow one can and should hold the line tightly. A point it
   cut *wide* of is dropped too, once the hull is past the line through it
-  square to the incoming leg (`ai._passed`) — otherwise a car that missed the
+  square to the incoming leg (`Nav.passed`) — otherwise a car that missed the
   circle turns back for it for ever. Speed comes from the corners ahead within
-  `APC_CORNER_HORIZON`. A corner's speed comes from the **cut budget**
+  `APC_CORNER_HORIZON` (`Nav.route_speed`). A corner's speed comes from the **cut budget**
   (`APC_CUT`, 8 m): a fillet of radius R misses the vertex by
   `R (1/cos(angle/2) - 1)`, so the budget caps R, the hull floors it, and the
   bend is driven at `sqrt(lat_accel * R)` — a right angle lands at ~11 m/s
@@ -880,7 +1043,9 @@ frontend/
   "smoke"/"terrain" for the seeker's log). A tree hides what stands behind it
   for good, a puff hides it for five seconds and is gone: nothing else differs
   between them, so nothing pairs the two checks up on its own. Every eye goes
-  through it - the AI's `_sees`, the player's IR lock (`Systems/Locking.cs`, which used
+  through it - `Systems/AI/Sense.cs` for the crews (one look per crew per tick,
+  which is what keeps the belief honest), the player's IR lock
+  (`Systems/Locking.cs`, which used
   to ask the field only and so let a hull be locked straight through a screen
   of smoke) and the missile seeker. `map.js` mirrors the same rule for the HUD
   (`MapData.sightAt` + `sightBlocked`, canopy and puffs); the pre-aim box is
@@ -1228,21 +1393,42 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
   the range readout, the arms' markers, the guided rounds' marker - reads
   `_sightAim`, which is what keeps them consistent with what the server does.
   The rings are laid out and picked in **screen space** (`_leadLayout`): a
-  target's two rings, which would always overlap at the assist's width, are
-  drawn side by side (`OO`, `LEAD_RING_GAP` between them) and the pair's whole
-  stadium is the catch area, because the point a pilot aims at - the hull's own
-  box - lands in the sliver between them. A laid-out ring is a **picker**, not a
-  position: `mark.x` / `y` is where it is drawn, `mark.wx` / `wy` / `wz` is the
-  aim point it stands for and the one the sight is snapped to, which is why the
-  `+` sits between the two rings instead of in either of them. Selection is the
-  nearest hull first (`lead.dist`), then the nearer of its two rings. ALT
-  (`input.freeYaw`, the cross is no longer the sight) and an open panel both
-  skip the snap. Width is `aimAssist ? LEAD_RING * assistRing : LEAD_RING`
-  (`_ringPx`), 2x-8x, default 4x, remembered in `localStorage` beside the
-  switch - the same `key` convention as `mech.volume`.  In game `V` throws that
-  same switch (`input.onToggleAssist` -> `_toggleAssist`), so the pilot keeps the
-  pointer and the cross is back under his hand without the panel; the message
-  list says which way it went, and the panel's button reads the same field.
+  target's two rings, when they would overlap at the assist's width, are laid
+  out as a pair along the line their own two solutions make - each ring on its
+  own arm's side of its middle, and no closer in than `LEAD_PAIR_SEP` radii
+  (`hud.js`, 1.0), so the two **overlap** instead of standing tangent - and the
+  direction is kept from the last frame while the two points are closer than a
+  pixel - so the pair rides the true points and a fast target cannot make it
+  swap arrangements between two frames. Overlap is what makes the pair handy:
+  28 px out to the side is a long way to swing a cross to shoot one arm's lead,
+  and two circles cut by one white line still read as two. The cut is
+  `hud._ringCut`: each ring keeps only the arc outside its partner, and the
+  chord between the two crossings - the perpendicular bisector of the centres,
+  i.e. exactly the set of points they are equally far from - is drawn white
+  once for the pair. That line *is* the picker's boundary: selection is the
+  nearest hull first (`lead.dist`), then the nearer of its two centres, so the
+  white line is where the cross hands over from one arm to the other. The
+  pair's whole stadium is the catch area, because the point a pilot aims at -
+  the hull's own box - lands round the middle of it. A
+  laid-out ring is a **picker**, not a position: `mark.x` / `y` is where it is
+  drawn, `mark.wx` / `wy` / `wz` is the aim point it stands for and the one the
+  sight is snapped to, which is why the `+` sits between the two rings instead
+  of in either of them. `_ringScreen` is what puts it there: a mark's own
+  projection when that lands in the frame, and **clamped one ring radius inside
+  the frame** when it does not - a lead is metres to hundreds of metres from the
+  hull (a rocket pod at 2 km flies 4-5 s) and a zoomed sight is a narrow slice of
+  the world, so the answer to "where do I point this arm" goes off the screen
+  regularly; a mark dropped for being out of frame took the whole pair with it
+  (one ring left, no white line, nothing saying which arm the survivor was).
+  `null` only for a point behind the camera, where there is no place to put it.
+  ALT (`input.freeYaw`, the cross is no longer the
+  sight) and an open panel both skip the snap. Width is
+  `aimAssist ? LEAD_RING * assistRing : LEAD_RING` (`_ringPx`), 2x-8x, default
+  4x, remembered in `localStorage` beside the switch - the same `key` convention
+  as `mech.volume`.  In game `V` throws that same switch
+  (`input.onToggleAssist` -> `_toggleAssist`), so the pilot keeps the pointer and
+  the cross is back under his hand without the panel; the message list says
+  which way it went, and the panel's button reads the same field.
 * `map.js` must stay ballistically identical to the server: same gravity,
   same 1/30 step, same launch bias (`wd.bias`), the same "building walls are
   columns, tree trunks are cylinders" rule (`wallAt`/`obstacleAt`/`trunkHit`),
@@ -1477,13 +1663,38 @@ cd frontend && npm install && npm run build      # -> assets/
   ./dotnet.sh run -- --check intercept             # every missile vs the defence post
   ./dotnet.sh run -- --check diag --minutes 2      # what a few AI hulls are doing
   ./dotnet.sh run -- --check net --minutes 30 --from 8   # one pilot's download, per minute
+  ./dotnet.sh run -- --check fcs                   # crew vs pilot, same scenarios
   ```
   `MECH_PERF=1` on the battle check runs it without the per-tick event scan and
-  prints the per-minute cost: on a 12 minute battle it is **1.3 ms/tick**
+  prints the per-minute cost: on a 12 minute battle it is **1.5 ms/tick**
   (0.06 ms of it the 15 Hz wire) against the Python server's 11.5 ms/tick, i.e.
-  ~9x, and the curve is flat where Python's climbs to 18 ms as the field matures.
+  ~8x, and the curve is flat where Python's climbs to 18 ms as the field matures.
+  About 0.2 ms of it is the crews' one look per tick (see "A crew's guns fire at
+  what the crew believes"); before that look it was 1.3 ms.
   Every check ends with `ecs.validate()`, so bookkeeping that a value comparison
   would not catch (a row pointing past its buffer) fails the run.
+* **`--check fcs` is the integration half of the fire control's proof**
+  (`Harness/FcsCheck.cs`): a range world with everything but two hulls and the bases
+  cleared off it, one flat 1.8 km corridor, and two ways to shoot the same target -
+  a real `ai_crew` (the whole `Engage` path) and a player's mech whose sight the
+  harness lays with `FireControl.solve` and whose dial is `pl.zero_range = 1000`.
+  The rounds go through `Weapons.fire` and fly for real, and each column is the
+  median clearance of the rounds fired plus whether the hull died.  The verdict is
+  "the crew is not more than 2 m behind the pilot", and it prints both columns so
+  the numbers can be read: measured, 800 m and 1600 m against a crossing APC and
+  a mech, a standing hull, the rocket nest and the 105 mm all land inside a metre
+  of each other.  The unit tests (`tests/`) prove the two hosts compute the same
+  function; this proves the same function flies the same round in the same world.
+  Four rows on the end cover what that corridor cannot: **`chassis`** fires an
+  APC's gatling, a rifleman's rifle and a mech's RPG (a round that bursts at 0 m
+  from the shooter is a muzzle at the hull's origin), **`pull`** reads `ai_tacc`
+  off a hull circling at 2.4 m/s² (an age that never resets reads 0), and
+  **`smoke`** puts one puff on the sight line and counts the rounds before the
+  screen, at the walking memory, and after it, and reads the memory's own length
+  off the belief (a crew reading the ECS keeps firing through all three; a crew
+  with no memory stops at the first), and **`arsenal`** fires one of each
+  `Defs.AI_LOADOUTS` at a standing APC and splits the rounds by arm (the punch arm
+  has to fire, and the gun has to fill a reload or a launch gap).
 * **`--check net` prices the wire** (`Harness/NetCheck.cs`): one scripted pilot
   (`Check.drive`), every payload `Server.broadcast` would have offered him, off
   the same doors (`snapshot_bytes` / `meta_payload` / `hearable`) at the same
@@ -1538,14 +1749,15 @@ fires on - one blue missile-defence post (`Modes/Range/Interceptor.cs`, 5 s
 respawn) and a ring of per-pilot spawn berths. **The range's own fixtures never shoot at the
 ground** - the targets and the post fire at nothing, so it is the place to test
 ballistics or look at a model up close. A hull a pilot drops there himself
-(`debug_spawn`) is the exception: it is tagged `range_drone`
-(`Mode.console_spawn_extra`) and `Modes/Range/TestAi.cs` runs `ai.run(hulls=)`
-over exactly those hulls, so a spawned red mech picks its own fights with the
-blue targets - which is how an AI crew's missile arm gets watched without
-waiting for a battle.  The tag, not a fixture list, is the test: a tool's
+(`debug_spawn`) is the exception: it is spawned with `range_drone` +
+`front_mission` + `crew_engage` (`Mode.console_spawn_extra`), so the range's own AI
+block drives it and a spawned red mech picks its own fights with the blue targets -
+which is how an AI crew's missile arm gets watched without waiting for a battle.
+The fixture hulls are built with `crew: false` and carry no AI tag at all, so no
+pass can reach them.  The tag, not a fixture list, is the test: a tool's
 scripted shooter (`tools/intercept_check.py`) is spawned untagged and stays a
-puppet. The range has no lanes, so `ai._advance`
-and `ai._advance_route` fall back to walking at the enemy post. The side is the
+puppet. The range has no lanes, so a route is -1 there and the lane policy
+(`Systems/AI/Strategies/Front.cs`) gives its crews the enemy post as a point instead. The side is the
 *lobby's* choice (`fixed_faction`
 is None here; `AUTO` balances, so a second browser lands opposite the first,
 which is how the radar and the intercept are checked from the receiving end -
@@ -1557,7 +1769,7 @@ is started with `MECH_LOG_LEVEL=DEBUG ./dev.sh range`; the browser script
 `tools/smoke_lock_test.js` drives a whole A/B smoke run from the console when
 such a missile is in the air and reads the event stream, not the log.
 Log: `/tmp/mech-range.log`, overrides `MECH_RANGE_PORT` (8011), `MECH_RANGE_LOG`.
-Product notes: `doc/product/range.md`.
+Product notes: `docs/product/range.md`.
 
 **Measure a mechanism on the range, not on a battle.** Weapons, ballistics,
 damage, the seeker and the whole audio chain are all measured this way, because a
@@ -1763,11 +1975,11 @@ for (let k = 0; k < 6; k++) {
 * **Code is English, documentation is Chinese.** Source, comments, commit
   messages, identifiers, log lines and everything a player reads - HUD copy,
   menu labels, feed messages, error text - are written in English. Everything
-  under `doc/` (`doc/product/`, `doc/plans/` and the design notes next to them)
+  under `docs/` (`docs/product/`, `docs/plans/` and the design notes next to them)
   is written in Chinese; a Chinese document quotes UI strings and identifiers
   verbatim in English rather than translating them.
 * The rule is about the *language of the file*, never about its name: a
-  `README.md` under `doc/` is Chinese, an English `///` comment is English,
+  `README.md` under `docs/` is Chinese, an English `///` comment is English,
   and the header comment of a tool in `tools/` is English like the code it
   documents. `AGENTS.md` itself stays English - it is the agent's working
   notes, not a document.
@@ -1798,7 +2010,7 @@ for (let k = 0; k < 6; k++) {
   (`1.12.2` -> `1.12.3`).** A change to a document or a comment alone bumps
   nothing - the number is the product's, not the repository's. A bump is part of
   the change, in the same commit, so a build and a screenshot name the same
-  version; a feature bump also carries its `doc/product/CHANGELOG.md` entry,
+  version; a feature bump also carries its `docs/product/CHANGELOG.md` entry,
   while a patch bump has nothing to write there, because a player sees no
   difference.
 * Tuning values (damage, rpm, range, speeds, wave interval, capture time) live

@@ -20,6 +20,10 @@ public sealed class Case
     public string why = "";
     public FireControl.Shot shot;
     public FireControl.Track track;
+    /// <summary>m; the target's biggest hit sphere.  Not an input to the solver - it
+    /// is what the trigger gate and this suite's own L1 assertion measure a shot
+    /// by (`Tol.Miss`).</summary>
+    public float radius;
 }
 
 public static class Cases
@@ -70,8 +74,8 @@ public static class Cases
                 ReadVec3(track.GetProperty("pos")),
                 ReadVec3(track.GetProperty("vel")),
                 stale ? default : new Vec3(acc[0].GetSingle(), 0f, acc[1].GetSingle()),
-                track.GetProperty("aim").GetSingle(),
-                track.GetProperty("radius").GetSingle());
+                track.GetProperty("aim").GetSingle());
+            c.radius = track.GetProperty("radius").GetSingle();
             All.Add(c);
         }
     }

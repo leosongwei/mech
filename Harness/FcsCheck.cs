@@ -37,6 +37,14 @@ public static class FcsCheck
 
     private sealed record Scenario(string Name, int Weapon, int Target, float Range, float Speed);
 
+    /// <summary>A row shot from another chassis: the fire control is the same law on
+    /// all three, so the same target has to take damage from all three.  The muzzle
+    /// and the aim height are the two things that differ, and both of them have been
+    /// wrong in a way no mech-only scenario can see (a round that leaves the hull's
+    /// own origin bursts on the ground in its first metre).</summary>
+    private sealed record Chassis(string Name, int Shooter, int[] Arms, int Target,
+                                  float Range, float Speed);
+
     /// <summary>Where the round's clearance is measured: the hull's geometric centre,
     /// the same aim height the solver is given.</summary>
     private static float AimHeight(int etype) => Defs.UNIT_DEFS[etype].height * 0.5f;
@@ -78,9 +86,85 @@ public static class FcsCheck
             if (verdict == "GAP") bad++;
             Console.WriteLine($"{s.Name,-44} {Show(crew),14} {Show(pilot),16}  {verdict}");
         }
+        // ---- every chassis has a muzzle --------------------------------------
+        // One row per chassis, all three through the same law: a carrier's gunner, a
+        // rifleman, and a mech firing a round with no fuse at a man (the aim height
+        // is the target's, not the shooter's - an RPG has no burst to make up for a
+        // sight line drawn 1.7 m over his head).
+        var chassis = new List<Chassis>
+        {
+            new("APC mg127 vs APC 800 standing", Defs.ETYPE_APC,
+                new[] { Defs.WID_MG127, Defs.WID_NONE }, Defs.ETYPE_APC, 800f, 0f),
+            new("rifleman vs rifleman 100 standing", Defs.ETYPE_INF_RIFLE,
+                new[] { Defs.WID_RIFLE556, Defs.WID_NONE }, Defs.ETYPE_INF_RIFLE, 100f, 0f),
+            new("mech RPG vs rifleman 400 standing", Defs.ETYPE_MECH,
+                new[] { Defs.WID_RPG, Defs.WID_AC30 }, Defs.ETYPE_INF_RIFLE, 400f, 0f),
+        };
+        Console.WriteLine("\nchassis                                      rounds    burst    target");
+        foreach (var s in chassis)
+        {
+            var r = ChassisShot(world, sx, sz, s);
+            string verdict = r.hurt > 0f || r.killed ? "ok" : "GAP";
+            if (verdict == "GAP") bad++;
+            Console.WriteLine($"{s.Name,-44} {r.rounds,6} {r.burst,9:0.0} m  "
+                              + $"{(r.killed ? "KILL" : $"-{r.hurt:0} hp"),9}  {verdict}");
+        }
+        // ---- a mech's second arm is a weapon, and it has to get used ---------
+        // Every AI loadout pairs the 30 mm with something: a rocket nest, a beam
+        // rider, a top attack, a 105 mm, a cheap gatling or a second cannon.  The two
+        // muzzles are 2.86 m apart and the hull can only point one way, so exactly one
+        // arm owns the sight at a time - which makes *which* arm a decision, and the
+        // row asks that both of them get their turn: the punch arm (the one the policy
+        // picks) and, once it cannot fire, the gun.
+        Console.WriteLine("\narsenal                                      punch arm  other arm");
+        foreach (var (_, loadout) in Defs.AI_LOADOUTS)
+        {
+            var a = ArsenalRow(world, sx, sz, loadout);
+            // the punch arm has to fire; the gun has to fire too when the punch arm
+            // spends more than the hand-off between rounds (a reload, a launch gap) -
+            // the two that never need it are the twin cannon (one hull, one bearing)
+            // and the cheap secondary that the gun outranks on both counts
+            bool ok = a.punch > 0 && (!a.slow_punch || a.other > 0);
+            if (!ok) bad++;
+            Console.WriteLine($"{ArsenalName(loadout),-44} {a.punch,9} {a.other,10}"
+                              + $"  {(a.slow_punch ? "(gun fills the gap)" : "")}  "
+                              + $"{(ok ? "ok" : "GAP")}");
+        }
+        // ---- the pull is measured on a target the crew has held a while ------
+        // `ai_tacc` is a finite difference of the velocities the ECS holds, EMA'd on
+        // the client's own time constant.  A hull going round a 60 m circle at
+        // 12 m/s pulls 2.4 m/s^2 the whole way; what this asks is that the number is
+        // still being refreshed seconds later (a sample age that never resets reads
+        // zero from half a second on).
+        var pull = PullRow(world, sx, sz, out float want);
+        bool pullOk = MathF.Abs(pull - want) <= 0.3f * want;
+        Console.WriteLine($"\npull: {pull:0.00} m/s^2 measured on a hull circling at "
+                          + $"{want:0.00} m/s^2 after 4 s  {(pullOk ? "ok" : "GAP")}");
+        if (!pullOk) bad++;
+
+        // ---- a screen of smoke is a screen for the guns ----------------------
+        // The crew works a hull, a puff is popped between them, and the question is
+        // not "does it keep shooting" (it does - at where it believes the hull went)
+        // but "does it stop when the memory runs out", and "was the sight really the
+        // thing that cut it".
+        var screen = ScreenRow(world, sx, sz);
+        // three claims: it was shooting, it went on shooting at what it believed, and
+        // it stopped when the memory ran out - and the memory is the rule's own 2 s,
+        // not a crew's taste
+        bool screenOk = screen.before > 0 && screen.during > 0 && screen.after == 0
+                        && screen.memory >= 0.5f * Crew.MEMORY
+                        && screen.memory <= Crew.MEMORY + 0.2f;
+        Console.WriteLine($"\nsmoke: {screen.before} rounds before the screen "
+                          + $"({screen.hp:0} hp landed), memory ran to {screen.memory:0.0} s, "
+                          + $"{screen.during} rounds at the memory, {screen.after} after it"
+                          + $"  {(screenOk ? "ok" : "GAP")}");
+        if (!screenOk) bad++;
+
         Console.WriteLine(bad == 0
-            ? "\nfcs: the crew and the pilot agree on every scenario"
-            : $"\nfcs: {bad} scenario(s) where the crew is behind the pilot by more than 2 m");
+            ? "\nfcs: the crew and the pilot agree on every scenario, every chassis hits, "
+              + "and smoke is a screen"
+            : $"\nfcs: {bad} gap(s) - a crew behind its pilot, a chassis that cannot hit, "
+              + "or a screen that does not hide");
         return bad == 0 ? 0 : 1;
     }
 
@@ -158,6 +242,265 @@ public static class FcsCheck
         if (crew.Rounds == 0 && pilot.Rounds > 0) return true;
         if (pilot.Rounds == 0) return false;
         return crew.Miss > pilot.Miss + 2f;
+    }
+
+    /// <summary>One AI loadout's rounds, split by arm, over a window at a standing
+    /// APC.  `punch` is the arm the policy would pick, `other` the one it leaves the
+    /// sight to when the punch arm cannot fire (a reload, a launch gap, an empty
+    /// rack).  The target is respawned when it dies: the row is about fire, not about
+    /// the kill.</summary>
+    private static (int punch, int other, bool slow_punch) ArsenalRow(
+        World world, float sx, float sz, int[] arms)
+    {
+        var e = world.ecs;
+        const float range = 800f;
+        int punch = PunchArm(arms);
+        int shooter = world.spawn_unit(Defs.ETYPE_MECH, Defs.FACTION_RED, sx, sz, -1,
+                                       weapons: arms, extra: new[] { AiTags.ENGAGE }, crew: true);
+        int target = world.spawn_unit(Defs.ETYPE_APC, Defs.FACTION_BLUE, sx + range, sz, -1,
+                                      crew: false);
+        int[] rounds = new int[2];
+        for (int tick = 0; tick < (int)(12f / DT); tick++)
+        {
+            Sweep(world, shooter, target);
+            if (!IsHull(e, shooter)) break;
+            if (!IsHull(e, target))
+            {
+                target = world.spawn_unit(Defs.ETYPE_APC, Defs.FACTION_BLUE, sx + range, sz,
+                                          -1, crew: false);
+            }
+            e.fv("pos").set3(target, sx + range, world.terrain.height_at(sx + range, sz), sz);
+            e.fv("vel").set3(target, 0f, 0f, 0f);
+            world.update(DT);
+            foreach (var ev in world.events)
+            {
+                if (ev.GetValueOrDefault("k") as string != "shot") continue;
+                if (ev.GetValueOrDefault("eid") is not int sid || sid != shooter) continue;
+                int arm = ev.GetValueOrDefault("arm") is int a ? a : -1;
+                if (arm is 0 or 1) rounds[arm]++;
+            }
+            world.events.Clear();
+        }
+        e.destroy(shooter);
+        if (IsHull(e, target)) e.destroy(target);
+        var wd = Defs.WEAPONS[arms[punch]];
+        // a round that spends longer than the hand-off between shots leaves the sight
+        // to the other arm; a beam rider holds it on purpose (the sight guides it)
+        bool slow = wd.kind == "saclos" ? false
+                    : wd.kind == "top" || 60f / MathF.Max(wd.rpm, 1f) > Engage.MASTER_HANDOFF;
+        return (rounds[punch], rounds[1 - punch], slow);
+    }
+
+    /// <summary>The arm the master-arm policy picks: the round that hurts most
+    /// (`Defs.AI_MASTER_ARM`), left arm on a tie - the same arithmetic
+    /// `Engage.ground_aim` runs.</summary>
+    private static int PunchArm(int[] arms)
+    {
+        int best = 0;
+        float score = float.NegativeInfinity;
+        for (int arm = 0; arm < 2; arm++)
+        {
+            var wd = Defs.WEAPONS[arms[arm]];
+            float s = wd.ad + wd.ed;
+            if (s > score) { score = s; best = arm; }
+        }
+        return best;
+    }
+
+    private static string ArsenalName(int[] arms) =>
+        $"{Defs.WEAPONS[arms[0]].name.Split(' ')[0]} + {Defs.WEAPONS[arms[1]].name.Split(' ')[0]}";
+
+    /// <summary>The pull a crew measures on a target it has held for seconds.
+    ///
+    /// The hull is driven round a circle: at `v` m/s on radius `r` the acceleration
+    /// is `v^2 / r`, constant in magnitude and turning with the hull, which is the
+    /// case a finite difference of two velocity samples measures cleanly.
+    /// </summary>
+    private static float PullRow(World world, float sx, float sz, out float want)
+    {
+        var e = world.ecs;
+        const float range = 900f, v = 12f, radius = 60f;
+        float w = v / radius;
+        want = v * v / radius;
+        int shooter = world.spawn_unit(Defs.ETYPE_MECH, Defs.FACTION_RED, sx, sz, -1,
+                                       weapons: new[] { Defs.WID_AC30, Defs.WID_NONE },
+                                       extra: new[] { AiTags.ENGAGE }, crew: true);
+        int target = world.spawn_unit(Defs.ETYPE_APC, Defs.FACTION_BLUE, sx + range, sz, -1,
+                                      crew: false);
+        float t = 0f;
+        for (int tick = 0; tick < (int)(5f / DT); tick++)
+        {
+            t += DT;
+            Sweep(world, shooter, target);
+            if (!IsHull(e, target)) break;
+            float a = w * t;
+            float cx = sx + range + radius * (MathF.Cos(a) - 1f);
+            float cz = sz + radius * MathF.Sin(a);
+            e.fv("pos").set3(target, cx, world.terrain.height_at(cx, cz), cz);
+            e.fv("vel").set3(target, -v * MathF.Sin(a), 0f, v * MathF.Cos(a));
+            world.update(DT);
+        }
+        // read it the way the fire control does (`CrewColumns.accel_of`): a sample
+        // older than `ACCEL_STALE` is not a pull, it is a memory of one
+        float age = e.fv("ai_tacc").get(shooter, 4);
+        float ax = e.fv("ai_tacc").get(shooter, 0), az = e.fv("ai_tacc").get(shooter, 1);
+        float pull = age <= CrewColumns.ACCEL_STALE ? MathF.Sqrt(ax * ax + az * az) : 0f;
+        e.destroy(shooter);
+        if (IsHull(e, target)) e.destroy(target);
+        return pull;
+    }
+
+    /// <summary>A puff of smoke between a crew and the hull it is working.
+    ///
+    /// The crew fires for two and a half seconds, then the screen goes up: the sight
+    /// is cut, `Sense` starts walking the belief, and the crew keeps firing at where
+    /// it thinks the hull is until `Crew.MEMORY` runs out.  What this row checks is the
+    /// three-part rule that makes smoke worth pulling - it was shooting before, it
+    /// shoots into the screen (at its own inference, not at the truth), and it stops
+    /// when the memory is gone.  A crew that never stops is reading the engine; one
+    /// that stops on the first puff has no memory at all.
+    /// </summary>
+    private static (int before, float memory, int during, int after, float hp) ScreenRow(
+        World world, float sx, float sz)
+    {
+        var e = world.ecs;
+        const float range = 700f;
+        // standing still on purpose: the screen then hides it for the whole window,
+        // so the phases are the rule's and not the puff's geometry
+        const float speed = 0f;
+        const float shotAt = 2.5f;      // s of clear shooting before the screen
+        const float window = 8f;
+        int shooter = world.spawn_unit(Defs.ETYPE_MECH, Defs.FACTION_RED, sx, sz, -1,
+                                       weapons: new[] { Defs.WID_AC30, Defs.WID_NONE },
+                                       extra: new[] { AiTags.ENGAGE }, crew: true);
+        int target = world.spawn_unit(Defs.ETYPE_APC, Defs.FACTION_BLUE, sx + range, sz, -1,
+                                      crew: false);
+        float hp0 = e.fv("hp")[target];
+        // how long the crew went on believing, measured on the belief itself: the age
+        // it had reached when it gave the hull up.  A crew reading the engine reads 0
+        // (it is never blind), and one with no memory reads 0 too (it drops the hull
+        // on the first puff) - `Crew.MEMORY` is the number in between
+        float t = 0f, firstBlocked = -1f, memory = 0f;
+        int before = 0, during = 0, after = 0, roundsBefore = 0;
+        float hpBefore = 0f;
+        var seen = new HashSet<int>();
+        for (int tick = 0; tick < (int)(window / DT); tick++)
+        {
+            t += DT;
+            Sweep(world, shooter, target);
+            if (!IsHull(e, target)) break;
+            e.fv("pos").set3(target, sx + range,
+                             world.terrain.height_at(sx + range, sz + speed * t), sz + speed * t);
+            e.fv("vel").set3(target, 0f, 0f, speed);
+            if (t >= shotAt && firstBlocked < 0f)
+            {
+                before = roundsBefore;
+                hpBefore = hp0 - e.fv("hp")[target];
+                // low and close, on the sight line: a puff is a 16 m ball when it
+                // bursts and creeps out to 45 m, so a screen 120 m out covers the
+                // whole leg to the hull
+                Puff(world, new Vec3(sx + 120f, world.terrain.height_at(sx + 120f, sz) + 6f, sz));
+                firstBlocked = t;
+            }
+            world.update(DT);
+            // the screen is what this row is about, so the crew's knowledge of *this*
+            // hull is what is counted: the range world's own spawner keeps putting
+            // fresh targets on the map and a crew that re-acquires one of those has
+            // not seen through the smoke
+            bool known = e.iv("target").get(shooter, 0) == target
+                         && e.fv("ai_tgt").get(shooter, 7) > 0.5f;
+            if (known && firstBlocked >= 0f)
+                memory = MathF.Max(memory, e.fv("ai_tgt").get(shooter, 6));
+            // a round's phase is the state of the crew's knowledge when it left
+            foreach (int id in world.projectiles())
+            {
+                if (!seen.Add(id)) continue;
+                if (e.iv("proj_src").get(id, 0) != shooter) continue;
+                if (firstBlocked < 0f) roundsBefore++;
+                else if (known) during++;
+                else after++;
+            }
+        }
+        e.destroy(shooter);
+        if (IsHull(e, target)) e.destroy(target);
+        return (before, memory, during, after, hpBefore);
+    }
+
+    /// <summary>One puff, standing where it is put: a canister about to burst with no
+    /// velocity, so `Systems/Smoke.cs` pops it on the spot in the first tick.</summary>
+    private static void Puff(World world, Vec3 at)
+    {
+        var e = world.ecs;
+        int cid = e.create(Components.CANISTER_COMPS);
+        e.fv("pos").set3(cid, at.x, at.y, at.z);
+        e.fv("vel").set3(cid, 0f, 0f, 0f);
+        e.fv("smoke_t")[cid] = DT;                       // bursts on the next tick
+        var r = Smoke._radii(0f);
+        e.fv("smoke_r").set3(cid, r.x, r.y, r.z);
+        e.fv("smoke_s")[cid] = 1f;
+    }
+
+
+    /// <summary>One row from another chassis: rounds fired, the nearest burst (metres
+    /// from the shooter - a muzzle at the hull's own origin reads 0 m, because that
+    /// round bursts in its first metre), and what the target lost.</summary>
+    private static (int rounds, float burst, float hurt, bool killed) ChassisShot(
+        World world, float sx, float sz, in Chassis s)
+    {
+        var e = world.ecs;
+        int shooter = world.spawn_unit(s.Shooter, Defs.FACTION_RED, sx, sz, -1,
+                                       weapons: s.Arms, extra: new[] { AiTags.ENGAGE },
+                                       crew: true);
+        int target = world.spawn_unit(s.Target, Defs.FACTION_BLUE, sx + s.Range, sz, -1,
+                                      crew: false);
+        float hp0 = e.fv("hp")[target];
+        var seen = new HashSet<int>();
+        var land = new List<float>();
+        int rounds = 0;
+        bool killed = false;
+        float t = 0f;
+        for (int tick = 0; tick < (int)(WINDOW / DT); tick++)
+        {
+            t += DT;
+            Sweep(world, shooter, target);
+            if (!IsHull(e, target)) { killed = true; break; }
+            e.fv("pos").set3(target, sx + s.Range,
+                             world.terrain.height_at(sx + s.Range, sz + s.Speed * t),
+                             sz + s.Speed * t);
+            e.fv("vel").set3(target, 0f, 0f, s.Speed);
+            world.update(DT);
+            if (Environment.GetEnvironmentVariable("MECH_FCS_DEBUG") == "1" && tick % 15 == 0)
+            {
+                var a2 = e.arch_of(shooter);
+                int r2 = e.row_of(shooter);
+                Console.Error.WriteLine($"t={t:0.0} dbg tgt={e.iv("target")[shooter]} "
+                    + $"trig={e.uv("trigger")[shooter]} mag={(a2 is null ? -1 : a2.i("mag")[r2 * 2])} "
+                    + $"cool={(a2 is null ? -1 : a2.f("cool")[r2 * 2]):0.00} "
+                    + $"yaw={e.fv("yaw")[shooter]:0.0000} syaw={e.fv("sight_yaw")[shooter]:0.0000} "
+                    + $"pitch={e.fv("pitch")[shooter]:0.0000} state={e.uv("ai_state")[shooter]} "
+                    + $"tgt_hp={(IsHull(e, target) ? e.fv("hp")[target] : 0f):0}");
+            }
+            foreach (int id in world.projectiles())
+            {
+                if (seen.Add(id) && e.iv("proj_src").get(id, 0) == shooter) rounds++;
+            }
+            // only two hulls stand on this field and one of them does not shoot, so a
+            // burst is this shooter's round coming apart
+            foreach (var ev in world.events)
+            {
+                if (!ev.TryGetValue("k", out var k) || (string?)k != "boom") continue;
+                if (!ev.TryGetValue("x", out var bx) || bx is not float x) continue;
+                if (!ev.TryGetValue("z", out var bz) || bz is not float z) continue;
+                land.Add(MathF.Sqrt((x - sx) * (x - sx) + (z - sz) * (z - sz)));
+            }
+            world.events.Clear();
+        }
+        // a hull that is gone took everything it had (its id belongs to the wreck)
+        killed |= !IsHull(e, target);
+        float hurt = killed ? hp0 : MathF.Max(0f, hp0 - e.fv("hp")[target]);
+        e.destroy(shooter);
+        if (IsHull(e, target)) e.destroy(target);
+        return (rounds, land.Count == 0 ? float.NaN : land.Min(), hurt, killed);
     }
 
     /// <summary>One shot, one way.</summary>
@@ -267,8 +610,7 @@ public static class FcsCheck
                                              out _, out _, out _);
         var tp = e.fv("pos").get3(target);
         var track = new FireControl.Track(tp, e.fv("vel").get3(target), default,
-                                          Defs.UNIT_DEFS[s.Target].height * 0.5f,
-                                          MathUtil.max_radius(s.Target));
+                                          Defs.UNIT_DEFS[s.Target].height * 0.5f);
         var sol = FireControl.solve(new FireControl.Shot(muzzle, eye, wd, pl.zero_range), track);
         if (!sol.valid) return;
         pl.in_yaw = sol.yaw;

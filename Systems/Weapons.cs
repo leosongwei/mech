@@ -27,6 +27,11 @@ public static class Weapons
 
     public static int kind_id(string kind) => KIND_ID.TryGetValue(kind, out int k) ? k : 0;
 
+    /// <summary>m: a man's weapon is at his hands, this far out along the bore from
+    /// the shoulder the crew looks over (`aim_of`).  A carriage or a mech carries its
+    /// own reach in the weapon table.</summary>
+    public const float FOOT_REACH = 0.7f;
+
     /// <summary>(origin, yaw, pitch) of the *sight*: where this unit's crew is looking.
     ///
     /// For a mech that is the free turret on the roof - the eye the camera sits in
@@ -215,6 +220,13 @@ public static class Weapons
     ///
     /// `right` / `up` are the tube the next round is in, in the rack's own lattice
     /// (`defs.rack_tube`): a pod fires out of the cells it still has rounds in.
+    ///
+    /// Every chassis has a mouth: a mech's arm (`muzzle_point`, with the lateral
+    /// offset and the barrel's reach), a carrier's turret and a man's shoulder
+    /// (both the point `aim_of` puts its eye at, out along the bore).  All three are
+    /// the point the fire control solves from, so the solved shot and the fired shot
+    /// leave from the same place - a round fired from the hull's origin is at ground
+    /// level, and that is a hit on the ground.
     /// </summary>
     public static Vec3 launch_geometry(World world, int eid, int arm, WeaponDef wd,
                                        float yaw, float pitch,
@@ -227,7 +239,7 @@ public static class Weapons
         right = 0f;
         up = 0f;
         var origin = e.fv("pos").get3(eid);
-        if (e.uv("etype")[eid] != Defs.ETYPE_MECH) return origin;
+        int etype = e.uv("etype")[eid];
         // where the bore ends, in order of who knows best: the weapon itself (the
         // 105 mm's barrel runs 5 m past its receiver), then its rack (a launcher of
         // tubes ends at the mouth of the tubes), then the kind's figure.
@@ -236,6 +248,17 @@ public static class Weapons
         else if (rack is not null) reach = rack.mouth;
         else if (Defs.MECH_ARM_REACH.TryGetValue(wd.kind, out float r)) reach = r;
         else reach = 1.8f;
+        if (etype != Defs.ETYPE_MECH)
+        {
+            // a carrier's gun is its turret and a man's is carried at his shoulder:
+            // the mouth is the mount (`aim_of`, which is also where the crew looks
+            // from) plus the bore's own length along the line it is laid on.  The
+            // hull's origin is at ground level, and a round that starts there is a
+            // hit on the ground in the first metre of its leg (`ground_hits_many`).
+            var (mount, _, _) = aim_of(world, eid);
+            var dir = MathUtil.dir_from(yaw, tube_pitch);
+            return mount + dir * (etype == Defs.ETYPE_APC ? reach : FOOT_REACH);
+        }
         if (rack is not null)
         {
             // `mag` is the magazine's size, `mag[eid, arm]` the pre-shot count here -

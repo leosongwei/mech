@@ -60,7 +60,8 @@ Net/
   Server.cs                # ASP.NET Core: websockets, static files, 30 Hz game loop
 Systems/                   # mechanics shared by every mode, each exposes run(world, dt)
                            #   AI/        the crews (see "AI is intent, movement is the machine"):
-                           #     Sense.cs, Threats.cs, Intercept.cs, Engage{Mech,Vehicle,Foot}.cs,
+                           #     Sense.cs (one look per crew per tick -> `ai_tgt`),
+                           #     Threats.cs, Intercept.cs, Engage{Mech,Vehicle,Foot}.cs,
                            #     Wander.cs (one file = one run), Strategies/{Front,Raid}.cs
                            #     (mission state machines), Support/{Tags,Crew,Policy,Engage,
                            #     ThreatTable}.cs (columns, vocabulary, shared fire control),
@@ -346,48 +347,102 @@ frontend/
 * **One fire-control law, two settings** (`Core/FireControl.cs`, mirrored line for
   line by `frontend/src/fcs.js`).  `solve(in Shot, in Track)` takes the muzzle, the
   eye, the gun, and a *track* (the target's position, the velocity it is really
-  moving at, the pull measured on it, the height to aim at, its biggest hit
-  sphere) and answers the point to lay the sight on, the angles, the elevation the
-  tube leaves at and the time of flight.  The one difference between the two
+  moving at, the pull measured on it, the height to aim at) and answers the point
+  to lay the sight on, the angles, the elevation the tube leaves at and the time
+  of flight.  The one difference between the two
   callers is the **zero**: a pilot's is the range on his dial
   (`pl.zero_range`, CTRL+wheel, 0.5-4 km, `Defs.ZERO_DEFAULT` at spawn), which
   keeps his reticle still while it crosses a crest; a crew has no reticle, so its
   zero is the range of the point it is engaging, solved from the same start.  The
   law is a pure function of its inputs - no `World`, no ECS, no `Rng`, and no
   `wd.spread` - which is what makes it testable (`tests/`, `run_tests.sh`).
+  `Solution.valid` is "this trajectory exists" (a time of flight, an elevation
+  under `ZERO_MAX_ELEV`); the inner 0.15 m convergence threshold is part of the
+  law, and both hosts run the same four iterations.
 * **Every arm solves its own shot; one arm owns the sight.**  A 30 mm and a rocket
   nest differ by 3x in flight time, so `Engage.ground_aim` solves per arm from that
   arm's own muzzle (`Weapons.launch_geometry` - the rack's elevation, the barrel's
   reach, the tube the next round is in), writes each arm's launch elevation into
   `aim_elev` (`Weapons.fire` reads it and adds dispersion only), and lays
   `sight_yaw` / `sight_pitch` on the **master arm**'s intercept point
-  (`Defs.AI_MASTER_ARM`: the round that arrives first).  The hull and the arms
-  slew after that one line (`Systems/Gunnery.cs`), so what the crew is looking at
-  and where the tubes point are two different things, and the arms that do not own
-  the sight fire only while their own bore is inside their own gate.  There is no
+  (`Defs.AI_MASTER_ARM`).  The hull and the arms slew after that one line
+  (`Systems/Gunnery.cs`), so what the crew is looking at and where the tubes point
+  are two different things, and the arms that do not own the sight fire only while
+  their own bore is inside their own gate.  There is no
   "aim speed" for the AI any more: leading a moving hull for a beam rider used to
   mean picking the *slowest* arm's average speed (the old `mean_speed`, which read 55 m/s
   for the rocket nest because the launch charge is nothing next to the motor) and
   the whole sight line was dragged with it.
+* **Which arm owns the sight is which weapon the mech uses.**  The two muzzles are
+  2.86 m apart (`MECH_ARM_MUZZLE` at -/+1.43) and the hull points one way, so the
+  arm laid on the master's solution is the arm that hits: the other one's round
+  leaves on the same bearing and misses by 2.86 m, wider than an APC's 1.4 m hit
+  sphere.  That makes `Defs.AI_MASTER_ARM` the whole armament decision, and it is
+  `Punch` (`ad + ed`) - a rocket nest, a beam rider, a top attack and a 105 mm all
+  outrank the 30 mm.  `Engage.MASTER_HANDOFF` (0.5 s) is the other half: an arm
+  with no rounds left, a reload or a launch gap longer than half a second hands the
+  sight over (`Engage._can_fire`), so a 105 mm's 3 s reload and a top attack's
+  `AI_LAUNCH_GAP` are covered by the gun instead of by silence, and a crew never
+  goes quiet with a full belt in its left arm.  A beam rider is exempt: it rides
+  `aim_of`, so its arm keeps the sight whatever its clock says.  Measured
+  (`--check fcs`, the `arsenal` row, 6 loadouts x 12 s): `Fastest` read "the 30 mm,
+  always" - 0 rounds from every rocket nest, SACLOS pack and top-attack rack in the
+  game, one arm for a whole battle; `Punch` reads 40 rockets + 31 cannon rounds,
+  16 SACLOS + 37, one top attack + 58, 4 x 105 mm + 47.
+* **Every chassis has a muzzle of its own** (`Weapons.launch_geometry`, the one
+  door a round leaves through).  A mech solves its arm's offset off
+  `MECH_ARM_MUZZLE` / `reach` / the rack; an APC solves off its **turret**
+  (`Weapons.bore_of` - its `yaw` is the *hull*, which is where it drives) and
+  `reach`; a man off his own body (`FOOT_REACH` 0.7 m).  A hull's own `pos` is the
+  ground it stands on, so a muzzle left there puts `first_hit_t` at 0 on the first
+  tick (`terrain.ground_hits_many` answers the leg's start) and every round bursts
+  under the shooter's feet - measured, an APC fired 299 rounds and landed all of
+  them at 0 m.  `Harness/FcsCheck.cs` keeps a row per chassis for exactly this.
 * **The trigger is a geometric gate, never a taste.**  The bearing must be inside
   the angle the target covers at that range,
   `atan((radius + hit_r) / dist)` - a round that misses a hull by a metre still
   counts, a round that misses a missile by a metre is a miss.  The old fixed
-  0.14 rad was 280 m of error at 2 km, i.e. a crew hosing the dirt: four 12
-  minute `--check battle` runs before and three after, the same destruction (402 deaths before,
-  411 after) on **54k rounds instead of 35k** - 134 rounds per kill down to 86.
+  0.14 rad was 280 m of error at 2 km, i.e. a crew hosing the dirt: three 12
+  minute `--check battle` runs put 374-473 deaths on **14-15k rounds**, 32-38
+  rounds per kill (402 deaths on 54k rounds, 134 per kill, before the law moved).
+  The gate is measured on *that arm's* bore, which is why a mech's second arm
+  stands down while the hull is laid on the master's solution: the two muzzles
+  are 2.86 m apart and the hull can only point one way, so the second arm's round
+  misses by that much - more than an APC's 1.78 m hit sphere at any range.  That
+  is geometry, not a wiring defect: laying the *hull* on the target's centre
+  instead would put the master arm 1.43 m off, which misses a rifleman (0.65 m).
   The *elevation* side is the machine's own tolerance (`Engage.PITCH_TOL` 0.02 rad),
   because the elevation a round leaves at is `aim_elev`, already solved - no
   unguided round leaves along the arm's pitch, and the two kinds that do carry
   their own guidance, straight down the sight line.
+* **A crew's guns fire at what the crew believes** (`ai_tgt`, `Ecs/Components.cs`).
+  `Systems/AI/Sense.cs` is the only writer: one look per crew per tick through
+  `Sight.clear` at the *target's* own body (60 % of its height), and while the
+  line is clear the belief *is* the truth - position, velocity and type copied in,
+  with `measure_accel` reading the same velocity the client differentiates.  When
+  the line is cut (smoke, a crest, a canopy, a house) the copying stops and the
+  point walks at the velocity stored with it for `Crew.MEMORY` (2 s), then the
+  crew forgets the hull.  `Engage.ground_aim` reads *only* that belief - never
+  `fv("pos")` for a target - so a screen of smoke is a screen for the guns and not
+  just for the picture, and a crew leads a hull it cannot see exactly as well as a
+  seeker does (`Core/Seeker.cs` is the same idea one round out).  The scan clock
+  (`ACQUIRE` 0.45 s, jittered 0.34-0.61 s) now only decides whether to *change*
+  target: it casts `SIGHT_CASTS` lines through the grid's box, and a target it
+  already holds is re-looked at every tick.  The look costs 0.2 ms/tick of a
+  12 minute battle (1.48 against 1.3 ms before it), and the alternative was the
+  asymmetry the whole design is built to avoid.
+
 * **The client solves the same law for the HUD** (`frontend/src/fcs.js`:
   `leadPoint`, `zeroAt`, `solveElevation`, `flightTo`, `solve`).  `map.js`
   re-exports them, so `game.js` keeps reading `leadPoint` / `zeroAt` for the
   rings, the impact marker and the range readout.  The two hosts cannot share
   code (C# and JS), so they share a case table instead: `tests/cases/fcs.json`
   is read by both runners and `./run_tests.sh` compares the answers, which is
-  how the 120 lines stay one function.  Aim height is `height * 0.5` on both
-  sides - the hull's geometric centre, and the only aim height there is.
+  how the 120 lines stay one function.  Aim height is the **target's** own
+  `height * 0.5` on both sides - the hull's geometric centre, and the only aim
+  height there is.  A crew that aimed at its own hull's centre instead was 1.7 m
+  over a rifleman's head at 400 m (`ground_aim` read `d.height` off the shooter),
+  which the 30 mm's `prox` fuse hid and an RPG could not.
 * **A launcher of tubes is described once, in `defs.rack`.** `rack(cols, rows,
   count, bore=, length=, centre=, ...)` hands back a plain dict — the lattice,
   the tube diameter and length, the pitch, the mouth (`centre + length/2`) and
@@ -981,7 +1036,9 @@ frontend/
   "smoke"/"terrain" for the seeker's log). A tree hides what stands behind it
   for good, a puff hides it for five seconds and is gone: nothing else differs
   between them, so nothing pairs the two checks up on its own. Every eye goes
-  through it - the AI's `_sees`, the player's IR lock (`Systems/Locking.cs`, which used
+  through it - `Systems/AI/Sense.cs` for the crews (one look per crew per tick,
+  which is what keeps the belief honest), the player's IR lock
+  (`Systems/Locking.cs`, which used
   to ask the field only and so let a hull be locked straight through a screen
   of smoke) and the missile seeker. `map.js` mirrors the same rule for the HUD
   (`MapData.sightAt` + `sightBlocked`, canopy and puffs); the pre-aim box is
@@ -1602,9 +1659,11 @@ cd frontend && npm install && npm run build      # -> assets/
   ./dotnet.sh run -- --check fcs                   # crew vs pilot, same scenarios
   ```
   `MECH_PERF=1` on the battle check runs it without the per-tick event scan and
-  prints the per-minute cost: on a 12 minute battle it is **1.3 ms/tick**
+  prints the per-minute cost: on a 12 minute battle it is **1.5 ms/tick**
   (0.06 ms of it the 15 Hz wire) against the Python server's 11.5 ms/tick, i.e.
-  ~9x, and the curve is flat where Python's climbs to 18 ms as the field matures.
+  ~8x, and the curve is flat where Python's climbs to 18 ms as the field matures.
+  About 0.2 ms of it is the crews' one look per tick (see "A crew's guns fire at
+  what the crew believes"); before that look it was 1.3 ms.
   Every check ends with `ecs.validate()`, so bookkeeping that a value comparison
   would not catch (a row pointing past its buffer) fails the run.
 * **`--check fcs` is the integration half of the fire control's proof**
@@ -1619,6 +1678,16 @@ cd frontend && npm install && npm run build      # -> assets/
   a mech, a standing hull, the rocket nest and the 105 mm all land inside a metre
   of each other.  The unit tests (`tests/`) prove the two hosts compute the same
   function; this proves the same function flies the same round in the same world.
+  Four rows on the end cover what that corridor cannot: **`chassis`** fires an
+  APC's gatling, a rifleman's rifle and a mech's RPG (a round that bursts at 0 m
+  from the shooter is a muzzle at the hull's origin), **`pull`** reads `ai_tacc`
+  off a hull circling at 2.4 m/s² (an age that never resets reads 0), and
+  **`smoke`** puts one puff on the sight line and counts the rounds before the
+  screen, at the walking memory, and after it, and reads the memory's own length
+  off the belief (a crew reading the ECS keeps firing through all three; a crew
+  with no memory stops at the first), and **`arsenal`** fires one of each
+  `Defs.AI_LOADOUTS` at a standing APC and splits the rounds by arm (the punch arm
+  has to fire, and the gun has to fill a reload or a launch gap).
 * **`--check net` prices the wire** (`Harness/NetCheck.cs`): one scripted pilot
   (`Check.drive`), every payload `Server.broadcast` would have offered him, off
   the same doors (`snapshot_bytes` / `meta_payload` / `hearable`) at the same

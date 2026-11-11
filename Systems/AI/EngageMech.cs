@@ -31,7 +31,8 @@ public static class EngageMech
             {
                 // one writer for this platform's trigger, whichever job it is
                 if (r.cover != 0) { intercept(world, c, r); continue; }
-                if (r.target < 0 && r.spot_t <= 0f) { r.trigger = 0; continue; }
+                // nothing in hand and nothing remembered: nothing to shoot at
+                if (!r.has_belief) { r.trigger = 0; continue; }
                 ground(world, c, r);
             }
         }

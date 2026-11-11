@@ -6,7 +6,8 @@
 // (`Systems/Movement/Foot.cs`), which is why he can walk one way and shoot another.
 //
 // The trigger is the same shared rule as the other two platforms: the arms' reach,
-// the semi automatic edge and the 0.14 rad of bearing error that a hull is worth.
+// the semi automatic edge and the bearing gate each arm solves for itself - the
+// angle his target's own hull covers at that range.
 
 namespace Mech.Server.Systems.AI;
 
@@ -33,7 +34,8 @@ public static class EngageFoot
             foreach (var r in c)
             {
                 if (r.cover != 0) { intercept(world, c, r, dt); continue; }
-                if (r.target < 0 && r.spot_t <= 0f) { r.trigger = 0; continue; }
+                // nothing in hand and nothing remembered: nothing to shoot at
+                if (!r.has_belief) { r.trigger = 0; continue; }
                 ground(world, c, r, dt);
             }
         }

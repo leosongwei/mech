@@ -1,5 +1,15 @@
 // Who is out there: every crew with `crew_engage` looks for a target on a slow
-// timer, and validates the one it already holds every tick.
+// timer, and what it *knows* about the one it holds is refreshed every tick - or
+// stops being refreshed, which is the whole point.
+//
+// This is the crew's only eye on a hull, and the only writer of its belief
+// (`ai_tgt`): while the line of sight is clear the belief is the truth, copied in
+// every tick; the moment the sight is cut (smoke, a crest, a house) the copying
+// stops and the point walks at the velocity it was last seen with, for `MEMORY`
+// seconds, before the crew gives the hull up.  `Engage` solves against that belief
+// and nothing else, so a screen of smoke is a screen for the guns too, and a crew
+// leads a hull it has lost sight of the way a missile's seeker does
+// (`Core/Seeker.cs`).
 //
 // The candidates come from the grid (`Core/Grid.cs`), not from a roster: a
 // 5000-unit battle puts a few dozen ids in the box around the shooter instead of a
@@ -48,31 +58,86 @@ public static class Sense
             var gids = g.ids;
             for (int k = 0; k < g.n; k++) combat_fac[gids[k]] = (sbyte)gf[k];
         }
-        var faction = e.uv("faction");
 
         foreach (var g in e.groups(SenseColumns.OnSense))
         {
             var c = new SenseColumns(g);
             foreach (var r in c)
             {
+                var own = Defs.UNIT_DEFS[r.etype];
                 r.timer -= dt;
+                int tid = r.target;
+
+                // ---- 1. the hull it is working: one look, every tick -----------
+                if (tid >= 0)
+                {
+                    // `combat_fac` is this tick's answer to "is this still a hull that
+                    // may be fought": an id recycled into a wreck, a corpse or a smoke
+                    // puff answers -1, and a hull of our own side is dropped on the spot
+                    // (a wreck the crew shot is the case the timer used to keep firing at)
+                    if (combat_fac[tid] < 0 || combat_fac[tid] == r.faction)
+                    {
+                        tid = -1;
+                        r.target_mem = -1;
+                    }
+                    else
+                    {
+                        var tpos = e.fv("pos").get3(tid);
+                        if (_sees(world, r, tpos, Defs.UNIT_DEFS[e.uv("etype")[tid]], own))
+                        {
+                            // seen: the belief is the truth, and the pull is measured
+                            var tvel = e.fv("vel").get3(tid);
+                            r.believe(tpos, tvel, e.uv("etype")[tid]);
+                            c.measure_accel(r.index, tid, tvel, dt);
+                        }
+                        else
+                        {
+                            // the sight is broken: the memory walks at what it was
+                            // doing, the pull ages out (no fresh sample), and after
+                            // `Crew.MEMORY` s the hull is a spot, not a target
+                            r.walk_belief(dt);
+                            if (r.belief_age > Crew.MEMORY) { tid = -1; r.target_mem = -1; }
+                        }
+                    }
+                }
+
+                // ---- 2. nothing in hand: the memory walks itself out ----------
+                if (tid < 0)
+                {
+                    if (!r.has_belief) c.measure_accel(r.index, -1, default, dt);
+                    else if (r.belief_age <= Crew.MEMORY) r.walk_belief(dt);
+                    else r.forget();
+                }
+
+                // ---- 3. the scan clock: somebody new, if somebody is visible --
                 if (r.timer <= 0f)
                 {
                     r.timer = ACQUIRE * world.rng.uniform(0.75f, 1.35f);
-                    r.target_mem = _acquire(world, r.faction, combat_fac, r.eye,
-                                            Defs.UNIT_DEFS[r.etype]);
+                    int found = _acquire(world, r.faction, combat_fac, r.eye, own);
+                    if (found >= 0 && found != r.target)
+                    {
+                        var tpos = e.fv("pos").get3(found);
+                        var tvel = e.fv("vel").get3(found);
+                        r.target_mem = found;
+                        r.believe(tpos, tvel, e.uv("etype")[found]);
+                        c.measure_accel(r.index, found, tvel, dt);
+                    }
                 }
-                int tid = r.target;
-                if (tid < 0) { c.measure_accel(r.index, -1, default, dt); continue; }
-                // the pull, measured on the velocity the ECS holds - what the client
-                // differentiates off two snapshots, `Core/FireControl.cs` leads on
-                c.measure_accel(r.index, tid, e.fv("vel").get3(tid), dt);
-                // a target that died, or that turns out to be one of ours, is
-                // dropped on the spot: the timer would otherwise keep a crew
-                // shooting at a wreck for half a second
-                if (!e.is_alive(tid) || faction[tid] == r.faction) r.target_mem = -1;
             }
         }
+    }
+
+    /// <summary>Does this crew have the hull in hand: inside its engagement range and
+    /// through the one line of sight (`Systems/Sight.cs` - terrain, canopies, smoke).
+    ///
+    /// The cast is aimed at the *target's* own body, 60 % of its height up, so a
+    /// hull looking at a rifleman looks at a man and not at a metre of air above
+    /// him.</summary>
+    private static bool _sees(World world, CrewRow r, Vec3 tpos, UnitDef td, UnitDef own)
+    {
+        float dx = tpos.x - r.eye.x, dz = tpos.z - r.eye.z;
+        if (MathF.Sqrt(dx * dx + dz * dz) > own.ai_range) return false;
+        return Sight.clear(world, r.eye, new Vec3(tpos.x, tpos.y + td.height * 0.6f, tpos.z));
     }
 
     /// <summary>Nearest hostile hull with line of sight, or -1.

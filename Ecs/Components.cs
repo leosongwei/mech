@@ -148,13 +148,14 @@ public static class Components
         ecs.register("nav_x", Kind.F);
         ecs.register("nav_z", Kind.F);
         ecs.register("nav_speed", Kind.F);
-        // where an AI last *saw* its target: with the sight broken (smoke, a
-        // crest, the hull ducking behind a building) it keeps shooting at that
-        // spot for a few seconds instead of giving up
-        ecs.register("spot_x", Kind.F);
-        ecs.register("spot_y", Kind.F);
-        ecs.register("spot_z", Kind.F);
-        ecs.register("spot_t", Kind.F);
+        // What the crew *believes* about the hull it is working: [x, y, z, vx, vy,
+        // vz, age, etype].  While the sight is clear it is the truth, refreshed
+        // every tick; once the sight is cut (smoke, a crest, a house) the point
+        // walks at the velocity it was last seen with, exactly like a missile's
+        // seeker memory (`Core/Seeker.cs`), so a crew shoots at what it knows.
+        // `age` is the seconds since it was actually seen and `etype == 0` means
+        // "nothing", so one component carries the whole memory.
+        ecs.register("ai_tgt", Kind.F, 8, 0.0);
         // the pull the crew has measured on its target, and the state that
         // measurement needs: [ax, az, prev vx, prev vz, age, target id].  The same
         // quantity the client gets off two velocity samples (`net.js`), measured
@@ -266,7 +267,7 @@ public static class Components
         "last_name", "last_fac", "last_etype", "last_wid",
         "weapon", "ammo", "mag", "cool", "reload_t",
         "trigger", "trigger_prev", "work_remaining_time", "target", "ai_state", "ai_timer",
-        "path_i", "lane", "spot_x", "spot_y", "spot_z", "spot_t", "flags",
+        "path_i", "lane", "flags",
         "ai_cover", "ai_threat", "ai_goal",
         "nav_route", "nav_x", "nav_z", "nav_speed",
     };
@@ -278,9 +279,11 @@ public static class Components
     public static readonly string[] CIV_COMPS = Cat(UNIT_COMPS, "home_x", "home_z");
 
     /// <summary>What a crew owns on top of its hull: the fire control's answer per
-    /// arm and the target's measured pull.  A pilot's machine has neither - his
-    /// zero is the dial he set and his lead is solved on his own screen.</summary>
-    public static readonly string[] CREW_FCS_COMPS = { "aim_elev", "ai_tacc" };
+    /// arm, the target's measured pull, and what it believes about that target.  A
+    /// pilot's machine has none of the three - his zero is the dial he set, his lead
+    /// is solved on his own screen, and the target he sees is the one the wire drew
+    /// him.</summary>
+    public static readonly string[] CREW_FCS_COMPS = { "aim_elev", "ai_tacc", "ai_tgt" };
 
     /// <summary>a wreck is scenery: it has a place and no velocity.</summary>
     public static readonly string[] DEBRIS_COMPS = {

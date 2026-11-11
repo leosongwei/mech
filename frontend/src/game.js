@@ -1089,7 +1089,10 @@ export class Game {
       tx = e.px + e.vx * lag; ty = e.py + half; tz = e.pz + e.vz * lag;
       vx = e.mvx === undefined ? e.vx : e.mvx;
       vz = e.mvz === undefined ? e.vz : e.mvz;
-      vy = 0;
+      // a hull on a slope really is climbing: `vel.y` is on the wire and the
+      // server's fire control leads with it, so the ring does too (a hull on the
+      // flat reads 0 and nothing changes)
+      vy = e.mvy === undefined ? e.vy : e.mvy;
     } else if (a.fly) {
       const f = a.fly;
       tx = f.x + (f.vx || 0) * lag; ty = f.y; tz = f.z + (f.vz || 0) * lag;
@@ -1306,7 +1309,7 @@ export class Game {
           a.m[0], a.m[1], a.m[2], aimEye[0], aimEye[1], aimEye[2],
           e.px + e.vx * lag, e.py + half, e.pz + e.vz * lag,
           e.mvx === undefined ? e.vx : e.mvx, e.mvz === undefined ? e.vz : e.mvz,
-          0, fresh ? e.ax : 0, fresh ? e.az : 0);
+          e.mvy === undefined ? e.vy : e.mvy, fresh ? e.ax : 0, fresh ? e.az : 0);
         if (p) t.marks.push({ arm: a.arm, x: p.x, y: p.y, z: p.z, tof: p.tof });
       }
       // the box stands on its own: a hull can be in view while the point to

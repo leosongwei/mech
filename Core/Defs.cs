@@ -808,13 +808,20 @@ public static partial class Defs
     // `Systems/AI/Support/Engage.cs` reads.  Every arm still gets its own solution;
     // the ones that do not own the sight fire only while their own solution sits
     // inside their own trigger gate.
+    //
+    // The two muzzles of a mech are 2.86 m apart and the hull can point one way, so
+    // the arm that owns the sight is the arm that fires: `Punch` is what makes the
+    // armament matter (a rocket nest, a beam rider, a top attack and a 105 mm all
+    // outscore the 30 mm, and the gun takes its turn while the other arm reloads or
+    // waits out `AI_LAUNCH_GAP`).  `Fastest` reads "the gun, always", which is the
+    // left arm only - the whole right-hand arsenal then stands down for the battle.
     public enum MasterArm
     {
         Slowest = 0,    // the round that takes longest: the old behaviour
         Fastest = 1,    // the round that arrives first - what a gun is for
         Punch = 2,      // the round that hurts most per hit
     }
-    public const MasterArm AI_MASTER_ARM = MasterArm.Fastest;
+    public const MasterArm AI_MASTER_ARM = MasterArm.Punch;
 
     // ------------------------------------------------------------------- shop
     // A weapon is bought as "hardware + a full load of ammunition": the hardware is

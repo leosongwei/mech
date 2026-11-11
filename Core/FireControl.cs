@@ -64,22 +64,22 @@ public static class FireControl
         }
     }
 
-    /// <summary>One target, as the shooter knows it.</summary>
+    /// <summary>One target, as the shooter knows it: the muzzle is one input (a
+    /// gun's own offset is in the answer) and this is the other.  A crew hands in
+    /// what it believes (`ai_tgt`), a pilot what the wire drew him.</summary>
     public readonly struct Track
     {
         public readonly Vec3 pos;         // the hull's origin (its feet)
         public readonly Vec3 vel;         // what it is really doing, m/s
         public readonly Vec3 acc;         // its measured pull, already age-checked
         public readonly float aim;        // m above `pos` the round should meet
-        public readonly float radius;     // m, its biggest hit sphere (triggers only)
 
-        public Track(Vec3 pos, Vec3 vel, Vec3 acc, float aim, float radius)
+        public Track(Vec3 pos, Vec3 vel, Vec3 acc, float aim)
         {
             this.pos = pos;
             this.vel = vel;
             this.acc = acc;
             this.aim = aim;
-            this.radius = radius;
         }
     }
 

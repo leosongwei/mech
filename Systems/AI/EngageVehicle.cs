@@ -30,7 +30,8 @@ public static class EngageVehicle
             foreach (var r in c)
             {
                 if (r.cover != 0) { intercept(world, c, r, dt); continue; }
-                if (r.target < 0 && r.spot_t <= 0f) { r.trigger = 0; continue; }
+                // nothing in hand and nothing remembered: nothing to shoot at
+                if (!r.has_belief) { r.trigger = 0; continue; }
                 ground(world, c, r, dt);
             }
         }

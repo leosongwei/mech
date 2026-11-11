@@ -61,19 +61,16 @@ public static class Front
         if (s.target >= 0 && s.target_seen)
         {
             r.state_mem = AiState.ENGAGE;
-            // remember the spot: if the sight breaks (smoke, a crest, a house) the
-            // crew keeps shooting there for a few seconds
-            r.remember_spot(world.ecs.fv("pos").get3(s.target));
-            r.spot_t_mem = Policy.SPOT_MEMORY;
             if (s.target_dist > d.ai_range * 0.55f) Policy.cruise(c, i);
             else Policy.halt(c, i);              // close enough: stand and shoot it out
             return;
         }
-        // ---- lost it: hose where it was ---------------------------------------
-        if (r.spot_t > 0f)
+        // ---- lost it: hose where it went --------------------------------------
+        // `Sense` walked the belief out for `Crew.MEMORY` seconds and the guns are
+        // already using it, so the tactic only has to stand still and keep shooting.
+        if (s.target_known)
         {
             r.state_mem = AiState.SUPPRESS;
-            r.spot_t_mem -= dt;
             Policy.halt(c, i);
             return;
         }

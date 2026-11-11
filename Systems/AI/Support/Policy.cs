@@ -25,24 +25,24 @@ public struct Situation
     public int mag_left;         // rounds left across both arms
     public int target;           // the id it is working (-1 = none)
     public float target_dist;    // plan-view metres
-    public bool target_seen;     // the shared sight rule (`Systems/Sight.cs`) says yes
+    public bool target_seen;     // its crew saw it this tick (`Systems/AI/Sense.cs`)
+    public bool target_known;    // ... or knows where it was going (`ai_tgt`)
     public bool covered;         // a round is coming for it: the gun is the intercept's
     public int route;            // the poly line it is following (-1 = a point)
 }
 
 public static class Policy
 {
-    public const float SPOT_MEMORY = 4.0f;   // s a crew keeps firing at a lost target's spot
-
     /// <summary>Where the enemy keeps its command post - the end of every route,
     /// and what a crew with no lane walks at (the range).</summary>
     public static (float x, float z) enemy_base(World world, byte faction) =>
         world.terrain.bases[1 - faction];
 
-    /// <summary>Read the crew's situation.  `target_seen` is the one line-of-sight
-    /// cast: the target's body, about 60 % of its height up, through the same door
-    /// the seeker and the AI's lookout use (`Systems/Sight.cs`: terrain, canopies
-    /// and smoke).</summary>
+    /// <summary>Read the crew's situation.
+    ///
+    /// The sight belongs to `Systems/AI/Sense.cs`, which takes one look per crew per
+    /// tick and leaves the answer in the belief (`ai_tgt`): a tactic reads it for
+    /// free, and the whole AI has one door to `Systems/Sight.cs`.</summary>
     public static Situation sense(World world, CrewColumns c, int i)
     {
         var s = new Situation
@@ -61,24 +61,24 @@ public static class Policy
             ? MathUtil.sight_eye(s.pos, c.yaw[i])
             : new Vec3(s.pos.x, s.pos.y + Defs.UNIT_DEFS[s.etype].height * 0.75f, s.pos.z);
 
-        var d = Defs.UNIT_DEFS[s.etype];
+        var r = c.row(i);
+        // what `Sense` found this tick (age 0 = seen), and whether there is anything
+        // to shoot at at all: a belief the sight was cut from still counts, for as
+        // long as it is walking (`Crew.MEMORY`)
+        s.target_known = r.has_belief;
+        s.target_seen = r.has_belief && r.belief_age == 0f;
+
         int tid = s.target;
         if (tid < 0) return s;
-        if (!world.ecs.is_alive(tid))
+        if (!world.ecs.is_alive(tid) || world.ecs.uv("faction")[tid] == s.faction)
         {
             s.target = -1;
             return s;
         }
-        var tpos = world.ecs.fv("pos").get3(tid);
-        if (world.ecs.uv("faction")[tid] == s.faction)
-        {
-            s.target = -1;
-            return s;
-        }
-        s.target_dist = MathUtil.dist2d(s.eye.x, s.eye.z, tpos.x, tpos.z);
-        if (s.target_dist < d.ai_range)
-            s.target_seen = Sight.clear(world, s.eye,
-                                        new Vec3(tpos.x, tpos.y + d.height * 0.6f, tpos.z));
+        // the range to what the crew believes, so a tactic never reads the ECS for a
+        // position either
+        var tp = r.belief_pos;
+        s.target_dist = MathUtil.dist2d(s.eye.x, s.eye.z, tp.x, tp.z);
         return s;
     }
 

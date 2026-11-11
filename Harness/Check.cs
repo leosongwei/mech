@@ -147,7 +147,8 @@ public static class Check
                                   + $"trig={a.get_u8("trigger", row)} mag={a.i("mag")[row*2]}/{a.i("mag")[row*2+1]} "
                                   + $"yaw={a.get_f("yaw", row):0.00} syaw={a.get_f("sight_yaw", row):0.00} "
                                   + $"pitch={a.get_f("pitch", row):0.00} pos=({a.get_f("pos", row, 0):0},{a.get_f("pos", row, 2):0}) "
-                                  + $"state={a.get_u8("ai_state", row)} spot_t={a.get_f("spot_t", row):0.0}");
+                                  + $"state={a.get_u8("ai_state", row)} mem={a.get_f("ai_tgt", row, 6):0.0} "
+                                  + $"pull={MathF.Sqrt(a.get_f("ai_tacc", row, 0) * a.get_f("ai_tacc", row, 0) + a.get_f("ai_tacc", row, 1) * a.get_f("ai_tacc", row, 1)):0.0}");
             }
         }
         return 0;

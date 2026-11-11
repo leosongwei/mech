@@ -18,11 +18,11 @@ public class CrewColumns : Columns<CrewRow>
     public float[] pos = null!, vel = null!, yaw = null!, pitch = null!;
     public float[] sight_yaw = null!, sight_pitch = null!, turret_yaw = null!;
     public float[] hp = null!, hpmax = null!;
-    public float[] timer = null!, spot_x = null!, spot_y = null!, spot_z = null!;
-    public float[] spot_t = null!;
-    // the fire control's own answer per arm (`Core/FireControl.cs`), and the pull
-    // measured on the target: [ax, az, prev vx, prev vz, age, target id]
-    public float[] aim_elev = null!, tacc = null!;
+    public float[] timer = null!;
+    // the fire control's own answer per arm (`Core/FireControl.cs`), the pull
+    // measured on the target: [ax, az, prev vx, prev vz, age, target id], and what
+    // the crew believes about that target: [x, y, z, vx, vy, vz, age, etype]
+    public float[] aim_elev = null!, tacc = null!, belief = null!;
     /// <summary>Bound where the platform owns arms; null for a man or a carrier.</summary>
     public float[]? arm_hp;
     public float[] nav_x = null!, nav_z = null!, nav_speed = null!;
@@ -33,7 +33,7 @@ public class CrewColumns : Columns<CrewRow>
     internal static readonly string[] names =
     {
         "pos", "vel", "yaw", "pitch", "sight_yaw", "sight_pitch", "turret_yaw",
-        "hp", "hpmax", "ai_timer", "spot_x", "spot_y", "spot_z", "spot_t",
+        "hp", "hpmax", "ai_timer", "ai_tgt",
         "nav_x", "nav_z", "nav_speed", "nav_route",
         "mag", "target", "ai_threat",
         "etype", "faction", "weapon", "trigger", "ai_state", "ai_cover", "ai_goal", "lane",
@@ -53,9 +53,7 @@ public class CrewColumns : Columns<CrewRow>
         turret_yaw = g.f("turret_yaw");
         hp = g.f("hp"); hpmax = g.f("hpmax");
         timer = g.f("ai_timer");
-        spot_x = g.f("spot_x"); spot_y = g.f("spot_y"); spot_z = g.f("spot_z");
-        spot_t = g.f("spot_t");
-        aim_elev = g.f("aim_elev"); tacc = g.f("ai_tacc");
+        aim_elev = g.f("aim_elev"); tacc = g.f("ai_tacc"); belief = g.f("ai_tgt");
         arm_hp = g.has("arm_hp") ? g.f("arm_hp") : null;
         nav_x = g.f("nav_x"); nav_z = g.f("nav_z"); nav_speed = g.f("nav_speed");
         nav_route = g.i("nav_route");
@@ -104,11 +102,14 @@ public class CrewColumns : Columns<CrewRow>
             tacc[b + 0] += (ax - tacc[b + 0]) * k;
             tacc[b + 1] += (az - tacc[b + 1]) * k;
         }
-        tacc[b + 4] += dt;
+        // the age is the age of the *sample*, so a fresh one resets it: a crew that
+        // holds one target for a minute is still measuring it every tick
+        tacc[b + 4] = 0f;
     }
 
     /// <summary>The pull to lead on: zero unless it was measured on this target and
-    /// is still fresh.</summary>
+    /// is still fresh (a hull that walked out of sight stops being measured, so its
+    /// pull ages out in `ACCEL_STALE`).</summary>
     public Vec3 accel_of(int i, int tid)
     {
         int b = i * 6;
@@ -134,7 +135,6 @@ public readonly struct CrewRow : IRow<CrewColumns>
     public int target => _c.target[i];
     public byte state => _c.state[i];
     public byte cover => _c.cover[i];
-    public float spot_t => _c.spot_t[i];
     public float nav_speed => _c.nav_speed[i];
     public int route => _c.nav_route[i];
 
@@ -167,7 +167,6 @@ public readonly struct CrewRow : IRow<CrewColumns>
 
     // the crew's own state
     public ref float timer => ref _c.timer[i];
-    public ref float spot_t_mem => ref _c.spot_t[i];
     public ref int target_mem => ref _c.target[i];
     public ref byte state_mem => ref _c.state[i];
     public ref byte goal_mem => ref _c.goal[i];
@@ -194,11 +193,47 @@ public readonly struct CrewRow : IRow<CrewColumns>
         set => _c.trigger[i] = value;
     }
 
-    // where it last saw its target
-    public Vec3 spot => new(_c.spot_x[i], _c.spot_y[i], _c.spot_z[i]);
-    public void remember_spot(Vec3 p)
+    // ---- what the crew believes about the hull it is working ----------------
+    //
+    // `Sense` is the only writer (`Systems/AI/Sense.cs`): while the sight is clear
+    // it copies the truth in every tick, and once the sight is cut it stops copying
+    // and the point walks at the velocity stored with it.  The fire control, the
+    // tactic and the trigger all read this, which is what makes a screen of smoke a
+    // screen for the guns.
+
+    public Vec3 belief_pos => new(_c.belief[i * 8], _c.belief[i * 8 + 1], _c.belief[i * 8 + 2]);
+    public Vec3 belief_vel => new(_c.belief[i * 8 + 3], _c.belief[i * 8 + 4], _c.belief[i * 8 + 5]);
+    /// <summary>s since the hull was last actually seen (0 = this tick).</summary>
+    public float belief_age => _c.belief[i * 8 + 6];
+    /// <summary>The hull's type when it was seen; 0 = the crew knows of nothing.</summary>
+    public int belief_type => (int)_c.belief[i * 8 + 7];
+    public bool has_belief => _c.belief[i * 8 + 7] > 0.5f;
+
+    /// <summary>Seen it: the belief is the truth, as of now.</summary>
+    public void believe(Vec3 p, Vec3 v, int etype)
     {
-        _c.spot_x[i] = p.x; _c.spot_y[i] = p.y; _c.spot_z[i] = p.z;
+        int b = i * 8;
+        _c.belief[b + 0] = p.x; _c.belief[b + 1] = p.y; _c.belief[b + 2] = p.z;
+        _c.belief[b + 3] = v.x; _c.belief[b + 4] = v.y; _c.belief[b + 5] = v.z;
+        _c.belief[b + 6] = 0f;
+        _c.belief[b + 7] = etype;
+    }
+
+    /// <summary>One tick of not seeing it: the memory walks at what it was doing.</summary>
+    public void walk_belief(float dt)
+    {
+        int b = i * 8;
+        _c.belief[b + 0] += _c.belief[b + 3] * dt;
+        _c.belief[b + 1] += _c.belief[b + 4] * dt;
+        _c.belief[b + 2] += _c.belief[b + 5] * dt;
+        _c.belief[b + 6] += dt;
+    }
+
+    /// <summary>Nothing left to work: the memory is gone with it.</summary>
+    public void forget()
+    {
+        int b = i * 8;
+        for (int k = 0; k < 8; k++) _c.belief[b + k] = 0f;
     }
 
     /// <summary>The eye the crew looks through: a mech's panoramic sight on its
@@ -213,6 +248,12 @@ public readonly struct CrewRow : IRow<CrewColumns>
 /// is the one thing that separates the three engage systems.</summary>
 public static class Crew
 {
+    /// <summary>s; how long a crew keeps working a hull it has lost sight of, on the
+    /// position and the velocity it last saw it with.  Two seconds is a screen of
+    /// smoke's first half: the crew keeps shooting into it, at where the hull would
+    /// be, and gives up before the screen clears.</summary>
+    public const float MEMORY = 2.0f;
+
     /// <summary>First arm that can bring a missile down: it carries a fuse, it has
     /// rounds and the mount is still there.  -1 if none can.
     ///

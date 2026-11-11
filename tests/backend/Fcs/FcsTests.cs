@@ -99,9 +99,9 @@ public static class FcsTests
             var sol = FireControl.solve(k.shot, k.track);
             Assert.True(sol.valid, $"{k.id}: no solution");
             float miss = Closest(k, sol);
-            Assert.AtMost(miss, Tol.Miss(k.track.radius),
+            Assert.AtMost(miss, Tol.Miss(k.radius),
                           $"{k.id}: the round passes {miss:0.00} m off "
-                          + $"(allowed {Tol.Miss(k.track.radius):0.00} m)");
+                          + $"(allowed {Tol.Miss(k.radius):0.00} m)");
         }
     }
 

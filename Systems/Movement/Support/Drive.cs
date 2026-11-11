@@ -102,16 +102,24 @@ public static class Drive
         if (!clear_run(terrain, px, pz, y, rad, dx, dz))
         {
             float bese = MathF.Atan2(dz, dx);
+            // The escape is the *smallest course change* that clears, with the legs the
+            // hull already has as the tie-break: the bearing it is already turning into
+            // wins while it stays clear, so a hull that has to pass a house commits to
+            // one side of it and walks that side.  A fixed list of bearings read in
+            // order hands a hull between two clear ones the one that comes first, which
+            // alternates every few ticks - and a ramp that reverses itself leaves the
+            // hull grinding in place beside its own base for the rest of the battle.
+            float swing_best = float.MaxValue;
             for (int k = 0; k < FAN.Length; k++)
             {
                 float a = bese + FAN[k];
                 float nx = MathF.Cos(a), nz = MathF.Sin(a);
-                if (clear_run(terrain, px, pz, y, rad, nx, nz))
-                {
-                    dx = nx;
-                    dz = nz;
-                    break;
-                }
+                if (!clear_run(terrain, px, pz, y, rad, nx, nz)) continue;
+                float swing = MathF.Abs(MathUtil.wrap_pi(a - r.leg_yaw));
+                if (swing >= swing_best) continue;
+                swing_best = swing;
+                dx = nx;
+                dz = nz;
             }
         }
         r.vel_cmd = new Vec3(dx * speed, 0f, dz * speed);

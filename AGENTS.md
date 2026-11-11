@@ -295,8 +295,15 @@ frontend/
   bicycle model, the integration - so only the `nav_* -> vel_cmd` step is gated on
   `ai_crew`.  Leave a pilot's `leg_yaw` lying where it spawned and his hull tops out
   at the leg-alignment floor: `0.45 * 50 m/s`, i.e. 81 km/h, in whatever direction
-  the alignment happens to be bad - which reads as "some directions are slower".  The plan and its reasoning:
-  `docs/plans/AI_plan.md`.
+  the alignment happens to be bad - which reads as "some directions are slower".
+  The obstacle fan a walker tries when the step ahead is blocked picks the **smallest
+  course change** that clears, with the hull's own `leg_yaw` as the tie-break
+  (`Drive.legs`).  Picking the first clear entry in the list instead is what a mech
+  between two clear bearings does: it alternates between them every few ticks, the
+  ramp reverses itself every time, and a hull beside its own base grinds in place for
+  the rest of the match - measured, 4-7 mechs a battle within 800 m of home before,
+  0 after (`Drive.PROBE` at 0.8/2/4 m is short enough that a house needs the
+  commitment).  The plan and its reasoning: `docs/plans/AI_plan.md`.
 * **A crew is a component.**  `World.spawn_unit(crew: true)` puts `ai_crew` on a hull
   plus its platform tag (`mech_ai` for a mech's crew, `foot_ai` for a man's; a
   carrier already carries `vehicle`), and a mission adds its own (`front_mission`,

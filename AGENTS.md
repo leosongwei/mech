@@ -539,10 +539,27 @@ frontend/
   nearest the death that is still connected to the base *and* not contested,
   **C** one town back from B towards the base - C is the spawn, none means the
   base ring (`World.base_spawn`). Its wait interpolates from the distance to
-  the enemy base: 40 s on your own doorstep, 3 s on theirs. The first deploy
-  has no `death_pos` and lands on the most advanced connected town instead
-  (`_lead_town`), because 5 km out of the gate is not a spawn point.
-  `spawn_mech` clears `death_pos` once it has been spent.
+  the enemy base: 40 s on your own doorstep, 3 s on theirs. A first deploy has no
+  `death_pos` of its own, so `_opening_death` makes one: the furthest town its
+  side holds on a lane drawn at random, which is the same walk as a death on the
+  front, so a fresh pilot comes back one town behind the front instead of
+  standing in it. `spawn_mech` clears `death_pos` once it has been spent.
+* **The map is a mirror, and both sides start on the same half of it.**
+  `Terrain.TOWN_SPOTS` holds still under the two mirrors the map has - across the
+  centre, `(x, y) -> (1000 - x, 1000 - y)`, and across the `x = z` diagonal - so
+  every town has a twin the same distance out of the other base, and each town's
+  size comes off `_orbit_key`, one stream per mirror orbit, so a pair is the same
+  prize. That is why `_on_lane` only projects a spot onto its lane: a jitter of
+  its own would be the one thing breaking the equality. Ownership then falls out
+  of the geometry (`BattleMode._assign_home_towns`): `lane_i` counts way points
+  from the red base, so the near half of each lane is red's and the far half is
+  blue's - 11 towns each, 4 / 4 / 3 per lane, and the two fronts meet at the
+  middle of the lane. Three depots are `TOWN_NEUTRAL`, and each sits where the two
+  bases are the same distance away: the two bends of the outer lanes (on the
+  anti-diagonal `x + y = 1000`, 9984 m each) and the middle of the mid lane, the
+  map's own centre, which also splits that lane's 2.7 km empty middle into two
+  1.4 km hops. They open unowned, so both chains are cut at the lane's midpoint and
+  the neutral depot is the one thing a match starts with a fight for.
 * **A town being fought over supplies nothing.** `waves._capture` recomputes
   `town["contested"]` every tick - a unit of a faction other than the owner is
   inside `CAPTURE_RADIUS` (170 m) - and `waves.front_town` walks the connected
@@ -1052,12 +1069,15 @@ frontend/
   drawn only through a clear line of sight, exactly what the seeker can lock.
   The ballistic prediction (`sightPoint`, `groundHit`) stays on the *round's*
   rule instead - leaves and smoke never stop a bullet.
-* **Towns are grown, not drawn.** Each one starts on its lane (`_on_lane` snaps
-  the spot onto the nearest lane point, slides it ±3 tiles along the road and
-  returns the lane direction) and then `_town_streets` grows the network
+* **Towns are grown, not drawn.** Each one starts on its lane (`_on_lane` projects
+  the spot onto the nearest lane point and returns the lane direction) and then
+  `_town_streets` grows the network
   OpenTTD-style: a front runs 2-6 tiles of street, then carries on, turns, dies
   and drops a branch, or joins the street it ran into - which is what closes a
-  block. Fronts start in the middle and on both sides of the lane, and reopen on
+  block. How big a town is (`radius`, block width, run budget, house count) is
+  drawn from `_orbit_key`'s stream instead of the map's, so the mirror pairs are
+  the same size; the streets themselves still come off `world.rng`, so no two
+  towns lay out alike. Fronts start in the middle and on both sides of the lane, and reopen on
   any street with room to grow. Two passes then make the network drivable
   instead of a maze: `_town_rungs` punches a cross street every `TOWN_RUNG` (4)
   tiles of a long street - only where a street really is on the other side, so

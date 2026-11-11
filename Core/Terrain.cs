@@ -28,8 +28,8 @@ namespace Mech.Server;
 
 /// <summary>One town: a depot on a lane, grown into a street network.</summary>
 /// <remarks>
-/// The generator writes the first six fields; the battle mode later writes
-/// `lane` / `lane_i` (which lane the town sits on, and where) and the two
+/// The generator writes the middle, the name and `neutral`; the battle mode later
+/// writes `lane` / `lane_i` (which lane the town sits on, and where) and the two
 /// reinforcement timers plus `contested` (`Modes/Battle/Waves.cs`).  `owner` is
 /// `-1` while nobody holds it.
 /// </remarks>
@@ -40,6 +40,7 @@ public sealed class Town
     public int owner = -1;
     public float progress;          // capture timer, seconds
     public string name = "";
+    public bool neutral;            // a spot from `TOWN_NEUTRAL`: opens unowned
 
     // written later, by the battle mode
     public int lane = -1;           // index into `world.lanes`, -1 = not assigned
@@ -182,15 +183,35 @@ public sealed class Terrain
 
     // Every town sits on a lane: a depot only supplies while its lane is
     // unbroken back to its own base, so a town off the lanes would be a dead
-    // capture point.  The list mirrors itself across the x = z diagonal (the
-    // mid lane), which is what keeps the two sides' holdings symmetric.
+    // capture point.  The table holds still under both mirrors the map has -
+    // across the centre, `(x, y) -> (1000 - x, 1000 - y)`, which pairs a red town
+    // with the blue one the same distance out of its base, and across the
+    // `x = z` diagonal, which pairs the north lane with the west lane.  Both
+    // sides therefore open on the same number of towns at the same ranges, and
+    // every lane carries an even number of them: half is the near half of each.
     public static readonly (int x, int y)[] TOWN_SPOTS =
     {
-        (270, 188), (390, 188), (520, 188), (650, 188), (780, 188),
-        (188, 270), (188, 390), (188, 520), (188, 650), (188, 780),
-        (812, 270), (812, 390), (812, 520), (812, 650), (812, 780),
-        (270, 812), (390, 812), (520, 812), (650, 812), (780, 812),
-        (350, 350), (440, 440), (560, 560), (650, 650), (740, 740),
+        // north lane: the same four ranges out of each base
+        (270, 188), (390, 188), (520, 188), (650, 188),
+        (812, 730), (812, 610), (812, 480), (812, 350),
+        // west lane: the same list read across the diagonal
+        (188, 270), (188, 390), (188, 520), (188, 650),
+        (730, 812), (610, 812), (480, 812), (350, 812),
+        // mid lane: three a side, on mirrored ranges along the diagonal
+        (260, 260), (350, 350), (440, 440),
+        (560, 560), (650, 650), (740, 740),
+    };
+
+    // The depots that open neutral, on the one ground that is exactly as far from
+    // either base: the far bend of the north lane, the far bend of the west lane
+    // (9984 m each) and the middle of the mid lane - the map's own centre, where
+    // the gap between the two mid-lane fronts would otherwise be 2.7 km of empty
+    // field.  The two bends sit on the anti-diagonal, the centre is its own
+    // mirror both ways, so no side starts holding one.
+    public static readonly (int x, int y)[] TOWN_NEUTRAL =
+    {
+        (812, 188), (188, 812),
+        (500, 500),
     };
 
     // Towns are *grown*, the way OpenTTD grows a city: a front runs a few tiles
@@ -1622,16 +1643,26 @@ public sealed class Terrain
     // towns: grown from the middle out, the way OpenTTD grows a city
     // =====================================================================
 
-    /// <summary>Snap a town spot onto its lane, then slide it a little along the road.</summary>
+    /// <summary>The key one mirror orbit of town spots shares: the spot reflected
+    /// across the map's centre and the one reflected across the `x = z` diagonal
+    /// answer with the same key, and so draw the same size.</summary>
+    private static int _orbit_key(int x, int y)
+    {
+        int ax = Math.Min(x, MAPW - x), ay = Math.Min(y, MAPH - y);
+        return Math.Min(ax, ay) * MAPW + Math.Max(ax, ay);
+    }
+
+    /// <summary>Snap a town spot onto its lane.</summary>
     /// <remarks>
     /// A town is a town because the road goes through it: its middle sits on the
     /// arterial, so the lane runs straight past the market square and the streets
     /// grow out of it.  A spot off the lane would be a detour nobody drives
     /// through, and the depot would never be worth capturing.  Also returns the
-    /// lane direction, so the streets know which side of it they are on.
+    /// lane direction, so the streets know which side of it they are on.  The snap
+    /// is exact, with no jitter of its own, because the table is what holds the
+    /// two halves of the map to the same ranges out of their bases.
     /// </remarks>
-    private static (int cx, int cy, float ux, float uy) _on_lane(
-        float x, float y, Rng rng)
+    private static (int cx, int cy, float ux, float uy) _on_lane(float x, float y)
     {
         float best = 1e18f, bpx = x, bpy = y, bux = 0f, buy = 0f;
         foreach (var lane in LANE_TILES)
@@ -1655,8 +1686,7 @@ public sealed class Terrain
                 }
             }
         }
-        float k = rng.uniform(-3f, 3f);
-        return ((int)MathF.Round(bpx + bux * k), (int)MathF.Round(bpy + buy * k), bux, buy);
+        return ((int)MathF.Round(bpx), (int)MathF.Round(bpy), bux, buy);
     }
 
     /// <summary>Grow the street network of one town out from its middle.</summary>
@@ -2239,9 +2269,12 @@ public sealed class Terrain
         var towns = new List<Town>();
         var clear = new bool[d * w];
         Array.Copy(lane_road, clear, clear.Length);
-        foreach (var spot in TOWN_SPOTS)
+        var spots = new List<(int x, int y, bool neutral)>();
+        foreach (var s in TOWN_SPOTS) spots.Add((s.x, s.y, false));
+        foreach (var s in TOWN_NEUTRAL) spots.Add((s.x, s.y, true));
+        foreach (var spot in spots)
         {
-            var (cx, cy, ux, uy) = _on_lane(spot.x, spot.y, rng);
+            var (cx, cy, ux, uy) = _on_lane(spot.x, spot.y);
             towns.Add(new Town
             {
                 x = cx * TILE,
@@ -2251,17 +2284,24 @@ public sealed class Terrain
                 owner = -1,
                 progress = 0f,
                 name = $"T{towns.Count:00}",
+                neutral = spot.neutral,
             });
-            int radius = rng.integers(TOWN_RADIUS.lo, TOWN_RADIUS.hi + 1);
+            // how big this town is comes off a stream of its own, keyed to the
+            // mirror orbit the spot belongs to, so every town a spot stands for
+            // is the same size: neither side opens on a bigger prize than the
+            // other.  The streets themselves still grow off the map's own
+            // stream, so no two towns lay out alike.
+            var size = new Rng(_orbit_key(spot.x, spot.y));
+            int radius = size.integers(TOWN_RADIUS.lo, TOWN_RADIUS.hi + 1);
             _town_streets(roads, tiles, w, d, rng, cx, cy, ux, uy, radius,
-                          rng.integers(TOWN_BLOCK.lo, TOWN_BLOCK.hi + 1),
-                          rng.integers(TOWN_RUNS.lo, TOWN_RUNS.hi + 1));
+                          size.integers(TOWN_BLOCK.lo, TOWN_BLOCK.hi + 1),
+                          size.integers(TOWN_RUNS.lo, TOWN_RUNS.hi + 1));
             // cross streets first, then every loose end gets a way out - both
             // before anything is built, so the new streets are open on both sides
             _town_rungs(roads, tiles, w, d, rng, cx, cy, radius, TOWN_RUNG, TOWN_REACH);
             _town_close(roads, tiles, w, d, rng, cx, cy, radius, TOWN_REACH);
             _town_houses(roads, tiles, walls, clear, no_build, w, d, rng, cx, cy,
-                         radius, rng.integers(TOWN_HOUSES.lo, TOWN_HOUSES.hi + 1));
+                         radius, size.integers(TOWN_HOUSES.lo, TOWN_HOUSES.hi + 1));
         }
 
         var road = new bool[d * w];

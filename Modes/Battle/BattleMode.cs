@@ -69,18 +69,19 @@ public sealed class BattleMode : Mode
     // ------------------------------------------------------------------
     /// <summary>Where a pilot's machine appears.
     ///
-    /// After a death: one town back down the lane the hull died on, the base if
-    /// there is none behind it.  On the first deploy: the most advanced town still
-    /// connected to the base, so a fresh pilot steps into the fight rather than
-    /// walking 5 km out of the gate.</summary>
+    /// One rule covers both cases: the spawn is `Waves.respawn_town`, which walks
+    /// back from the death one town at a time along that lane, and falls back to
+    /// the command base when there is nothing behind it.  A first deploy has no
+    /// death of its own, so it takes one: the furthest town its side holds on a
+    /// lane drawn at random.  That is the same walk as a death on the front, so a
+    /// fresh pilot comes back one town behind the front instead of standing in it,
+    /// and both sides open on the same machine.</summary>
     public override (float x, float z, float yaw)? mech_spawn(World world, Player player)
     {
-        Town? town;
-        if (player.death_pos is null)
-            town = _lead_town(world, player.faction);
-        else
-            town = Waves.respawn_town(world, player.faction,
-                                      player.death_pos.Value.x, player.death_pos.Value.z);
+        var death = player.death_pos ?? _opening_death(world, player.faction);
+        var town = death is null
+            ? null
+            : Waves.respawn_town(world, player.faction, death.Value.x, death.Value.z);
         float x, z;
         if (town is null)
         {
@@ -96,26 +97,17 @@ public sealed class BattleMode : Mode
         return (x, z, MathF.Atan2(ez - z, ex - x));
     }
 
-    /// <summary>The front town nearest the enemy base on any lane, or null when
-    /// every one of them is a stone's throw from their guns (900 m).</summary>
-    public Town? _lead_town(World world, int faction)
+    /// <summary>The death a first deploy stands in for: the furthest town the
+    /// side holds on a lane drawn at random, or null when it holds none.</summary>
+    public (float x, float z)? _opening_death(World world, int faction)
     {
-        var (ex, ez) = world.terrain.bases[1 - faction];
-        Town? best = null;
-        float best_d = 1e18f;
+        var lanes = new List<int>();
         for (int lane = 0; lane < world.lanes.Count; lane++)
-        {
-            var town = Waves.front_town(world, faction, lane);
-            if (town is null) continue;
-            float dx = town.x - ex, dz = town.z - ez;
-            float d = MathF.Sqrt(dx * dx + dz * dz);
-            if (d < best_d)
-            {
-                best = town;
-                best_d = d;
-            }
-        }
-        return best is not null && best_d > 900f ? best : null;
+            if (Waves._chain(world, faction, lane).Count > 0) lanes.Add(lane);
+        if (lanes.Count == 0) return null;
+        var chain = Waves._chain(world, faction, world.rng.choice(lanes));
+        var town = chain[^1];
+        return (town.x, town.z);
     }
 
     /// <summary>The wait is the walk back: long at home, short on the enemy's step.
@@ -171,20 +163,25 @@ public sealed class BattleMode : Mode
         }
     }
 
-    /// <summary>Both sides start holding their closest towns: staging areas for
-    /// reinforcements and forward respawn points.</summary>
+    /// <summary>Every town opens owned - bar the two bends - and each side holds
+    /// the near half of each lane.
+    ///
+    /// The map's towns come in mirrored pairs, so "the near half of the lane"
+    /// is exactly "the same number of towns the same ranges out of either base",
+    /// and the two fronts meet in the middle of the lane.  `lane_i` counts way
+    /// points from the red base (`Waves.bind`), which makes the near half red's
+    /// and the far half blue's.  A `neutral` town is the lane's own bend, the
+    /// ground both bases are the same distance from, so it opens unowned and
+    /// cuts both chains there.</summary>
     public void _assign_home_towns(World world)
     {
-        foreach (int faction in _factions)
+        for (int lane = 0; lane < world.lanes.Count; lane++)
         {
-            var (bx, bz) = world.terrain.bases[faction];
-            // stable sort, like Python's `sorted`
-            var nearest = world.towns.OrderBy(t => _d(t.x, t.z, bx, bz));
-            int k = 0;
-            foreach (var town in nearest)
+            int middle = world.lanes[lane].Count / 2;
+            foreach (var town in world.towns)
             {
-                if (k++ >= 3) break;
-                town.owner = faction;
+                if (town.lane != lane || town.neutral) continue;
+                town.owner = town.lane_i < middle ? Defs.FACTION_RED : Defs.FACTION_BLUE;
                 town.progress = 0f;
             }
         }

@@ -171,6 +171,7 @@ export class Game {
     this.helpOpen = false;
     this.started = false;
     this.winner = -1;
+    this.deathSpot = null;      // where the pilot's hull was last seen alive
     this.zoom = 1;              // smoothed, drives the field of view
     this.zoomIdx = 0;           // optics step selected with the wheel
     this.zeroRange = 1000;      // sight setting in metres (CTRL+wheel)
@@ -204,6 +205,9 @@ export class Game {
       this.buyable = init.buyable;
       this.rearm = init.rearm || null;
       this.playerFaction = init.faction;
+      // the death cam's centre starts on this side's base, and the first live
+      // frame takes it over with the hull's own position
+      this.deathSpot = { x: init.bases[init.faction][0], z: init.bases[init.faction][1] };
       this.range = init.mode === 'range';
       if (init.lock && init.lock.frac) this.lockFrac = init.lock.frac;
       // sight settings come from the server so the steps are one list
@@ -555,6 +559,9 @@ export class Game {
     // pitch with the view here would draw (and predict for) a machine that
     // snaps to wherever the pilot looks - exactly what it no longer does
     const own = this.ownEntity();
+    // the last place a pilot saw his own hull: the hull leaves the snapshot the
+    // moment it dies, so the death cam reads the spot off this instead
+    if (own) this.deathSpot = { x: own.x, z: own.z };
 
     if (this.shopOpen && !own) this._shopClose();
     this._checkDamage(own);
@@ -1705,13 +1712,15 @@ export class Game {
   _camera(own, dt) {
     const cam = { viewProj: mat4(), invViewProj: mat4() };
     if (!own) {
-      // death cam: orbit the base
-      const bx = this.init.bases[this.net.meta && this.net.meta.faction !== undefined
-        ? this.net.meta.faction : this.playerFaction];
+      // death cam: a slow orbit round the place the hull fell.  `deathSpot`
+      // starts on this side's base and the first live frame takes it over
+      const at = this.deathSpot;
+      const bx = at.x;
+      const bz = at.z;
       const t = this.net.meta ? this.net.meta.time || 0 : 0;
       const ang = t * 0.15;
-      const eye = [bx[0] + Math.cos(ang) * 160, this.map.heightAt(bx[0], bx[1]) + 90, bx[1] + Math.sin(ang) * 160];
-      makeCamera(cam, eye, [bx[0], this.map.heightAt(bx[0], bx[1]) + 10, bx[1]], 1.0, this.glCanvas.clientWidth / this.glCanvas.clientHeight, 1, this.renderer.far);
+      const eye = [bx + Math.cos(ang) * 160, this.map.heightAt(bx, bz) + 90, bz + Math.sin(ang) * 160];
+      makeCamera(cam, eye, [bx, this.map.heightAt(bx, bz) + 10, bz], 1.0, this.glCanvas.clientWidth / this.glCanvas.clientHeight, 1, this.renderer.far);
       invert4(cam.invViewProj, cam.viewProj);
       return cam;
     }

@@ -321,8 +321,13 @@ frontend/
   (`battle()` / `range()` / `defence()`).
 * **An AI crew fires the arms it has.** `Systems/AI/Engage*.cs` used to pull the
   right trigger only for `kind in ("rocket", "saclos")`; it fires any arm
-  whose own `range` covers the target (still 2.2 km for those two, `ai_range`
-  for everything else), and `weapons.run` gives a `lock` weapon on an
+  whose own `range` covers the target and whose reach the crew engages at -
+  `min(ai_range, wd.range)`, one rule for every kind, so a 3.4 km cannon, a 1 km
+  rocket nest and a 3 km top attack all come out of the same table. A lock
+  weapon's *pilot* reach is its own number (`lock_range`, 4 km for the top
+  attack; `Defs.lock_range`), while the arm's `range` is the crew's launch
+  decision - which is why `Locking.cs` reads the first and `Engage` the second.
+  `weapons.run` gives a `lock` weapon on an
   ownerless hull the lock the crew already holds — the AI's `target`
   component — because there is no `pl.lock_target` to wait for. There is also a
   floor under the cycle: `defs.AI_LAUNCH_GAP` (15 s) for a lock round, or eight
@@ -432,7 +437,11 @@ frontend/
   `Systems/AI/Sense.cs` is the only writer: one look per crew per tick through
   `Sight.clear` at the *target's* own body (60 % of its height), and while the
   line is clear the belief *is* the truth - position, velocity and type copied in,
-  with `measure_accel` reading the same velocity the client differentiates.  When
+  with `measure_accel` reading the same velocity the client differentiates.  The
+  range test is the eye to the target's geometric centre in three dimensions -
+  the same quantity `Engage.ground_aim` gates its solution on - so `sight` and
+  `ai_range` answer one question and a hull on a ridge is never "seen" at a
+  distance it cannot be shot at.  When
   the line is cut (smoke, a crest, a canopy, a house) the copying stops and the
   point walks at the velocity stored with it for `Crew.MEMORY` (2 s), then the
   crew forgets the hull.  `Engage.ground_aim` reads *only* that belief - never

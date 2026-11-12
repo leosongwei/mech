@@ -37,9 +37,6 @@ namespace Mech.Server.Systems.AI;
 
 public static class Engage
 {
-    /// <summary>m: the far hand-off a racked launcher keeps, for the two arms whose
-    /// reach is not the crew's own engagement range.</summary>
-    public const float RACK_REACH = 2200.0f;
     /// <summary>rad: how far the mount may still be from the sight when the arm is
     /// allowed to open up.  The elevation a round *leaves* at is `aim_elev`, solved
     /// per arm; this only says the machine has been laid.</summary>
@@ -254,10 +251,9 @@ public static class Engage
                 int wid = c.weapon[i * 2 + arm];
                 if (wid == Defs.WID_NONE) continue;
                 var wd = Defs.WEAPONS[wid];
-                // the far hand-off: a racked launcher keeps its 2.2 km, everything
-                // else fires as far as the round it carries reaches
-                float reach = wd.kind is "rocket" or "saclos" ? RACK_REACH : own.ai_range;
-                if (aim.dist > MathF.Min(reach, wd.range)) continue;
+                // an arm fires as far as its own round reaches, and no further than
+                // the crew engages at: the two numbers are each arm's reach
+                if (aim.dist > MathF.Min(own.ai_range, wd.range)) continue;
                 // the gate: the angle this hull covers at this range, plus the
                 // round's own body.  A round that misses a mech by a metre still
                 // counts; a round that misses a missile by a metre is a miss - and

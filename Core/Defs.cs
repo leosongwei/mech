@@ -281,6 +281,10 @@ public sealed class WeaponDef
     // (`Systems/Flights.cs::Expire`; running out of *wire* always cooks off)
     public bool expire_burst;
     public int range;               // m at which the round still carries its energy
+    // m the *seeker* holds a lock to, for the kinds that need one (`@lock`).  A lock
+    // weapon's `range` is the crew's launch decision, and a pilot's reach is not the
+    // AI's: the top attack is fired at 3 km and locked at 4.  0 = the same as `range`.
+    public int lock_range;
     public int cost;                // $ for the hardware; -1 = not for sale
     public float ammo_cost;         // $ per round of a full load
     // `lock` is a C# keyword, so the field is written `@lock` - the metadata name,
@@ -397,10 +401,10 @@ public static partial class Defs
             wid = WID_AC30, key = "ac30", name = "30mm AUTOCANNON", kind = "bullet",
             ap = 15f, ad = 7f, ed = 18f, er = 8.0f,
             rpm = 300, mag = 400, reserve = 0, reload = 0.0f, vel = 1080f, spread = 0.0011f,
-            bias = 0.0f, g = 9.81f, thrust = 0f, maxvel = 0f, life = 9.3f, range = 3200,
+            bias = 0.0f, g = 9.81f, thrust = 0f, maxvel = 0f, life = 9.3f, range = 3400,
             cost = 300, ammo_cost = 0.5f, @lock = 0, lock_time = 0f, salvo = 0, semi = 0,
             color = new[] { 1.0f, 0.82f, 0.25f }, cal = 30f, prox = 2.5f,
-            desc = "High velocity, 3.2 km effective",
+            desc = "High velocity, 3.4 km effective",
         },
         // one belt of 1500, no reload: the gun runs dry and that is it.  1800 rpm is
         // exactly one round per tick, the fastest the 30 Hz clock can fire - twice the
@@ -413,10 +417,10 @@ public static partial class Defs
             wid = WID_MG127, key = "mg127", name = "12.7mm MACHINE GUN", kind = "bullet",
             ap = 8f, ad = 10f, ed = 0f, er = 0f,
             rpm = 1800, mag = 1500, reserve = 0, reload = 0.0f, vel = 890f, spread = 0.00225f,
-            bias = 0.0f, g = 9.81f, thrust = 0f, maxvel = 0f, life = 11.2f, range = 1800,
+            bias = 0.0f, g = 9.81f, thrust = 0f, maxvel = 0f, life = 11.2f, range = 1000,
             cost = 180, ammo_cost = 0.1f, @lock = 0, lock_time = 0f, salvo = 0, semi = 0,
             color = new[] { 1.0f, 0.68f, 0.20f }, cal = 12.7f, gatling = true,
-            desc = "1.8 km suppressive fire",
+            desc = "1.0 km suppressive fire",
         },
         // S-8 class: a launch charge throws the 80 mm rocket out at ~55 m/s, the motor
         // burns for a second and it leaves at 610 m/s.  A small shaped charge plus a
@@ -434,7 +438,7 @@ public static partial class Defs
             ap = 40f, ad = 25f, ed = 35f, er = 10.0f,
             rpm = 600, mag = 40, reserve = 0, reload = 0.0f, vel = 55f, spread = 0.003f,
             bias = 0.0429f, g = 9.81f, thrust = 560f, maxvel = 610f, life = 16.4f,
-            range = 3200, cost = 350, ammo_cost = 4.0f, @lock = 0, lock_time = 0f, salvo = 1,
+            range = 1000, cost = 350, ammo_cost = 4.0f, @lock = 0, lock_time = 0f, salvo = 1,
             semi = 0, color = new[] { 1.0f, 0.45f, 0.15f }, cal = 80f, rcs = 0.005f,
             rack = RACK_ROCKET, desc = "40 rounds, hold to fire, sighted to 1 km",
         },
@@ -461,7 +465,7 @@ public static partial class Defs
             rpm = 200, mag = 16, reserve = 0, reload = 0.0f, vel = 40f, spread = 0.003f,
             bias = 0.0f, g = 0.0f, thrust = 100f, burn = 5.6f, drag = 0.0002f, maxvel = 600f,
             life = 36.0f, wob = 30.0f, wob_f = 1.5f, maxdist = 4000.0f,
-            range = 4000, cost = 500, ammo_cost = 30.0f, @lock = 0, lock_time = 0f, salvo = 0,
+            range = 3400, cost = 500, ammo_cost = 30.0f, @lock = 0, lock_time = 0f, salvo = 0,
             semi = 0, color = new[] { 0.35f, 1.0f, 0.55f }, cal = 152f, rcs = 0.02f,
             rack = RACK_SACLOS, desc = "Beam riding, keep the sight on target",
         },
@@ -498,7 +502,7 @@ public static partial class Defs
             ap = 900f, ad = 120f, ed = 60f, er = 7.0f,
             rpm = 200, mag = 8, reserve = 0, reload = 0.0f, vel = 20f, spread = 0.002f,
             bias = 0.0f, g = 9.81f, thrust = 110.0f, maxvel = 306.0f, life = 30.0f,
-            expire_burst = true, range = 4000, cost = 700, ammo_cost = 45.0f,
+            expire_burst = true, range = 3000, lock_range = 4000, cost = 700, ammo_cost = 45.0f,
             mass = 20.0f, dia = 0.127f, cd0 = 0.75f, k_cl = 0.12f, cl_alpha = 16.0f,
             cl_max = 5.0f, burn = 3.4f, ignite = 0.15f, loft = RACK_TOP.elev, apex = 950.0f,
             turn_r = 700.0f, pn_n = 4.0f, pn_r = 300.0f, pn_v = 120.0f,
@@ -512,19 +516,19 @@ public static partial class Defs
             wid = WID_RIFLE556, key = "rifle556", name = "5.56mm RIFLE", kind = "bullet",
             ap = 5f, ad = 4f, ed = 0f, er = 0f,
             rpm = 430, mag = 30, reserve = 900, reload = 2.2f, vel = 900f, spread = 0.007f,
-            bias = 0.0f, g = 9.81f, thrust = 0f, maxvel = 0f, life = 11.1f, range = 450,
+            bias = 0.0f, g = 9.81f, thrust = 0f, maxvel = 0f, life = 11.1f, range = 800,
             cost = -1, ammo_cost = 0.05f, @lock = 0, lock_time = 0f, salvo = 0, semi = 0,
-            color = new[] { 1.0f, 0.9f, 0.5f }, cal = 5.56f, desc = "450 m rifle",
+            color = new[] { 1.0f, 0.9f, 0.5f }, cal = 5.56f, desc = "800 m rifle",
         },
         new WeaponDef
         {
             wid = WID_RPG, key = "rpg", name = "RPG LAUNCHER", kind = "rocket",
             ap = 100f, ad = 40f, ed = 20f, er = 3.0f,
             rpm = 25, mag = 1, reserve = 900, reload = 6.5f, vel = 50f, spread = 0.008f,
-            bias = 0.0f, g = 9.81f, thrust = 380f, maxvel = 300f, life = 33.3f, range = 500,
+            bias = 0.0f, g = 9.81f, thrust = 380f, maxvel = 300f, life = 33.3f, range = 800,
             cost = -1, ammo_cost = 8.0f, @lock = 0, lock_time = 0f, salvo = 0, semi = 0,
             color = new[] { 1.0f, 0.5f, 0.2f }, cal = 85f, rcs = 0.002f,
-            desc = "500 m anti-tank rocket",
+            desc = "800 m anti-tank rocket",
         },
         // 105 mm smoothbore: a tank gun hung on a mech arm, not an autocannon.  One
         // round in the breech, three seconds of autoloader between shots, twelve
@@ -561,7 +565,7 @@ public static partial class Defs
             ap = 800f, ad = 120f, ed = 80f, er = 6.0f,
             rpm = 12, mag = 16, reserve = 0, reload = 0.0f, vel = 40f, spread = 0.003f,
             bias = 0.0f, g = 0.0f, thrust = 100f, burn = 5.6f, drag = 0.0002f, maxvel = 600f,
-            life = 36.0f, wob = 30.0f, wob_f = 1.5f, maxdist = 4000.0f, range = 4000,
+            life = 36.0f, wob = 30.0f, wob_f = 1.5f, maxdist = 4000.0f, range = 3000,
             expire_burst = true,
             cost = -1, ammo_cost = 0.0f, @lock = 0, lock_time = 0f, salvo = 0, semi = 0,
             color = new[] { 0.35f, 1.0f, 0.55f }, cal = 152f, rcs = 0.02f,
@@ -606,6 +610,10 @@ public static partial class Defs
 
     /// <summary>May this weapon's rounds be locked, fused and shot down?</summary>
     public static bool is_interceptable(int wid) => Array.IndexOf(INTERCEPT_KINDS, WEAPONS[wid].kind) >= 0;
+
+    /// <summary>m a seeker can lock a hull with this weapon at: its own
+    /// `lock_range`, or `range` when it sets none.</summary>
+    public static int lock_range(WeaponDef wd) => wd.lock_range > 0 ? wd.lock_range : wd.range;
 
     // ------------------------------------------------------- first_hit_record
     // The round's `first_hit_t` while nothing has been hit this tick.  A leg is
@@ -924,7 +932,7 @@ public sealed class UnitDef
     public float height;        // m, ground to the top of the hull
     public float radar_strength;    // m^4, 0 = no self-defence radar
     public int[] weapons = { Defs.WID_NONE, Defs.WID_NONE };  // (left arm, right arm)
-    public int ai_range;        // m an AI crew opens fire at
+    public int ai_range;        // m an AI crew engages at (an arm still needs its own `range`)
     public int sight;           // m it can pick a target out to
     public int reward;          // $ for killing it
     public float splat;         // m, the fireball the client draws when it dies
@@ -959,7 +967,7 @@ public static partial class Defs
         {
             name = "RIFLEMAN", hp = 10f, dp = 1f, de = 1f,
             speed = 5.5f, radius = 0.55f, height = 1.8f,
-            weapons = new[] { WID_RIFLE556, WID_NONE }, ai_range = 420, sight = 600,
+            weapons = new[] { WID_RIFLE556, WID_NONE }, ai_range = 800, sight = 800,
             reward = 45, splat = 1.0f, targets = new[] { ETYPE_INF_RIFLE, ETYPE_INF_ROCKET },
             spheres = new[] { new[] { (float)MOD_CHASSIS, 0.0f, 0.9f, 0.0f, 0.65f } },
             death = new DeathDef
@@ -972,7 +980,7 @@ public static partial class Defs
         {
             name = "AT RIFLEMAN", hp = 10f, dp = 1f, de = 1f,
             speed = 5.0f, radius = 0.55f, height = 1.8f,
-            weapons = new[] { WID_RPG, WID_NONE }, ai_range = 480, sight = 650,
+            weapons = new[] { WID_RPG, WID_NONE }, ai_range = 800, sight = 800,
             reward = 70, splat = 1.0f,
             spheres = new[] { new[] { (float)MOD_CHASSIS, 0.0f, 0.9f, 0.0f, 0.65f } },
             death = new DeathDef
@@ -994,7 +1002,7 @@ public static partial class Defs
             // self-defence radar: half the mech's discovery range, i.e. a sixteenth of
             // its `radar_strength` (d^4), so the warning time is halved as well
             radar_strength = 3.125e12f,
-            weapons = new[] { WID_MG127, WID_APC_ATGM }, ai_range = 1800, sight = 2600,
+            weapons = new[] { WID_MG127, WID_APC_ATGM }, ai_range = 3000, sight = 3000,
             reward = 180, splat = DEATH_BLAST.er,
             spheres = new[]
             {
@@ -1030,7 +1038,7 @@ public static partial class Defs
             // is the window a pilot needs: at 780 m the fuse's own trigger is a 0.26 deg
             // cone, so the burst has to be laid, not sprayed
             radar_strength = 1.75e14f,
-            weapons = new[] { WID_AC30, WID_ROCKET }, ai_range = 2600, sight = 3400,
+            weapons = new[] { WID_AC30, WID_ROCKET }, ai_range = 3500, sight = 3500,
             reward = 350, splat = DEATH_BLAST.er, spheres = MECH_HITSPHERES,
             death = new DeathDef
             {

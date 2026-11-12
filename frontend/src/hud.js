@@ -612,7 +612,7 @@ export class HUD {
         }
         ctx.fillStyle = 'rgba(200,230,210,0.55)';
         ctx.font = '10px "Courier New", monospace';
-        ctx.fillText(`${(wd.range / 1000).toFixed(1)}km  ${wd.desc || ''}`, x0 + 8, y0 + 50);
+        ctx.fillText(`${((wd.lock_range || wd.range) / 1000).toFixed(1)}km  ${wd.desc || ''}`, x0 + 8, y0 + 50);
       }
       ctx.globalAlpha = 1;
     }

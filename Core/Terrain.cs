@@ -1237,7 +1237,7 @@ public sealed class Terrain
     /// shape of a crest line rather than of a bump.  `amps` sets the weight of
     /// each octave; without one the weight simply halves.</summary>
     private static float[] _fbm(Rng rng, int w, int h, int octaves = 6, int base_res = 2,
-                                int base_res_y = 0, float[] amps = null)
+                                int base_res_y = 0, float[]? amps = null)
     {
         int resy = base_res_y > 0 ? base_res_y : base_res;
         var outv = new float[w * h];

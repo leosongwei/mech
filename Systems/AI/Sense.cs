@@ -130,20 +130,26 @@ public static class Sense
     /// <summary>Does this crew have the hull in hand: inside its engagement range and
     /// through the one line of sight (`Systems/Sight.cs` - terrain, canopies, smoke).
     ///
-    /// The cast is aimed at the *target's* own body, 60 % of its height up, so a
-    /// hull looking at a rifleman looks at a man and not at a metre of air above
-    /// him.</summary>
+    /// The range is the same quantity the fire solution gates on
+    /// (`Engage.ground_aim`): the eye to the hull's geometric centre, in three
+    /// dimensions, so a hull on a ridge is neither "seen" at a range it cannot be
+    /// shot at nor the other way round.  The *cast* is aimed at the target's own
+    /// body, 60 % of its height up, so a hull looking at a rifleman looks at a man
+    /// and not at a metre of air above him.</summary>
     private static bool _sees(World world, CrewRow r, Vec3 tpos, UnitDef td, UnitDef own)
     {
         float dx = tpos.x - r.eye.x, dz = tpos.z - r.eye.z;
-        if (MathF.Sqrt(dx * dx + dz * dz) > own.ai_range) return false;
+        float dy = tpos.y + td.height * 0.5f - r.eye.y;
+        if (dx * dx + dy * dy + dz * dz > (float)own.ai_range * own.ai_range) return false;
         return Sight.clear(world, r.eye, new Vec3(tpos.x, tpos.y + td.height * 0.6f, tpos.z));
     }
 
     /// <summary>Nearest hostile hull with line of sight, or -1.
     ///
     /// No position is gathered here - the grid carries its own copy, in the same
-    /// order as its ids.</summary>
+    /// order as its ids.  The distance is the one `_sees` measures: eye to the
+    /// hull's geometric centre, so the scan radius and the engagement radius answer
+    /// the same question.</summary>
     private static int _acquire(World world, int fac, sbyte[] combat_fac, Vec3 eye, UnitDef d)
     {
         var grid = world.grid;
@@ -161,8 +167,9 @@ public static class Sense
             if (cf < 0 || cf == fac) continue;
             if (want != null && Array.IndexOf(want, (int)etype[id]) < 0) continue;
             float dx = p[k * 3] - eye.x;
+            float dy = p[k * 3 + 1] + Defs.UNIT_DEFS[etype[id]].height * 0.5f - eye.y;
             float dz = p[k * 3 + 2] - eye.z;
-            float ds = MathF.Sqrt(dx * dx + dz * dz);
+            float ds = MathF.Sqrt(dx * dx + dy * dy + dz * dz);
             if (!(ds <= d.sight)) continue;
             cand[n].id = id;
             cand[n].x = p[k * 3];

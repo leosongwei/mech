@@ -82,12 +82,17 @@ void main(){
   // 3 km at 20x optics, which is where the sight actually looks.
   vec2 d = max(a - uA0, 0.0);
   vec2 spacing = uTile * exp2(d / G);
-  // Step the grid with the eye in whole cells of its *own* spacing instead of
-  // sliding it continuously: every vertex then sits on a fixed world point
-  // until the eye crosses a cell, and the far hills stay put instead of
-  // crawling over the heightfield a little every frame.  Inside the flat core
-  // that grid is the tile grid, so those vertices land on tile corners.
-  vec2 base = floor(uCam.xz / spacing) * spacing;
+  // Step the grid with the eye in whole *tiles* instead of sliding it
+  // continuously: every vertex then sits on a fixed world point until the eye
+  // crosses a tile, and the far hills stay put instead of crawling over the
+  // heightfield a little every frame.
+  //
+  // One lattice for the whole mesh, at the finest spacing, and not one per band:
+  // a band that snapped to its own (coarser) grid put its vertices on a lattice
+  // with a different phase, and at every band boundary the quad that straddles it
+  // was stretched by up to a whole local cell - hundreds of metres out at the far
+  // rings, and re-phased every time the eye crossed a cell, so the tear moved.
+  vec2 base = floor(uCam.xz / uTile) * uTile;
   vec2 off = sg * (uTile * min(a, vec2(uA0)) + kk * (exp2(d / G) - 1.0));
   vec2 world = base + off;
   float h = texH(world / uTile);
@@ -628,22 +633,11 @@ export class Renderer {
     const LIFT = 0.06;                  // asphalt sits just proud of the grass
     const ASPHALT = [0.235, 0.230, 0.220];
     const PAINT = [0.60, 0.585, 0.505];
-    const h = map.heights, W = map.w, H = map.h;
 
-    // Height of the flat triangle the terrain patch draws under (x, z): the
-    // patch splits every tile along its north-east to south-west diagonal, and
-    // a road vertex has to land on that plane, or the asphalt sinks into the
-    // slope somewhere inside the tile.
-    const facet = (x, z) => {
-      const fx = Math.min(Math.max(x / T, 0), W - 1.001);
-      const fz = Math.min(Math.max(z / T, 0), H - 1.001);
-      const i = fx | 0, j = fz | 0;
-      const tx = fx - i, tz = fz - j;
-      const a = h[j * W + i], b = h[j * W + i + 1];
-      const c = h[(j + 1) * W + i], d = h[(j + 1) * W + i + 1];
-      if (tx + tz <= 1) return a + (b - a) * tx + (c - a) * tz;
-      return d + (c - d) * (1 - tx) + (b - d) * (1 - tz);
-    };
+    // Height of the flat triangle the terrain patch draws under (x, z).
+    // `map.heightAt` *is* that rule (both hosts and this pass solve the same
+    // two triangles), so a road vertex lands on the plane the patch draws.
+    const facet = (x, z) => map.heightAt(x, z);
 
     const out = [];
     const vert = (x, z, col, lift) => out.push(x, facet(x, z) + lift, z,
@@ -683,9 +677,9 @@ export class Renderer {
       return s - Math.floor(s);
     };
 
-    for (let j = 0; j < H; j++) {
-      for (let i = 0; i < W; i++) {
-        const bits = roads[j * W + i];
+    for (let j = 0; j < map.h; j++) {
+      for (let i = 0; i < map.w; i++) {
+        const bits = roads[j * map.w + i];
         if (!bits) continue;
         const x0 = i * T, z0 = j * T;
         const m = T * 0.5;
@@ -802,7 +796,16 @@ export class Renderer {
         const sx = tile * (0.88 + r1 * 0.10);
         const sz = tile * (0.88 + r2 * 0.10);
         const wall = HOUSES[Math.floor(hash(i * 0.7, j * 1.3) * HOUSES.length) % HOUSES.length];
-        emit(MESH_FACADE, x, y + sy * 0.5, z, 0, 0, sx, sy, sz, wall);
+        // A town stands on its hill, so the facet under a block is a slope: the
+        // box is drawn from the *lowest* corner of the tile up to the roofline, so
+        // it is buried on the uphill side instead of hovering over the downhill
+        // one.  The roof stays where the wall column says it is.
+        const hh = map.heights;
+        const hlo = Math.min(hh[j * w + i], hh[j * w + i + 1],
+                             hh[(j + 1) * w + i], hh[(j + 1) * w + i + 1]);
+        const foot = Math.min(hlo, y) - 0.4;
+        const tall = y + sy - foot;
+        emit(MESH_FACADE, x, foot + tall * 0.5, z, 0, 0, sx, tall, sz, wall);
         // roof: a flat slab with a parapet, plus the odd plant box on top
         const dark = r1 > 0.5 ? 0.46 : 0.52;
         emit(MESH_BOX, x, y + sy + 0.22, z, 0, 0, sx * 1.03, 0.45, sz * 1.03,
@@ -813,10 +816,14 @@ export class Renderer {
             [0.34, 0.35, 0.36]);
         }
         if (r2 < 0.22) {
-          // a low annex against one side, well under the wall column
+          // a low annex against one side, well under the wall column, on the
+          // ground of its own tile as well
           const ax = x + (r1 > 0.5 ? 1 : -1) * sx * 0.44;
           const az = z + (r2 - 0.5) * sz * 0.4;
-          emit(MESH_FACADE, ax, y + sy * 0.3, az, 0, 0, sx * 0.42, sy * 0.6, sz * 0.42,
+          const afoot = Math.min(map.heightAt(ax, az), foot) - 0.3;
+          const atall = y + sy * 0.72 - afoot;
+          emit(MESH_FACADE, ax, afoot + atall * 0.5, az, 0, 0,
+            sx * 0.42, atall, sz * 0.42,
             [wall[0] * 0.94, wall[1] * 0.90, wall[2] * 0.86]);
         }
       } else if (t === 4) {
@@ -1145,12 +1152,19 @@ export class Renderer {
     // the tile patch is centred on the eye, snapped to whole tiles so every
     // vertex stays exactly on a tile corner
     const K = TILE_PATCH;
-    const ox = Math.min(Math.max(Math.round(cam.eye[0] / tile) - K, 0), this.map.w - 1 - 2 * K);
-    const oz = Math.min(Math.max(Math.round(cam.eye[2] / tile) - K, 0), this.map.h - 1 - 2 * K);
+    // floor, not round: the far grid's flat core is placed on the tile lattice
+    // from `floor(uCam / uTile)`, so this rectangle has to be cut out of the same
+    // lattice or the two meshes disagree by a tile along its edge
+    const ox = Math.min(Math.max(Math.floor(cam.eye[0] / tile) - K, 0), this.map.w - 1 - 2 * K);
+    const oz = Math.min(Math.max(Math.floor(cam.eye[2] / tile) - K, 0), this.map.h - 1 - 2 * K);
     this.tileOrigin = [ox, oz];
-    // world bounds of the patch, handed to the far program so it can cut the
-    // same rectangle out of its own mesh
-    const patch = [ox * tile, oz * tile, (ox + 2 * K) * tile, (oz + 2 * K) * tile];
+    // World bounds of the patch, handed to the far program so it can cut the same
+    // rectangle out of its own mesh.  The cut is one tile *inside* the patch: the
+    // far mesh then keeps drawing under the patch's outer ring, and the two
+    // surfaces overlap instead of meeting.  A butt joint between two grids of
+    // different resolution is a visible step at grazing angles whatever the phase
+    // (no skirts, no stitching); an overlap is invisible and costs one ring.
+    const patch = [(ox + 1) * tile, (oz + 1) * tile, (ox + 2 * K - 1) * tile, (oz + 2 * K - 1) * tile];
 
     const common = (u) => {
       gl.uniformMatrix4fv(u.uViewProj, false, cam.viewProj);

@@ -120,6 +120,24 @@ public static class Integrate
         terrain.blocked(x, z - rad) ||
         terrain.trunk_blocked(x, z, rad);
 
+    /// <summary>Whether the ground between (x, z) and (nx, nz) climbs harder than
+    /// this chassis can pull itself up.
+    ///
+    /// Uphill only: a hull can always come back off a face, which is what keeps a
+    /// machine from being entombed by the step that put it there.  The slack is
+    /// the facet the hull is already standing on - its own height is the plane it
+    /// stands on, so a step at exactly its limit must not read as a wall - plus a
+    /// centimetre for the float.</summary>
+    public static bool too_steep(Terrain terrain, float x, float y0, float z,
+                                 float nx, float nz, float max_grad)
+    {
+        float dx = nx - x, dz = nz - z;
+        float run = MathF.Sqrt(dx * dx + dz * dz);
+        if (run < 1e-4f) return false;
+        float rise = terrain.height_at(nx, nz) - y0;
+        return rise > max_grad * run + 0.01f * run + 0.02f;
+    }
+
     /// <summary>Turn every walker's legs towards the direction it is driving.
     ///
     /// Locomotion, not aim: a hull's legs follow the machine's own motion, which
@@ -161,10 +179,13 @@ public static class Integrate
             nx = MathF.Min(MathF.Max(x + vx * dt, TILE), maxx);
             nz = MathF.Min(MathF.Max(z + vz * dt, TILE), maxz);
             float rad = Defs.UNIT_DEFS[et].radius * 0.6f;
-            if (blocked(terrain, nx, nz, rad))
+            float grad = Defs.max_gradient(et);
+            bool fits(float ax, float az) =>
+                !blocked(terrain, ax, az, rad) && !too_steep(terrain, x, y0, z, ax, az, grad);
+            if (!fits(nx, nz))
             {
-                if (!blocked(terrain, nx, z, rad)) nz = z;
-                else if (!blocked(terrain, x, nz, rad)) nx = x;
+                if (fits(nx, z)) nz = z;
+                else if (fits(x, nz)) nx = x;
                 else { nx = x; nz = z; }
             }
             if (wheeled)

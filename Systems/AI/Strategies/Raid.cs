@@ -113,9 +113,7 @@ public static class Raid
     // line round the enemy instead of 1.25x, through a third of the fire.
     public const float ASTAR_WEIGHT = 1.6f;
     public const float ARRIVE = 25.0f;           // m: a way point this close counts as reached
-    public const float HANDOVER = 400.0f;        // m from the town middle where the street grid takes over
-    public const float WINDOW_PAD = 320.0f;      // m of extra window around a street plan
-    public const float STREET_TREE_COST = 3.0f;  // extra cost of a street-grid node under a canopy
+    public const float HANDOVER = 400.0f;        // m from the town middle where the navmesh takes over
     public const float TOWN_STOP = 150.0f;       // m from the town middle: inside the 170 m capture ring,
                                                  // but at its edge - a raider does not drive into the
                                                  // blocks of a town it is taking (300-650 m of houses)
@@ -339,8 +337,9 @@ public static class Raid
     ///
     /// The route is planned in two halves: the strategic grid carries it across the
     /// open field, and the last `HANDOVER` metres - the part that runs into a town -
-    /// are planned on the 16 m street grid, because at 128 m a town is a smear of
-    /// half walls and a plan drawn on it strands a hull against a house.</summary>
+    /// are planned on the terrain's own facets (`Systems/AI/Nav/`), because at 128 m
+    /// a town is a smear of half walls and a plan drawn on it strands a hull against
+    /// a house.</summary>
     public static void _replan(World world, int eid, GridNav? nav = null, float[]? force = null)
     {
         var e = world.ecs;
@@ -371,8 +370,8 @@ public static class Raid
         e.uv("ai_state")[eid] = AiState.ADVANCE;
     }
 
-    /// <summary>Plan a way out of whatever this hull has driven into, on the street
-    /// grid.
+    /// <summary>Plan a way out of whatever this hull has driven into, on the facet
+    /// navmesh.
     ///
     /// A raider that has pushed at something for `STUCK_REPLAN` seconds is not on
     /// the line it was given - it is behind a house, in a court, or on the wrong
@@ -400,8 +399,7 @@ public static class Raid
         else end = world.terrain.bases[1 - b.u8("faction")[row]];
         int i = b.i("path_i")[row];
         var target = i < path.Count ? path[i] : end;
-        var grid = new StreetNav(world.terrain, (px, pz), target);
-        var legs = _legs(world.terrain, grid, (px, pz), target);
+        var legs = Paths.plan(world.terrain, NavProfile.of(Defs.ETYPE_MECH), px, pz, target.x, target.z);
         if (legs.Count >= 2)
         {
             // `path[i + 1:]` in Python: an index already past the end of the route
@@ -583,10 +581,9 @@ public static class Raid
     ///
     /// `cost` is the static half of the route cost - one for open ground, more for
     /// woods or buildings - and `open` is what A* is allowed to stand on at all.
-    /// Python has these two attributes duplicated on `FieldNav` and `StreetNav`; here
-    /// they are one base class, and the two subclasses differ only in how they fill
-    /// them (a 128 m strategic node is a mean over 8x8 tiles, a street node is one
-    /// tile).
+    /// `FieldNav` is the only implementation left: the 128 m strategic picture.
+    /// Everything below it - the town approach, the way out of a court - is planned
+    /// on facets, in `Systems/AI/Nav/`.
     /// </summary>
     public abstract class GridNav
     {
@@ -653,59 +650,6 @@ public static class Raid
                         ? 1f + WOOD_COST * wood + WALL_COST * build
                           + GRADIENT_COST * MathF.Min(GRADIENT_CAP, force[n])
                         : float.PositiveInfinity;
-                }
-            }
-        }
-    }
-
-    /// <summary>The street grid: one node per 16 m map tile, over a window around a
-    /// town.
-    ///
-    /// The strategic grid cannot see a street.  At 128 m a node is only "open"
-    /// unless half of it is wall, so a town is a smear it will happily plan a route
-    /// through - and the hull that drives that route ends up against a house with
-    /// nothing to do but push.  This is the same idea one level down: a node per map
-    /// tile, buildings and rock impassable, the streets and the plaza open, the
-    /// woods expensive (a mech may drive under a canopy, it does not want to).  It
-    /// is built for the window it is needed in - a town and its approach, or the
-    /// ground around a hull that has got itself stuck - so it is about the size of
-    /// the strategic grid and costs about the same to search.
-    ///
-    /// Cost per node is `1 + STREET_TREE_COST` of wood: the streets are all equal as
-    /// far as a walking hull is concerned, and a route through a park is a route
-    /// through a park.</summary>
-    public sealed class StreetNav : GridNav
-    {
-        public StreetNav(Terrain terrain, (float x, float z) a, (float x, float z) b,
-                         float pad = WINDOW_PAD)
-        {
-            float bx0 = MathF.Max(0f, MathF.Min(a.x, b.x) - pad);
-            float bz0 = MathF.Max(0f, MathF.Min(a.z, b.z) - pad);
-            float bx1 = MathF.Min(terrain.w * Terrain.TILE, MathF.Max(a.x, b.x) + pad + Terrain.TILE);
-            float bz1 = MathF.Min(terrain.d * Terrain.TILE, MathF.Max(a.z, b.z) + pad + Terrain.TILE);
-            int i0 = (int)(bx0 / Terrain.TILE), j0 = (int)(bz0 / Terrain.TILE);
-            int i1 = (int)(bx1 / Terrain.TILE), j1 = (int)(bz1 / Terrain.TILE);
-            cw = Math.Max(1, i1 - i0);
-            cd = Math.Max(1, j1 - j0);
-            cell_m = Terrain.TILE;
-            x0 = i0 * Terrain.TILE;
-            z0 = j0 * Terrain.TILE;
-            open = new bool[cd * cw];
-            cost = new float[cd * cw];
-            for (int j = 0; j < cd; j++)
-            {
-                int tj = Math.Min(terrain.d - 1, j0 + j);
-                for (int i = 0; i < cw; i++)
-                {
-                    int ti = Math.Min(terrain.w - 1, i0 + i);
-                    byte t = terrain.tiles[tj * terrain.w + ti];
-                    bool solid = t == Terrain.TILE_BUILDING || t == Terrain.TILE_ROCK ||
-                                 t == Terrain.TILE_SOLID || t == Terrain.TILE_BASE;
-                    bool wood = t == Terrain.TILE_TREE || t == Terrain.TILE_FOREST;
-                    int n = j * cw + i;
-                    open[n] = !solid;
-                    cost[n] = solid ? float.PositiveInfinity
-                                    : 1f + STREET_TREE_COST * (wood ? 1f : 0f);
                 }
             }
         }
@@ -866,7 +810,7 @@ public static class Raid
     /// <summary>Way points from `start` to `end`, planned at two scales.
     ///
     /// The strategic grid carries the raider across the open field to `street`
-    /// (`_handover`), and from there the street grid takes it the last few hundred
+    /// (`_handover`), and from there the facet navmesh takes it the last few hundred
     /// metres into the town - one plan, one list of way points, and the driver does
     /// not need to know which half it is on.</summary>
     public static List<(float x, float z)> _route(Terrain terrain, GridNav nav,
@@ -875,8 +819,8 @@ public static class Raid
     {
         if (street is null) return _legs(terrain, nav, start, end);
         var pts = _legs(terrain, nav, start, street.Value);
-        var town = new StreetNav(terrain, street.Value, end);
-        var legs = _legs(terrain, town, street.Value, end);
+        var legs = Paths.plan(terrain, NavProfile.of(Defs.ETYPE_MECH),
+                              street.Value.x, street.Value.z, end.x, end.z);
         if (legs.Count == 0) return pts;
         var outv = new List<(float x, float z)>(pts.Count + legs.Count);
         for (int i = 0; i + 1 < pts.Count; i++) outv.Add(pts[i]);
@@ -901,7 +845,7 @@ public static class Raid
         return _shortcut(terrain, pts);
     }
 
-    /// <summary>Where the street plan takes over from the strategic one.
+    /// <summary>Where the navmesh takes over from the strategic grid.
     ///
     /// `HANDOVER` metres out from the town middle, on the line the raider arrives
     /// along: far enough out that the strategic grid's last decision is made in open

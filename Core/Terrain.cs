@@ -1,10 +1,10 @@
-// OpenTTD-ish tile terrain: heightfield, tile map, lanes and towns.
+// Tile terrain: continuous heightfield, tile map, lanes and towns.
 //
-// The heightfield stores *vertex* heights (metres, quantised to `HSTEP` steps so
-// the ground reads as flat terraces joined by one-tile slopes - the angular
-// OpenTTD look) on a `w x d` grid whose vertices sit at `(i*TILE, j*TILE)`.
-// The tile map stores one byte per tile (`tiles[j*w + i]` covering
-// `[i*TILE, (i+1)*TILE) square`).
+// The heightfield stores *vertex* heights (metres, a continuous value) on a
+// `w x d` grid whose vertices sit at `(i*TILE, j*TILE)`; the ground between four
+// of them is the two flat triangles `height_at` solves, so what a round hits is
+// the facet the client draws.  The tile map stores one byte per tile
+// (`tiles[j*w + i]` covering `[i*TILE, (i+1)*TILE) square`).
 //
 // The map is 16000 x 16000 m made of 16 m tiles.  Both arrays are shipped to
 // the browser (zlib compressed) so client side prediction - ballistic impact
@@ -17,10 +17,10 @@
 // produces is a different but equivalent one.
 //
 // What must stay identical is the *physics* and the *rules*: 16 m tiles with
-// 1000x1000 of them, heights on `HSTEP` terraces, the road bit mask, the road
-// corridor being flattened, `no_build` keeping houses one tile off a straight
-// lane and two off a diagonal one, the town plaza, the house counts, and the
-// one that other systems lean on - a tree tile blocks with its **trunk**
+// 1000x1000 of them, the triangle `height_at` samples, the road bit mask, the
+// road corridor being flattened, `no_build` keeping houses one tile off a
+// straight lane and two off a diagonal one, the town plaza, the house counts, and
+// the one that other systems lean on - a tree tile blocks with its **trunk**
 // (a cylinder, solved) and hides with its **canopy** (a volume, solved), never
 // with a slab over the whole tile.
 
@@ -41,6 +41,7 @@ public sealed class Town
     public float progress;          // capture timer, seconds
     public string name = "";
     public bool neutral;            // a spot from `TOWN_NEUTRAL`: opens unowned
+    public int radius;              // tiles the streets were grown out to
 
     // written later, by the battle mode
     public int lane = -1;           // index into `world.lanes`, -1 = not assigned
@@ -109,9 +110,6 @@ public sealed class Terrain
     public const float TILE = 16f;
     public const int MAPW = 1000;
     public const int MAPH = 1000;
-    /// <summary>Height quantum: one 4 m step per 16 m tile is a gentle 14 degree
-    /// ramp, so terraces stay drivable.</summary>
-    public const float HSTEP = 4f;
 
     public const byte TILE_GRASS = 0;
     public const byte TILE_ROAD = 1;
@@ -422,9 +420,16 @@ public sealed class Terrain
     // -- sampling ---------------------------------------------------------
     /// <summary>Bilinear height.</summary>
     /// <remarks>
-    /// This is the hottest scalar in the server (every march sample, every
-    /// hull, every sight line), so it reads the four corners straight off the
-    /// buffer and blends them - no helper call per corner.
+    /// This is the hottest scalar in the server (every march sample, every hull,
+    /// every sight line), so it reads the four corners straight off the buffer
+    /// and solves the one triangle the point falls in - no helper call per corner.
+    ///
+    /// The rule is the one the client draws: the tile is split along the
+    /// north-east to south-west diagonal, so `tx + tz <= 1` is the triangle
+    /// {a=(i,j), b=(i+1,j), c=(i,j+1)} and the rest is {d=(i+1,j+1), c, b}.
+    /// `renderer._buildTilePatch`'s index buffer and `_buildRoads`' `facet` are
+    /// the same split, which is why a road vertex and a hull's footprint land on
+    /// the ground that is drawn under them.
     /// </remarks>
     public float height_at(float x, float z)
     {
@@ -435,9 +440,9 @@ public sealed class Terrain
         float tx = fx - i;
         float tz = fz - j;
         int k = j * w + i;
-        float h00 = h[k], h10 = h[k + 1], h01 = h[k + w], h11 = h[k + w + 1];
-        return (h00 * (1f - tx) + h10 * tx) * (1f - tz) +
-               (h01 * (1f - tx) + h11 * tx) * tz;
+        float a = h[k], b = h[k + 1], c = h[k + w], d = h[k + w + 1];
+        if (tx + tz <= 1f) return a + (b - a) * tx + (c - a) * tz;
+        return d + (c - d) * (1f - tx) + (b - d) * (1f - tz);
     }
 
     private Trunk[] _trunks(int i, int j)
@@ -899,8 +904,10 @@ public sealed class Terrain
             }
             float tx = fx - i;
             float tz = fz - j;
-            float y = (c00 * (1f - tx) + c10 * tx) * (1f - tz) +
-                      (c01 * (1f - tx) + c11 * tx) * tz;
+            // the same two triangles `height_at` solves
+            float y = tx + tz <= 1f
+                ? c00 + (c10 - c00) * tx + (c01 - c00) * tz
+                : c11 + (c01 - c11) * (1f - tx) + (c10 - c11) * (1f - tz);
             int ti = x >= 0f ? (int)(x * INV_TILE) : -1;
             int tj = z >= 0f ? (int)(z * INV_TILE) : -1;
             if (ti < 0 || tj < 0 || ti >= tw || tj >= td)
@@ -1202,12 +1209,14 @@ public sealed class Terrain
             if (y0 > gh - 1) y0 = gh - 1;
             int y1 = Math.Min(y0 + 1, gh - 1);
             float fy = ys - y0;
+            fy = fy * fy * fy * (fy * (fy * 6f - 15f) + 10f);
             for (int x = 0; x < w; x++)
             {
                 float xs = w > 1 ? x * (gw - 1) / (float)(w - 1) : 0f;
                 int x0 = (int)MathF.Floor(xs);
                 int x1 = Math.Min(x0 + 1, gw - 1);
                 float fx = xs - x0;
+                fx = fx * fx * fx * (fx * (fx * 6f - 15f) + 10f);
                 float top = g[y0 * gw + x0] * (1f - fx) + g[y0 * gw + x1] * fx;
                 float bot = g[y1 * gw + x0] * (1f - fx) + g[y1 * gw + x1] * fx;
                 outv[y * w + x] = top * (1f - fy) + bot * fy;
@@ -1216,24 +1225,111 @@ public sealed class Terrain
         return outv;
     }
 
-    /// <summary>Fractal noise: octaves of upsampled value grids.</summary>
-    private static float[] _fbm(Rng rng, int w, int h, int octaves = 6, int base_res = 2)
+    /// <summary>TerraGenesis' octave amplitudes (OpenTTD's `tgp.cpp`, the
+    /// "smooth" row of its table): every wavelength is half the last, and every
+    /// contribution is worth a fifth to a hundredth of it.  A fractal with an
+    /// even amplitude ratio puts as much slope in the metre scale as in the
+    /// kilometre scale, which is a crumpled blanket; this one is a landscape.</summary>
+    private static readonly float[] TGEN_AMP = { 1f, 0.45f, 0.15f, 0.05f, 0.015f, 0.005f, 0.002f };
+
+    /// <summary>Fractal noise: octaves of upsampled value grids.  `base_res_y`
+    /// coarsens the y lattice alone, which stretches the field along y - the
+    /// shape of a crest line rather than of a bump.  `amps` sets the weight of
+    /// each octave; without one the weight simply halves.</summary>
+    private static float[] _fbm(Rng rng, int w, int h, int octaves = 6, int base_res = 2,
+                                int base_res_y = 0, float[] amps = null)
     {
+        int resy = base_res_y > 0 ? base_res_y : base_res;
         var outv = new float[w * h];
         float amp = 1f;
         float total = 0f;
         int res = base_res;
         for (int o = 0; o < octaves; o++)
         {
-            var g = new float[res * res];
+            float a = amps != null ? (o < amps.Length ? amps[o] : 0f) : amp;
+            var g = new float[res * resy];
             for (int k = 0; k < g.Length; k++) g[k] = rng.random();
-            var up = _upsample(g, res, res, w, h);
-            for (int k = 0; k < outv.Length; k++) outv[k] += up[k] * amp;
-            total += amp;
+            var up = _upsample(g, res, resy, w, h);
+            for (int k = 0; k < outv.Length; k++) outv[k] += up[k] * a;
+            total += a;
             amp *= 0.5f;
             res *= 2;
+            resy *= 2;
         }
         for (int k = 0; k < outv.Length; k++) outv[k] /= total;
+        return outv;
+    }
+
+    /// <summary>The four land styles of TerraGenesis' curve maps, coarse to
+    /// broken: a plain flattens what the fractal hands it (a fifth of the range
+    /// by the top of the fractal), country rolls, hills climb, and a range keeps
+    /// half its ground in the top fifth of the height.  Each is a list of
+    /// (x, y) control points on a normalized height.</summary>
+    private static readonly float[][] _CURVES =
+    {
+        new[] { 0f, 0f, 0.80f, 0.13f, 1f, 0.40f },
+        new[] { 0f, 0f, 0.53f, 0.13f, 0.80f, 0.27f, 1f, 0.60f },
+        new[] { 0f, 0f, 0.53f, 0.27f, 0.80f, 0.57f, 1f, 0.80f },
+        new[] { 0f, 0f, 0.40f, 0.30f, 0.70f, 0.80f, 0.92f, 0.99f, 1f, 0.99f },
+    };
+
+    /// <summary>A normalized height through one style, `s` in 0..1 blending
+    /// between neighbouring styles.</summary>
+    private static float _curve_map(float x, float s)
+    {
+        float f = Math.Clamp(s, 0f, 1f) * (_CURVES.Length - 1);
+        int i = Math.Min((int)f, _CURVES.Length - 2);
+        float t = f - i;
+        float a = _piecewise(x, _CURVES[i]);
+        float b = _piecewise(x, _CURVES[i + 1]);
+        return a + (b - a) * t;
+    }
+
+    /// <summary>Linear between a curve's control points.</summary>
+    private static float _piecewise(float x, float[] cp)
+    {
+        for (int i = 0; i + 3 < cp.Length; i += 2)
+        {
+            if (x <= cp[i + 2] || i + 4 >= cp.Length)
+            {
+                float dx = cp[i + 2] - cp[i];
+                return cp[i + 1] + (cp[i + 3] - cp[i + 1]) * (dx > 0f ? (x - cp[i]) / dx : 1f);
+            }
+        }
+        return cp[^1];
+    }
+
+    /// <summary>One octave of value noise, its lattice *rotated* by the caller's
+    /// angle and read with a smootherstep weight.  The rotation is what keeps the
+    /// octaves from agreeing: a lattice of its own, on the same axes as its
+    /// neighbours, lines its creases up with theirs and the map reads as a quilt
+    /// of squares.  The lattice wraps, so the field is continuous at the edge.</summary>
+    private static float[] _octave(Rng rng, int res, int w, int d, float ca, float sa)
+    {
+        var g = new float[res * res];
+        for (int k = 0; k < g.Length; k++) g[k] = rng.random();
+        var outv = new float[w * d];
+        float sc = (res - 1) / (float)Math.Max(w - 1, d - 1);
+        float cx = (w - 1) * 0.5f, cz = (d - 1) * 0.5f;
+        for (int j = 0; j < d; j++)
+        {
+            float pz = j - cz;
+            for (int i = 0; i < w; i++)
+            {
+                float px = i - cx;
+                float u = (px * ca - pz * sa) * sc + (res - 1) * 0.5f;
+                float v = (px * sa + pz * ca) * sc + (res - 1) * 0.5f;
+                int u0 = (int)MathF.Floor(u), v0 = (int)MathF.Floor(v);
+                float fu = u - u0, fv = v - v0;
+                fu = fu * fu * fu * (fu * (fu * 6f - 15f) + 10f);
+                fv = fv * fv * fv * (fv * (fv * 6f - 15f) + 10f);
+                int ua = ((u0 % res) + res) % res, ub = (ua + 1) % res;
+                int va = ((v0 % res) + res) % res, vb = (va + 1) % res;
+                float top = g[va * res + ua] * (1f - fu) + g[va * res + ub] * fu;
+                float bot = g[vb * res + ua] * (1f - fu) + g[vb * res + ub] * fu;
+                outv[j * w + i] = top * (1f - fv) + bot * fv;
+            }
+        }
         return outv;
     }
 
@@ -1283,17 +1379,138 @@ public sealed class Terrain
         }
     }
 
-    /// <summary>Snap a smooth heightfield to `HSTEP` platforms.</summary>
+    /// <summary>Lower (or raise) every vertex into the band its four neighbours
+    /// allow, so no face is steeper than `max_grad` rise over run.</summary>
     /// <remarks>
-    /// The whole map becomes flat terraces joined by gentle one-tile ramps: the
-    /// ground reads as cut out of blocks instead of a dune.
+    /// The continuous field can be shaped as steeply as the noise likes, and a
+    /// short octave easily builds a face no hull can climb - 40 m of relief over a
+    /// 125 m wavelength is above 45 degrees on its flank.  This is a Lipschitz
+    /// clamp: one pass pulls each vertex to within `max_grad * TILE` of each of
+    /// its four neighbours, and a handful of passes carries the excess out into
+    /// the run instead of leaving a blade.  Four-neighbour only: a diagonal
+    /// neighbour is `TILE * sqrt 2` away and its own limit is looser, so the pass
+    /// errs towards gentle.
     /// </remarks>
-    private static float[] _terrace(float[] hh, int w, int d)
+    private static void _limit_slope(float[] hh, int w, int d, float max_grad, int passes = 4)
     {
-        var outv = new float[w * d];
-        for (int k = 0; k < outv.Length; k++)
-            outv[k] = MathF.Round(hh[k] / HSTEP) * HSTEP;
-        return outv;
+        float reach = max_grad * TILE;
+        // A diagonal neighbour is `TILE * sqrt 2` away, and the bound here is set
+        // a little inside it: that diagonal is the shared edge of a tile's two
+        // triangles, and `_limit_facets` trims a facet against it, so it has to
+        // come out strictly under `sqrt 2` of the reach or the trim has no root to
+        // move to (measured: a tile right on the boundary was left at 1.05).
+        float diag = reach * 1.30f;
+        for (int p = 0; p < passes; p++)
+        {
+            for (int j = 0; j < d; j++)
+            {
+                for (int i = 0; i < w; i++)
+                {
+                    int k = j * w + i;
+                    float v = hh[k];
+                    if (i > 0) v = Math.Clamp(v, hh[k - 1] - reach, hh[k - 1] + reach);
+                    if (i < w - 1) v = Math.Clamp(v, hh[k + 1] - reach, hh[k + 1] + reach);
+                    if (j > 0) v = Math.Clamp(v, hh[k - w] - reach, hh[k - w] + reach);
+                    if (j < d - 1) v = Math.Clamp(v, hh[k + w] - reach, hh[k + w] + reach);
+                    // the two diagonals: they are the shared edge of a tile's two
+                    // triangles, and `_limit_facets` needs that edge to be inside
+                    // the limit before a facet has a height it can be trimmed to
+                    if (i > 0 && j > 0) v = Math.Clamp(v, hh[k - w - 1] - diag, hh[k - w - 1] + diag);
+                    if (i < w - 1 && j < d - 1) v = Math.Clamp(v, hh[k + w + 1] - diag, hh[k + w + 1] + diag);
+                    if (i < w - 1 && j > 0) v = Math.Clamp(v, hh[k - w + 1] - diag, hh[k - w + 1] + diag);
+                    if (i > 0 && j < d - 1) v = Math.Clamp(v, hh[k + w - 1] - diag, hh[k + w - 1] + diag);
+                    hh[k] = v;
+                }
+            }
+        }
+    }
+
+    /// <summary>Trim each facet to the same `max_grad`, measured the way a hull
+    /// measures it: the gradient of one triangle, which is the length of its two
+    /// leg differences over a tile.
+    /// </summary>
+    /// <remarks>
+    /// `_limit_slope` bounds the two axes, and an axis-bound field still has a
+    /// corner where both of them sit at the limit at once - that facet's own
+    /// gradient is `sqrt 2` times the bound, measured at 1.18 on a map capped at
+    /// 0.85.  So every triangle is asked the direct question: `(u - a, v - a)` over
+    /// a tile must not be longer than the limit allows.  The apex is moved to the
+    /// height that puts it exactly on the limit, `A = ((U + V) +- sqrt(2G^2 -
+    /// (U-V)^2)) / 2`, taking the root nearest where it stands.  Every corner is an
+    /// apex of some triangle, so a couple of passes settles it; the trim only ever
+    /// takes slope out of the field.
+    /// </remarks>
+    private static void _limit_facets(float[] hh, int w, int d, float max_grad,
+                                      int passes = 10, bool reverse = false)
+    {
+        float G = max_grad * TILE;
+        for (int p = 0; p < passes; p++)
+        {
+            for (int jj = 0; jj + 1 < d; jj++)
+            {
+                for (int ii = 0; ii + 1 < w; ii++)
+                {
+                    int j = reverse ? d - 2 - jj : jj;
+                    int i = reverse ? w - 2 - ii : ii;
+                    int k = j * w + i;                  // a = (i,j)
+                    _trim(hh, k, k + 1, k + w, G);             // triangle {a,b,c}
+                    _trim(hh, k + w + 1, k + w, k + 1, G);     // triangle {d,c,b}
+                }
+            }
+        }
+    }
+
+    private static void _trim(float[] hh, int apex, int u, int v, float G)
+    {
+        float U = hh[u], V = hh[v];
+        // The far edge first: the diagonal is the shared edge of a tile's two
+        // facets, and moving an apex can push it past what either facet can hold.
+        // Measured before this step existed: one tile sat at 0.95 against a 0.85
+        // ceiling purely because its shared edge was 19.32 m of difference over
+        // 22.6 m, which leaves the apex no height to move to at all.
+        float edge = MathF.Abs(U - V);
+        float max_edge = G * 1.30f;
+        if (edge > max_edge)
+        {
+            float mid = (U + V) * 0.5f;
+            float k = max_edge / edge;
+            hh[u] = mid + (U - mid) * k;
+            hh[v] = mid + (V - mid) * k;
+            U = hh[u];
+            V = hh[v];
+        }
+        float A = hh[apex];
+        float du = U - A, dv = V - A;
+        if (du * du + dv * dv <= G * G) return;
+        float inside = 2f * G * G - (U - V) * (U - V);
+        if (inside <= 0f) return;
+        float half = 0.5f * MathF.Sqrt(inside);
+        float up = (U + V) * 0.5f + half;
+        float dn = (U + V) * 0.5f - half;
+        hh[apex] = MathF.Abs(up - A) <= MathF.Abs(dn - A) ? up : dn;
+    }
+
+    /// <summary>Apply the slope ceiling until it holds: one axis pass, then the
+    /// facet trim, repeated, and a last pass from the far end.
+    ///
+    /// The two constraints feed each other - a trim moves a corner that is the
+    /// shared edge of the neighbouring facet, and an axis pass pulls a diagonal
+    /// back inside what the trim needs to have a root - so alternating them is
+    /// what makes the ceiling hold.  Measured on the battle map: axis-only left a
+    /// 1.18 face, the facet trim alone 0.95, alternating 0.89, and alternating
+    /// plus one pass running backwards 0.85 - the backwards pass alone is the
+    /// difference between those last two, because the facet the forwards pass
+    /// moved last is the one left over.
+    /// </summary>
+    private static void _shape_ceiling(float[] hh, int w, int d, float max_grad, int rounds = 6)
+    {
+        for (int r = 0; r < rounds; r++)
+        {
+            _limit_slope(hh, w, d, max_grad, 1);
+            _limit_facets(hh, w, d, max_grad, 2);
+        }
+        _limit_facets(hh, w, d, max_grad, 2, reverse: true);
+        _limit_facets(hh, w, d, max_grad, 1);
     }
 
     /// <summary>Grow a mask by `r` tiles with the four-neighbour rule.</summary>
@@ -1497,6 +1714,13 @@ public sealed class Terrain
     }
 
     /// <summary>`np.percentile(a, q)` with numpy's linear interpolation.</summary>
+    /// <summary>Hermite 0..1 ramp between two edges - the blend a mask is made of.</summary>
+    private static float Smooth(float a, float b, float v)
+    {
+        float t = Math.Clamp((v - a) / (b - a), 0f, 1f);
+        return t * t * (3f - 2f * t);
+    }
+
     private static float _percentile(float[] a, float q)
     {
         var c = (float[])a.Clone();
@@ -2184,28 +2408,82 @@ public sealed class Terrain
     // the battle map
     // =====================================================================
 
-    /// <summary>Grow the battle map: 16 km of terraced hills, three lanes, roads
+    /// <summary>Grow the battle map: 16 km of hills, three lanes, roads
     /// and 25 grown towns.</summary>
     public static Terrain generate(int seed = 11)
     {
         var rng = new Rng(seed);
         int w = MAPW, d = MAPH;
 
-        // layered terrain: broad hills + medium relief.  The fbm field is
-        // stretched over its own percentiles so the map actually has ridges
-        // (~300 m) and plains (~20 m) instead of one gentle carpet: terraced
-        // afterwards, that contrast is what makes the ground read as cut blocks.
-        var basef = _fbm(rng, w, d, 6);
-        var relief = _fbm(rng, w, d, 5);
-        float lo = _percentile(basef, 0.08f);
-        float hi = _percentile(basef, 0.97f);
+        // ---- the landform ----------------------------------------------------
+        // TerraGenesis, the way OpenTTD grows a landscape (src/tgp.cpp), with our
+        // own numbers: a fractal whose octave amplitudes fall away far faster
+        // than its wavelengths shorten, then a *region by region* blend of land
+        // styles.  That order matters - the fractal alone is one carpet of the
+        // same bump everywhere, and it is the style blend that puts a plain and
+        // a range on the same map.
+        //
+        //   amp    OpenTTD's "very rough" row of its table: a sweep of kilometres
+        //          and a texture under it worth a degree of slope
+        //   mask   the first three octaves of the fractal itself, so a range does
+        //          not stand on ground that was flat
+        //   style  four curve maps, from a plain (which flattens what it is given
+        //          to a fifth of the range) to a range (which keeps half its
+        //          ground in the top fifth of the height)
+        //
+        // The fractal is summed octave by octave here rather than through `_fbm`
+        // because the first three octaves alone are the mask - *where* the high
+        // ground is - and a mask drawn from the same field is what keeps a range
+        // off ground that was already flat.  Every octave draws its own lattice
+        // angle: lattices on one set of axes line their creases up and the map
+        // reads as a quilt of squares.
+        var land = new float[w * d];
+        var coarse = new float[w * d];
+        float amp_total = 0f, coarse_total = 0f;
+        int res = 10;
+        for (int o = 0; o < TGEN_AMP.Length; o++)
+        {
+            float ang = (rng.random() - 0.5f) * MathF.PI;
+            var up = _octave(rng, res, w, d, MathF.Cos(ang), MathF.Sin(ang));
+            float a = TGEN_AMP[o];
+            for (int k = 0; k < land.Length; k++)
+            {
+                land[k] += up[k] * a;
+                if (o < 3) coarse[k] += up[k] * a;
+            }
+            amp_total += a;
+            if (o < 3) coarse_total += a;
+            res *= 2;
+        }
+        for (int k = 0; k < land.Length; k++)
+        {
+            land[k] /= amp_total;
+            coarse[k] /= coarse_total;
+        }
+        var relief = _fbm(rng, w, d, 4, 40);
+
+        // the lowest tenth of the fractal is the valley floor: it is held at the
+        // floor level rather than scaled, which is what makes a plain a plain
+        float lo = _percentile(land, 0.10f);
+        float hi = _percentile(land, 0.995f);
+        // and the mask is read off the coarse field, so the blend between a
+        // plain and a range is a band of kilometres and never a seam
+        float s_lo = _percentile(coarse, 0.18f);
+        float s_hi = _percentile(coarse, 0.55f);
+
+        const float FLOOR = 16f;        // metres: the lowest ground on the map
+        const float RISE = 205f;        // metres: floor to the highest summit
         var height = new float[w * d];
         for (int k = 0; k < height.Length; k++)
         {
-            float b = Math.Clamp((basef[k] - lo) / (hi - lo), 0f, 1f);
-            height[k] = 20f + MathF.Pow(b, 1.35f) * 280f + (relief[k] - 0.5f) * 40f;
+            float x01 = Math.Clamp((land[k] - lo) / (hi - lo), 0f, 1f);
+            // the style stops short of the last curve: a curve map's top is a
+            // plateau, and a 200 m summit with a table on it reads as a mesa
+            float s = Smooth(s_lo, s_hi, coarse[k]) * 0.8f;
+            height[k] = FLOOR + _curve_map(x01, s) * RISE + (relief[k] - 0.5f) * 11f;
         }
         height = _blur3(_blur3(height, w, d), w, d);
+        _shape_ceiling(height, w, d, Defs.MAX_TERRAIN_GRADIENT);
 
         var tiles = new byte[d * w];
 
@@ -2214,7 +2492,7 @@ public sealed class Terrain
         {
             float bx = bt.x * TILE, by = bt.y * TILE;
             int btx = (int)bt.x, bty = (int)bt.y;
-            float target = MathF.Round(height[bty * w + btx] / HSTEP) * HSTEP;
+            float target = height[bty * w + btx];
             // the blend is over at 600 m, so only that window has to be touched
             int span = (int)(600f / TILE) + 2;
             for (int j = Math.Max(0, bty - span); j <= Math.Min(d - 1, bty + span); j++)
@@ -2285,6 +2563,7 @@ public sealed class Terrain
                 progress = 0f,
                 name = $"T{towns.Count:00}",
                 neutral = spot.neutral,
+                radius = 0,
             });
             // how big this town is comes off a stream of its own, keyed to the
             // mirror orbit the spot belongs to, so every town a spot stands for
@@ -2302,6 +2581,37 @@ public sealed class Terrain
             _town_close(roads, tiles, w, d, rng, cx, cy, radius, TOWN_REACH);
             _town_houses(roads, tiles, walls, clear, no_build, w, d, rng, cx, cy,
                          radius, size.integers(TOWN_HOUSES.lo, TOWN_HOUSES.hi + 1));
+            towns[^1].radius = radius;
+        }
+
+        // ---- the town square -------------------------------------------------
+        // A town follows its hill.  The *square* in the middle (`TOWN_PLAZA`) is
+        // level, because that is where a hull comes down when the town is a
+        // forward spawn, and the ground around it is pulled half way towards the
+        // square's height - enough that the streets and the blocks are not a
+        // staircase, little enough that the town still climbs.
+        foreach (var tn in towns)
+        {
+            float plate = height[tn.tile_y * w + tn.tile_x];
+            float plaza = TOWN_PLAZA * TILE;
+            float outer = tn.radius * TILE + 120f;
+            int span = (int)(outer / TILE) + 2;
+            for (int j = Math.Max(0, tn.tile_y - span); j <= Math.Min(d - 1, tn.tile_y + span); j++)
+            {
+                for (int i = Math.Max(0, tn.tile_x - span); i <= Math.Min(w - 1, tn.tile_x + span); i++)
+                {
+                    float dx = i * TILE - tn.x, dz = j * TILE - tn.z;
+                    float dist = MathF.Sqrt(dx * dx + dz * dz);
+                    if (dist >= outer) continue;
+                    // 1 on the square, 0.5 across the town, 0 past its edge
+                    float k = dist <= plaza
+                        ? 1f
+                        : 0.5f * (1f - Math.Clamp((dist - plaza) / (outer - plaza), 0f, 1f));
+                    k = k * k * (3f - 2f * k);          // smoothstep
+                    int kk = j * w + i;
+                    height[kk] = height[kk] * (1f - k) + plate * k;
+                }
+            }
         }
 
         var road = new bool[d * w];
@@ -2309,18 +2619,14 @@ public sealed class Terrain
         for (int k = 0; k < road.Length; k++) if (road[k]) tiles[k] = TILE_ROAD;
 
         // ---- road corridor ---------------------------------------------------
-        // Cut the roads into the ground.  Every tile of the asphalt is made dead
-        // flat - all four of its corners take one terraced height - and the tiles
-        // beside it are averaged into it, so what the asphalt is laid on is a run
-        // of neat plateaus instead of four corners of four different slopes
-        // meeting under the road.  That is what keeps the surface from breaking
-        // up at the tile diagonals.  A road tile outvotes the tiles around it, so
-        // the road itself never bends: where it changes level, the verges do.
-        height = _terrace(height, w, d);
+        // Cut the roads into the ground: the ground under the asphalt is
+        // averaged over its own tile and the tiles beside it, so what the
+        // asphalt is laid on is a gentle cross section instead of four corners
+        // of four different slopes meeting under the road, and it never breaks
+        // up along the tile diagonals.  A road tile outvotes the tiles around it,
+        // so the road itself never bends: where it changes level, the verges do.
         var corridor = _dilate(road, w, d, 2);
         var htile = _blur3(_blur3(_blur3(height, w, d), w, d), w, d);
-        for (int k = 0; k < htile.Length; k++)
-            htile[k] = MathF.Round(htile[k] / HSTEP) * HSTEP;
 
         // every vertex averages the four tiles that touch it, with a road tile
         // counting ROAD_WEIGHT times as much as a verge
@@ -2356,9 +2662,14 @@ public sealed class Terrain
                 float cnt = rn[b0] * ROAD_WEIGHT + cn[b0];
                 if (cnt <= 0f) continue;
                 float acc = ra[b0] * ROAD_WEIGHT + ca[b0];
-                height[j * w + i] = MathF.Round(acc / MathF.Max(cnt, 1f) / HSTEP) * HSTEP;
+                height[j * w + i] = acc / MathF.Max(cnt, 1f);
             }
         }
+
+        // the corridor and the town plates move the ground after the first clamp,
+        // so the ceiling is applied once more over the finished field: a cut bank
+        // beside a road is still a bank, and this is where it is made drivable
+        _shape_ceiling(height, w, d, Defs.MAX_TERRAIN_GRADIENT);
 
         // ---- base pads -------------------------------------------------------
         // the pad itself is drivable; the bunker core in the middle is solid so
@@ -2523,9 +2834,8 @@ public sealed class Terrain
                 float zm = j * TILE;
                 float dx = xm - hx, dz = zm - hz;
                 float r = MathF.Sqrt(dx * dx + dz * dz);
-                // a wobbly radius keeps the hill from being a perfect cone; the
-                // terracing below turns the slopes into the same faceted
-                // contours as the battle map
+                // a wobbly radius keeps the hill from being a perfect cone, and
+                // the slopes are the same continuous ground the battle map has
                 float ang = MathF.Atan2(dz, dx);
                 float wobble = 1f + 0.16f * MathF.Sin(3f * ang + 0.7f)
                                   + 0.09f * MathF.Sin(5f * ang - 1.3f);
@@ -2560,7 +2870,8 @@ public sealed class Terrain
                 height[k] += plains[k] * 9f * (0.25f + 0.75f * blend);
             }
         }
-        height = _terrace(_blur3(_blur3(height, n, n), n, n), n, n);
+        height = _blur3(_blur3(height, n, n), n, n);
+        _shape_ceiling(height, n, n, Defs.MAX_TERRAIN_GRADIENT);
 
         var tiles = new byte[n * n];                    // grass everywhere
         var bases = new Dictionary<int, (float x, float z)>

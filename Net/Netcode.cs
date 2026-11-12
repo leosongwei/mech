@@ -69,7 +69,11 @@ public static class Netcode
     // is JSON's key names, not the precision of the data.
     public const int FX_STRIDE = 24;
     public const int CONTACT_EVERY = 8;        // ticks: 3.75 Hz, and that is smooth
-    public const float CONTACT_QUANT = 4f;     // metres per unit of the u16 (16 km -> 4000)
+    public const float CONTACT_QUANT = 8f;     // metres per unit of the u16 (16 km -> 2000, 524 km full)
+    /// <summary>Metres per unit of a heightfield vertex on the wire.  A face of
+    /// the ground is 16 m across, so 5 cm is far finer than anything the mesh can
+    /// show - what the unit buys is that a slope is a slope and not a terrace.</summary>
+    public const float H_UNIT = 0.05f;
 
     // ------------------------------------------------------------------
     // init
@@ -94,13 +98,12 @@ public static class Netcode
     public static Dictionary<string, object?> static_payload(World world)
     {
         var t = world.terrain;
-        // `np.round(t.h).astype(np.int16)`: heights sit on 4 m steps, so the
-        // int16 plane is the biggest thing in the init frame before zlib.
-        // `MathF.Round` is round-half-to-even by default, which is what
-        // `np.round` does - a vertex exactly on a .5 step lands the same way.
+        // heights travel as u16 `H_UNIT` steps: the biggest plane in the init
+        // frame before zlib, and the one the client's own prediction reads
+        ushort hq(float v) => (ushort)Math.Clamp((int)MathF.Round(v / H_UNIT), 0, 65535);
         var hb = new byte[t.h.Length * 2];
         for (int k = 0; k < t.h.Length; k++)
-            BinaryPrimitives.WriteInt16LittleEndian(hb.AsSpan(k * 2), (short)MathF.Round(t.h[k]));
+            BinaryPrimitives.WriteUInt16LittleEndian(hb.AsSpan(k * 2), hq(t.h[k]));
 
         // the towns with the Python dict's keys, not the C# `Town`'s (which
         // also carries the capture timers only the server ever reads)
@@ -145,6 +148,7 @@ public static class Netcode
             ["map"] = new Dictionary<string, object?>
             {
                 ["w"] = t.w, ["h"] = t.d, ["tile"] = Terrain.TILE,
+                ["hunit"] = H_UNIT,
                 ["heights"] = _b64(hb),
                 ["tiles"] = _b64(t.tiles),
                 ["roads"] = _b64(t.roads),

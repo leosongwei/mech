@@ -39,6 +39,7 @@ public static class Pipeline
         sense(into);
         into.Add(Front.run);        // the lane's state machine
         into.Add(Raid.run);         // the raiding parties: their own routes and mission
+        into.Add(Paths.run);        // a hull that has run out of road: the facet navmesh
         engage(into);
         into.Add(Wander.run);       // civilians
         return into;
@@ -52,6 +53,7 @@ public static class Pipeline
         var into = new List<Action<World, float>>();
         sense(into);
         into.Add(Front.run);
+        into.Add(Paths.run);
         engage(into);
         into.Add(Wander.run);
         return into;

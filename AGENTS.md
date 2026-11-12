@@ -42,7 +42,9 @@ Ecs/
 Core/
   Defs.cs                  # entity types, weapons, unit stats, mech geometry
   World.cs                 # World/Player: terrain, players, spawning, tick, queries
-  Terrain.cs               # 1000x1000 tiles of 16 m -> 16 km square map
+  Terrain.cs               # 1000x1000 tiles of 16 m -> 16 km square map; a continuous
+                           #   heightfield sampled per *triangle* (`height_at`), with the
+                           #   generator's slope ceiling (`_shape_ceiling`)
   MathUtil.cs              # angles, hit spheres, muzzle geometry
   Profiler.cs              # white-box probes (MECH_PROBE=1), off and free by default
   Grid.cs                  # 128 m cell index over the units, refiled every tick (AI broadphase)
@@ -66,6 +68,9 @@ Systems/                   # mechanics shared by every mode, each exposes run(wo
                            #     (mission state machines), Support/{Tags,Crew,Policy,Engage,
                            #     ThreatTable}.cs (columns, vocabulary, shared fire control),
                            #     Support/Pipeline.cs (the block a mode registers)
+                           #     Nav/        the facet navmesh (see "A hull that has run out
+                           #       NavMesh.cs  of road"): NavProfile, NavWalk, NavRegion, NavQuery
+                           #       Paths.cs    the stuck clock, the request queue, string-pull
                            #   Movement/  one driver per chassis: Foot.cs / Mech.cs / Vehicle.cs,
                            #     Support/{Drive,Integrate}.cs.  The only writer of `vel`/`pos`.
                            #   Gunnery.cs: the sight leads, the hull and the arms slew after it
@@ -100,6 +105,7 @@ Harness/                   # headless checks, no socket: Check.cs (battle/range/
                            # NetCheck.cs (one pilot's wire, per minute)
 tests/                     # unit tests, run by run_tests.sh - no server, no socket
   cases/fcs.json           #   the fire control's contract: inputs only, both hosts read it
+  cases/height.json        #   the ground's contract: a 16x16 grid and hand-computed heights
   frontend/                #   node:test (built in).  support/tol.mjs = the tolerances,
                            #   fcs/ = the cases, the runner and emit.mjs
   backend/                 #   a console runner (Support/MiniTest.cs = [Test] + reflection
@@ -628,6 +634,42 @@ frontend/
   *not* worth batching is the integration itself — a few batched loops over one
   or two rows cost more than the scalar arithmetic they replace (measured,
   twice).
+* **The ground is continuous, and a facet is the unit of it** (`Terrain.height_at`).
+  The heightfield stores vertex heights with no quantum; the surface between four
+  of them is the two flat triangles split along the tile's own diagonal
+  (`tx + tz <= 1` is `{a,b,c}`, the rest `{d,c,b}`), and *that rule is the only one*:
+  the server, `map.js`'s `heightAt` and the near terrain mesh all solve it, so the
+  facet a round bursts on is the facet under a hull and the facet under the cross.
+  `tests/cases/height.json` is the table both hosts answer (a bilinear blend, a
+  terrace or the other diagonal all fail it).  The physics cell stays 16 m - the
+  scale a round is walked at (`step = 9` in `FirstHit`, `LOS_STEP = 8` in
+  `Sight`) is a half tile and the arguments for both depend on that.
+* **Slope is a number, not a step.** `Defs.MAX_TERRAIN_GRADIENT` (0.85, rise over
+  run) is the generator's ceiling, enforced by `_shape_ceiling`: an axis clamp, a
+  per-facet trim and one pass running backwards, because each constraint moves
+  corners the other one needs (measured: axis only 1.18, facets only 0.95,
+  alternating 0.89, alternating plus the backwards pass 0.878 - a relaxation, so
+  it settles within 3 % and the harness prints what it got).  The chassis' own
+  limits are `APC 0.58 / MECH 0.70 / FOOT 0.80`, read through
+  `Defs.max_gradient(etype)` by `Integrate.too_steep`, `Drive`'s fan and the
+  navmesh - one number, three callers, which is what makes "a crest is a wall"
+  the same answer in all of them.  Uphill only: a hull always comes back off a
+  face it climbed, so nothing is entombed by the step that put it there.
+* **A hull that has run out of road asks for another one** (`Systems/AI/Nav/`).
+  The mission says where (`nav_route` / `nav_x`), the driver says how, and between
+  them `Paths` watches *progress*: a commanded hull that has not closed 1.5 m on
+  its way point in `STUCK_SKIP` (2 s) - and is pointing at it, not coming round
+  onto it - is pushing at something, and asks for a detour.  The search is A\* over
+  the terrain's own facets in a window around it (`NavRegion`, snapped to
+  `SNAP` tiles so the cache hits), advanced `NODES_PER_TICK` at a time, then
+  straightened with `NavWalk.clear` and spliced in front of the way points the
+  hull already had; the driver learns nothing new.  The predicate is the whole
+  point: `blocked`, `trunk_blocked` and the climb limit are the ones movement
+  uses, so a planned leg is a leg the machine can drive.  Before it, the raider's
+  street grid called a wood passable at a cost and a command base solid while the
+  driver said the opposite of both.  Strategic planning is still `Raid.FieldNav`
+  (128 m + the force gradient); the navmesh is the layer under it, and the only
+  one that knows a facet's slope.
 * **A leg is queried at the granularity of each shape it can meet.**  The ground
   is a continuous field and is sampled every 9 m; a building is a whole tile and
   is solved as a slab from the terrain to its roof (`walls`); a trunk is a
@@ -1684,6 +1726,8 @@ cd frontend && npm install && npm run build      # -> assets/
   ./dotnet.sh run -- --check diag --minutes 2      # what a few AI hulls are doing
   ./dotnet.sh run -- --check net --minutes 30 --from 8   # one pilot's download, per minute
   ./dotnet.sh run -- --check fcs                   # crew vs pilot, same scenarios
+  ./dotnet.sh run -- --check terrain                # facet slopes, lane drivability, sample cost
+  ./dotnet.sh run -- --check nav                    # the navmesh: region, profiles, a 12.7 km plan, lanes
   ```
   `MECH_PERF=1` on the battle check runs it without the per-tick event scan and
   prints the per-minute cost: on a 12 minute battle it is **1.5 ms/tick**

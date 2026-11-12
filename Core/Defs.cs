@@ -917,6 +917,9 @@ public sealed class UnitDef
     public int[]? arms;
     public float dp, de;
     public float speed;         // m/s the hull's own governor allows
+    /// <summary>Rise over run this chassis will climb; `Defs.max_gradient` reads it.
+    /// The default is a man's - the two hulls that drive say their own.</summary>
+    public float max_grad = Defs.FOOT_MAX_GRADIENT;
     public float radius;        // m, the collision circle
     public float height;        // m, ground to the top of the hull
     public float radar_strength;    // m^4, 0 = no self-defence radar
@@ -987,6 +990,7 @@ public static partial class Defs
         {
             name = "APC", hp = 100f, dp = 10f, de = 20f,
             speed = 100.0f / 3.6f, radius = 2.2f, height = 2.8f,
+            max_grad = APC_MAX_GRADIENT,
             // self-defence radar: half the mech's discovery range, i.e. a sixteenth of
             // its `radar_strength` (d^4), so the warning time is halved as well
             radar_strength = 3.125e12f,
@@ -1015,6 +1019,7 @@ public static partial class Defs
         {
             name = "MECH", hp = 120f, arms = new[] { 50, 50 }, dp = 10f, de = 20f,
             speed = 50.0f, radius = 1.9f, height = 6.5f,
+            max_grad = MECH_MAX_GRADIENT,
             // A doppler receiver answers `d^2 <= K * v_closing`, so where a round is
             // picked up is set by how fast it is *closing*: 544 / 975 / 1368 / 977 m
             // against the RPG / the S-8 / the SACLOS / the top attack, each at the speed
@@ -1134,6 +1139,21 @@ public static partial class Defs
     // the hull rolls up to speed instead of snapping to it: 0-100 km/h in ~3 s,
     // 0-180 in ~5.4 s
     public const float MECH_ACCEL = 9.3f;               // m/s^2, top speed 180 km/h
+
+    // ---- slopes -------------------------------------------------------------
+    // Rise over run: 1.0 is 45 degrees.  The ground is a continuous field, so a
+    // hillside is a number and not a step, and these are the numbers that decide
+    // where a hull can go: the generator never builds a face steeper than
+    // MAX_TERRAIN_GRADIENT, and a chassis refuses to enter a face steeper than
+    // its own - which is what makes a crest a wall to a wheeled hull and a detour
+    // to everybody else.  Movement (`Drive`, `Integrate`) and pathing
+    // (`Systems/AI/Nav.cs`) read the same figure through `max_gradient`.
+    public const float MAX_TERRAIN_GRADIENT = 0.85f;   // 40 deg, the generator's ceiling
+    public const float APC_MAX_GRADIENT = 0.58f;       // 30 deg, wheels
+    public const float MECH_MAX_GRADIENT = 0.70f;      // 35 deg, legs up a slope
+    public const float FOOT_MAX_GRADIENT = 0.80f;      // 39 deg, a man on foot
+    /// <summary>The slope a chassis will not climb, by its own def.</summary>
+    public static float max_gradient(int etype) => UNIT_DEFS[etype].max_grad;
 
     // ---- wheeled hulls ------------------------------------------------------
     // An APC is tagged `vehicle`, and a vehicle steers instead of strafing.  It is a

@@ -177,9 +177,12 @@ export class MapData {
 
   static async load(info, lanes) {
     const hBytes = await inflate(b64ToBytes(info.heights));
-    const i16 = new Int16Array(hBytes.buffer, hBytes.byteOffset, hBytes.byteLength >> 1);
-    const heights = new Float32Array(i16.length);
-    for (let i = 0; i < i16.length; i++) heights[i] = i16[i];
+    const u16 = new Uint16Array(hBytes.buffer, hBytes.byteOffset, hBytes.byteLength >> 1);
+    // heights travel as u16 `hunit` steps (`Netcode.H_UNIT`), so the plane is
+    // half a metre wide per vertex and the ground between vertices is a slope
+    const unit = info.hunit || 0.05;
+    const heights = new Float32Array(u16.length);
+    for (let i = 0; i < u16.length; i++) heights[i] = u16[i] * unit;
     const tiles = await inflate(b64ToBytes(info.tiles));
     const roads = info.roads ? await inflate(b64ToBytes(info.roads)) : new Uint8Array(tiles.length);
     const walls = info.walls ? await inflate(b64ToBytes(info.walls)) : new Uint8Array(tiles.length);
@@ -188,6 +191,11 @@ export class MapData {
     return map;
   }
 
+  // The ground under a point: the one triangle of the tile the point falls in,
+  // split along the north-east to south-west diagonal.  Mirrors
+  // `Terrain.height_at` line for line, and it is the same two triangles
+  // `renderer._buildTilePatch` draws - so a reticle, a predicted impact point
+  // and the facet under a hull are one surface.
   heightAt(x, z) {
     const fx = Math.min(Math.max(x / this.tile, 0), this.w - 1.001);
     const fz = Math.min(Math.max(z / this.tile, 0), this.h - 1.001);
@@ -196,7 +204,8 @@ export class MapData {
     const h = this.heights;
     const a = h[j * this.w + i], b = h[j * this.w + i + 1];
     const c = h[(j + 1) * this.w + i], d = h[(j + 1) * this.w + i + 1];
-    return (a * (1 - tx) + b * tx) * (1 - tz) + (c * (1 - tx) + d * tx) * tz;
+    if (tx + tz <= 1) return a + (b - a) * tx + (c - a) * tz;
+    return d + (c - d) * (1 - tx) + (b - d) * (1 - tz);
   }
 
   tileAt(x, z) {

@@ -72,8 +72,8 @@ Systems/                   # mechanics shared by every mode, each exposes run(wo
                            #       NavMesh.cs  of road"): NavProfile, NavWalk, NavRegion, NavQuery
                            #       Paths.cs    the stuck clock, the request queue, string-pull
                            #   Movement/  one driver per chassis: Foot.cs / Vehicle.cs, and
-                           #     Mech/ (six laws, see "The legs are an engine"): Steer /
-                           #     Turn / Thrust / Slope / Drag / Ground, each a `run`.
+                           #     Mech/ (five laws, see "The legs are an engine"): Steer /
+                           #     Thrust / Slope / Drag / Ground, each a `run`.
                            #     Support/{Drive,Integrate}.cs.  The only writer of `vel`/`pos`.
                            #   Gunnery.cs: the sight leads, the hull and the arms slew after it
                            #   Sight.cs: the one line of sight (terrain + smoke), clear/why
@@ -1049,24 +1049,26 @@ own; the wire is `net/wire.js` + `net/rows.js` and the picture is `net/view.js`.
   corners**, because a wheeled hull cannot follow a right angle whatever the map does
   with it — which is the vehicle driver's problem, not a crew's (`Nav.passed`).
 * **The legs are an engine, and the hill is the other half of it.**  A mech is not
-  a ramp toward a commanded velocity: `Systems/Movement/Mech/` is six passes, one
+  a ramp toward a commanded velocity: `Systems/Movement/Mech/` is five passes, one
   law each, in the order the tick runs them - `Steer` (the crew's intent and the leg
-  swing that steers it), `Turn` (the direction the hull is going), `Thrust` (the
-  power curve and its g limit, the cruise governor, the brake that plants them),
-  `Slope` (gravity along the way the hull is going), `Drag` (the square-of-speed
-  resistance), `Ground` (`Integrate.step`).  The velocity buffer *is* where the
-  forces compose, so there is no accumulator component, and the state is the
-  components every mover already owns.
-  **Speed and direction are two actuators.**  `Thrust` only changes the speed, along
-  the way the hull is already going; the way itself is `Turn`'s alone, at
-  `min(MECH_TURN_RATE, MECH_TURN_G * g / v)` - 1.6 rad/s of ceiling, 3 g of lateral
-  plant - times the leg-alignment factor.  Left to the engine's own sideways share a
-  change of heading was an exponential with `v/a` for its time constant, so a right
-  angle at 180 km/h took eight to ten seconds and a machine driven from a cross that
-  had already come round appeared to slide sideways across its own sight.  Now a
-  right angle costs 2.8 s at 180 km/h (an 82 m radius) and 1.6 s at 72, the speed is
-  barely touched by a turn, and the crew's detour count in `--check nav`'s lane row
-  fell from 131 to 54 because a hull that can corner gets where it was sent.
+  swing that follows it), `Thrust` (the power curve and its g limit, the bearing it
+  pushes on, the cruise governor, the brake that plants them), `Slope` (gravity along
+  the way the hull is going), `Drag` (the square-of-speed resistance), `Ground`
+  (`Integrate.step`).  The velocity buffer *is* where the forces compose, so there
+  is no accumulator component, and the state is the components every mover already
+  owns.
+  **The bearing is the whole of the steering.**  One actuator: the legs push along
+  the command, and the way the hull is *going* is whatever that push has bent it
+  into (`a/v` of width - 4.1 s to 45 degrees and 16.7 s to square from 180 km/h,
+  with the speed barely touched, measured by `--check drive`'s `redirect` rows).  A
+  pilot's command comes off his own hull's frame, so `A` pushes the machine square
+  across itself, and steering is turning the *sight*: `Gunnery` swings the hull after
+  it at 80 deg/s and the thrust follows the hull.  That is why `ALT` (the free look)
+  needs no heading lock - the stick never read the view.  A second actuator for the
+  direction (`MECH_TURN_G` 3 g) was tried in 1.27.0 and dropped as far too strong
+  for the machine it was on.  The crew's detour count in `--check nav`'s lane row is
+  the number that reads a corner: ~130 with this drive, 54 with the 3 g turn (single
+  runs, with a whole battle moving around them).
   **The push is a power, so the force is `P(v)/v`**, `MECH_HP_LOW` 5000 hp at a
   standstill rising linearly to `MECH_HP_HIGH` 8000 hp at `MECH_RATED_V` (50 m/s,
   180 km/h), flat above it, over `MECH_MASS` 15 t.  A bare curve runs away at v->0,
@@ -1102,10 +1104,11 @@ own; the wire is `net/wire.js` + `net/rows.js` and the picture is `net/view.js`.
   35 degree face stays there with zero drift (`--check drive`'s two `park` rows:
   10 s parked, moved 0.00 m, height unchanged).  Braking downhill pays gravity's
   share first - 204 km/h to a stop in 5.0 s where the flat takes 3.5.
-  The legs' alignment (`MECH_LEG_ALIGN` 0.45..1) scales the *thrust* and the *turn
-  rate* - a hull that has not got its feet round yet pushes weaker and comes round
-  slower - and it never caps a speed, so a hull that reverses its command turns its
-  legs round and pulls away in an arc.
+  The legs' alignment (`MECH_LEG_ALIGN` 0.45..1) scales the *thrust* - a hull that
+  has not got its feet round yet pushes weaker, and the feet take 0.6 s at
+  `Integrate.turn_legs`' 2.6 rad/s to swing a right angle - and it never caps a
+  speed, so a hull that reverses its command turns its legs round and pulls away in
+  an arc.
 
 * **Wheeled hulls** — an APC carries the `vehicle` tag, and that tag changes
   both halves of its movement. Locomotion (`movement._vehicle`) is a rear-axle
@@ -1471,14 +1474,17 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
   the frame: interpolate snapshots, aim, build the draw list, draw, HUD.  The
   `yaw` / `pitch` on the wire are the *sight* (where the pilot looks), never the
   hull: `player_input` writes them into `sight_yaw` / `sight_pitch`.
-* **The stick drives in the sight's frame, and ALT holds that frame still**
-  (`input/sight.js::moveVector`).  Normally `mx` / `mz` come off `viewYaw`, so
-  WASD follows the cross; with ALT down the view is free to crane round
-  (`freeYaw`) and the stick keeps reading the **sight's** own yaw, which the mouse
-  cannot move while ALT is held - so a pilot looking 90 degrees off still holds W
-  to walk the way he was walking.  The minimap's own mark reads the same heading
-  (`hudstate.viewYaw` -> `minimap.js`): it points where the pilot is looking, and
-  `own.yaw` on the wire is the hull still swinging after it.
+* **The stick drives in the hull's frame** (`input/sight.js::moveVector`, handed
+  the newest hull `tyaw` off the wire).  `mx` / `mz` come off the hull's own yaw, so
+  W pushes along the machine and A pushes square across it, and turning is done with
+  the *sight*: `Gunnery` swings the hull after the look line at 80 deg/s and the
+  thrust goes with the hull.  ALT is then only a look (`freeYaw`) - it moves
+  nothing, because the stick never read the view.  `sendInput` runs before the
+  `own` stage, so it asks `ownEntity()` for the hull rather than reading `ctx.own`,
+  and the *eye*, the cross and the reported pose all still read the view.  The
+  minimap's own mark reads the view heading (`hudstate.viewYaw` ->
+  `minimap.js`): it points where the pilot is looking, and `own.yaw` on the wire is
+  the hull still swinging after it.
 * **Two headings, and the client keeps them apart.** `_aim` solves the centre
   cross, the range readout and the seeker ring from the view (`dirFrom(input)`,
   the sight line from `_sightEye`) and each arm's impact marker from the *bore*
@@ -1868,11 +1874,13 @@ cd frontend && npm install && npm run build      # -> assets/
   (uphill and down, with the theory solved from the gradient it actually measured),
   the brake's run-out from 180 km/h, a 12 m/s cruise, two `park` rows - braked to
   rest on that same face, uphill and down, then ten seconds standing on it - and two
-  `turn` rows.  Measured: 49.67 against 50.00 on the flat (the tick's own
-  discretisation), 38.01 against 38.18 up a 24 degree face, 56.78 against 57.10 down
-  it, 78 m to a stop, 11.90 m/s of a 12 m/s cruise, 0.00 m of drift parked, and a
-  right angle in 2.63 s from 176 km/h (the rate law alone says 2.62) and 1.57 s from
-  73.
+  `redirect` rows: the command turned square at speed, with the `u` / `w` split of
+  the law integrated beside it.  Measured: 49.67 against 50.00 on the flat (the
+  tick's own discretisation), 38.01 against 38.18 up a 24 degree face, 56.78 against
+  57.10 down it, 78 m to a stop, 11.90 m/s of a 12 m/s cruise, 0.00 m of drift
+  parked, and a right angle in 4.10 s to 45 degrees and 16.7 s square from 176 km/h
+  (the integrated law says 4.07 and 16.7; the feet are planted before the clock
+  starts, so the row is the push and not the leg swing).
 * **`--check fcs` is the integration half of the fire control's proof**
   (`Harness/FcsCheck.cs`): a range world with everything but two hulls and the bases
   cleared off it, one flat 1.8 km corridor, and two ways to shoot the same target -

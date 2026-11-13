@@ -65,8 +65,8 @@ public static class DriveCheck
         bad += cruise(world, fx, fz);
         bad += park(world, "park up", sx, sz, +1f);
         bad += park(world, "park down", sx, sz, -1f);
-        bad += turn(world, "turn at 180", fx, fz, 49f);
-        bad += turn(world, "turn at 72", fx, fz, 20f);
+        bad += turn(world, "redirect 180", fx, fz, 49f);
+        bad += turn(world, "redirect 72", fx, fz, 20f);
 
         world.ecs.validate();
         Console.WriteLine(bad == 0 ? "\nall rows match the law" : $"\n{bad} row(s) off");
@@ -225,21 +225,25 @@ public static class DriveCheck
         return ok ? 0 : 1;
     }
 
-    /// <summary>A right angle at speed: the command turns 90 degrees and the hull
-    /// follows at the rate its legs allow.
+    /// <summary>A right angle at speed: the command is turned square and the push
+    /// takes the hull's track round with it.
     ///
-    /// The direction is `Mech.Turn`'s alone since the thrust model came apart into
-    /// two actuators, and this is the row that says so: with the sideways share of
-    /// the engine doing the steering, a right angle at the top speed took eight to
-    /// ten seconds and a machine driven from a cross that had already come round
-    /// looked like it was sliding sideways.  The theory is the rate law with no leg
-    /// lag in it, so the measured column is a shade slower by design - the feet have
-    /// to come round first.</summary>
+    /// The push is the whole of the steering, so what is measured here is the drive's
+    /// own corner - the machine goes on pointing one way and travelling another while
+    /// the sideways share of `P(v)/v` bends its velocity.  The theory is that same
+    /// law integrated in the command's frame: `u` along the new bearing grows on the
+    /// push less the drag's share of it, `w` across it only ever decays, and the two
+    /// crossings are 45 degrees (the velocity halfway round) and 5 degrees (square).
+    ///
+    /// The feet are planted before the clock starts (`leg_yaw` on the new bearing), so
+    /// the row measures the push and not the third of a second `Legs` spends turning
+    /// them; a pilot's own turn carries that on top.</summary>
     private static int turn(World world, string name, float x, float z, float v0)
     {
         float top = Defs.UNIT_DEFS[Defs.ETYPE_MECH].speed;
         var eid = world.spawn_unit(Defs.ETYPE_MECH, Defs.FACTION_BLUE, x, z, crew: false);
         var cmd = world.ecs.fv("vel_cmd");
+        var vel = world.ecs.fv("vel");
         float t = 0f;
         while (t < 40f)                                   // run up to the entry speed
         {
@@ -250,33 +254,53 @@ public static class DriveCheck
             if (Speed(world, eid) >= v0) break;
         }
         float entry = Speed(world, eid);
-        const float WANT = MathF.PI / 2f;
+        float s = world.terrain.slope_along(x, z, 1f, 0f);
+        const float WANT = MathF.PI / 2f;                 // the new bearing: square across
+        world.ecs.fv("leg_yaw").set(eid, 0, WANT);
+        float half = -1f, square = -1f;
         float spun = 0f;
-        while (spun < 20f && Heading(world, eid) < WANT - 0.035f)   // 2 degrees
+        while (spun < 90f)
         {
             cmd.set(eid, 0, MathF.Cos(WANT) * top);
             cmd.set(eid, 2, MathF.Sin(WANT) * top);
             Pin(world, eid, x, z);
             spun += DT;
+            float u = vel.get(eid, 0) * MathF.Cos(WANT) + vel.get(eid, 2) * MathF.Sin(WANT);
+            float w = vel.get(eid, 0) * MathF.Sin(WANT) - vel.get(eid, 2) * MathF.Cos(WANT);
+            if (half < 0f && u >= w) half = spun;
+            if (w <= u * MathF.Tan(5f * MathF.PI / 180f)) { square = spun; break; }
         }
-        float rate = MathF.Min(Defs.MECH_TURN_RATE, Defs.MECH_TURN_G * Defs.GRAVITY / entry);
-        float want = WANT / rate;
+        var (want_half, want_square) = Redirect(entry, s);
         float outv = Speed(world, eid);
-        bool ok = spun < want * 1.6f && spun > want * 0.9f;
-        Console.WriteLine($"{name,-14} {entry * 3.6f,4:0} km/h entry: 90 deg in {spun:0.00} s "
-                          + $"(rate law {want:0.00}, radius {entry / rate:0.0} m), "
-                          + $"speed {entry * 3.6f:0} -> {outv * 3.6f:0} km/h"
+        bool ok = half > 0f && half > want_half * 0.95f && half < want_half * 1.05f;
+        Console.WriteLine($"{name,-14} {entry * 3.6f,4:0} km/h entry: half round in {half:0.00} s "
+                          + $"(law {want_half:0.00}), square in {square:0.0} s "
+                          + $"(law {want_square:0.0}), speed {entry * 3.6f:0} -> {outv * 3.6f:0} km/h"
                           + (ok ? "" : "   <-- off"));
         world.ecs.destroy(eid);
         return ok ? 0 : 1;
     }
 
-    /// <summary>The heading of the velocity the hull is actually making, radians from
-    /// +x.</summary>
-    private static float Heading(World world, int eid)
+    /// <summary>The same corner solved off the constants: in the command's own frame
+    /// the push is along `u`, the drag charges the whole velocity and the hill pulls
+    /// along it, and the two crossings fall out of the integration.</summary>
+    private static (float half, float square) Redirect(float v0, float slope)
     {
-        var v = world.ecs.fv("vel");
-        return MathF.Atan2(v.get(eid, 2), v.get(eid, 0));
+        float step = DT / 8f;
+        float pull = -Defs.GRAVITY * slope / MathF.Sqrt(1f + slope * slope);
+        float u = 0f, w = MathF.Max(v0, 0.01f);
+        float t = 0f, half = 0f, square = 0f;
+        while (t < 300f)
+        {
+            float v = MathF.Max(MathF.Sqrt(u * u + w * w), 0.5f);
+            float a = MechThrust.Force(v) / Defs.MECH_MASS;
+            u += (a - Defs.MECH_DRAG * v * u + pull * u / v) * step;
+            w += (-Defs.MECH_DRAG * v * w + pull * w / v) * step;
+            t += step;
+            if (half == 0f && u >= w) half = t;
+            if (w <= u * MathF.Tan(5f * MathF.PI / 180f)) { square = t; break; }
+        }
+        return (half, square);
     }
 
     /// <summary>Stopping on a hillside: brake to rest with the stick released, then

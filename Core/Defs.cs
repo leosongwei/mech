@@ -1183,18 +1183,11 @@ public static partial class Defs
     // solved, not tuned: the flat balance at MECH_RATED_V with the full 8000 hp
     public const float MECH_DRAG =
         MECH_HP_HIGH * HORSEPOWER / (MECH_RATED_V * MECH_MASS * MECH_RATED_V * MECH_RATED_V);
-    // The legs steer as well as push, and steering is its own actuator: a machine
-    // plants its feet and comes round, which is a lateral budget of its own and not
-    // the drive's.  Under the thrust model alone the *only* thing that turned a hull
-    // was the sideways share of its own push, so a change of direction was an
-    // exponential with `v/a` for its time constant - 8 to 10 s for a right angle at
-    // 180 km/h, i.e. the machine appeared to slide sideways while the view it was
-    // driven from had already come round.  Now the direction is turned at
-    // `min(MECH_TURN_RATE, MECH_TURN_G * g / v)` and the thrust only changes the
-    // speed along it: a right angle takes 2.8 s at 180 km/h (an 85 m radius), 1.6 s
-    // at 72 km/h, and no time at all from a standstill (there is no heading yet).
-    public const float MECH_TURN_G = 3.0f;              // lateral g the legs plant to come round
-    public const float MECH_TURN_RATE = 1.6f;           // rad/s, the ceiling at low speed (92 deg/s)
+    // The push is the whole of the steering: a hull pushes where it was told to and
+    // its velocity bends after the push at `a/v`, so a right angle at 180 km/h is a
+    // long, wide crossing of its own track (measured by `--check drive`).  Which is
+    // why a pilot's WASD is read in his own hull's frame (`input/sight.js`): the
+    // machine goes where the machine points.
     public const float MECH_BRAKE = 12.0f;              // m/s^2 the legs plant with; above the steepest hill's pull
     public const float MECH_GOVERNOR_BAND = 3.0f;        // m/s of speed error that puts the legs on full push
     // a hull whose legs point across the way it was told to go pushes with the

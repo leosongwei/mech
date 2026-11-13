@@ -74,7 +74,11 @@ function sendInput(app) {
   app.sendAcc += dt;
   if (app.sendAcc < 1 / TICK_HZ) return;
   app.sendAcc = 0;
-  const [mx, mz] = app.input.moveVector();
+  // the stick is read in the hull's frame - W pushes along the machine - so the
+  // newest hull heading on the wire is what turns it.  (`send` runs before `own`,
+  // so it asks the entity table itself rather than last frame's `ctx.own`.)
+  const own = app.ownEntity();
+  const [mx, mz] = app.input.moveVector(own ? own.tyaw : app.input.yaw);
   const aim = app.aim.sightAim();
   const msg = {
     t: 'in',

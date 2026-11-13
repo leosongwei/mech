@@ -12,7 +12,7 @@
 | 标题 | `MECH`（大字、绿色发光） |
 | 副标题 | `16 KM SQUARE FRONT · RED VS BLUE · THREE LANES` |
 | 版本号 | 副标题下一行小字 `v<版本>`（当前 `v1.12.3`），取自 `MechServer.csproj` 的 `<Version>`，**构建时**由 `frontend/webpack.config.js` 写进页面（见 [AGENTS.md](../../AGENTS.md) 的版本约定）；靶场（`--range`）同样显示 |
-| 键位表 | 两列：`W A S D` 移动（推杆跟随视线）、`MOUSE` 观瞄（车身/俯仰随后追上）、`WHEEL` 瞄具、`ALT + MOUSE` 自由观察（同时锁定前进方向）、`LMB / RMB` 左右臂、`Q` 热烟幕、`V` 准星吸附开关、`B` 换装面板、`ENTER / ESC` 面板确认/取消、`ESC` 释放鼠标（释放后点右上角齿轮开设置） |
+| 键位表 | 两列：`W A S D` 移动（推力在**车身坐标系**里：`W` 沿车头、`A/D` 向两侧平推）、`MOUSE` 观瞄（车身/俯仰随后追上，车身转过去推力跟着转）、`WHEEL` 瞄具、`ALT + MOUSE` 自由观察（视线离开准星，行进方向不受影响）、`LMB / RMB` 左右臂、`Q` 热烟幕、`V` 准星吸附开关、`B` 换装面板、`ENTER / ESC` 面板确认/取消、`ESC` 释放鼠标（释放后点右上角齿轮开设置） |
 | PILOT ID | 文本框，默认 `PILOT-<pid>`，最多 16 字符，自动全选 |
 | SIDE | 三个按钮 `RED` / `BLUE` / `AUTO`，选中的按钮填色（红/蓝/绿） |
 | DEPLOY | 绿色主按钮；点击后进入游戏并请求指针锁定（只生效一次，`ENTER` 不会再触发部署） |

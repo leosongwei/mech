@@ -76,8 +76,10 @@ export class Input {
     this.sight.update(dt);
   }
 
-  moveVector() {
-    return this.sight.moveVector(this.keys);
+  // the stick is read in the machine's own frame, so the caller hands in the hull's
+  // heading (the newest one on the wire)
+  moveVector(hullYaw) {
+    return this.sight.moveVector(this.keys, hullYaw);
   }
 
   _keyDown(e) {

@@ -14,6 +14,12 @@
 // speed it was asked for it plants and pushes back; with no command at all it
 // plants and stops the hull where it stands.
 //
+// The bearing is the whole of the steering: a pilot's command comes off his own
+// hull's frame (`input/sight.js`), so W pushes along the machine and A pushes
+// square across it, and the way the hull is *going* is whatever the push has bent
+// it into - at 1.5 g that bend is `a/v` wide, which is why a heavy machine crosses
+// its own track through a turn instead of tracking it.
+//
 // A command at the machine's *own top speed* is the stick pushed all the way: the
 // governor stands down, the legs give everything they have, and the hill and the
 // drag decide what comes out.  Anything slower is a cruise speed, which the
@@ -21,9 +27,9 @@
 // because at 1.5 g a tick's worth of thrust is a real fraction of a whole band of
 // speed and a governor that overshot would rattle around its target.
 //
-// The push goes along the way the hull is *going* - `Turn` owns the direction, this
-// pass owns the speed - and along the slope, so the hill takes its cut first: the
-// horizontal share is `cos(slope)` of it and the rest goes into the ground.
+// The push is measured along the slope it is aimed up, so the hill takes its cut
+// first: the horizontal share is `cos(slope)` of it and the rest goes into the
+// ground.
 
 namespace Mech.Server.Systems.Movement;
 
@@ -53,19 +59,9 @@ public static partial class Mech
                         continue;
                     }
                     float speed = MathF.Sqrt(v.x * v.x + v.z * v.z);
-                    // the push follows the way the hull is going: `Turn` has already
-                    // brought that round onto the command at the legs' own rate
-                    float dx, dz;
-                    if (speed > 0.5f)
-                    {
-                        dx = v.x / speed;
-                        dz = v.z / speed;
-                    }
-                    else
-                    {
-                        dx = cmd.x / cs;
-                        dz = cmd.z / cs;
-                    }
+                    // the push goes where the machine was told to push, and it is the
+                    // push that bends the way the hull is going
+                    float dx = cmd.x / cs, dz = cmd.z / cs;
                     float top = Defs.UNIT_DEFS[r.etype].speed;
                     float push = Force(speed) / Defs.MECH_MASS;     // m/s^2 the legs can make here
                     float a;
@@ -78,8 +74,11 @@ public static partial class Mech
                     else
                     {
                         // the governor: a cruise speed is held by pushing while the
-                        // hull is short of it and planting when it is over
-                        err = cs - speed;
+                        // hull is short of it and planting when it is over.  The speed
+                        // it holds is the share of it going the way it was told, which
+                        // is what keeps a cruise *through* a turn (the slip is the
+                        // machine's own business, not part of the order)
+                        err = cs - (v.x * dx + v.z * dz);
                         float u = Math.Clamp(err / Defs.MECH_GOVERNOR_BAND, -1f, 1f);
                         a = u >= 0f ? push * Legs(r, dx, dz) * u : Defs.MECH_BRAKE * u;
                         if (a == 0f) continue;
@@ -119,12 +118,10 @@ public static partial class Mech
 
         /// <summary>How much of the machine the legs can put behind a bearing: full
         /// with them lined up under it, `MECH_LEG_ALIGN` of it at right angles, and a
-        /// fifth of what is left once the chassis is out.
-        ///
-        /// Public because the legs steer as well as push (`Mech.Turn`), and a hull
-        /// that has not got its feet round yet comes round slower for the same
-        /// reason it pushes weaker.</summary>
-        public static float Legs(in MoveRow r, float dx, float dz)
+        /// fifth of what is left once the chassis is out.  A hull told to push square
+        /// across itself plants its feet first and then leans on them, which is the
+        /// ramp this factor is (`Integrate.turn_legs`).</summary>
+        private static float Legs(in MoveRow r, float dx, float dz)
         {
             float align = MathF.Cos(MathUtil.wrap_pi(MathF.Atan2(dz, dx) - r.leg_yaw));
             float f = Defs.MECH_LEG_ALIGN + (1f - Defs.MECH_LEG_ALIGN) * MathF.Max(0f, align);

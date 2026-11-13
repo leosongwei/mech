@@ -11,7 +11,7 @@
 
 ---
 
-## 2026-11-13 · 机甲换成马力曲线,小地图指向视线,ALT 锁定朝向,树林翻倍(1.27.0)
+## 2026-11-13 · 机甲换成马力曲线,转向只是推力方向,小地图指向视线,树林翻倍(1.27.0)
 
 - **机甲换成了一张马力曲线 + 1.5 g 动力上限**:腿是发动机,推力 = 功率 / 速度
   (`P(v) = 5000 → 8000 hp` 线性,`F = min(P/v, 1.5 g × 15 t)`,15 t;重力不计入这个
@@ -19,10 +19,13 @@
   发动机——108 km/h 1.15 g、144 km/h 0.94 g、180 km/h 0.81 g,**0–100 km/h 约
   2.1 s**,144 km/h 4.0 s。极限速度由平方阻力给出(`MECH_DRAG = 3.182e-3 /m`,
   由"平地 180 km/h 时 8000 hp 打平阻力"解出)。
-  * **转向独立成第二套机构**:推力只管车速,**方向**由腿单独转(3 g 侧向、1.6 rad/s
-    封顶):**180 km/h 转直角 2.6 s、半径 82 m**,72 km/h 只要 1.6 s,而且转弯几乎不掉速
-    (176 → 173 km/h)。以前方向只能靠推力的横向分量慢慢掰,180 km/h 转 90° 要 8–10 s,
-    视觉上就是"准星已经朝东、车还在往北滑"。现在鼠标转身和 `A/D` 侧推物理上一致。
+  * **转向就是推力方向**:`W A S D` 读的是**车身**坐标系——`W` 沿车头推、`A/D` 向车身
+    两侧平推(`A` 在车头朝东时把机体推向正北),推力方向永远和车身对齐,速度方向的改变
+    **只由这份推力产生**(功率曲线 + 1.5 g 双重钳制),没有第二套转向机构。想换方向就转
+    观瞄:车身 **80°/s** 跟上来,推力随车身转过去,速度再被推力慢慢掰过去——180 km/h 上
+    速度方向转 45° 要 **4.1 s**、完全摆正(残余 5° 侧滑)要 **16.7 s** 且几乎不掉速
+    (176 → 178 km/h);73 km/h 进弯 1.4 s 到 45°,并且一路加速回 177 km/h。所以高速转弯
+    是"车身先摆过去、机身横向滑一段"的宽斜切,速度越低越灵敏。
   * **上坡减速、下坡加速**:35° 上坡(机甲上限)平衡在 114 km/h、30° 上坡 125 km/h、
     30° 下坡 210 km/h、40° 下坡 215 km/h;1.5 g 只限制动力、重力照常加,所以
     "被重力拖停在坡上"在机甲能上的任何坡里都不存在(35° 起车净加速度 6.4 m/s²)。
@@ -30,14 +33,15 @@
     停下 78 m / 3.5 s,24° 坡上从 204 km/h 停住 5.0 s。
   * **能停在坡上**:腿撑地刹停后重力不再作用于机体,35° 的坡上停住也不会往下溜
     (实测 24° 坡停稳后 10 s 位移 **0.00 m**)。
-  * 腿是转向机构:急转先转腿、后加速,所以是画弧(对齐系数 0.45–1.0)。**背向推杆**
-    也是掉头走(约 1.2 s 转完腿,之后满推力),不再是以前"背向只有 81 km/h"的慢速平移。
+  * 腿是推力机构:侧推/掉头先转腿(2.6 rad/s)、后满推力,没转到位之前推力打对齐系数
+    (0.45–1.0)。**背向推杆**是掉头走(约 1.2 s 转完腿,之后满推力),不再是以前"背向只有
+    81 km/h"的慢速平移。
   * AI 的 `nav_speed` 由调速器维持(平地指令 12 m/s 实际 11.9 m/s,每 tick 只取
     还差的那一点,不会冲过头)。
 - **小地图上自己的箭头指向视线**,不再指向车头:机甲的车身是追着观瞄转的,箭头跟着
   玩家在看的方向走。
-- **按住 `ALT` 时前进方向锁定**:自由观察可以把视线甩到侧面 90°,`W` 仍然沿原来的
-  方向加速(WASD 改以观瞄朝向为基准,而不是自由视角)。
+- **`ALT` 只是自由观察**:视线离开准星环顾四周,机体的行进方向不受影响——因为推杆读的是
+  车身坐标系,本来就不看视线(以前 WASD 以视线为基准,ALT 得额外"锁定前进方向")。
 - **树林的团数翻一倍**(460 → 920 团),**每团的面积不变**:散兵坑更多、更密,
   但每一片林子的形状大小和以前一样。
 - **突袭队的 128 m 战略网格也按坡度判能不能过**:一格节点里超过**四分之一**的面
@@ -48,15 +52,16 @@
   在 128 m 这一级几乎永远不是约束(和 16 m 面上"机甲 99.1% 可达"是一回事);
   25 座城从本方基地出发**全部仍然可达**,建表 14 ms(只在出发那一 tick)。
 - 涉及文件:`Core/Defs.cs`(`MECH_HP_LOW` / `MECH_HP_HIGH` / `MECH_MASS` /
-  `MECH_RATED_V` / `MECH_V_TRACTION` / `MECH_DRAG` / `MECH_BRAKE` /
-  `MECH_HP_LOW` / `MECH_HP_HIGH` / `MECH_MASS` / `MECH_RATED_V` / `MECH_G_LIMIT` /
-  `MECH_DRAG` / `MECH_TURN_G` / `MECH_TURN_RATE` / `MECH_GOVERNOR_BAND`)、`Core/Terrain.cs`(`slope_along`、树林
+  `MECH_RATED_V` / `MECH_G_LIMIT` / `MECH_DRAG` / `MECH_BRAKE` /
+  `MECH_GOVERNOR_BAND` / `MECH_LEG_ALIGN`)、`Core/Terrain.cs`(`slope_along`、树林
   团数)、`Systems/AI/Strategies/Raid.cs`(`FieldNav` 的坡度通行判定、`_open_line`)、
   `Harness/NavCheck.cs`(`raider grid` 一行)、
-  `Systems/Movement/Mech/{Steer,Turn,Thrust,Slope,Drag,Ground}.cs`(取代
+  `Systems/Movement/Mech/{Steer,Thrust,Slope,Drag,Ground}.cs`(取代
   `Systems/Movement/Mech.cs`)、`Core/World.cs`(流水线)、`Harness/DriveCheck.cs`
-  (`--check drive`)、`frontend/src/input/sight.js`、`frontend/src/hud/minimap.js`、
-  `frontend/src/app/hudstate.js`、`docs/plans/mech_thrust.md`。
+  (`--check drive`)、`frontend/src/input/{sight,index}.js`(车身坐标系推杆)、
+  `frontend/src/app/frame.js`、`frontend/src/hud/minimap.js`、
+  `frontend/src/app/hudstate.js`、`frontend/src/index.html`(键位表)、
+  `docs/plans/mech_thrust.md`。
 
 ## 2026-11-13 · 单位模型的两处外观修正(1.26.0)
 

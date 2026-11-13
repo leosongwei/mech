@@ -1067,8 +1067,11 @@ own; the wire is `net/wire.js` + `net/rows.js` and the picture is `net/view.js`.
   needs no heading lock - the stick never read the view.  A second actuator for the
   direction (`MECH_TURN_G` 3 g) was tried in 1.27.0 and dropped as far too strong
   for the machine it was on.  The crew's detour count in `--check nav`'s lane row is
-  the number that reads a corner: ~130 with this drive, 54 with the 3 g turn (single
-  runs, with a whole battle moving around them).
+  the number that reads a corner: 82 and 133 in two runs here, 19 with the 3 g turn -
+  single runs, with a whole battle moving around them.  `--check battle --minutes 12`
+  on seed 11 goes 533 deaths on 20.9k rounds against 589 on 26.1k for that 3 g build,
+  i.e. 39 rounds per kill against 44: a hull that corners slowly fights a little
+  smaller war, and no more wastefully.
   **The push is a power, so the force is `P(v)/v`**, `MECH_HP_LOW` 5000 hp at a
   standstill rising linearly to `MECH_HP_HIGH` 8000 hp at `MECH_RATED_V` (50 m/s,
   180 km/h), flat above it, over `MECH_MASS` 15 t.  A bare curve runs away at v->0,

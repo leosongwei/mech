@@ -115,21 +115,15 @@ assets/                    # compiled client (webpack output, gitignored)
 tools/
   gun_report.py            # weapon-report audio analysis (numpy; the numbers in audio.js)
   smoke_lock_test.js       # browser-console driver: seeker A/B smoke test
-frontend/                  # the shipped client: fifteen files, one of them 1836 lines
+frontend/                  # the client: four layers, one direction (checked by
+                           #   scripts/depgraph.mjs); `npm run build` = deps check +
+                           #   syntax check + webpack -> ../assets/
+  package.json
   webpack.config.js        # entry src/main.js -> ../assets/bundle.js
   icons.json               # single source of truth for every HUD icon glyph
-  scripts/                 # fetch-material-icons.sh: rebuild the font subset
+  scripts/                 # depgraph.mjs (layers, no cycle), syntax.mjs (every module
+                           #   parses), fetch-material-icons.sh (rebuild the font subset)
   vendor/material-symbols/ # committed Material Symbols subset (a few KB) + LICENSE
-  src/                     # main.js, game.js, net.js, map.js, fcs.js, scene.js,
-                           #   renderer.js, hud.js, meshes.js, particles.js, math.js,
-                           #   input.js, audio.js, shop.js, icons.js
-frontend_v2/               # the same client, ported onto the layered layout the plan
-                           #   in docs/plans/frontend.md describes (fills ../assets/ the
-                           #   same way; `MECH_FRONTEND=v2 ./dev.sh build` builds it).
-                           #   Once it is signed off, frontend/ goes and this is renamed.
-  package.json             # `npm run build` = deps check + syntax check + webpack
-  scripts/depgraph.mjs     # the import graph: layers, no cycle, one domain edge (render -> map)
-  scripts/syntax.mjs       # every module parses (webpack is otherwise the only parser)
   src/
     main.js                # boots Game, exposes it as window.__game
     icons.js  shop.js      # two leaves: the icon glyph table, the rearm pricing law
@@ -153,15 +147,15 @@ frontend_v2/               # the same client, ported onto the layered layout the
                            #   systems/{aim,lead,rwr,camera,feedback,shop,settings}.js
 ```
 
-The two trees are the same client: `render/passes.js` is the draw order,
-`app/frame.js`'s `STAGES` is the frame order, and everything the console reaches
-for kept its name (`g.net.*`, `g.hud._project`, `g.renderer.draw` / `beginDynamic`
-/ `roadCount` / `propStats` / `screenArrow` / `overlayOrigin`, `g._camera` for the
-free camera, `g.input.*`, `g.audio.*`, `g.particles.*`).  What moved: the camera,
-aiming, the pre-aim rings, the warning receiver and the panels are `app/systems/`;
-the model emitters take an instance batch instead of calling the renderer by shape
-name; the renderer's passes, shaders and GL resources are files of their own; the
-wire is `net/wire.js` + `net/rows.js` and the picture is `net/view.js`.
+`render/passes.js` is the draw order and `app/frame.js`'s `STAGES` is the frame
+order; everything the console reaches for has a name (`g.net.*`,
+`g.hud._project`, `g.renderer.draw` / `beginDynamic` / `roadCount` / `propStats` /
+`screenArrow` / `overlayOrigin`, `g.freeCam` for the free camera, `g.input.*`,
+`g.audio.*`, `g.particles.*`).  The layers: the camera, the aiming, the pre-aim
+rings, the warning receiver and the panels are `app/systems/`; the model emitters
+take an instance batch (`render/batch.js`) instead of calling the renderer by
+shape name; the renderer's passes, shaders and GL resources are files of their
+own; the wire is `net/wire.js` + `net/rows.js` and the picture is `net/view.js`.
 
 ### Server
 
@@ -480,7 +474,7 @@ wire is `net/wire.js` + `net/rows.js` and the picture is `net/view.js`.
   asymmetry the whole design is built to avoid.
 
 * **The client solves the same law for the HUD** (`frontend/src/fcs.js`:
-  `leadPoint`, `zeroAt`, `solveElevation`, `flightTo`, `solve`).  `map.js`
+  `leadPoint`, `zeroAt`, `solveElevation`, `flightTo`, `solve`).  `map/`
   re-exports them, so `game.js` keeps reading `leadPoint` / `zeroAt` for the
   rings, the impact marker and the range readout.  The two hosts cannot share
   code (C# and JS), so they share a case table instead: `tests/cases/fcs.json`
@@ -495,7 +489,7 @@ wire is `net/wire.js` + `net/rows.js` and the picture is `net/view.js`.
   the tube diameter and length, the pitch, the mouth (`centre + length/2`) and
   the body it is drawn as — and `defs.rack_tube(fired, spec)` says which cell
   the next round leaves from (bottom row first, left to right). `weapons.fire`
-  solves its launch point off those two and `scene.js`'s `rack()` draws the same
+  solves its launch point off those two and `scene/arms.js::rack()` draws the same
   lattice from the *same spec*, which travels to the client with the rest of the
   weapon table: a mouth that was drawn is a mouth a round leaves. The gun's own
   length wins first (`wd["reach"]`), then the rack's mouth, then the kind's
@@ -508,7 +502,7 @@ wire is `net/wire.js` + `net/rows.js` and the picture is `net/view.js`.
   about 1.15 tube widths (the nest's 0.155 on a 0.135 bore), which is what makes
   a face read as a bundle of tubes; the body is a 0.04 m sheet-metal edge round
   the lattice and nothing more.  How a rack is *hung* is two fields, and the
-  server, `scene.js` and the client's muzzle all read the same two: `elev` is
+  server, `scene/arms.js` and the client's muzzle all read the same two: `elev` is
   what the tubes add to the angle of the arm they are on, and `bolted` means
   the arm's slewing does not move them at all.  So the top-attack rack is
   `bolted` at its 42° (the round's own loft, whatever the pilot's cross does),
@@ -672,7 +666,7 @@ wire is `net/wire.js` + `net/rows.js` and the picture is `net/view.js`.
   The heightfield stores vertex heights with no quantum; the surface between four
   of them is the two flat triangles split along the tile's own diagonal
   (`tx + tz <= 1` is `{a,b,c}`, the rest `{d,c,b}`), and *that rule is the only one*:
-  the server, `map.js`'s `heightAt` and the near terrain mesh all solve it, so the
+  the server, `map/`'s `heightAt` and the near terrain mesh all solve it, so the
   facet a round bursts on is the facet under a hull and the facet under the cross.
   `tests/cases/height.json` is the table both hosts answer (a bilinear blend, a
   terrace or the other diagonal all fail it).  The physics cell stays 16 m - the
@@ -788,7 +782,7 @@ wire is `net/wire.js` + `net/rows.js` and the picture is `net/view.js`.
   down all over the map).  **One boolean, two channels**: `_threats` computes
   `radarAlarm = some(t => t.alarm)` where `t.alarm` is
   `seen ? (warn || aim) : steady` written per round, and both the rim
-  (`hud.js`) and the trill (`_alarms`) read exactly that - which is why they can
+  (`hud/`) and the trill (`_alarms`) read exactly that - which is why they can
   count the same beats (`RWR_TONE_S`).  A round the receiver can place is judged
   on its geometry, one it only hears on its bearing drift; `seen` is re-judged
   every frame, so a round that slows down or turns hands judgement straight back
@@ -833,7 +827,7 @@ wire is `net/wire.js` + `net/rows.js` and the picture is `net/view.js`.
     so an arrow is lit by the sun the machine under it is lit by; `uOutline`
     doubles as the piece selector (1 cylinder, 2 cone) because the shader paints
     that cone's base cap white.
-  `hud.js` owns the layout (`dialAt`, `arrowRingAt`, `ARROW_R`): the ring is the
+  `hud/` owns the layout (`dialAt`, `arrowRingAt`, `ARROW_R`): the ring is the
   strip the gear vacated when it moved into the screen's corner, and the message
   stack stops 10 px short of it.  With a round inbound the rim **blinks** - pure
   red against a washed-out red, one alternation per tone of the missile trill
@@ -1110,7 +1104,7 @@ wire is `net/wire.js` + `net/rows.js` and the picture is `net/view.js`.
   `structure_hit`, which walks the same tiles and asks each one.
 * **Trees are trunks for physics, canopies for sight.** A tree/forest tile
   holds 1-5 trees whose trunks are the only solid part of it: `_trunks(i, j)`
-  (server) / `treeTrunks` in `map.js` lay them out from one hash both sides
+  (server) / `treeTrunks` in `map/` lay them out from one hash both sides
   replicate exactly, and each is a **cylinder** - `r` = 0.35-0.6 m, `h` =
   0.4 x the tree's 10-18 m height, the same cylinder the renderer draws.
   A trunk is a metre wide, far thinner than the 8 m the ray walk samples at, so
@@ -1140,7 +1134,7 @@ wire is `net/wire.js` + `net/rows.js` and the picture is `net/view.js`.
   which is what keeps the belief honest), the player's IR lock
   (`Systems/Locking.cs`, which used
   to ask the field only and so let a hull be locked straight through a screen
-  of smoke) and the missile seeker. `map.js` mirrors the same rule for the HUD
+  of smoke) and the missile seeker. `map/` mirrors the same rule for the HUD
   (`MapData.sightAt` + `sightBlocked`, canopy and puffs); the pre-aim box is
   drawn only through a clear line of sight, exactly what the seeker can lock.
   The ballistic prediction (`sightPoint`, `groundHit`) stays on the *round's*
@@ -1190,7 +1184,7 @@ wire is `net/wire.js` + `net/rows.js` and the picture is `net/view.js`.
   whole column whether the entity owned the component or not, so a rifleman
   paid for a mech's arms, magazines and sight (56 of his 80 bytes empty, and
   `pad3` + `hp[1]` were never even written: `AllocateUninitializedArray` sent
-  heap bytes).  Row widths now follow what `scene.js` / `hud.js` actually read:
+  heap bytes).  Row widths now follow what `scene/` / `hud/` actually read:
   a mech keeps `syaw`/`spitch` (its own sight head is drawn on them) and
   `ammo`/`mag`/`weapon`/`arm_hp`, an APC keeps `turret`/`pitch`/`vel`/`target`
   (the turret, the lead rings, the laser warning), a base keeps `pitch`/
@@ -1227,10 +1221,10 @@ wire is `net/wire.js` + `net/rows.js` and the picture is `net/view.js`.
   (`view.mech`), because `game.ownEntity()` returning null sends the camera to
   the base orbit - i.e. a drop looks like a death - and **the command bases**,
   because the HUD's base-integrity bars scan the entity table for `type === 5`
-  (`hud.js`), so a base at 2 km would blink out of the top bar for most of a
+  (`hud/`), so a base at 2 km would blink out of the top bar for most of a
   match.  Two rows are 2.4 kB/s.  A dead pilot's eye is his base
   (`view.at`), which is where the client's camera is anyway.
-  **Enter at R, leave at 1.15 R** (`TIER_DEAD_BAND`): `net.js` deletes every
+  **Enter at R, leave at 1.15 R** (`TIER_DEAD_BAND`): `net/` deletes every
   entity the newest frame does not mention, so without the band a hull parked on
   a circle is re-created (position snap, `mvx` smoothing reset) every crossing.
   The client needs **no change** for any of this - every consumer is map-driven
@@ -1384,7 +1378,7 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
 ### Client
 
 * The lobby's callsign is the one setting that is not the audio bus's
-  (`audio.js` keeps `mech.volume` / `mech.alarmvolume`); `game.js` keeps
+  (`audio/` keeps `mech.volume` / `mech.alarmvolume`); `game.js` keeps
   `mech.name` and writes it at `DEPLOY`, so a reload prefills the last callsign
   instead of `PILOT-<pid>`.
 * `game.js` sends input at 30 Hz (`{t:"in",yaw,pitch,mx,mz,fl,fr}`) and drives
@@ -1443,22 +1437,22 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
   `WEBGL_multi_draw` with a per-command fallback. Prop instances are batched
   per mesh (`this.meshes.length` batches) and culled in 640 m chunks
   (`CHUNK_TILES` = 40) by `_buildProps`, which plants the trees of
-  `map.js`'s `treeTrunks` (the same trunks the server collides against) and,
+  `map/`'s `treeTrunks` (the same trunks the server collides against) and,
   per building tile, a `MESH_FACADE` box as tall as `map.walls`
   (storeys and windows are painted in the shader off `vLocal`/`vScale`,
   `uFacade`), a roof slab with a parapet, an occasional plant box or annex.
-* `scene.js` builds unit models from primitives in a local frame: **+X
-  forward, +Y up, +Z right** (see `math.js compose`). A Y-axis primitive is
-  laid along the barrel with `pitch = FORWARD` (`-PI/2`); use
+* `scene/` builds unit models from primitives in a local frame: **+X
+  forward, +Y up, +Z right** (see `core/math.js`'s `composeInto`). A Y-axis
+  primitive is laid along the barrel with `pitch = FORWARD` (`-PI/2`); use
   `FORWARD + p` when a pitch is already in play. A **box** scales on X = along
-  the bore, **Y = up, Z = across** — `put('box', p, dist, len, height, width)`,
+  the bore, **Y = up, Z = across** — `put(MESH.BOX, p, dist, len, height, width, colour)`,
   and swapping the last two draws a tall pod lying on its side.
 * **An arm that carries its own launcher draws nothing behind it.** A weapon with
   a `rack` (the rocket nest, the top-attack rack) *is* the arm: the plain station
   body and the 0.66 m shoulder ball are skipped for it, because they swallow the
   tube mouths at both ends — which is exactly why the first top-attack rack could
-  not be seen from behind. `rack()` draws the body `defs.rack` derived plus one
-  hexagon per cell, dark for a cell that has fired.
+  not be seen from behind. `rack()` in `scene/arms.js` draws the body
+  `defs.rack` derived plus one hexagon per cell, dark for a cell that has fired.
 * **`at()` turns a piece's offset with the same yaw it turns the mesh with**,
   which is what everything bolted to a hull wants - and what the sight head must
   *not* do: its pivot is fixed to the hull, so the head has to rotate on the
@@ -1468,7 +1462,7 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
   `spitch`. Getting this wrong (passing the sight's angles to `at`) draws the
   head a metre and a half off its own pillar whenever the two disagree.
 * **The pre-aim ring reads the target's acceleration off the wire**
-  (`leadPoint`'s `ax` / `az`): nobody broadcasts throttle, so `net.js` measures
+  (`leadPoint`'s `ax` / `az`): nobody broadcasts throttle, so `net/` measures
   it - the difference of two velocity samples over the ticks between them, EMA
   smoothed on a 0.25 s time constant, a jump over 25 m/s^2 treated as a
   teleport rather than a pull, and a sample older than half a second ignored.
@@ -1492,7 +1486,7 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
   target's two rings, when they would overlap at the assist's width, are laid
   out as a pair along the line their own two solutions make - each ring on its
   own arm's side of its middle, and no closer in than `LEAD_PAIR_SEP` radii
-  (`hud.js`, 1.0), so the two **overlap** instead of standing tangent - and the
+  (`hud/`, 1.0), so the two **overlap** instead of standing tangent - and the
   direction is kept from the last frame while the two points are closer than a
   pixel - so the pair rides the true points and a fast target cannot make it
   swap arrangements between two frames. Overlap is what makes the pair handy:
@@ -1525,7 +1519,7 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
   (`input.onToggleAssist` -> `_toggleAssist`), so the pilot keeps the pointer and
   the cross is back under his hand without the panel; the message list says
   which way it went, and the panel's button reads the same field.
-* `map.js` must stay ballistically identical to the server: same gravity,
+* `map/` must stay ballistically identical to the server: same gravity,
   same 1/30 step, same launch bias (`wd.bias`), the same "building walls are
   columns, tree trunks are cylinders" rule (`wallAt`/`obstacleAt`/`trunkHit`),
   otherwise the predicted impact point drifts off the real one. It also carries
@@ -1549,7 +1543,7 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
   JSON, whose key names alone (`"t":"fx","k":"boom","x":…`) were 40 of every
   68 bytes.  Measured on a real 6-mech fight: 190 events/s, 2.41 kB/s, and the
   same batch serialised as JSON is 2.9x bigger; over minutes 8..15 of a battle
-  the fx line went 13.9 -> **4.1 kB/s**.  `net.js` dispatches binary frames by
+  the fx line went 13.9 -> **4.1 kB/s**.  `net/` dispatches binary frames by
   magic (`MECH` snapshot, `MECF` fx, `MECP` ping) and rebuilds the events in the
   shape `game._fx` already speaks, so nothing downstream knows the difference.
   `hearable` runs *before* the split, so the per-ear filter is unchanged: it
@@ -1813,7 +1807,7 @@ cd frontend && npm install && npm run build      # -> assets/
   sphere: the numbers move with where he is.
 * **`tools/gun_report.py`** is the weapon-report analysis (it reads a recording
   with ffmpeg and prints the third-octave spectrum per window; `--synth` renders
-  the cue `HEAVY_REPORT` in `audio.js` describes).  It is the one Python script
+  the cue `HEAVY_REPORT` in `audio/` describes).  It is the one Python script
   left, it needs `numpy` in `.venv`, and it never touches the server.
   `tools/smoke_lock_test.js` is a browser-console driver for the seeker's smoke
   A/B test.
@@ -1977,62 +1971,65 @@ when the code contains quotes.
 
 ### Looking at the world: a free camera
 
-The frame camera is built by `game._camera(own, dt)` from the mech's position,
-the yaw / pitch and the zoom. Replacing it from the console and passing a fake
-`own` puts the eye anywhere, which is how terrain, roads and props are
-inspected (the mech itself never has to move):
+`g.freeCam` puts the eye anywhere in the world, or parks it on a hull and follows
+it as it drives - the way to look *at* a machine, a road junction or a smoke
+screen instead of out of a cockpit.  It is the client's own debug door (no server
+flag), and `camera()` asks it before anything else, so the eye stands where it was
+put whatever the pilot is doing: dead, respawning, or looking through a 20x sight.
 
 ```js
 const g = window.__game;
-g.__origCam = g.__origCam || g._camera.bind(g);
-g.__cam = (eye, yaw, pitch) => { g._camera = (own, dt) => {
-  // `input.viewYaw` is a GETTER (yaw + freeYaw), its assignment is silently
-  // dropped - the real knobs are `yaw` and `freeYaw`
-  g.input.yaw = yaw; g.input.freeYaw = 0;
-  g.input.pitch = pitch;                     // -1.45 = straight down
-  // the eye is mounted on the hull `mech.sight_z` behind its rotation axis, so
-  // a fake `own` needs a `yaw` too - without one the mount offset is NaN and
-  // the camera goes with it
-  return g.__origCam({ x: eye[0], y: eye[1] - 5.05, z: eye[2], yaw }, dt);
-}; };
-g.__cam([x, y, z], Math.PI / 4, -0.45);      // yaw: dirFrom convention
+
+g.freeCam()                                 // the spec now set, or null
+g.freeCam(null)                             // back to the cockpit
+g.freeCam({ x, y, z, yaw, pitch, zoom })    // a fixed eye (dirFrom yaw; -1.45 = straight down)
+g.freeCam({ id, dist, yaw, height, zoom })  // watch entity `id`
+g.freeCam(id)                               // watch it from the standard vantage
 ```
 
-* `_camera` is a cockpit camera whose eye is the commander's sight head: it
-  sits at `defs.mech.eye` (5.05 m) above `own.y`, `defs.mech.sight_z` (-0.62 m)
-  behind the hull's rotation axis and carried by the hull's yaw - hence the
-  `- 5.05` above and the `yaw` in the fake `own`. `_sightEye` returns that same
-  point, and it is the origin the server's sight, seeker and fire control solve
-  from, so the cross, the range readout and the lead circles cannot disagree.
-  The sight *head's* own rotation does not move it (the head turns about the
-  pillar, the eye is the pivot); the hull swinging underneath does, which is
-  the geometry the decoupled sight is for. The pilot's own
-  machine is drawn like any other unit, in full: there is **no separate
-  first-person view model**, so the barrels on screen are the barrels the
-  rounds leave from. The one piece left out of it is the sight head the eye is
-  inside of (`scene.mech`, the `own` flag). That head is drawn with its optical
-  axis on `MECH_EYE` (`SIGHT_Y` in `scene.js` - the two numbers move together),
-  which is what keeps the eye *below* every other hull's sight roof instead of
-  looking down on it.
+* A **parked eye** is solved off that entity's drawn pose (`x` / `z` / `yaw`)
+  every frame, so a walking mech's arms are followed instead of left behind:
+  `dist` 12 m out, `height` 2.6 m above its ground, looking at the hull's own
+  centre (`defs.units[type].height * 0.5`) whichever way it turns.  `yaw` there is
+  the direction **from the hull to the eye** - left out it is the hull's own yaw +
+  0.9 rad, a three-quarter view from the front left - so the eye keeps that side
+  of the machine as the machine swings.  `zoom` is the optics step (1 = the plain
+  1x field of view; 4 puts a barrel or a tube rack in reach without walking in).
+* Every hull id is in `g.net.entities`; `[...g.net.entities].filter(([, e]) => e.type
+  === 4)` is every mech on the wire.  The snapshot is a sphere around the pilot's
+  eye (`Netcode.SnapshotView`), so what can be watched is what the tier carried: a
+  fixture worth a close look is `debug_spawn`ed first.
+* The HUD keeps drawing (cross, rings, the dial) and the *aim* still comes from the
+  pilot's own sight: the free camera moves the picture, not the machine.
+* `g._camera` stays replaceable for what a spec cannot express (a camera tied to a
+  point, an orbit).  It is a cockpit camera whose eye is the commander's sight
+  head: it sits at `defs.mech.eye` (5.05 m) above `own.y`, `defs.mech.sight_z`
+  (-0.62 m) behind the hull's rotation axis and carried by the hull's yaw, so a
+  fake `own` needs a `yaw` (`scene/helpers.js::SIGHT_Y` / `SIGHT_Z` are the same
+  two numbers).  `_sightEye` returns that same point, and it is the origin the
+  server's sight, seeker and fire control solve from, so the cross, the range
+  readout and the lead circles cannot disagree.  The sight *head's* own rotation
+  does not move it (the head turns about the pillar, the eye is the pivot); the
+  hull swinging underneath does, which is the geometry the decoupled sight is for.
+  The pilot's own machine is drawn like any other unit, in full: there is **no
+  separate first-person view model**, so the barrels on screen are the barrels the
+  rounds leave from.  The one piece left out of it is the sight head the eye is
+  inside of (`scene/units/mech.js`, the `own` flag).  That head is drawn with its
+  optical axis on `MECH_EYE` (`SIGHT_Y` in `scene/helpers.js` - the two numbers
+  move together), which is what keeps the eye *below* every other hull's sight
+  roof instead of looking down on it.
 * `input.pitch` is a plain field (settable), `input.viewYaw` is not: writing
-  `g.input.viewYaw = ...` does nothing and the eye keeps looking along
+  `g.input.viewYaw = ...` does nothing and the cockpit eye keeps looking along
   `input.yaw`, which is the *last thing sent to the server* - a still mech can
-  sit there for minutes with a stale yaw. `debug_tp` sets it, `g.input.yaw` is
+  sit there for minutes with a stale yaw.  `debug_tp` sets it, `g.input.yaw` is
   what the mech turns to.
-* The override survives until the page is reloaded — a `navigate` clears it and
-  drops you back in the lobby, so re-click `DEPLOY` (or re-click the element
-  whose `textContent` is `DEPLOY`).
+* The free camera survives until it is released or the page is reloaded - a
+  `navigate` clears it and drops you back in the lobby, so re-click `DEPLOY` (or
+  re-click the element whose `textContent` is `DEPLOY`).  A `MECH_DEBUG`-less
+  server still has it: it is the console's, not the wire's.
 * `g.renderer.roadCount = 0` (save the old value) hides the road pass;
-  replacing `g.renderer.draw` with a wrapper that calls `g.renderer.beginDynamic()`
-  first hides every dynamic body — including the pilot's own mech — which is
-  what a clean scenery shot needs:
-
-```js
-const r = g.renderer;
-r.__d = r.__d || r.draw.bind(r);
-r.draw = (cam) => { r.beginDynamic(); r.__d(cam); };
-```
-
+  `g.renderer.beginDynamic()` clears the dynamic bodies (hulls, rounds, props'
+  moving half), which is what a clean scenery shot wants.
 * `g.map.heightAt(x, z)`, `g.map.walls`, `g.map.roads`, `g.renderer.propStats`
   and `g.renderer.roadCount` are all readable, so a picture can be checked
   against the data it came from.

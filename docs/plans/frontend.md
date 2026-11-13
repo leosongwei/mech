@@ -1,7 +1,7 @@
 # 前端重构:一条图形管线、单位/地图渲染分文件、网络与音频成系统
 
 日期:2026-11-13
-状态:**已实施(九步全部完成),待签收后删除旧目录并改名**
+状态:**已实施(九步全部完成),旧目录已删除、`frontend_v2/` 已改名为 `frontend/`**
 范围:**`frontend/src/` 的模块结构。玩家看到的东西一行都不变。**
 版本:纯内部重构,玩家不可见 → 实施时只 bump `MechServer.csproj` 的第三位
 (1.25.0 → 1.25.x),`docs/product/CHANGELOG.md` 不写条目。任何一步如果顺带改了手感、
@@ -18,12 +18,13 @@
 
 ---
 
-## 0. 落地结果(2026-11-13,九步全部完成)
+## 0. 落地结果(2026-11-13,九步全部完成,旧树已删除)
 
-新树在 `frontend_v2/`(分支 `frontend-v2`),旧树 `frontend/` 原样保留;两者都往
-`assets/` 出包,`MECH_FRONTEND=v2 ./dev.sh build` 构建新的那个。签收之后:删
-`frontend/`,把 `frontend_v2/` 改名为 `frontend/`,再把 `tests/frontend/{height,fcs}`
-里的两处 import 路径从 `frontend_v2/` 改回 `frontend/`。
+新树先落在 `frontend_v2/`(分支 `frontend-v2`),旧树 `frontend/` 原样保留、两者都往
+`assets/` 出包做 A/B;签收后旧树**已删除**,`frontend_v2/` 改名为 `frontend/`,
+`tests/frontend/{height,fcs}` 的两处 import 路径、`.gitignore` 的过渡行、`dev.sh` 的
+`MECH_FRONTEND` 开关、`scripts/depgraph.mjs` 的头注释与 `AGENTS.md` 的目录树都跟着
+改回单一棵树。
 
 | 项 | 结果 |
 | --- | --- |
@@ -69,6 +70,25 @@
     现在固定成 `field.update(own, viewYaw, ctx.now / 1000)`,注释写清哪个是毫秒哪个是秒。
     这是"重构里唯一一次真·回归",也说明 §11 那条"用耳朵验一遍"的检查不能省:
     `renderer.stats`、截图和测试都不会报它。
+
+12. **抓到一个玩家可见的回归:`scene` 拿到的不是武器表(已修)。** 旧版是
+    `drawUnits(R, entities, projectiles, this.defs.weapons, …)`,新版的
+    `app/frame.js` 把整个 `app.defs`(`{weapons, units, mech, radar}`)当成武器表传给了
+    `emitUnits` / `emitProjectiles`,于是 `wdefs[wid]` 永远 `undefined`、`wd = {}`、
+    `kind` 落进 `'none'` 兜底分支:**两臂都画成 0.90 m × 0.18 m 的短粗筒**(用户原话
+    "两个短粗的不明物体"),30 mm 的 3.2 m 炮管、105 mm 的巨箱 + 5 m 炮管、所有管式
+    发射器的 `rack` 全部消失,弹丸也退回默认弹体与默认颜色。用户截图一眼看出来的,
+    代码侧一次参数对比就定位。修法是 `defs: app.defs.weapons`(两处),`scene` 仍然只
+    认一件事:wid → 武器定义。
+13. **新增 `g.freeCam` 自由相机 API(新旧一致,已写进 AGENTS.md)。** 模型这类东西
+    只能"贴近看",而旧办法是在控制台里替换 `game._camera` 并塞一个假的 `own`:能用,
+    但写起来别扭、也看不了正在跑的 AI。现在是一行 spec:
+    `g.freeCam({id})` / `g.freeCam({id, dist, yaw, height, zoom})` /
+    `g.freeCam({x, y, z, yaw, pitch, zoom})` / `g.freeCam(null)` 复位。
+    锚定单位的那个每帧按快照姿态解算眼位(方向是"从车体指向眼"),所以机甲的腿在走、
+    车体在转,眼位跟着走;`camera()` 最先问它,所以死亡、重生、20× 倍镜都盖不住它。
+    上面第 12 条的复查就是用它做的:`g.freeCam({id: 124, dist: 13})` 直接停在
+    那台 30 mm + 105 mm 的机甲三米外。
 
 **实测时踩到的两个环境坑**(不是代码问题,记在这里免得下次再查):后台标签页里 rAF 被
 限流,`screenshot` 可能抓到**上一帧的半成品**,看起来像整屏被一块巨大的三角面糊住;

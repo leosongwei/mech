@@ -4,9 +4,11 @@
   "private": true,
   "description": "WebGL2 client for the MECH shooter",
   "scripts": {
-    "build": "webpack --mode production",
+    "build": "node scripts/depgraph.mjs && node --experimental-vm-modules scripts/syntax.mjs && webpack --mode production",
     "dev": "webpack --mode development --watch",
-    "serve": "webpack serve --mode development"
+    "serve": "webpack serve --mode development",
+    "check:deps": "node scripts/depgraph.mjs",
+    "check:syntax": "node --experimental-vm-modules scripts/syntax.mjs"
   },
   "devDependencies": {
     "webpack": "^5.90.0",

@@ -99,20 +99,12 @@ cmd_status() {
   mux ls 2>/dev/null || echo "no sessions"
 }
 
-# Which client tree to build: `frontend/` (the shipped one) or `frontend_v2/`
-# (the layered port, verified but not yet promoted).  Both fill `assets/`, so the
-# server serves whichever was built last:
-#
-#   MECH_FRONTEND=v2 ./dev.sh build
+# The web client lives in `frontend/`; `npm run build` fills `assets/`, which the
+# server serves at `/`.  The build runs the layout check and the syntax check
+# first (both fail loudly), then webpack.
 cmd_build() {
-  local tree="${MECH_FRONTEND:-frontend}"
-  case "$tree" in
-    frontend_v2|v2) tree=frontend_v2 ;;
-    frontend|v1)    tree=frontend ;;
-    *) echo "MECH_FRONTEND must be v1 (frontend/) or v2 (frontend_v2/)" >&2; return 2 ;;
-  esac
-  ( cd "$ROOT/$tree" && npm install --cache /tmp/npmcache --no-audit --no-fund && npm run build )
-  echo "client built from $tree/ into assets/"
+  ( cd "$ROOT/frontend" && npm install --cache /tmp/npmcache --no-audit --no-fund && npm run build )
+  echo "client built from frontend/ into assets/"
 }
 
 case "${1:-start}" in

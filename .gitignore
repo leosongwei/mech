@@ -24,6 +24,3 @@ assets/
 .dotnet_tmp/
 bin/
 obj/
-
-# frontend_v2 shares frontend's node_modules during the transition
-frontend_v2/node_modules

@@ -149,9 +149,9 @@ function render(app) {
   const ownId = own ? own.id : -1;
   app.renderer.draw(cam, (b) => {
     emitUnits(b, app.net.entities, {
-      defs: app.defs, flashes: app.flashes, ownId, now: ctx.now,
+      defs: app.defs.weapons, flashes: app.flashes, ownId, now: ctx.now,
     });
-    emitProjectiles(b, app.net.projectiles, { defs: app.defs });
+    emitProjectiles(b, app.net.projectiles, { defs: app.defs.weapons });
     emitSmoke(b, app.net.smoke);
     app.particles.emit(b);
   });

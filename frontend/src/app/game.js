@@ -59,6 +59,7 @@ export class Game {
     this.ready = false;
     this.winner = -1;
     this.deathSpot = null;          // where the pilot's hull was last seen alive
+    this.freecam = null;            // the console's free camera (`freeCam`), null = cockpit
     this.zoom = 1;                  // smoothed, drives the field of view
     this.zoomIdx = 0;               // optics step selected with the wheel
     this.zeroRange = 1000;          // sight setting in metres (CTRL+wheel)
@@ -108,6 +109,30 @@ export class Game {
   // at the terrain), and that hook has to keep working.
   _camera(own, dt) {
     return camera(this, own, dt);
+  }
+
+  // The console's free camera: the eye stands anywhere in the world, or rides a
+  // hull while it drives - the way to look *at* a machine rather than out of
+  // one, which is what the models are checked with.
+  //
+  //   g.freeCam()                                // the spec now set, or null
+  //   g.freeCam(null)                            // back to the cockpit
+  //   g.freeCam({ x, y, z, yaw, pitch, zoom })   // a fixed eye
+  //   g.freeCam({ id, dist, yaw, height, zoom }) // watch entity `id`
+  //   g.freeCam(id)                              // watch it from the standard vantage
+  //
+  // A parked eye is solved every frame off the entity's drawn pose
+  // (`systems/camera.js::freeCamera`), so `yaw` there is the direction from the
+  // hull to the eye: the eye keeps that side of the machine as it drives, and
+  // looks at its centre however it turns.
+  freeCam(spec) {
+    if (spec === undefined) return this.freecam;
+    if (spec === null || spec === false) {
+      this.freecam = null;
+      return null;
+    }
+    this.freecam = typeof spec === 'number' ? { id: spec } : { ...spec };
+    return this.freecam;
   }
 
   // The pilot's own hull, straight off the snapshot (the id is the meta's).

@@ -15,6 +15,9 @@ if (!match) {
 }
 const version = match[1];
 
+// Same output directory as the old client on purpose: `dev.sh` and the server's
+// static file handler do not care which tree produced `assets/`, so the new
+// client is verified by building it in place and reloading the page.
 module.exports = {
   entry: './src/main.js',
   output: {

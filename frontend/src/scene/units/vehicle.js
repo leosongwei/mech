@@ -17,7 +17,12 @@ export function apc(b, e, ctx) {
   at(b, MESH.BOX, e, yaw, 0, 0, 1.35, 0, 3.4, 1.3, 3.4, METAL);
   at(b, MESH.BOX, e, yaw, 0, 0, 0.45, 0, 3.1, 0.5, 3.2, METAL_D);
   at(b, MESH.BOX, e, yaw, 0, 0, 1.7, -0.6, 2.6, 0.7, 2.6, fac);
-  at(b, MESH.BOX, e, yaw, 0, 0, 1.55, 2.3, 1.4, 0.5, 2.2, GLASS);
+  // The windscreen is a slab *set into* the bow, raked back 18 degrees: the hull
+  // is 3.4 m long, so its nose plate is the plane 1.7 m forward of the centre,
+  // and the glass sits 4 cm proud of it with its top tucked under the roof line.
+  // (A slab hung off the front of the bow - 2.3 m forward, 1.4 m deep - was a
+  // dark box cantilevered a metre and a half into the air.)
+  at(b, MESH.BOX, e, yaw, 0.32, 0, 1.60, 1.56, 0.22, 0.58, 2.40, GLASS);
   for (const s of [-1, 1]) {
     for (const f of [-1.15, 0, 1.15]) {
       at(b, MESH.SPHERE, e, yaw, 0, s * 1.75, 0.62, f, 1.25, 1.25, 1.25, [0.08, 0.08, 0.09]);

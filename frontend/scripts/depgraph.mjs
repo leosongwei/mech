@@ -1,6 +1,6 @@
 // The client's import graph, checked instead of trusted.
 //
-// `frontend_v2/src` is four layers and one direction:
+// `frontend/src` is four layers and one direction:
 //
 //   core/   (0)  pure: constants, maths, the fire control law
 //   domain  (1)  net/ map/ audio/ render/ input/    - no view, no app

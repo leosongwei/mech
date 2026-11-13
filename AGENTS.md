@@ -42,7 +42,9 @@ Ecs/
 Core/
   Defs.cs                  # entity types, weapons, unit stats, mech geometry
   World.cs                 # World/Player: terrain, players, spawning, tick, queries
-  Terrain.cs               # 1000x1000 tiles of 16 m -> 16 km square map
+  Terrain.cs               # 1000x1000 tiles of 16 m -> 16 km square map; a continuous
+                           #   heightfield sampled per *triangle* (`height_at`), with the
+                           #   generator's slope ceiling (`_shape_ceiling`)
   MathUtil.cs              # angles, hit spheres, muzzle geometry
   Profiler.cs              # white-box probes (MECH_PROBE=1), off and free by default
   Grid.cs                  # 128 m cell index over the units, refiled every tick (AI broadphase)
@@ -66,6 +68,9 @@ Systems/                   # mechanics shared by every mode, each exposes run(wo
                            #     (mission state machines), Support/{Tags,Crew,Policy,Engage,
                            #     ThreatTable}.cs (columns, vocabulary, shared fire control),
                            #     Support/Pipeline.cs (the block a mode registers)
+                           #     Nav/        the facet navmesh (see "A hull that has run out
+                           #       NavMesh.cs  of road"): NavProfile, NavWalk, NavRegion, NavQuery
+                           #       Paths.cs    the stuck clock, the request queue, string-pull
                            #   Movement/  one driver per chassis: Foot.cs / Mech.cs / Vehicle.cs,
                            #     Support/{Drive,Integrate}.cs.  The only writer of `vel`/`pos`.
                            #   Gunnery.cs: the sight leads, the hull and the arms slew after it
@@ -100,6 +105,7 @@ Harness/                   # headless checks, no socket: Check.cs (battle/range/
                            # NetCheck.cs (one pilot's wire, per minute)
 tests/                     # unit tests, run by run_tests.sh - no server, no socket
   cases/fcs.json           #   the fire control's contract: inputs only, both hosts read it
+  cases/height.json        #   the ground's contract: a 16x16 grid and hand-computed heights
   frontend/                #   node:test (built in).  support/tol.mjs = the tolerances,
                            #   fcs/ = the cases, the runner and emit.mjs
   backend/                 #   a console runner (Support/MiniTest.cs = [Test] + reflection
@@ -315,8 +321,13 @@ frontend/
   (`battle()` / `range()` / `defence()`).
 * **An AI crew fires the arms it has.** `Systems/AI/Engage*.cs` used to pull the
   right trigger only for `kind in ("rocket", "saclos")`; it fires any arm
-  whose own `range` covers the target (still 2.2 km for those two, `ai_range`
-  for everything else), and `weapons.run` gives a `lock` weapon on an
+  whose own `range` covers the target and whose reach the crew engages at -
+  `min(ai_range, wd.range)`, one rule for every kind, so a 3.4 km cannon, a 1 km
+  rocket nest and a 3 km top attack all come out of the same table. A lock
+  weapon's *pilot* reach is its own number (`lock_range`, 4 km for the top
+  attack; `Defs.lock_range`), while the arm's `range` is the crew's launch
+  decision - which is why `Locking.cs` reads the first and `Engage` the second.
+  `weapons.run` gives a `lock` weapon on an
   ownerless hull the lock the crew already holds — the AI's `target`
   component — because there is no `pl.lock_target` to wait for. There is also a
   floor under the cycle: `defs.AI_LAUNCH_GAP` (15 s) for a lock round, or eight
@@ -426,7 +437,11 @@ frontend/
   `Systems/AI/Sense.cs` is the only writer: one look per crew per tick through
   `Sight.clear` at the *target's* own body (60 % of its height), and while the
   line is clear the belief *is* the truth - position, velocity and type copied in,
-  with `measure_accel` reading the same velocity the client differentiates.  When
+  with `measure_accel` reading the same velocity the client differentiates.  The
+  range test is the eye to the target's geometric centre in three dimensions -
+  the same quantity `Engage.ground_aim` gates its solution on - so `sight` and
+  `ai_range` answer one question and a hull on a ridge is never "seen" at a
+  distance it cannot be shot at.  When
   the line is cut (smoke, a crest, a canopy, a house) the copying stops and the
   point walks at the velocity stored with it for `Crew.MEMORY` (2 s), then the
   crew forgets the hull.  `Engage.ground_aim` reads *only* that belief - never
@@ -539,10 +554,27 @@ frontend/
   nearest the death that is still connected to the base *and* not contested,
   **C** one town back from B towards the base - C is the spawn, none means the
   base ring (`World.base_spawn`). Its wait interpolates from the distance to
-  the enemy base: 40 s on your own doorstep, 3 s on theirs. The first deploy
-  has no `death_pos` and lands on the most advanced connected town instead
-  (`_lead_town`), because 5 km out of the gate is not a spawn point.
-  `spawn_mech` clears `death_pos` once it has been spent.
+  the enemy base: 40 s on your own doorstep, 3 s on theirs. A first deploy has no
+  `death_pos` of its own, so `_opening_death` makes one: the furthest town its
+  side holds on a lane drawn at random, which is the same walk as a death on the
+  front, so a fresh pilot comes back one town behind the front instead of
+  standing in it. `spawn_mech` clears `death_pos` once it has been spent.
+* **The map is a mirror, and both sides start on the same half of it.**
+  `Terrain.TOWN_SPOTS` holds still under the two mirrors the map has - across the
+  centre, `(x, y) -> (1000 - x, 1000 - y)`, and across the `x = z` diagonal - so
+  every town has a twin the same distance out of the other base, and each town's
+  size comes off `_orbit_key`, one stream per mirror orbit, so a pair is the same
+  prize. That is why `_on_lane` only projects a spot onto its lane: a jitter of
+  its own would be the one thing breaking the equality. Ownership then falls out
+  of the geometry (`BattleMode._assign_home_towns`): `lane_i` counts way points
+  from the red base, so the near half of each lane is red's and the far half is
+  blue's - 11 towns each, 4 / 4 / 3 per lane, and the two fronts meet at the
+  middle of the lane. Three depots are `TOWN_NEUTRAL`, and each sits where the two
+  bases are the same distance away: the two bends of the outer lanes (on the
+  anti-diagonal `x + y = 1000`, 9984 m each) and the middle of the mid lane, the
+  map's own centre, which also splits that lane's 2.7 km empty middle into two
+  1.4 km hops. They open unowned, so both chains are cut at the lane's midpoint and
+  the neutral depot is the one thing a match starts with a fight for.
 * **A town being fought over supplies nothing.** `waves._capture` recomputes
   `town["contested"]` every tick - a unit of a faction other than the owner is
   inside `CAPTURE_RADIUS` (170 m) - and `waves.front_town` walks the connected
@@ -611,6 +643,42 @@ frontend/
   *not* worth batching is the integration itself — a few batched loops over one
   or two rows cost more than the scalar arithmetic they replace (measured,
   twice).
+* **The ground is continuous, and a facet is the unit of it** (`Terrain.height_at`).
+  The heightfield stores vertex heights with no quantum; the surface between four
+  of them is the two flat triangles split along the tile's own diagonal
+  (`tx + tz <= 1` is `{a,b,c}`, the rest `{d,c,b}`), and *that rule is the only one*:
+  the server, `map.js`'s `heightAt` and the near terrain mesh all solve it, so the
+  facet a round bursts on is the facet under a hull and the facet under the cross.
+  `tests/cases/height.json` is the table both hosts answer (a bilinear blend, a
+  terrace or the other diagonal all fail it).  The physics cell stays 16 m - the
+  scale a round is walked at (`step = 9` in `FirstHit`, `LOS_STEP = 8` in
+  `Sight`) is a half tile and the arguments for both depend on that.
+* **Slope is a number, not a step.** `Defs.MAX_TERRAIN_GRADIENT` (0.85, rise over
+  run) is the generator's ceiling, enforced by `_shape_ceiling`: an axis clamp, a
+  per-facet trim and one pass running backwards, because each constraint moves
+  corners the other one needs (measured: axis only 1.18, facets only 0.95,
+  alternating 0.89, alternating plus the backwards pass 0.878 - a relaxation, so
+  it settles within 3 % and the harness prints what it got).  The chassis' own
+  limits are `APC 0.58 / MECH 0.70 / FOOT 0.80`, read through
+  `Defs.max_gradient(etype)` by `Integrate.too_steep`, `Drive`'s fan and the
+  navmesh - one number, three callers, which is what makes "a crest is a wall"
+  the same answer in all of them.  Uphill only: a hull always comes back off a
+  face it climbed, so nothing is entombed by the step that put it there.
+* **A hull that has run out of road asks for another one** (`Systems/AI/Nav/`).
+  The mission says where (`nav_route` / `nav_x`), the driver says how, and between
+  them `Paths` watches *progress*: a commanded hull that has not closed 1.5 m on
+  its way point in `STUCK_SKIP` (2 s) - and is pointing at it, not coming round
+  onto it - is pushing at something, and asks for a detour.  The search is A\* over
+  the terrain's own facets in a window around it (`NavRegion`, snapped to
+  `SNAP` tiles so the cache hits), advanced `NODES_PER_TICK` at a time, then
+  straightened with `NavWalk.clear` and spliced in front of the way points the
+  hull already had; the driver learns nothing new.  The predicate is the whole
+  point: `blocked`, `trunk_blocked` and the climb limit are the ones movement
+  uses, so a planned leg is a leg the machine can drive.  Before it, the raider's
+  street grid called a wood passable at a cost and a command base solid while the
+  driver said the opposite of both.  Strategic planning is still `Raid.FieldNav`
+  (128 m + the force gradient); the navmesh is the layer under it, and the only
+  one that knows a facet's slope.
 * **A leg is queried at the granularity of each shape it can meet.**  The ground
   is a continuous field and is sampled every 9 m; a building is a whole tile and
   is solved as a slab from the terrain to its roof (`walls`); a trunk is a
@@ -1052,12 +1120,15 @@ frontend/
   drawn only through a clear line of sight, exactly what the seeker can lock.
   The ballistic prediction (`sightPoint`, `groundHit`) stays on the *round's*
   rule instead - leaves and smoke never stop a bullet.
-* **Towns are grown, not drawn.** Each one starts on its lane (`_on_lane` snaps
-  the spot onto the nearest lane point, slides it ±3 tiles along the road and
-  returns the lane direction) and then `_town_streets` grows the network
+* **Towns are grown, not drawn.** Each one starts on its lane (`_on_lane` projects
+  the spot onto the nearest lane point and returns the lane direction) and then
+  `_town_streets` grows the network
   OpenTTD-style: a front runs 2-6 tiles of street, then carries on, turns, dies
   and drops a branch, or joins the street it ran into - which is what closes a
-  block. Fronts start in the middle and on both sides of the lane, and reopen on
+  block. How big a town is (`radius`, block width, run budget, house count) is
+  drawn from `_orbit_key`'s stream instead of the map's, so the mirror pairs are
+  the same size; the streets themselves still come off `world.rng`, so no two
+  towns lay out alike. Fronts start in the middle and on both sides of the lane, and reopen on
   any street with room to grow. Two passes then make the network drivable
   instead of a maze: `_town_rungs` punches a cross street every `TOWN_RUNG` (4)
   tiles of a long street - only where a street really is on the other side, so
@@ -1664,6 +1735,8 @@ cd frontend && npm install && npm run build      # -> assets/
   ./dotnet.sh run -- --check diag --minutes 2      # what a few AI hulls are doing
   ./dotnet.sh run -- --check net --minutes 30 --from 8   # one pilot's download, per minute
   ./dotnet.sh run -- --check fcs                   # crew vs pilot, same scenarios
+  ./dotnet.sh run -- --check terrain                # facet slopes, lane drivability, sample cost
+  ./dotnet.sh run -- --check nav                    # the navmesh: region, profiles, a 12.7 km plan, lanes
   ```
   `MECH_PERF=1` on the battle check runs it without the per-tick event scan and
   prints the per-minute cost: on a 12 minute battle it is **1.5 ms/tick**

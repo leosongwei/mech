@@ -1,0 +1,42 @@
+{
+ "_comment": "The ground's contract: `Terrain.height_at` (Core/Terrain.cs) and `MapData.heightAt` (frontend/src/map.js) answer the same height for the same point, because the cross, a predicted impact and the server's own ballistics all solve through them. One row is one sample. The grid is 16x16 vertices of 16 m (so `_build_cull` and the tile walk run their real index maths) with four raised vertices, which pins *both* triangles of a tile: a bilinear blend, a terrace or the other diagonal all answer differently around `diagonal_exactly`. Metres.",
+ "w": 16, "h": 16, "tile": 16,
+ "tolerance": 0.001,
+ "heights": [
+  [0, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  [20, 40, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+ ],
+ "cases": [
+  {"id":"corner_origin","why":"the south-west corner of the first tile","x":0,"z":0,"h":0},
+  {"id":"tri_a_quarter","why":"inside triangle {a,b,c}, both weights a quarter","x":4,"z":4,"h":7.5},
+  {"id":"diagonal_exactly","why":"tx+tz == 1 is triangle {a,b,c} - the diagonal belongs to it","x":8,"z":8,"h":15},
+  {"id":"tri_a_ne_edge","why":"triangle {a,b,c}, weighted towards b","x":12,"z":4,"h":12.5},
+  {"id":"tri_a_sw_edge","why":"triangle {a,b,c}, weighted towards c","x":4,"z":12,"h":17.5},
+  {"id":"tri_b_far_corner","why":"triangle {d,c,b}: the far corner is the 40 m vertex","x":12,"z":12,"h":27.5},
+  {"id":"tri_b_just_past_diag","why":"just across the diagonal, where the two planes disagree most","x":9,"z":9,"h":18.125},
+  {"id":"tri_a_x_heavy","why":"left of the diagonal but x-heavy: the two triangles split it differently","x":9,"z":6,"h":13.125},
+  {"id":"tri_a_z_heavy","why":"the mirror of the row above","x":6,"z":9,"h":15},
+  {"id":"tri_b_tile_edge","why":"the last point of a tile still belongs to it","x":15.9,"z":15.9,"h":39.6875},
+  {"id":"next_tile_tri_a","why":"the next tile east starts from vertex (1,0)","x":20,"z":8,"h":22.5},
+  {"id":"next_tile_tri_b","why":"... and its far triangle from (2,1)","x":28,"z":12,"h":10},
+  {"id":"south_tile_tri_a","why":"the tile south of the corner one: a = 20, the other two corners pull it back","x":4,"z":20,"h":20},
+  {"id":"fine_sub_metre","why":"a metre in: the facet has to be a real plane, not a step","x":1,"z":1,"h":1.875},
+  {"id":"negative_clamped","why":"off the south-west edge reads the border vertex","x":-10,"z":-10,"h":0},
+  {"id":"far_flat","why":"open ground far from the four raised vertices","x":100,"z":100,"h":0},
+  {"id":"map_edge","why":"clamped to the last vertex column like the server","x":1000,"z":0,"h":0}
+ ]
+}

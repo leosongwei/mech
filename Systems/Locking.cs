@@ -90,7 +90,7 @@ public static class Locking
                 else
                 {
                     var (ang, dist) = _angle_to(_sight_point(pos.get3(tracked)), origin, d);
-                    if (ang > cone || dist > wd.range
+                    if (ang > cone || dist > Defs.lock_range(wd)
                         || !Sight.clear(world, origin, _sight_point(pos.get3(tracked)), LOS_STEP))
                         tracked = -1;
                 }
@@ -117,7 +117,7 @@ public static class Locking
                         var tp = pos.get3(tid);
                         float vx = tp.x - origin.x, vy = tp.y - origin.y, vz = tp.z - origin.z;
                         float dist = MathF.Sqrt(vx * vx + vy * vy + vz * vz);
-                        if (!(dist > MIN_DIST) || !(dist < wd.range)) continue;
+                        if (!(dist > MIN_DIST) || !(dist < Defs.lock_range(wd))) continue;
                         if (faction[tid] == mine) continue;
                         var aim = _sight_point(tp);
                         float ax = aim.x - origin.x, ay = aim.y - origin.y, az = aim.z - origin.z;

@@ -12,7 +12,7 @@ const ROWS = [74, 46, 30, 25, 20];
 const PROJ_STRIDE = 32;
 const SMOKE_STRIDE = 32;
 const CONTACT_STRIDE = 6;       // minimap point: x, z, faction, etype
-const CONTACT_QUANT = 4;        // metres per unit of the u16
+const CONTACT_QUANT = 8;        // metres per unit of the u16
 const TICK_HZ = 30;
 // the measured acceleration's two constants: how long a pull is remembered
 // (a hull that stopped pulling reads as stopping in a quarter second, which is

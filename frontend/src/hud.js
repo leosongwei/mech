@@ -612,9 +612,43 @@ export class HUD {
         }
         ctx.fillStyle = 'rgba(200,230,210,0.55)';
         ctx.font = '10px "Courier New", monospace';
-        ctx.fillText(`${(wd.range / 1000).toFixed(1)}km  ${wd.desc || ''}`, x0 + 8, y0 + 50);
+        ctx.fillText(`${((wd.lock_range || wd.range) / 1000).toFixed(1)}km  ${wd.desc || ''}`, x0 + 8, y0 + 50);
       }
       ctx.globalAlpha = 1;
+    }
+    ctx.restore();
+  }
+
+  // The crosshair assist's state, the top row of the sight block - one row
+  // above `OPTICS`, because the switch (`V`) changes the width of the pre-aim
+  // rings, which is what a pilot reads when he is deciding whether the cross
+  // will be caught by one.  Two cells, and the one the machine is in is white:
+  // the two rows under it own the sight's own colours (cyan for the optics,
+  // amber for the zero), so this one is the HUD's plain white.
+  _assistRow(s, w, y, slot) {
+    const ctx = this.ctx;
+    const on = !!s.assistOn;
+    const cells = ['OFF', 'ON'];
+    const total = slot * cells.length;
+    const x0 = w / 2 - total / 2;
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.font = '10px "Courier New", monospace';
+    ctx.fillStyle = 'rgba(150,190,175,0.55)';
+    ctx.fillText('AIM ASSIST', w / 2, y - 13);
+    ctx.font = '11px "Courier New", monospace';
+    for (let i = 0; i < cells.length; i++) {
+      const cx = x0 + slot * i + slot / 2;
+      const lit = (i === 1) === on;
+      if (lit) {
+        ctx.fillStyle = 'rgba(255,255,255,0.14)';
+        ctx.fillRect(x0 + slot * i, y - 10, slot, 13);
+        ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x0 + slot * i + 0.5, y - 9.5, slot - 1, 12);
+      }
+      ctx.fillStyle = lit ? '#ffffff' : 'rgba(170,200,190,0.45)';
+      ctx.fillText(cells[i], cx, y);
     }
     ctx.restore();
   }
@@ -630,6 +664,7 @@ export class HUD {
     const y = h - 140;
     ctx.save();
     ctx.textAlign = 'center';
+    this._assistRow(s, w, y - 34, slot);
     ctx.font = '10px "Courier New", monospace';
     ctx.fillStyle = 'rgba(150,190,175,0.55)';
     ctx.fillText('OPTICS', w / 2, y - 14);

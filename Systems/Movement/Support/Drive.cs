@@ -23,30 +23,28 @@ public static class Drive
     // m: the steps a fan bearing has to be clear for
     private static readonly float[] PROBE = { 0.8f, 2.0f, 4.0f };
 
-    /// <summary>Whether a hull of radius `rad` fits at (x, z): the samples the
-    /// integration uses, plus the ground height - a mech has legs and climbs a
-    /// raised spot, but a step high enough to swallow the hull is a wall.</summary>
-    public static bool clear(Terrain terrain, float x, float z, float y, float rad)
-    {
-        if (terrain.blocked(x, z) || terrain.blocked(x + rad, z) ||
-            terrain.blocked(x - rad, z) || terrain.blocked(x, z + rad) ||
-            terrain.blocked(x, z - rad))
-            return false;
-        if (terrain.trunk_blocked(x, z, rad)) return false;
-        return MathF.Abs(terrain.height_at(x, z) - y) < 4f;
-    }
-
-    /// <summary>Whether a hull can drive at least a couple of metres this way.
+    /// <summary>Whether a hull of radius `rad` standing at (x, z, y) can drive a
+    /// few metres out along (dx, dz).
     ///
     /// Tested *along the first few metres*, not at one point in front: the
     /// integration moves one step at a time and refuses any step where the hull does
     /// not fit, so a fan that only looks 14 m out will happily steer through a house
-    /// whose far side is open.</summary>
+    /// whose far side is open.  The climb is rise over the distance to the probe,
+    /// against the same figure `Integrate.step` refuses a move on - a machine's
+    /// `max_grad`, so the fan and the feet agree about what a wall is.</summary>
     private static bool clear_run(Terrain terrain, float x, float z, float y, float rad,
-                                  float dx, float dz)
+                                  float grad, float dx, float dz)
     {
         foreach (float step in PROBE)
-            if (!clear(terrain, x + dx * step, z + dz * step, y, rad)) return false;
+        {
+            float px = x + dx * step, pz = z + dz * step;
+            if (terrain.blocked(px, pz) || terrain.blocked(px + rad, pz) ||
+                terrain.blocked(px - rad, pz) || terrain.blocked(px, pz + rad) ||
+                terrain.blocked(px, pz - rad))
+                return false;
+            if (terrain.trunk_blocked(px, pz, rad)) return false;
+            if (terrain.height_at(px, pz) - y > grad * step + 0.02f) return false;
+        }
         return true;
     }
 
@@ -98,8 +96,9 @@ public static class Drive
         // hull this size
         var terrain = world.terrain;
         float rad = Defs.UNIT_DEFS[r.etype].radius * 0.6f;
+        float grad = Defs.max_gradient(r.etype);
         float y = r.pos.y;
-        if (!clear_run(terrain, px, pz, y, rad, dx, dz))
+        if (!clear_run(terrain, px, pz, y, rad, grad, dx, dz))
         {
             float bese = MathF.Atan2(dz, dx);
             // The escape is the *smallest course change* that clears, with the legs the
@@ -114,7 +113,7 @@ public static class Drive
             {
                 float a = bese + FAN[k];
                 float nx = MathF.Cos(a), nz = MathF.Sin(a);
-                if (!clear_run(terrain, px, pz, y, rad, nx, nz)) continue;
+                if (!clear_run(terrain, px, pz, y, rad, grad, nx, nz)) continue;
                 float swing = MathF.Abs(MathUtil.wrap_pi(a - r.leg_yaw));
                 if (swing >= swing_best) continue;
                 swing_best = swing;

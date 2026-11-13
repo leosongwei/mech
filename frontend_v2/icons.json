@@ -1,0 +1,29 @@
+[
+  {
+    "use": "settings panel button (top right)",
+    "name": "settings",
+    "codepoint": "e8b8",
+    "std": "\u2699",
+    "std_name": "gear",
+    "std_codepoint": "U+2699",
+    "class": "settings"
+  },
+  {
+    "use": "master volume row in the settings panel",
+    "name": "volume_up",
+    "codepoint": "e050",
+    "std": "\ud83d\udd0a",
+    "std_name": "speaker",
+    "std_codepoint": "U+1F50A",
+    "class": "volume"
+  },
+  {
+    "use": "close button in the settings panel",
+    "name": "close",
+    "codepoint": "e5cd",
+    "std": "\u2715",
+    "std_name": "multiplication x",
+    "std_codepoint": "U+2715",
+    "class": "close"
+  }
+]

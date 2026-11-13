@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-import { solve } from '../../../frontend/src/fcs.js';
+import { solve } from '../../../frontend_v2/src/core/fcs.js';
 import { TOL } from '../support/tol.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));

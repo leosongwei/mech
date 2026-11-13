@@ -115,28 +115,53 @@ assets/                    # compiled client (webpack output, gitignored)
 tools/
   gun_report.py            # weapon-report audio analysis (numpy; the numbers in audio.js)
   smoke_lock_test.js       # browser-console driver: seeker A/B smoke test
-frontend/
+frontend/                  # the shipped client: fifteen files, one of them 1836 lines
   webpack.config.js        # entry src/main.js -> ../assets/bundle.js
   icons.json               # single source of truth for every HUD icon glyph
   scripts/                 # fetch-material-icons.sh: rebuild the font subset
   vendor/material-symbols/ # committed Material Symbols subset (a few KB) + LICENSE
+  src/                     # main.js, game.js, net.js, map.js, fcs.js, scene.js,
+                           #   renderer.js, hud.js, meshes.js, particles.js, math.js,
+                           #   input.js, audio.js, shop.js, icons.js
+frontend_v2/               # the same client, ported onto the layered layout the plan
+                           #   in docs/plans/frontend.md describes (fills ../assets/ the
+                           #   same way; `MECH_FRONTEND=v2 ./dev.sh build` builds it).
+                           #   Once it is signed off, frontend/ goes and this is renamed.
+  package.json             # `npm run build` = deps check + syntax check + webpack
+  scripts/depgraph.mjs     # the import graph: layers, no cycle, one domain edge (render -> map)
+  scripts/syntax.mjs       # every module parses (webpack is otherwise the only parser)
   src/
     main.js                # boots Game, exposes it as window.__game
-    game.js                # client loop, input -> server, camera, fx, settings menu
-    icons.js               # icons.json -> glyph strings, FontFace loader, drawIcon()
-    net.js                 # websocket, snapshot decode, interpolation
-    map.js                 # client copy of terrain + the sight ray (`fcs.js` re-exported)
-    fcs.js                 # the fire control law, twin of Core/FireControl.cs
-    scene.js               # unit models built from instanced primitives
-    renderer.js            # tiled near terrain + far LOD grid, roads, instanced draws,
-                           #   and the screen-space overlay (the threat arrows)
-    hud.js                 # centre cross, arm impact markers, lock box, modules, minimap
-    meshes.js              # primitive meshes (box, sphere, cone, cylinder, rock)
-    particles.js           # smoke, trails, impacts
-    math.js                # mat4, lookAt, compose, dirFrom, angles
-    input.js               # pointer lock, keys, wheel, panel keys
-    audio.js               # WebAudio cues, master gain + volume setting, SOUND_SPEED + attenuation()
+    icons.js  shop.js      # two leaves: the icon glyph table, the rearm pricing law
+    core/                  # config.js (shared numbers) storage.js math.js fcs.js
+    net/                   # wire.js rows.js view.js client.js index.js
+    map/                   # tiles.js field.js solid.js sight.js predict.js paint.js
+    audio/                 # levels.js graph.js voices.js synth.js cues.js alarms.js
+                           #   field.js (the sound field) index.js
+    render/                # gpu.js mesh-table.js batch.js meshes.js textures.js
+                           #   shaders/{chunks,sky,terrain,road,mesh,overlay}.js
+                           #   terrain.js roads.js props.js overlay.js camera.js
+                           #   passes.js renderer.js
+    scene/                 # palette.js helpers.js arms.js projectile.js smoke.js
+                           #   units/{mech,vehicle,infantry}.js index.js
+    hud/                   # layout.js canvas.js reticle.js leads.js dial.js minimap.js
+                           #   messages.js status.js overlays.js gear.js
+                           #   panels/{shop,settings}.js index.js
+    fx/                    # dispatch.js (the server's event stream), particles.js
+    input/                 # bindings.js pointer.js sight.js index.js
+    app/                   # game.js frame.js boot.js panels.js hudstate.js
+                           #   systems/{aim,lead,rwr,camera,feedback,shop,settings}.js
 ```
+
+The two trees are the same client: `render/passes.js` is the draw order,
+`app/frame.js`'s `STAGES` is the frame order, and everything the console reaches
+for kept its name (`g.net.*`, `g.hud._project`, `g.renderer.draw` / `beginDynamic`
+/ `roadCount` / `propStats` / `screenArrow` / `overlayOrigin`, `g._camera` for the
+free camera, `g.input.*`, `g.audio.*`, `g.particles.*`).  What moved: the camera,
+aiming, the pre-aim rings, the warning receiver and the panels are `app/systems/`;
+the model emitters take an instance batch instead of calling the renderer by shape
+name; the renderer's passes, shaders and GL resources are files of their own; the
+wire is `net/wire.js` + `net/rows.js` and the picture is `net/view.js`.
 
 ### Server
 

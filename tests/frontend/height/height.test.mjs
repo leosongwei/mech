@@ -9,7 +9,7 @@ import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import assert from 'node:assert';
 
-import { MapData } from '../../../frontend/src/map.js';
+import { MapData } from '../../../frontend_v2/src/map/index.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const table = JSON.parse(readFileSync(join(here, '..', '..', 'cases', 'height.json'), 'utf8'));

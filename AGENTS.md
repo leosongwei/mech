@@ -1860,6 +1860,7 @@ cd frontend && npm install && npm run build      # -> assets/
   ./dotnet.sh run -- --check drive                 # the mech's thrust model vs its own algebra
   ./dotnet.sh run -- --check terrain                # facet slopes, lane drivability, sample cost
   ./dotnet.sh run -- --check nav                    # the navmesh: region, profiles, a 12.7 km plan, lanes
+  ./dotnet.sh run -- --check stuck --minutes 12    # does a battle keep moving: hulls ordered somewhere and still
   ```
   `MECH_PERF=1` on the battle check runs it without the per-tick event scan and
   prints the per-minute cost: on a 12 minute battle it is **1.5 ms/tick**
@@ -1869,6 +1870,31 @@ cd frontend && npm install && npm run build      # -> assets/
   what the crew believes"); before that look it was 1.3 ms.
   Every check ends with `ecs.validate()`, so bookkeeping that a value comparison
   would not catch (a row pointing past its buffer) fails the run.
+* **`--check stuck` asks whether a battle keeps moving** (`Harness/StuckCheck.cs`):
+  the failure no census line shows, because the field reads the same at 8 minutes
+  whether two crews are driving or nine are pushing at a wall.  Each crewed hull
+  (a mech or an APC - a pilot's machine is a puppet with no crew and is left out)
+  has its position pinned to an anchor, the anchor moves when the hull takes 2 m
+  off it, and the seconds since then are its clock; a hull that is still **and**
+  ordered somewhere (`nav_speed` over 0.5 m/s with a way point more than 15 m off,
+  read without touching the driver's cursor) is what the check calls stuck.  Hulls
+  never block each other, so that state is the ground or the route.  Per minute it
+  prints the crews alive, the crews with an order, the ones still for a minute, the
+  stuck ones, a `crawl` column (ordered and making under a tenth of what it was
+  told), and the kilometres the field walked; any hull still for 2 minutes while
+  ordered is a fault and a detail line says which chassis, where, what it wanted
+  against what it made, and what the ground is - in a wall or not, how many of eight
+  bearings it could step on, its own footprint, the slope against its own gradient
+  limit, and the distance to the nearest base.
+  Measured: 0-1 trapped hull per 12 minutes across runs, on both the current build
+  and the 3 g one, and it is the same fault every time - a mech spawned with its own
+  footprint overlapping a structure 55-140 m off its base.  `Integrate.step` tests
+  the destination's five samples, which include the overlap the hull already sits
+  in, so every step is refused and the machine stands at full throttle for the rest
+  of the match; `Drive.clear_run` probes 0.8-4 m ahead and never tests the hull's
+  own footprint, so it reports the way clear and the fan never fires, and a detour
+  changes a route the hull cannot start to follow.  A spawn that overlaps a
+  structure is the place a fix belongs (`World.base_spawn` / `spawn_unit`).
 * **`--check drive` measures the mech's thrust law** (`Harness/DriveCheck.cs`): the
   two design points off the constants (`sqrt(T/k)` = 180 km/h,
   `sqrt((T cos30 + g sin30)/k)` = 220) and then a hull on a **treadmill** - put back

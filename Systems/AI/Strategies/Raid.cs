@@ -610,10 +610,43 @@ public static class Raid
     /// woods or buildings - and `open` is what A* is allowed to stand on at all.
     /// It is rebuilt per plan, not per tick: the map does not change (the debug
     /// tree knob repaints tiles, and the next plan is the earliest anything could
-    /// know).</summary>
+    /// know).
+    ///
+    /// A node is ground a *chassis* has to cross, so `open` answers the same two
+    /// questions the facet layer does, at 128 m instead of 16: is there a wall in it
+    /// (`STEEP_SHARE` of it is not), and can the machine climb what is there.  A
+    /// stand of trees costs and a face it cannot climb closes the node - the one
+    /// difference is that a node is a *block*, and a block with a cliff across part
+    /// of it is still crossable round the cliff.  So the test is a share, not a
+    /// worst case: `steep` of a node's facets over the profile's limit and the node
+    /// is a wall for that chassis.</summary>
     public sealed class FieldNav : GridNav
     {
-        public FieldNav(Terrain terrain, float[] force)
+        /// <summary>The share of a node's facets a chassis may find too steep before
+        /// the node closes.  A quarter: a cliff band across a 128 m block leaves
+        /// three quarters of it to weave through, and one steep facet in an
+        /// otherwise gentle node costs nothing.  Read off the map: a node holds 128
+        /// facets, and the blocks this closes are the ones with a real face in them,
+        /// not the ones that happen to touch a crease (`--check nav` prints the
+        /// census).</summary>
+        public const float STEEP_SHARE = 0.25f;
+
+        /// <summary>Tiles between the facets the share is measured on: every other
+        /// one, so a node is judged on a 32 m lattice and the build stays near the
+        /// 6 ms it was (it is 12 ms of the launch tick with it, 24 without).  A face
+        /// steep enough to stop a chassis is a whole 16 m triangle wide, so the
+        /// halved lattice reads the same picture of a node: measured, the mech's
+        /// census and the node that closes are the same either way.</summary>
+        private const int SAMPLE = 2;
+
+        /// <summary>Nodes the last build shut, and why: walls, and the chassis' own
+        /// climb limit.  `--check nav` reads them, together with `worst_steep` - the
+        /// steepest share any node on the map reached, which is how close the ground
+        /// came to being closed at all.</summary>
+        public int closed_wall, closed_steep;
+        public float worst_steep;
+
+        public FieldNav(Terrain terrain, float[] force, NavProfile profile)
         {
             int k = (int)(NAV_CELL / Terrain.TILE);
             int nw = terrain.w / k, nd = terrain.d / k;
@@ -625,14 +658,19 @@ public static class Raid
             open = new bool[cd * cw];
             cost = new float[cd * cw];
             float inv = 1f / (k * k);
+            float lim = Sq(profile.max_grad * Terrain.TILE);
             for (int j = 0; j < cd; j++)
             {
                 for (int i = 0; i < cw; i++)
                 {
-                    int solid_n = 0, wood_n = 0, build_n = 0;
+                    int solid_n = 0, wood_n = 0, build_n = 0, steep_n = 0, facets = 0;
                     for (int jj = 0; jj < k; jj++)
                     {
                         int rowbase = (j * k + jj) * terrain.w + i * k;
+                        bool sample_row = jj % SAMPLE == 0;
+                        // the corner heights one row down, and the two facets each
+                        // tile carries (`NavRegion` measures them the same way)
+                        int tj = Math.Min(terrain.d - 2, j * k + jj);
                         for (int ii = 0; ii < k; ii++)
                         {
                             byte t = terrain.tiles[rowbase + ii];
@@ -640,11 +678,31 @@ public static class Raid
                                 t == Terrain.TILE_SOLID || t == Terrain.TILE_BASE) solid_n++;
                             if (t == Terrain.TILE_TREE || t == Terrain.TILE_FOREST) wood_n++;
                             if (t == Terrain.TILE_BUILDING) build_n++;
+                            if (!sample_row || ii % SAMPLE != 0) continue;
+                            int ti = Math.Min(terrain.w - 2, i * k + ii);
+                            int hk = tj * terrain.w + ti;
+                            float a = terrain.h[hk], b = terrain.h[hk + 1];
+                            float c = terrain.h[hk + terrain.w], d = terrain.h[hk + terrain.w + 1];
+                            // a facet is over the limit when its two sides are, so
+                            // the test is on the squares and the whole grid costs no
+                            // square root at all (`lim` is `max_grad` in metres of
+                            // rise across one tile)
+                            if (Sq(b - a) + Sq(c - a) > lim) steep_n++;
+                            if (Sq(c - d) + Sq(b - d) > lim) steep_n++;
+                            facets += 2;
                         }
                     }
                     float solid = solid_n * inv, wood = wood_n * inv, build = build_n * inv;
                     int n = j * cw + i;
-                    bool is_open = solid < 0.5f;         // drivable unless half of the node is wall
+                    // drivable unless half of the node is wall, or a quarter of its
+                    // ground is a face this chassis cannot climb
+                    bool walled = solid >= 0.5f;
+                    float share = (float)steep_n / facets;
+                    if (share > worst_steep) worst_steep = share;
+                    bool steep = share > STEEP_SHARE;
+                    if (walled) closed_wall++;
+                    else if (steep) closed_steep++;
+                    bool is_open = !walled && !steep;
                     open[n] = is_open;
                     cost[n] = is_open
                         ? 1f + WOOD_COST * wood + WALL_COST * build
@@ -653,12 +711,16 @@ public static class Raid
                 }
             }
         }
+
+        private static float Sq(float v) => v * v;
     }
 
     public static (FieldNav nav, float[] force) _nav(World world, int faction)
     {
         var force = _gradient(world, faction);
-        return (new FieldNav(world.terrain, force), force);
+        // a raiding party is mechs (`RAID_SIZE` of them, all `ETYPE_MECH`), so the
+        // grid asks the mech's own climb limit what it may cross
+        return (new FieldNav(world.terrain, force, NavProfile.of(Defs.ETYPE_MECH)), force);
     }
 
     /// <summary>The enemy force gradient: how much of his army would see a hull
@@ -842,7 +904,7 @@ public static class Raid
         foreach (var (i, j) in cells) pts.Add(grid.at(i, j));
         pts[0] = start;
         pts[^1] = end;
-        return _shortcut(terrain, pts);
+        return _shortcut(terrain, NavProfile.of(Defs.ETYPE_MECH), pts);
     }
 
     /// <summary>Where the navmesh takes over from the strategic grid.
@@ -978,8 +1040,8 @@ public static class Raid
     /// (`_open_line`).  The look-ahead is short on purpose: the grid route is
     /// already diagonal wherever the ground is, and every extra point costs a line
     /// test of a kilometre through the tile map.</summary>
-    public static List<(float x, float z)> _shortcut(Terrain terrain, List<(float x, float z)> pts,
-                                                     int look = 4)
+    public static List<(float x, float z)> _shortcut(Terrain terrain, in NavProfile p,
+                                                     List<(float x, float z)> pts, int look = 4)
     {
         if (pts.Count <= 2) return new List<(float x, float z)>(pts);
         var outv = new List<(float x, float z)> { pts[0] };
@@ -987,7 +1049,7 @@ public static class Raid
         while (k < pts.Count - 1)
         {
             int n = Math.Min(pts.Count - 1, k + look);
-            while (n > k + 1 && !_open_line(terrain, pts[k], pts[n])) n -= 1;
+            while (n > k + 1 && !_open_line(terrain, p, pts[k], pts[n])) n -= 1;
             outv.Add(pts[n]);
             k = n;
         }
@@ -995,17 +1057,31 @@ public static class Raid
     }
 
     /// <summary>A straight run of ground a raider may cross: no wall, no trunk, no
-    /// wood.</summary>
-    public static bool _open_line(Terrain terrain, (float x, float z) a, (float x, float z) b)
+    /// wood, and no climb past the chassis' own limit - the same three rules the
+    /// node grid answered, tested along the line the shortcut would take instead of
+    /// over a block of ground.
+    ///
+    /// The climb test is `Integrate.too_steep`'s, uphill only and against the same
+    /// `max_grad`: a shortcut that cuts a corner over a face the machine cannot walk
+    /// up would undo everything the planner did to route round it.</summary>
+    public static bool _open_line(Terrain terrain, in NavProfile p,
+                                  (float x, float z) a, (float x, float z) b)
     {
         float dx = b.x - a.x, dz = b.z - a.z;
-        int n = Math.Max(1, (int)(_d(a.x, a.z, b.x, b.z) / Terrain.TILE));
+        float span = _d(a.x, a.z, b.x, b.z);
+        int n = Math.Max(1, (int)(span / Terrain.TILE));
+        float run = span / n;
+        float ph = terrain.height_at(a.x, a.z);
         for (int k = 1; k < n; k++)
         {
             float x = a.x + dx * k / n, z = a.z + dz * k / n;
             if (terrain.blocked(x, z)) return false;
+            if (terrain.trunk_blocked(x, z, p.radius)) return false;
             int t = terrain.tile_type(x, z);
             if (t == Terrain.TILE_TREE || t == Terrain.TILE_FOREST) return false;
+            float h = terrain.height_at(x, z);
+            if (h - ph > p.max_grad * run + 0.02f) return false;
+            ph = h;
         }
         return true;
     }

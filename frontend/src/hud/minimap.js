@@ -97,11 +97,13 @@ export function minimap(ctx, s, baked) {
     ctx.fillStyle = FACTION_COLORS[e.faction] ? rgbTrunc(e.faction) : DEFAULT_UNIT;
     ctx.fillRect(px - sz, pz - sz, sz * 2, sz * 2);
   }
-  // own
+  // own: the mark points where the pilot is looking, not where the hull happens
+  // to be facing - a mech's hull swings after its sight, so the hull's yaw is the
+  // machine catching up and the sight's is the heading the pilot is flying
   if (s.own) {
     const px = x0 + s.own.x * kx;
     const pz = y0 + s.own.z * kz;
-    const yaw = s.own.yaw;
+    const yaw = s.viewYaw ?? s.own.yaw;
     ctx.strokeStyle = '#ffffff';
     ctx.lineWidth = 1.5;
     ctx.beginPath();

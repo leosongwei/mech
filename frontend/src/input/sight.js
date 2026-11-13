@@ -54,8 +54,15 @@ export class Sight {
     this.freePitch += -this.freePitch * k;
   }
 
-  // WASD in the view's own frame: +fz is forward, +fx is right.  The keys are
-  // handed in because they belong to the input facet, not to the sight.
+  // WASD in the frame the machine is driving in: +fz is forward, +fx is right.
+  // The keys are handed in because they belong to the input facet, not to the
+  // sight.
+  //
+  // The frame is the view - so the stick follows the cross - *except* with ALT
+  // held: then the head is free to crane round and the machine keeps the heading
+  // it was walking on, so a pilot looking 90 degrees off still holds W to go the
+  // way the hull was going.  Which is the sight's own yaw, because while ALT is
+  // down the mouse does not move the sight at all.
   moveVector(keys) {
     let fx = 0, fz = 0;
     if (keys.has('KeyW')) fz += 1;
@@ -63,7 +70,7 @@ export class Sight {
     if (keys.has('KeyA')) fx -= 1;
     if (keys.has('KeyD')) fx += 1;
     if (fx === 0 && fz === 0) return [0, 0];
-    const y = this.viewYaw;
+    const y = this.alt ? this.yaw : this.viewYaw;
     const fwd = [Math.cos(y), Math.sin(y)];
     const right = [-Math.sin(y), Math.cos(y)];
     const mx = fwd[0] * fz + right[0] * fx;

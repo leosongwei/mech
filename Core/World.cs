@@ -180,8 +180,16 @@ public sealed class World
         {
             Systems.Gunnery.run, Systems.Locking.run, Systems.Smoke.run, Systems.Weapons.run,
             // one driver per chassis (`Systems/Movement/`): each reads the crew's
-            // intent (`nav_*`) and writes `vel_cmd`, `vel` and `pos` for its own rows
-            Systems.Movement.Foot.run, Systems.Movement.Mech.run, Systems.Movement.Vehicle.run,
+            // intent (`nav_*`) and writes `vel_cmd`, `vel` and `pos` for its own rows.
+            // The mech is a chain of five laws (`Systems/Movement/Mech/`): the command
+            // and the legs, the legs' push, the hill's pull, the drag that limits it,
+            // and the ground it is all laid on - so a mech is a thrust machine and a
+            // car is still a throttle
+            Systems.Movement.Foot.run,
+            Systems.Movement.Mech.Steer.run, Systems.Movement.Mech.Thrust.run,
+            Systems.Movement.Mech.Slope.run, Systems.Movement.Mech.Drag.run,
+            Systems.Movement.Mech.Ground.run,
+            Systems.Movement.Vehicle.run,
             // the tick's hit spheres: built here because `movement` has already
             // moved the hulls (a unit's `pos` is the end of its tick, `prev` is
             // `pos - vel*dt`) and the flight systems have not moved the missiles yet

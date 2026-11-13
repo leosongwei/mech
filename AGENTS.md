@@ -71,7 +71,9 @@ Systems/                   # mechanics shared by every mode, each exposes run(wo
                            #     Nav/        the facet navmesh (see "A hull that has run out
                            #       NavMesh.cs  of road"): NavProfile, NavWalk, NavRegion, NavQuery
                            #       Paths.cs    the stuck clock, the request queue, string-pull
-                           #   Movement/  one driver per chassis: Foot.cs / Mech.cs / Vehicle.cs,
+                           #   Movement/  one driver per chassis: Foot.cs / Vehicle.cs, and
+                           #     Mech/ (five laws, see "The legs are an engine"): Steer /
+                           #     Thrust / Slope / Drag / Ground, each a `run`.
                            #     Support/{Drive,Integrate}.cs.  The only writer of `vel`/`pos`.
                            #   Gunnery.cs: the sight leads, the hull and the arms slew after it
                            #   Sight.cs: the one line of sight (terrain + smoke), clear/why
@@ -308,10 +310,11 @@ own; the wire is `net/wire.js` + `net/rows.js` and the picture is `net/view.js`.
 * **AI is intent, movement is the machine.**  A crew says *where* and *how fast* -
   `nav_route` (an index into `world.routes`, `Core/Nav.cs`), or a point
   `nav_x`/`nav_z`, plus `nav_speed` - and nothing else that moves.  The drivers
-  (`Systems/Movement/`: one file per chassis, `Foot` / `Mech` / `Vehicle`, with
-  `Support/Drive.cs` for the intent-to-way-point step and `Support/Integrate.cs` for
-  `vel_cmd -> vel -> pos`) own `pos`, `vel`, `vel_cmd`, `leg_yaw`, `wheel_speed`,
-  `backout_t`, `blocked_t` and the route cursor `path_i`.  Corner speed, the
+  (`Systems/Movement/`: `Foot` / `Vehicle` by file, the mech as the five laws under
+  `Mech/`, with `Support/Drive.cs` for the intent-to-way-point step and
+  `Support/Integrate.cs` for `vel_cmd -> vel -> pos`) own `pos`, `vel`, `vel_cmd`,
+  `leg_yaw`, `wheel_speed`, `backout_t`, `blocked_t` and the route cursor
+  `path_i`.  Corner speed, the
   acceptance radius and the obstacle fan are *the machine's*: an 11 m turning radius
   cannot hold 100 km/h round a right angle, so `Nav.route_speed` / `Nav.arrive_radius`
   are called by `Vehicle.run` and never by a crew.  A pilot writes `vel_cmd` from the
@@ -696,8 +699,24 @@ own; the wire is `net/wire.js` + `net/rows.js` and the picture is `net/view.js`.
   uses, so a planned leg is a leg the machine can drive.  Before it, the raider's
   street grid called a wood passable at a cost and a command base solid while the
   driver said the opposite of both.  Strategic planning is still `Raid.FieldNav`
-  (128 m + the force gradient); the navmesh is the layer under it, and the only
-  one that knows a facet's slope.
+  (128 m + the force gradient), and it now asks the mech's own climb limit what a
+  node it may cross: the block closes when `solid >= 0.5` **or** when
+  `FieldNav.STEEP_SHARE` (a quarter) of its facets are steeper than
+  `NavProfile.of(ETYPE_MECH).max_grad` (0.70, 35 deg) - so ground the hull cannot
+  climb is closed at 128 m instead of being discovered at 16.  A block is a
+  *share* and not a worst case on purpose: 128 m of room is enough to walk round
+  one cliff, and a node that closed on a single steep facet would cut the map into
+  pieces.  `_shortcut`'s string-pull makes the same call along the line it would
+  take (`_open_line` tests `max_grad` uphill, `Integrate.too_steep`'s rule),
+  because a shortcut over a face the machine cannot walk up undoes the A*'s care.
+  Measured (`--check nav`'s `raider grid` row, 15625 nodes on the battle map, the
+  facet share sampled on a 32 m lattice): 5 nodes walled, **0 closed for a mech**
+  and the steepest block on the whole map is 3 % of its ground over 35 deg - the
+  map's faces top out around 24 deg where a hull would cross them, so a mech's own
+  limit never binds at 128 m (its 35 deg is above the ground it is given); the 25
+  towns stay reachable and the build is 14 ms of the launch tick.  A chassis whose
+  limit is under the map's hills closes nodes here (`NavProfile` is what the rule
+  reads), and the raider grid itself is only ever built for mechs.
 * **A leg is queried at the granularity of each shape it can meet.**  The ground
   is a continuous field and is sampled every 9 m; a building is a whole tile and
   is solved as a slab from the terrain to its roof (`walls`); a trunk is a
@@ -1029,6 +1048,53 @@ own; the wire is `net/wire.js` + `net/rows.js` and the picture is `net/view.js`.
   points it has passed).  The lane is a plain polyline: **the map does not round its
   corners**, because a wheeled hull cannot follow a right angle whatever the map does
   with it — which is the vehicle driver's problem, not a crew's (`Nav.passed`).
+* **The legs are an engine, and the hill is the other half of it.**  A mech is not
+  a ramp toward a commanded velocity: `Systems/Movement/Mech/` is five passes, one
+  law each, in the order the tick runs them - `Steer` (the crew's intent and the
+  leg swing that steers it), `Thrust` (the power curve and its g limit, the cruise
+  governor, the brake that plants them), `Slope` (gravity along the way the hull is
+  going), `Drag` (the square-of-speed resistance), `Ground` (`Integrate.step`).  The
+  velocity buffer *is* where the forces compose, so there is no accumulator
+  component, and the state is the components every mover already owns.
+  **The push is a power, so the force is `P(v)/v`**, `MECH_HP_LOW` 5000 hp at a
+  standstill rising linearly to `MECH_HP_HIGH` 8000 hp at `MECH_RATED_V` (50 m/s,
+  180 km/h), flat above it, over `MECH_MASS` 15 t.  A bare curve runs away at v->0,
+  so the drive carries its own **g limit** - `MECH_G_LIMIT` 1.5 g, 221 kN, and
+  gravity is counted *apart* from it - and the two take turns: below 76 km/h a flat
+  1.5 g, above it the engine (1.15 g at 108 km/h, 0.81 g at 180), 0-100 km/h in
+  2.1 s.  A constant thrust gave the same 0.8 g everywhere and read as neither an
+  engine nor a machine; 5 g off the line read as a cartoon, which is why the limit
+  is where it is.  `MECH_MASS` is the only mass anywhere in the simulation, because
+  horsepower is; every other system thinks in accelerations.
+  The machine pushes along the **slope**, so only `cos(slope)` of it survives
+  horizontally; the hill adds `g sin(slope)`, and `MECH_DRAG` is *solved* from the
+  flat balance at the rated speed (`P(v0)/v0 = m k v0^2`, one const expression in
+  `Defs`) because a power curve has no top end of its own.  The hills are therefore
+  consequences, not constraints (`docs/plans/mech_thrust.md`; `--check drive`
+  settles a hull on the steepest face the map has): 30 deg uphill 125 km/h, the
+  35 deg climb limit 114, 30 deg down 210, 40 deg down 215.  The g limit is a limit
+  on the *drive*, so a hill still adds or takes its own: at the 35 deg limit a hull
+  pulls away at 1.5g·cos35 - g·sin35 = 6.4 m/s^2 and is never dragged to a standstill
+  by gravity on a slope it may climb.
+  A command at the hull's **own top speed** is the stick pinned - full thrust with
+  no governor, which is the only reason a descent can pass the flat top speed at
+  all (at 210 km/h down a 30 degree face the drive is 0.66 g, far under its limit,
+  so the limit plays no part up there).  A slower command is a cruise speed, held by
+  `u = clamp((cmd - v_along)/3, -1, 1)` **and capped at the gap that is left**:
+  one tick of 1.5 g is half the governor band, so a governor that overshot would
+  rattle around its target (`--check drive` reads 11.90 m/s of a 12 m/s cruise).
+  No command at all plants the legs - `MECH_BRAKE` 12 m/s^2 (1.22 g), near enough
+  the launch that the machine starts and stops alike (180 km/h to a standstill in
+  78 m).
+  **Parked, the legs carry the hill**: `Slope` spends gravity on a hull that is
+  *going* somewhere (a command, or motion), so a machine that brakes to rest on a
+  35 degree face stays there with zero drift (`--check drive`'s two `park` rows:
+  10 s parked, moved 0.00 m, height unchanged).  Braking downhill pays gravity's
+  share first - 204 km/h to a stop in 5.0 s where the flat takes 3.5.
+  The legs' alignment (`MECH_LEG_ALIGN` 0.45..1) scales the *thrust*, not a speed
+  ceiling, so a hull that reverses its command turns its legs round and pulls away
+  in an arc.
+
 * **Wheeled hulls** — an APC carries the `vehicle` tag, and that tag changes
   both halves of its movement. Locomotion (`movement._vehicle`) is a rear-axle
   bicycle model: `leg_yaw` *is* the hull state (mirrored into `yaw` for the
@@ -1139,6 +1205,14 @@ own; the wire is `net/wire.js` + `net/rows.js` and the picture is `net/view.js`.
   drawn only through a clear line of sight, exactly what the seeker can lock.
   The ballistic prediction (`sightPoint`, `groundHit`) stays on the *round's*
   rule instead - leaves and smoke never stop a bullet.
+* **The countryside is groves, and there are 920 of them.**  The map's woods are
+  blobs, not a carpet: each one is a round stand of 2-12 tiles of radius with a
+  0.62-of-radius core of thick forest (`TILE_FOREST`, several trees a tile) and a
+  ragged edge of single-tree tiles, and lone trees are scattered over the plains
+  at 0.45 % of the grass.  The count is what changed in 1.27.0 (460 -> 920) and the
+  size of a stand is untouched - the map has more places to hide a hull in, and the
+  same ones to hide it in as before.  Roads and town squares are cleared *after*
+  the forests, so a trunk never lands on the asphalt or in a plaza.
 * **Towns are grown, not drawn.** Each one starts on its lane (`_on_lane` projects
   the spot onto the nearest lane point and returns the lane direction) and then
   `_town_streets` grows the network
@@ -1385,6 +1459,14 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
   the frame: interpolate snapshots, aim, build the draw list, draw, HUD.  The
   `yaw` / `pitch` on the wire are the *sight* (where the pilot looks), never the
   hull: `player_input` writes them into `sight_yaw` / `sight_pitch`.
+* **The stick drives in the sight's frame, and ALT holds that frame still**
+  (`input/sight.js::moveVector`).  Normally `mx` / `mz` come off `viewYaw`, so
+  WASD follows the cross; with ALT down the view is free to crane round
+  (`freeYaw`) and the stick keeps reading the **sight's** own yaw, which the mouse
+  cannot move while ALT is held - so a pilot looking 90 degrees off still holds W
+  to walk the way he was walking.  The minimap's own mark reads the same heading
+  (`hudstate.viewYaw` -> `minimap.js`): it points where the pilot is looking, and
+  `own.yaw` on the wire is the hull still swinging after it.
 * **Two headings, and the client keeps them apart.** `_aim` solves the centre
   cross, the range readout and the seeker ring from the view (`dirFrom(input)`,
   the sight line from `_sightEye`) and each arm's impact marker from the *bore*
@@ -1754,6 +1836,7 @@ cd frontend && npm install && npm run build      # -> assets/
   ./dotnet.sh run -- --check diag --minutes 2      # what a few AI hulls are doing
   ./dotnet.sh run -- --check net --minutes 30 --from 8   # one pilot's download, per minute
   ./dotnet.sh run -- --check fcs                   # crew vs pilot, same scenarios
+  ./dotnet.sh run -- --check drive                 # the mech's thrust model vs its own algebra
   ./dotnet.sh run -- --check terrain                # facet slopes, lane drivability, sample cost
   ./dotnet.sh run -- --check nav                    # the navmesh: region, profiles, a 12.7 km plan, lanes
   ```
@@ -1765,6 +1848,17 @@ cd frontend && npm install && npm run build      # -> assets/
   what the crew believes"); before that look it was 1.3 ms.
   Every check ends with `ecs.validate()`, so bookkeeping that a value comparison
   would not catch (a row pointing past its buffer) fails the run.
+* **`--check drive` measures the mech's thrust law** (`Harness/DriveCheck.cs`): the
+  two design points off the constants (`sqrt(T/k)` = 180 km/h,
+  `sqrt((T cos30 + g sin30)/k)` = 220) and then a hull on a **treadmill** - put back
+  on its spot every tick with the velocity it made, so a drag balance can settle
+  without three kilometres of clear ground: flat, the steepest face the map has
+  (uphill and down, with the theory solved from the gradient it actually measured),
+  the brake's run-out from 180 km/h, a 12 m/s cruise, and two `park` rows - braked
+  to rest on that same face, uphill and down, then ten seconds standing on it.
+  Measured: 49.57 against 50.00 on the flat (the tick's own discretisation), 31.27
+  against 31.52 up a 24 degree face, 59.28 against 59.73 down it, 78 m to a stop,
+  11.81 m/s of a 12 m/s cruise, and 0.00 m of drift parked on either.
 * **`--check fcs` is the integration half of the fire control's proof**
   (`Harness/FcsCheck.cs`): a range world with everything but two hulls and the bases
   cleared off it, one flat 1.8 km corridor, and two ways to shoot the same target -

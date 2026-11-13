@@ -34,6 +34,10 @@ function ownState(app, own) {
   return {
     own,
     dead: !own,
+    // the heading the minimap's mark points: the sight's line, which is where the
+    // pilot is looking and where the guns are laid (the hull's own `yaw` on the
+    // wire is the machine still swinging after it)
+    viewYaw: app.input.viewYaw,
     // the hull's ground speed: the snapshot velocity is the one it is really
     // moving at (it ramps up over three seconds), `mv*` its smoothed copy
     speed: own ? Math.hypot(own.mvx || 0, own.mvz || 0) * 3.6 : 0,

@@ -445,6 +445,19 @@ public sealed class Terrain
         return d + (c - d) * (1f - tx) + (b - d) * (1f - tz);
     }
 
+    /// <summary>The ground's gradient along a horizontal direction - rise over run,
+    /// positive uphill, the same figure `MAX_TERRAIN_GRADIENT` and `max_gradient`
+    /// speak.
+    ///
+    /// Measured `step` either side of the point, which is a hull's own width rather
+    /// than the one facet under its feet: a machine reads the hill it is walking up,
+    /// so the edge between two facets is a bend.
+    /// The mech's thrust model is the one caller (`Systems/Movement/Mech/Slope.cs`).
+    /// </summary>
+    public float slope_along(float x, float z, float dx, float dz, float step = 2f) =>
+        (height_at(x + dx * step, z + dz * step) -
+         height_at(x - dx * step, z - dz * step)) * (0.5f / step);
+
     private Trunk[] _trunks(int i, int j)
     {
         int k = j * w + i;
@@ -2688,8 +2701,11 @@ public sealed class Terrain
         // ---- forests ---------------------------------------------------------
         // a thick stand in the middle of every blob (several trees per tile) with
         // a ragged edge of single-tree tiles, plus lone trees scattered over the
-        // plains: the countryside reads as groves instead of a painted texture
-        for (int blob = 0; blob < 460; blob++)
+        // plains: the countryside reads as groves instead of a painted texture.
+        // Twice as many groves as the map used to grow, each of them the size it
+        // always was: a grove is a place a hull hides behind, and there are twice
+        // as many of those places now
+        for (int blob = 0; blob < 920; blob++)
         {
             int cx = rng.integers(6, w - 6);
             int cy = rng.integers(6, d - 6);

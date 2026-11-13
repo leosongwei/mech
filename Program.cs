@@ -45,7 +45,7 @@ for (int k = 0; k < args.Length; k++)
             break;
         default:
             Console.Error.WriteLine($"mech: unknown argument '{args[k]}'" +
-                                    " (usage: --host H --port N [--range] | --check terrain|nav|battle|range|hit|intercept|diag|net|tiers|fcs [--minutes N])");
+                                    " (usage: --host H --port N [--range] | --check terrain|nav|drive|battle|range|hit|intercept|diag|net|tiers|fcs [--minutes N])");
             return 1;
     }
 }
@@ -55,6 +55,7 @@ if (check is not null)
     {
         "terrain" => Mech.Server.Harness.TerrainCheck.run(),
         "nav" => Mech.Server.Harness.NavCheck.run(),
+        "drive" => Mech.Server.Harness.DriveCheck.run(),
         "battle" => Mech.Server.Harness.Check.battle(minutes, players, perf: Environment.GetEnvironmentVariable("MECH_PERF") == "1"),
         "range" => Mech.Server.Harness.Check.range(minutes),
         "fcs" => Mech.Server.Harness.FcsCheck.run(),

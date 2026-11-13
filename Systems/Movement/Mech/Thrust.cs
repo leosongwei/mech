@@ -21,8 +21,9 @@
 // because at 1.5 g a tick's worth of thrust is a real fraction of a whole band of
 // speed and a governor that overshot would rattle around its target.
 //
-// The push is along the slope, so the hill takes its cut first: the horizontal
-// share is `cos(slope)` of it and the rest goes into the ground.
+// The push goes along the way the hull is *going* - `Turn` owns the direction, this
+// pass owns the speed - and along the slope, so the hill takes its cut first: the
+// horizontal share is `cos(slope)` of it and the rest goes into the ground.
 
 namespace Mech.Server.Systems.Movement;
 
@@ -43,7 +44,6 @@ public static partial class Mech
                     var v = r.vel;
                     var cmd = r.vel_cmd;
                     float cs = MathF.Sqrt(cmd.x * cmd.x + cmd.z * cmd.z);
-                    float speed = MathF.Sqrt(v.x * v.x + v.z * v.z);
                     if (cs < 0.05f)
                     {
                         // nothing asked for: the legs plant.  Drag alone takes forty
@@ -52,7 +52,20 @@ public static partial class Mech
                         Stop(r, v, dt);
                         continue;
                     }
-                    float dx = cmd.x / cs, dz = cmd.z / cs;
+                    float speed = MathF.Sqrt(v.x * v.x + v.z * v.z);
+                    // the push follows the way the hull is going: `Turn` has already
+                    // brought that round onto the command at the legs' own rate
+                    float dx, dz;
+                    if (speed > 0.5f)
+                    {
+                        dx = v.x / speed;
+                        dz = v.z / speed;
+                    }
+                    else
+                    {
+                        dx = cmd.x / cs;
+                        dz = cmd.z / cs;
+                    }
                     float top = Defs.UNIT_DEFS[r.etype].speed;
                     float push = Force(speed) / Defs.MECH_MASS;     // m/s^2 the legs can make here
                     float a;
@@ -66,13 +79,11 @@ public static partial class Mech
                     {
                         // the governor: a cruise speed is held by pushing while the
                         // hull is short of it and planting when it is over
-                        err = cs - (v.x * dx + v.z * dz);
+                        err = cs - speed;
                         float u = Math.Clamp(err / Defs.MECH_GOVERNOR_BAND, -1f, 1f);
                         a = u >= 0f ? push * Legs(r, dx, dz) * u : Defs.MECH_BRAKE * u;
                         if (a == 0f) continue;
                     }
-                    // along the slope, so the hill takes its share before the hull
-                    // sees any of it
                     float s = terrain.slope_along(r.pos.x, r.pos.z, dx, dz);
                     float step = a * dt / MathF.Sqrt(1f + s * s);
                     if (governed)
@@ -106,10 +117,14 @@ public static partial class Mech
                              Defs.MECH_G_LIMIT * Defs.GRAVITY * Defs.MECH_MASS);
         }
 
-        /// <summary>How much of the machine's thrust the legs can put on a bearing:
-        /// full with them lined up under it, `MECH_LEG_ALIGN` of it at right angles,
-        /// and a fifth of what is left once the chassis is out.</summary>
-        private static float Legs(in MoveRow r, float dx, float dz)
+        /// <summary>How much of the machine the legs can put behind a bearing: full
+        /// with them lined up under it, `MECH_LEG_ALIGN` of it at right angles, and a
+        /// fifth of what is left once the chassis is out.
+        ///
+        /// Public because the legs steer as well as push (`Mech.Turn`), and a hull
+        /// that has not got its feet round yet comes round slower for the same
+        /// reason it pushes weaker.</summary>
+        public static float Legs(in MoveRow r, float dx, float dz)
         {
             float align = MathF.Cos(MathUtil.wrap_pi(MathF.Atan2(dz, dx) - r.leg_yaw));
             float f = Defs.MECH_LEG_ALIGN + (1f - Defs.MECH_LEG_ALIGN) * MathF.Max(0f, align);

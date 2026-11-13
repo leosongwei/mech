@@ -1,8 +1,8 @@
 # 机甲运动：马力曲线、重力、阻力
 
 1.27.0 起机甲不是"朝指令速度逼近"，而是一台**发动机**：腿给一张功率曲线，推力是
-功率除以速度。这一页记下模型的来历、常数怎么解出来、以及为什么代码是五个 system
-而不是一个。
+功率除以速度；**方向和速度是两个执行器**（转向另有一套侧向预算）。这一页记下模型的
+来历、常数怎么解出来、以及为什么代码是六个 system 而不是一个。
 
 ## 1. 三个力
 
@@ -84,16 +84,46 @@ dv/dt = F(v)/m · f · u · cosθ - g·sinθ - k·v²
 * `|cmd| < 0.05` → **撑地刹车**：`MECH_BRAKE = 12 m/s²`（1.22 g），和 1.5 g 的起步
   几乎对称：180 km/h 到停下 78 m / 3.5 s。
 
-## 4. 为什么是五个 system
+## 4. 转向是第二套机构
+
+推力只管**车速**，**方向**由 `Mech.Turn` 单独写：
+
+```
+ω = min(MECH_TURN_RATE, MECH_TURN_G · g / v) · f        （rad/s）
+MECH_TURN_RATE = 1.6 rad/s      （92°/s，低速封顶）
+MECH_TURN_G    = 3.0 g          （腿能踩住的侧向加速度）
+f              = 腿的对齐系数（0.45–1.0）
+```
+
+只有推力的话，改变方向只能靠推力的**横向分量**，而那个是
+`dv/dt` 的一个分量，于是转向退化成一条指数曲线，时间常数 `τ = v/a`：
+180 km/h 转直角要 **8–10 s**，而且整个过程中**准星已经转过去了、车还在往北滑**——
+这就是"鼠标转身还不如侧推"的来源。
+
+两个执行器分开以后：
+
+| 进入速度 | 转 90° | 半径 |
+| --- | --- | --- |
+| 180 km/h | 2.63 s（理论 2.62） | 82 m |
+| 126 km/h | 2.2 s | 42 m |
+| 72 km/h | 1.57 s | 14 m |
+| 36 km/h | 1.2 s | 6 m |
+
+速度几乎不掉（180 km/h 转直角 176 → 173 km/h），因为转弯不再消耗纵向推力。
+侧向 g 是"腿能踩住多少"的量，不是发动机的预算，所以它比 1.5 g 的动力上限更大：
+机甲是**踩住、拧身、再推**，这两件事本来就不是一个作动器。
+
+## 5. 为什么是六个 system
 
 一条定律一个 `run`，按 tick 顺序注册在 `World._build_pipeline`：
 
 ```
-Steer  →  Thrust  →  Slope  →  Drag  →  Ground
+Steer  →  Turn  →  Thrust  →  Slope  →  Drag  →  Ground
 ```
 
 * `Steer`：AI 的意图（`Drive.legs`）转成 `vel_cmd`，腿按机器自己的速率转向；
-* `Thrust`：腿的推力 / 调速器 / 撑地刹车，写进 `vel`；
+* `Turn`：速度的**方向**转向指令方向（速率受 3 g 与腿对齐限制），只转方向不改大小；
+* `Thrust`：腿的推力 / 调速器 / 撑地刹车，沿**行进方向**改速度，写进 `vel`；
 * `Slope`：重力沿地面那一份，写进 `vel`；
 * `Drag`：平方阻力，从 `vel` 里扣；
 * `Ground`：`Integrate.step` —— 唯一一个真的移动 `pos` 的。
@@ -105,12 +135,12 @@ Steer  →  Thrust  →  Slope  →  Drag  →  Ground
 这样做的好处是每一行都能单独读、单独改：
 
 * "上坡为什么慢"在 `Slope`；"平地为什么是 180"在 `Drag` 与 `Defs.MECH_DRAG`；
-  "为什么下坡能到 220"在 `Thrust` 的满推杆分支；"急转为什么画弧"在 `Steer`；
+  "为什么下坡能跑过 180"在 `Thrust` 的满推杆分支；"转弯为什么是弧、半径多大"在 `Turn`；
 * `--check drive` 一行为一条定律：平地 / 上坡 / 下坡 / 刹车 / 巡航，实测与代数并列；
 * 车（`Vehicle.cs`）仍然是自己的自行车模型，步兵（`Foot.cs`）不变：这一串只跑在
   `MoveColumns.OnMech` 上，即"有机甲手臂血池"那一个原型。
 
-## 5. 实测
+## 6. 实测
 
 ```
 ./dotnet.sh run -- --check drive
@@ -134,6 +164,8 @@ brake                          run out from 180 km/h: 78.4 m in 3.50 s (brake al
 cruise                         asked 12 m/s, held 11.90 m/s
 park up           24   stopped from 137 km/h in 2.2 s, then 10 s parked: moved 0.00 m, height +0.00 m
 park down         24   stopped from 204 km/h in 5.0 s, then 10 s parked: moved 0.00 m, height +0.00 m
+turn at 180     176 km/h entry: 90 deg in 2.63 s (rate law 2.62, radius 81.6 m), speed 176 -> 173 km/h
+turn at 72       73 km/h entry: 90 deg in 1.57 s (rate law 1.09, radius 14.1 m), speed 73 -> 122 km/h
 ```
 
 `theory` 那一列是把同一张力曲线解零点得到的（`Mech.Thrust.Force` 只有一份实现），

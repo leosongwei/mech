@@ -72,8 +72,8 @@ Systems/                   # mechanics shared by every mode, each exposes run(wo
                            #       NavMesh.cs  of road"): NavProfile, NavWalk, NavRegion, NavQuery
                            #       Paths.cs    the stuck clock, the request queue, string-pull
                            #   Movement/  one driver per chassis: Foot.cs / Vehicle.cs, and
-                           #     Mech/ (five laws, see "The legs are an engine"): Steer /
-                           #     Thrust / Slope / Drag / Ground, each a `run`.
+                           #     Mech/ (six laws, see "The legs are an engine"): Steer /
+                           #     Turn / Thrust / Slope / Drag / Ground, each a `run`.
                            #     Support/{Drive,Integrate}.cs.  The only writer of `vel`/`pos`.
                            #   Gunnery.cs: the sight leads, the hull and the arms slew after it
                            #   Sight.cs: the one line of sight (terrain + smoke), clear/why
@@ -1049,13 +1049,24 @@ own; the wire is `net/wire.js` + `net/rows.js` and the picture is `net/view.js`.
   corners**, because a wheeled hull cannot follow a right angle whatever the map does
   with it — which is the vehicle driver's problem, not a crew's (`Nav.passed`).
 * **The legs are an engine, and the hill is the other half of it.**  A mech is not
-  a ramp toward a commanded velocity: `Systems/Movement/Mech/` is five passes, one
-  law each, in the order the tick runs them - `Steer` (the crew's intent and the
-  leg swing that steers it), `Thrust` (the power curve and its g limit, the cruise
-  governor, the brake that plants them), `Slope` (gravity along the way the hull is
-  going), `Drag` (the square-of-speed resistance), `Ground` (`Integrate.step`).  The
-  velocity buffer *is* where the forces compose, so there is no accumulator
-  component, and the state is the components every mover already owns.
+  a ramp toward a commanded velocity: `Systems/Movement/Mech/` is six passes, one
+  law each, in the order the tick runs them - `Steer` (the crew's intent and the leg
+  swing that steers it), `Turn` (the direction the hull is going), `Thrust` (the
+  power curve and its g limit, the cruise governor, the brake that plants them),
+  `Slope` (gravity along the way the hull is going), `Drag` (the square-of-speed
+  resistance), `Ground` (`Integrate.step`).  The velocity buffer *is* where the
+  forces compose, so there is no accumulator component, and the state is the
+  components every mover already owns.
+  **Speed and direction are two actuators.**  `Thrust` only changes the speed, along
+  the way the hull is already going; the way itself is `Turn`'s alone, at
+  `min(MECH_TURN_RATE, MECH_TURN_G * g / v)` - 1.6 rad/s of ceiling, 3 g of lateral
+  plant - times the leg-alignment factor.  Left to the engine's own sideways share a
+  change of heading was an exponential with `v/a` for its time constant, so a right
+  angle at 180 km/h took eight to ten seconds and a machine driven from a cross that
+  had already come round appeared to slide sideways across its own sight.  Now a
+  right angle costs 2.8 s at 180 km/h (an 82 m radius) and 1.6 s at 72, the speed is
+  barely touched by a turn, and the crew's detour count in `--check nav`'s lane row
+  fell from 131 to 54 because a hull that can corner gets where it was sent.
   **The push is a power, so the force is `P(v)/v`**, `MECH_HP_LOW` 5000 hp at a
   standstill rising linearly to `MECH_HP_HIGH` 8000 hp at `MECH_RATED_V` (50 m/s,
   180 km/h), flat above it, over `MECH_MASS` 15 t.  A bare curve runs away at v->0,
@@ -1091,9 +1102,10 @@ own; the wire is `net/wire.js` + `net/rows.js` and the picture is `net/view.js`.
   35 degree face stays there with zero drift (`--check drive`'s two `park` rows:
   10 s parked, moved 0.00 m, height unchanged).  Braking downhill pays gravity's
   share first - 204 km/h to a stop in 5.0 s where the flat takes 3.5.
-  The legs' alignment (`MECH_LEG_ALIGN` 0.45..1) scales the *thrust*, not a speed
-  ceiling, so a hull that reverses its command turns its legs round and pulls away
-  in an arc.
+  The legs' alignment (`MECH_LEG_ALIGN` 0.45..1) scales the *thrust* and the *turn
+  rate* - a hull that has not got its feet round yet pushes weaker and comes round
+  slower - and it never caps a speed, so a hull that reverses its command turns its
+  legs round and pulls away in an arc.
 
 * **Wheeled hulls** — an APC carries the `vehicle` tag, and that tag changes
   both halves of its movement. Locomotion (`movement._vehicle`) is a rear-axle
@@ -1854,11 +1866,13 @@ cd frontend && npm install && npm run build      # -> assets/
   on its spot every tick with the velocity it made, so a drag balance can settle
   without three kilometres of clear ground: flat, the steepest face the map has
   (uphill and down, with the theory solved from the gradient it actually measured),
-  the brake's run-out from 180 km/h, a 12 m/s cruise, and two `park` rows - braked
-  to rest on that same face, uphill and down, then ten seconds standing on it.
-  Measured: 49.57 against 50.00 on the flat (the tick's own discretisation), 31.27
-  against 31.52 up a 24 degree face, 59.28 against 59.73 down it, 78 m to a stop,
-  11.81 m/s of a 12 m/s cruise, and 0.00 m of drift parked on either.
+  the brake's run-out from 180 km/h, a 12 m/s cruise, two `park` rows - braked to
+  rest on that same face, uphill and down, then ten seconds standing on it - and two
+  `turn` rows.  Measured: 49.67 against 50.00 on the flat (the tick's own
+  discretisation), 38.01 against 38.18 up a 24 degree face, 56.78 against 57.10 down
+  it, 78 m to a stop, 11.90 m/s of a 12 m/s cruise, 0.00 m of drift parked, and a
+  right angle in 2.63 s from 176 km/h (the rate law alone says 2.62) and 1.57 s from
+  73.
 * **`--check fcs` is the integration half of the fire control's proof**
   (`Harness/FcsCheck.cs`): a range world with everything but two hulls and the bases
   cleared off it, one flat 1.8 km corridor, and two ways to shoot the same target -

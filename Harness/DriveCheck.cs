@@ -65,6 +65,8 @@ public static class DriveCheck
         bad += cruise(world, fx, fz);
         bad += park(world, "park up", sx, sz, +1f);
         bad += park(world, "park down", sx, sz, -1f);
+        bad += turn(world, "turn at 180", fx, fz, 49f);
+        bad += turn(world, "turn at 72", fx, fz, 20f);
 
         world.ecs.validate();
         Console.WriteLine(bad == 0 ? "\nall rows match the law" : $"\n{bad} row(s) off");
@@ -221,6 +223,60 @@ public static class DriveCheck
                           + (ok ? "" : "   <-- off"));
         world.ecs.destroy(eid);
         return ok ? 0 : 1;
+    }
+
+    /// <summary>A right angle at speed: the command turns 90 degrees and the hull
+    /// follows at the rate its legs allow.
+    ///
+    /// The direction is `Mech.Turn`'s alone since the thrust model came apart into
+    /// two actuators, and this is the row that says so: with the sideways share of
+    /// the engine doing the steering, a right angle at the top speed took eight to
+    /// ten seconds and a machine driven from a cross that had already come round
+    /// looked like it was sliding sideways.  The theory is the rate law with no leg
+    /// lag in it, so the measured column is a shade slower by design - the feet have
+    /// to come round first.</summary>
+    private static int turn(World world, string name, float x, float z, float v0)
+    {
+        float top = Defs.UNIT_DEFS[Defs.ETYPE_MECH].speed;
+        var eid = world.spawn_unit(Defs.ETYPE_MECH, Defs.FACTION_BLUE, x, z, crew: false);
+        var cmd = world.ecs.fv("vel_cmd");
+        float t = 0f;
+        while (t < 40f)                                   // run up to the entry speed
+        {
+            cmd.set(eid, 0, top);
+            cmd.set(eid, 2, 0f);
+            Pin(world, eid, x, z);
+            t += DT;
+            if (Speed(world, eid) >= v0) break;
+        }
+        float entry = Speed(world, eid);
+        const float WANT = MathF.PI / 2f;
+        float spun = 0f;
+        while (spun < 20f && Heading(world, eid) < WANT - 0.035f)   // 2 degrees
+        {
+            cmd.set(eid, 0, MathF.Cos(WANT) * top);
+            cmd.set(eid, 2, MathF.Sin(WANT) * top);
+            Pin(world, eid, x, z);
+            spun += DT;
+        }
+        float rate = MathF.Min(Defs.MECH_TURN_RATE, Defs.MECH_TURN_G * Defs.GRAVITY / entry);
+        float want = WANT / rate;
+        float outv = Speed(world, eid);
+        bool ok = spun < want * 1.6f && spun > want * 0.9f;
+        Console.WriteLine($"{name,-14} {entry * 3.6f,4:0} km/h entry: 90 deg in {spun:0.00} s "
+                          + $"(rate law {want:0.00}, radius {entry / rate:0.0} m), "
+                          + $"speed {entry * 3.6f:0} -> {outv * 3.6f:0} km/h"
+                          + (ok ? "" : "   <-- off"));
+        world.ecs.destroy(eid);
+        return ok ? 0 : 1;
+    }
+
+    /// <summary>The heading of the velocity the hull is actually making, radians from
+    /// +x.</summary>
+    private static float Heading(World world, int eid)
+    {
+        var v = world.ecs.fv("vel");
+        return MathF.Atan2(v.get(eid, 2), v.get(eid, 0));
     }
 
     /// <summary>Stopping on a hillside: brake to rest with the stick released, then

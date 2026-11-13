@@ -84,6 +84,7 @@ public static class StuckCheck
 
         Console.WriteLine($"stuck check: {minutes} min of a battle on seed {seed}, "
                           + $"{STILL_S:0} s still to read, {STUCK_S:0} s while ordered is a fault");
+        int planted = Planted(world);
         Console.WriteLine("t      crews  mech  apc  ordered  still  stuck  crawl   worst   walked");
 
         int ticks = (int)(minutes * 60f / DT);
@@ -130,7 +131,60 @@ public static class StuckCheck
                                   + $"   ({k.jam:0} s of it, in bits)");
         Console.WriteLine($"\n{track.Count} crewed hulls alive at the end "
                           + $"(mech {mechs}, apc {apcs})");
-        return faults.Count == 0 ? 0 : 1;
+        return faults.Count == 0 && planted == 0 ? 0 : 1;
+    }
+
+    /// <summary>Put a hull down inside the biggest building on the map and see whether
+    /// the tick frees it: `Systems/Unstick.cs` is the pass that does, and this row is
+    /// the proof that it still does - the battle itself only puts one hull in that
+    /// state per ten minutes, which is too rare to read.
+    ///
+    /// The hull is a puppet (`crew: false`): the repair is the simulation's, not a
+    /// crew's, and a puppet will not drive itself out and confuse the reading.</summary>
+    private static int Planted(World world)
+    {
+        var t = world.terrain;
+        float bx = 0f, bz = 0f;
+        float best = 0f;
+        for (int j = 4; j < t.d - 4; j++)
+            for (int i = 4; i < t.w - 4; i++)
+            {
+                float h = t.wall_at((i + 0.5f) * Terrain.TILE, (j + 0.5f) * Terrain.TILE);
+                // a tall building with clear ground beside it, so a hull centred in it
+                // has somewhere to be put back to within one tile
+                if (h <= best || t.blocked((i + 3f) * Terrain.TILE, (j + 0.5f) * Terrain.TILE)) continue;
+                best = h;
+                bx = (i + 0.5f) * Terrain.TILE;
+                bz = (j + 0.5f) * Terrain.TILE;
+            }
+        int bad = 0;
+        Console.WriteLine($"planted rows: a hull put down at the centre of the tallest building "
+                          + $"on the map ({bx:0}, {bz:0}), {best} m of wall over the tile");
+        foreach (byte et in new[] { Defs.ETYPE_MECH, Defs.ETYPE_APC })
+        {
+            var e = world.ecs;
+            int eid = world.spawn_unit(et, Defs.FACTION_BLUE, bx, bz, crew: false);
+            var pos = e.fv("pos");
+            var vel = e.fv("vel");
+            // a push at it, as a driver would: the repair must free it where it stands,
+            // and the velocity it arrives with is zero
+            vel.set(eid, 0, 12f);
+            vel.set(eid, 2, 0f);
+            float rad = Defs.UNIT_DEFS[et].radius * 0.6f;
+            bool was = Integrate.blocked(t, bx, bz, rad);
+            for (int k = 0; k < Unstick.EVERY * 2; k++) world.update(DT);
+            float x = pos.get(eid, 0), z = pos.get(eid, 2);
+            bool now = Integrate.blocked(t, x, z, rad);
+            float v = MathF.Sqrt(vel.get(eid, 0) * vel.get(eid, 0) + vel.get(eid, 2) * vel.get(eid, 2));
+            bool ok = was && !now && v < 0.01f;
+            Console.WriteLine($"  {(et == Defs.ETYPE_MECH ? "mech" : "apc"),-4} started inside a "
+                              + $"structure {was}, put down at ({x:0}, {z:0}) "
+                              + $"{MathUtil.dist2d(bx, bz, x, z):0} m away, inside {now}, "
+                              + $"speed {v:0.00} m/s{(ok ? "" : "   <-- not freed")}");
+            e.destroy(eid);
+            if (!ok) bad += 1;
+        }
+        return bad;
     }
 
     /// <summary>One tick of one archetype: the anchor, the clock, and the order.</summary>

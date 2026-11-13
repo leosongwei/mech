@@ -179,6 +179,10 @@ public sealed class World
         systems.AddRange(new Action<World, float>[]
         {
             Systems.Gunnery.run, Systems.Locking.run, Systems.Smoke.run, Systems.Weapons.run,
+            // a hull that was put down overlapping a structure has nowhere to step
+            // (`Systems/Unstick.cs`): it is put back on the nearest clear ground
+            // before a driver reads its place, and it drives off from there
+            Systems.Unstick.run,
             // one driver per chassis (`Systems/Movement/`): each reads the crew's
             // intent (`nav_*`) and writes `vel_cmd`, `vel` and `pos` for its own rows.
             // The mech is a chain of five laws (`Systems/Movement/Mech/`): the command

@@ -71,6 +71,8 @@ Systems/                   # mechanics shared by every mode, each exposes run(wo
                            #     Nav/        the facet navmesh (see "A hull that has run out
                            #       NavMesh.cs  of road"): NavProfile, NavWalk, NavRegion, NavQuery
                            #       Paths.cs    the stuck clock, the request queue, string-pull
+                           #   Unstick.cs: a hull put down overlapping a structure is
+                           #     moved to the nearest clear ground, velocity zeroed
                            #   Movement/  one driver per chassis: Foot.cs / Vehicle.cs, and
                            #     Mech/ (five laws, see "The legs are an engine"): Steer /
                            #     Thrust / Slope / Drag / Ground, each a `run`.
@@ -236,9 +238,14 @@ own; the wire is `net/wire.js` + `net/rows.js` and the picture is `net/view.js`.
   read for that.
 * **World** (`Core/World.cs`) owns terrain, players, the ECS and the system
   pipeline. Shared order: `rearm`, `player_input`, the mode's pre-systems
-  (battle: `ai`), `gunnery, locking, smoke, weapons, movement, projectiles,
+  (battle: `ai`), `gunnery, locking, smoke, weapons, unstick, movement, projectiles,
   proximity, blasts, mortality, economy, debris`, then the mode's post-systems
-  (battle: `waves`).
+  (battle: `waves`).  `unstick` sits immediately before the drivers: a hull whose own
+  footprint overlaps a building, a rock, a base pad or a trunk has no step it may
+  take (`Integrate.step` refuses any destination whose five samples include that
+  overlap), so it is put on the nearest clear ground with `vel` zeroed and its
+  `vel_cmd` kept, and it drives off from there.  One tick in `Unstick.EVERY` (10)
+  looks, because the fault never heals itself.
   A round's tick then runs `spheres, expire, flight_ballistic, flight_rocket,
   flight_saclos, flight_top, first_hit_ground, first_hit_structures,
   first_hit_units, first_hit_fuse, impact` - one system per kind of round and one
@@ -1886,15 +1893,16 @@ cd frontend && npm install && npm run build      # -> assets/
   against what it made, and what the ground is - in a wall or not, how many of eight
   bearings it could step on, its own footprint, the slope against its own gradient
   limit, and the distance to the nearest base.
-  Measured: 0-1 trapped hull per 12 minutes across runs, on both the current build
-  and the 3 g one, and it is the same fault every time - a mech spawned with its own
-  footprint overlapping a structure 55-140 m off its base.  `Integrate.step` tests
-  the destination's five samples, which include the overlap the hull already sits
-  in, so every step is refused and the machine stands at full throttle for the rest
-  of the match; `Drive.clear_run` probes 0.8-4 m ahead and never tests the hull's
-  own footprint, so it reports the way clear and the fan never fires, and a detour
-  changes a route the hull cannot start to follow.  A spawn that overlaps a
-  structure is the place a fix belongs (`World.base_spawn` / `spawn_unit`).
+  Before `Systems/Unstick.cs` it found 0-1 trapped hull per 12 minutes across runs,
+  on both the current build and the 3 g one, and it was the same fault every time: a
+  mech spawned with its own footprint overlapping a structure 55-140 m off its base,
+  so `Integrate.step` refused every step (its five samples include the overlap the
+  hull already sits in) and the machine stood at full throttle for the rest of the
+  match.  The check also opens with two `planted` rows - a mech and an APC put down at
+  the centre of the tallest building on the map with a velocity - which is the one
+  reading that proves the repair, because the battle itself only produces that state
+  now and then.  Measured with the pass in: both planted rows come out 10 m away on
+  clear ground at 0.00 m/s, and 12 minutes of battle is 0 stuck hulls, exit 0.
 * **`--check drive` measures the mech's thrust law** (`Harness/DriveCheck.cs`): the
   two design points off the constants (`sqrt(T/k)` = 180 km/h,
   `sqrt((T cos30 + g sin30)/k)` = 220) and then a hull on a **treadmill** - put back

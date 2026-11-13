@@ -62,8 +62,11 @@ function netIn(app) {
 
 function sound(app) {
   // the pilot's eye is where the wavefront has to have arrived, and the sound
-  // field reads the live position and the live yaw for exactly that reason
-  app.audio.field.update(ctx.own, app.input.viewYaw, ctx.now);
+  // field reads the live position and the live yaw for exactly that reason.
+  // Its clock is seconds (`performance.now() / 1000`, the same one `push`
+  // stamps); `ctx.now` is milliseconds, because the models' gatling spin reads
+  // it that way.
+  app.audio.field.update(ctx.own, app.input.viewYaw, ctx.now / 1000);
 }
 
 function sendInput(app) {

@@ -62,6 +62,13 @@
 9. **`frontend_v2/node_modules` 是指向 `frontend/node_modules` 的符号链接**(`.gitignore`
    里加了一行),过渡期不重复装一遍包。
 10. **`map/index.js` 保留 `MapData` 这个名字**,`tests/frontend/height` 只改路径不改代码。
+11. **声音场的时钟单位踩了一次坑(已修)。** `SoundField` 的 `push` / `update` 走的是
+    `performance.now() / 1000`(秒),而 `app/frame.js` 的 `ctx.now` 是毫秒——模型那边的
+    机炮转速按毫秒读,所以同一个数被两个单位用了。结果每个事件一进空气就 `age > SOUND_TTL`
+    被丢掉:**整局完全没有枪炮声**,而告警(颤音、锁音)照响,因为它们绕开声场直接调。
+    现在固定成 `field.update(own, viewYaw, ctx.now / 1000)`,注释写清哪个是毫秒哪个是秒。
+    这是"重构里唯一一次真·回归",也说明 §11 那条"用耳朵验一遍"的检查不能省:
+    `renderer.stats`、截图和测试都不会报它。
 
 **实测时踩到的两个环境坑**(不是代码问题,记在这里免得下次再查):后台标签页里 rAF 被
 限流,`screenshot` 可能抓到**上一帧的半成品**,看起来像整屏被一块巨大的三角面糊住;

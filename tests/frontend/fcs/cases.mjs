@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-import { solve } from '../../../frontend/src/fcs.js';
+import { solve } from '../../../frontend/src/core/fcs.js';
 import { TOL } from '../support/tol.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -28,7 +28,7 @@ export function inputs(c) {
   return { shot: c.shot, track };
 }
 
-/** One case solved by `frontend/src/fcs.js`. */
+/** One case solved by `frontend/src/core/fcs.js`. */
 export function run(c) {
   const { shot, track } = inputs(c);
   return solve(shot, track);

@@ -99,9 +99,12 @@ cmd_status() {
   mux ls 2>/dev/null || echo "no sessions"
 }
 
+# The web client lives in `frontend/`; `npm run build` fills `assets/`, which the
+# server serves at `/`.  The build runs the layout check and the syntax check
+# first (both fail loudly), then webpack.
 cmd_build() {
   ( cd "$ROOT/frontend" && npm install --cache /tmp/npmcache --no-audit --no-fund && npm run build )
-  echo "client built into assets/"
+  echo "client built from frontend/ into assets/"
 }
 
 case "${1:-start}" in

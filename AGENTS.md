@@ -71,7 +71,11 @@ Systems/                   # mechanics shared by every mode, each exposes run(wo
                            #     Nav/        the facet navmesh (see "A hull that has run out
                            #       NavMesh.cs  of road"): NavProfile, NavWalk, NavRegion, NavQuery
                            #       Paths.cs    the stuck clock, the request queue, string-pull
-                           #   Movement/  one driver per chassis: Foot.cs / Mech.cs / Vehicle.cs,
+                           #   Unstick.cs: a hull put down overlapping a structure is
+                           #     moved to the nearest clear ground, velocity zeroed
+                           #   Movement/  one driver per chassis: Foot.cs / Vehicle.cs, and
+                           #     Mech/ (five laws, see "The legs are an engine"): Steer /
+                           #     Thrust / Slope / Drag / Ground, each a `run`.
                            #     Support/{Drive,Integrate}.cs.  The only writer of `vel`/`pos`.
                            #   Gunnery.cs: the sight leads, the hull and the arms slew after it
                            #   Sight.cs: the one line of sight (terrain + smoke), clear/why
@@ -115,28 +119,47 @@ assets/                    # compiled client (webpack output, gitignored)
 tools/
   gun_report.py            # weapon-report audio analysis (numpy; the numbers in audio.js)
   smoke_lock_test.js       # browser-console driver: seeker A/B smoke test
-frontend/
+frontend/                  # the client: four layers, one direction (checked by
+                           #   scripts/depgraph.mjs); `npm run build` = deps check +
+                           #   syntax check + webpack -> ../assets/
+  package.json
   webpack.config.js        # entry src/main.js -> ../assets/bundle.js
   icons.json               # single source of truth for every HUD icon glyph
-  scripts/                 # fetch-material-icons.sh: rebuild the font subset
+  scripts/                 # depgraph.mjs (layers, no cycle), syntax.mjs (every module
+                           #   parses), fetch-material-icons.sh (rebuild the font subset)
   vendor/material-symbols/ # committed Material Symbols subset (a few KB) + LICENSE
   src/
     main.js                # boots Game, exposes it as window.__game
-    game.js                # client loop, input -> server, camera, fx, settings menu
-    icons.js               # icons.json -> glyph strings, FontFace loader, drawIcon()
-    net.js                 # websocket, snapshot decode, interpolation
-    map.js                 # client copy of terrain + the sight ray (`fcs.js` re-exported)
-    fcs.js                 # the fire control law, twin of Core/FireControl.cs
-    scene.js               # unit models built from instanced primitives
-    renderer.js            # tiled near terrain + far LOD grid, roads, instanced draws,
-                           #   and the screen-space overlay (the threat arrows)
-    hud.js                 # centre cross, arm impact markers, lock box, modules, minimap
-    meshes.js              # primitive meshes (box, sphere, cone, cylinder, rock)
-    particles.js           # smoke, trails, impacts
-    math.js                # mat4, lookAt, compose, dirFrom, angles
-    input.js               # pointer lock, keys, wheel, panel keys
-    audio.js               # WebAudio cues, master gain + volume setting, SOUND_SPEED + attenuation()
+    icons.js  shop.js      # two leaves: the icon glyph table, the rearm pricing law
+    core/                  # config.js (shared numbers) storage.js math.js fcs.js
+    net/                   # wire.js rows.js view.js client.js index.js
+    map/                   # tiles.js field.js solid.js sight.js predict.js paint.js
+    audio/                 # levels.js graph.js voices.js synth.js cues.js alarms.js
+                           #   field.js (the sound field) index.js
+    render/                # gpu.js mesh-table.js batch.js meshes.js textures.js
+                           #   shaders/{chunks,sky,terrain,road,mesh,overlay}.js
+                           #   terrain.js roads.js props.js overlay.js camera.js
+                           #   passes.js renderer.js
+    scene/                 # palette.js helpers.js arms.js projectile.js smoke.js
+                           #   units/{mech,vehicle,infantry}.js index.js
+    hud/                   # layout.js canvas.js reticle.js leads.js dial.js minimap.js
+                           #   messages.js status.js overlays.js gear.js
+                           #   panels/{shop,settings}.js index.js
+    fx/                    # dispatch.js (the server's event stream), particles.js
+    input/                 # bindings.js pointer.js sight.js index.js
+    app/                   # game.js frame.js boot.js panels.js hudstate.js
+                           #   systems/{aim,lead,rwr,camera,feedback,shop,settings}.js
 ```
+
+`render/passes.js` is the draw order and `app/frame.js`'s `STAGES` is the frame
+order; everything the console reaches for has a name (`g.net.*`,
+`g.hud._project`, `g.renderer.draw` / `beginDynamic` / `roadCount` / `propStats` /
+`screenArrow` / `overlayOrigin`, `g.freeCam` for the free camera, `g.input.*`,
+`g.audio.*`, `g.particles.*`).  The layers: the camera, the aiming, the pre-aim
+rings, the warning receiver and the panels are `app/systems/`; the model emitters
+take an instance batch (`render/batch.js`) instead of calling the renderer by
+shape name; the renderer's passes, shaders and GL resources are files of their
+own; the wire is `net/wire.js` + `net/rows.js` and the picture is `net/view.js`.
 
 ### Server
 
@@ -215,9 +238,14 @@ frontend/
   read for that.
 * **World** (`Core/World.cs`) owns terrain, players, the ECS and the system
   pipeline. Shared order: `rearm`, `player_input`, the mode's pre-systems
-  (battle: `ai`), `gunnery, locking, smoke, weapons, movement, projectiles,
+  (battle: `ai`), `gunnery, locking, smoke, weapons, unstick, movement, projectiles,
   proximity, blasts, mortality, economy, debris`, then the mode's post-systems
-  (battle: `waves`).
+  (battle: `waves`).  `unstick` sits immediately before the drivers: a hull whose own
+  footprint overlaps a building, a rock, a base pad or a trunk has no step it may
+  take (`Integrate.step` refuses any destination whose five samples include that
+  overlap), so it is put on the nearest clear ground with `vel` zeroed and its
+  `vel_cmd` kept, and it drives off from there.  One tick in `Unstick.EVERY` (10)
+  looks, because the fault never heals itself.
   A round's tick then runs `spheres, expire, flight_ballistic, flight_rocket,
   flight_saclos, flight_top, first_hit_ground, first_hit_structures,
   first_hit_units, first_hit_fuse, impact` - one system per kind of round and one
@@ -289,10 +317,11 @@ frontend/
 * **AI is intent, movement is the machine.**  A crew says *where* and *how fast* -
   `nav_route` (an index into `world.routes`, `Core/Nav.cs`), or a point
   `nav_x`/`nav_z`, plus `nav_speed` - and nothing else that moves.  The drivers
-  (`Systems/Movement/`: one file per chassis, `Foot` / `Mech` / `Vehicle`, with
-  `Support/Drive.cs` for the intent-to-way-point step and `Support/Integrate.cs` for
-  `vel_cmd -> vel -> pos`) own `pos`, `vel`, `vel_cmd`, `leg_yaw`, `wheel_speed`,
-  `backout_t`, `blocked_t` and the route cursor `path_i`.  Corner speed, the
+  (`Systems/Movement/`: `Foot` / `Vehicle` by file, the mech as the five laws under
+  `Mech/`, with `Support/Drive.cs` for the intent-to-way-point step and
+  `Support/Integrate.cs` for `vel_cmd -> vel -> pos`) own `pos`, `vel`, `vel_cmd`,
+  `leg_yaw`, `wheel_speed`, `backout_t`, `blocked_t` and the route cursor
+  `path_i`.  Corner speed, the
   acceptance radius and the obstacle fan are *the machine's*: an 11 m turning radius
   cannot hold 100 km/h round a right angle, so `Nav.route_speed` / `Nav.arrive_radius`
   are called by `Vehicle.run` and never by a crew.  A pilot writes `vel_cmd` from the
@@ -455,7 +484,7 @@ frontend/
   asymmetry the whole design is built to avoid.
 
 * **The client solves the same law for the HUD** (`frontend/src/fcs.js`:
-  `leadPoint`, `zeroAt`, `solveElevation`, `flightTo`, `solve`).  `map.js`
+  `leadPoint`, `zeroAt`, `solveElevation`, `flightTo`, `solve`).  `map/`
   re-exports them, so `game.js` keeps reading `leadPoint` / `zeroAt` for the
   rings, the impact marker and the range readout.  The two hosts cannot share
   code (C# and JS), so they share a case table instead: `tests/cases/fcs.json`
@@ -470,7 +499,7 @@ frontend/
   the tube diameter and length, the pitch, the mouth (`centre + length/2`) and
   the body it is drawn as — and `defs.rack_tube(fired, spec)` says which cell
   the next round leaves from (bottom row first, left to right). `weapons.fire`
-  solves its launch point off those two and `scene.js`'s `rack()` draws the same
+  solves its launch point off those two and `scene/arms.js::rack()` draws the same
   lattice from the *same spec*, which travels to the client with the rest of the
   weapon table: a mouth that was drawn is a mouth a round leaves. The gun's own
   length wins first (`wd["reach"]`), then the rack's mouth, then the kind's
@@ -483,7 +512,7 @@ frontend/
   about 1.15 tube widths (the nest's 0.155 on a 0.135 bore), which is what makes
   a face read as a bundle of tubes; the body is a 0.04 m sheet-metal edge round
   the lattice and nothing more.  How a rack is *hung* is two fields, and the
-  server, `scene.js` and the client's muzzle all read the same two: `elev` is
+  server, `scene/arms.js` and the client's muzzle all read the same two: `elev` is
   what the tubes add to the angle of the arm they are on, and `bolted` means
   the arm's slewing does not move them at all.  So the top-attack rack is
   `bolted` at its 42° (the round's own loft, whatever the pilot's cross does),
@@ -647,7 +676,7 @@ frontend/
   The heightfield stores vertex heights with no quantum; the surface between four
   of them is the two flat triangles split along the tile's own diagonal
   (`tx + tz <= 1` is `{a,b,c}`, the rest `{d,c,b}`), and *that rule is the only one*:
-  the server, `map.js`'s `heightAt` and the near terrain mesh all solve it, so the
+  the server, `map/`'s `heightAt` and the near terrain mesh all solve it, so the
   facet a round bursts on is the facet under a hull and the facet under the cross.
   `tests/cases/height.json` is the table both hosts answer (a bilinear blend, a
   terrace or the other diagonal all fail it).  The physics cell stays 16 m - the
@@ -677,8 +706,24 @@ frontend/
   uses, so a planned leg is a leg the machine can drive.  Before it, the raider's
   street grid called a wood passable at a cost and a command base solid while the
   driver said the opposite of both.  Strategic planning is still `Raid.FieldNav`
-  (128 m + the force gradient); the navmesh is the layer under it, and the only
-  one that knows a facet's slope.
+  (128 m + the force gradient), and it now asks the mech's own climb limit what a
+  node it may cross: the block closes when `solid >= 0.5` **or** when
+  `FieldNav.STEEP_SHARE` (a quarter) of its facets are steeper than
+  `NavProfile.of(ETYPE_MECH).max_grad` (0.70, 35 deg) - so ground the hull cannot
+  climb is closed at 128 m instead of being discovered at 16.  A block is a
+  *share* and not a worst case on purpose: 128 m of room is enough to walk round
+  one cliff, and a node that closed on a single steep facet would cut the map into
+  pieces.  `_shortcut`'s string-pull makes the same call along the line it would
+  take (`_open_line` tests `max_grad` uphill, `Integrate.too_steep`'s rule),
+  because a shortcut over a face the machine cannot walk up undoes the A*'s care.
+  Measured (`--check nav`'s `raider grid` row, 15625 nodes on the battle map, the
+  facet share sampled on a 32 m lattice): 5 nodes walled, **0 closed for a mech**
+  and the steepest block on the whole map is 3 % of its ground over 35 deg - the
+  map's faces top out around 24 deg where a hull would cross them, so a mech's own
+  limit never binds at 128 m (its 35 deg is above the ground it is given); the 25
+  towns stay reachable and the build is 14 ms of the launch tick.  A chassis whose
+  limit is under the map's hills closes nodes here (`NavProfile` is what the rule
+  reads), and the raider grid itself is only ever built for mechs.
 * **A leg is queried at the granularity of each shape it can meet.**  The ground
   is a continuous field and is sampled every 9 m; a building is a whole tile and
   is solved as a slab from the terrain to its roof (`walls`); a trunk is a
@@ -763,7 +808,7 @@ frontend/
   down all over the map).  **One boolean, two channels**: `_threats` computes
   `radarAlarm = some(t => t.alarm)` where `t.alarm` is
   `seen ? (warn || aim) : steady` written per round, and both the rim
-  (`hud.js`) and the trill (`_alarms`) read exactly that - which is why they can
+  (`hud/`) and the trill (`_alarms`) read exactly that - which is why they can
   count the same beats (`RWR_TONE_S`).  A round the receiver can place is judged
   on its geometry, one it only hears on its bearing drift; `seen` is re-judged
   every frame, so a round that slows down or turns hands judgement straight back
@@ -808,7 +853,7 @@ frontend/
     so an arrow is lit by the sun the machine under it is lit by; `uOutline`
     doubles as the piece selector (1 cylinder, 2 cone) because the shader paints
     that cone's base cap white.
-  `hud.js` owns the layout (`dialAt`, `arrowRingAt`, `ARROW_R`): the ring is the
+  `hud/` owns the layout (`dialAt`, `arrowRingAt`, `ARROW_R`): the ring is the
   strip the gear vacated when it moved into the screen's corner, and the message
   stack stops 10 px short of it.  With a round inbound the rim **blinks** - pure
   red against a washed-out red, one alternation per tone of the missile trill
@@ -1010,6 +1055,71 @@ frontend/
   points it has passed).  The lane is a plain polyline: **the map does not round its
   corners**, because a wheeled hull cannot follow a right angle whatever the map does
   with it — which is the vehicle driver's problem, not a crew's (`Nav.passed`).
+* **The legs are an engine, and the hill is the other half of it.**  A mech is not
+  a ramp toward a commanded velocity: `Systems/Movement/Mech/` is five passes, one
+  law each, in the order the tick runs them - `Steer` (the crew's intent and the leg
+  swing that follows it), `Thrust` (the power curve and its g limit, the bearing it
+  pushes on, the cruise governor, the brake that plants them), `Slope` (gravity along
+  the way the hull is going), `Drag` (the square-of-speed resistance), `Ground`
+  (`Integrate.step`).  The velocity buffer *is* where the forces compose, so there
+  is no accumulator component, and the state is the components every mover already
+  owns.
+  **The bearing is the whole of the steering.**  One actuator: the legs push along
+  the command, and the way the hull is *going* is whatever that push has bent it
+  into (`a/v` of width - 4.1 s to 45 degrees and 16.7 s to square from 180 km/h,
+  with the speed barely touched, measured by `--check drive`'s `redirect` rows).  A
+  pilot's command comes off his own hull's frame, so `A` pushes the machine square
+  across itself, and steering is turning the *sight*: `Gunnery` swings the hull after
+  it at 80 deg/s and the thrust follows the hull.  That is why `ALT` (the free look)
+  needs no heading lock - the stick never read the view.  A second actuator for the
+  direction (`MECH_TURN_G` 3 g) was tried in 1.27.0 and dropped as far too strong
+  for the machine it was on.  The crew's detour count in `--check nav`'s lane row is
+  the number that reads a corner: 82 and 133 in two runs here, 19 with the 3 g turn -
+  single runs, with a whole battle moving around them.  `--check battle --minutes 12`
+  on seed 11 goes 533 deaths on 20.9k rounds against 589 on 26.1k for that 3 g build,
+  i.e. 39 rounds per kill against 44: a hull that corners slowly fights a little
+  smaller war, and no more wastefully.
+  **The push is a power, so the force is `P(v)/v`**, `MECH_HP_LOW` 5000 hp at a
+  standstill rising linearly to `MECH_HP_HIGH` 8000 hp at `MECH_RATED_V` (50 m/s,
+  180 km/h), flat above it, over `MECH_MASS` 15 t.  A bare curve runs away at v->0,
+  so the drive carries its own **g limit** - `MECH_G_LIMIT` 1.5 g, 221 kN, and
+  gravity is counted *apart* from it - and the two take turns: below 76 km/h a flat
+  1.5 g, above it the engine (1.15 g at 108 km/h, 0.81 g at 180), 0-100 km/h in
+  2.1 s.  A constant thrust gave the same 0.8 g everywhere and read as neither an
+  engine nor a machine; 5 g off the line read as a cartoon, which is why the limit
+  is where it is.  `MECH_MASS` is the only mass anywhere in the simulation, because
+  horsepower is; every other system thinks in accelerations.
+  The machine pushes along the **slope**, so only `cos(slope)` of it survives
+  horizontally; the hill adds `g sin(slope)`, and `MECH_DRAG` is *solved* from the
+  flat balance at the rated speed (`P(v0)/v0 = m k v0^2`, one const expression in
+  `Defs`) because a power curve has no top end of its own.  The hills are therefore
+  consequences, not constraints (`docs/plans/mech_thrust.md`; `--check drive`
+  settles a hull on the steepest face the map has): 30 deg uphill 125 km/h, the
+  35 deg climb limit 114, 30 deg down 210, 40 deg down 215.  The g limit is a limit
+  on the *drive*, so a hill still adds or takes its own: at the 35 deg limit a hull
+  pulls away at 1.5g·cos35 - g·sin35 = 6.4 m/s^2 and is never dragged to a standstill
+  by gravity on a slope it may climb.
+  A command at the hull's **own top speed** is the stick pinned - full thrust with
+  no governor, which is the only reason a descent can pass the flat top speed at
+  all (at 210 km/h down a 30 degree face the drive is 0.66 g, far under its limit,
+  so the limit plays no part up there).  A slower command is a cruise speed, held by
+  `u = clamp((cmd - v_along)/3, -1, 1)` **and capped at the gap that is left**:
+  one tick of 1.5 g is half the governor band, so a governor that overshot would
+  rattle around its target (`--check drive` reads 11.90 m/s of a 12 m/s cruise).
+  No command at all plants the legs - `MECH_BRAKE` 12 m/s^2 (1.22 g), near enough
+  the launch that the machine starts and stops alike (180 km/h to a standstill in
+  78 m).
+  **Parked, the legs carry the hill**: `Slope` spends gravity on a hull that is
+  *going* somewhere (a command, or motion), so a machine that brakes to rest on a
+  35 degree face stays there with zero drift (`--check drive`'s two `park` rows:
+  10 s parked, moved 0.00 m, height unchanged).  Braking downhill pays gravity's
+  share first - 204 km/h to a stop in 5.0 s where the flat takes 3.5.
+  The legs' alignment (`MECH_LEG_ALIGN` 0.45..1) scales the *thrust* - a hull that
+  has not got its feet round yet pushes weaker, and the feet take 0.6 s at
+  `Integrate.turn_legs`' 2.6 rad/s to swing a right angle - and it never caps a
+  speed, so a hull that reverses its command turns its legs round and pulls away in
+  an arc.
+
 * **Wheeled hulls** — an APC carries the `vehicle` tag, and that tag changes
   both halves of its movement. Locomotion (`movement._vehicle`) is a rear-axle
   bicycle model: `leg_yaw` *is* the hull state (mirrored into `yaw` for the
@@ -1085,7 +1195,7 @@ frontend/
   `structure_hit`, which walks the same tiles and asks each one.
 * **Trees are trunks for physics, canopies for sight.** A tree/forest tile
   holds 1-5 trees whose trunks are the only solid part of it: `_trunks(i, j)`
-  (server) / `treeTrunks` in `map.js` lay them out from one hash both sides
+  (server) / `treeTrunks` in `map/` lay them out from one hash both sides
   replicate exactly, and each is a **cylinder** - `r` = 0.35-0.6 m, `h` =
   0.4 x the tree's 10-18 m height, the same cylinder the renderer draws.
   A trunk is a metre wide, far thinner than the 8 m the ray walk samples at, so
@@ -1115,11 +1225,19 @@ frontend/
   which is what keeps the belief honest), the player's IR lock
   (`Systems/Locking.cs`, which used
   to ask the field only and so let a hull be locked straight through a screen
-  of smoke) and the missile seeker. `map.js` mirrors the same rule for the HUD
+  of smoke) and the missile seeker. `map/` mirrors the same rule for the HUD
   (`MapData.sightAt` + `sightBlocked`, canopy and puffs); the pre-aim box is
   drawn only through a clear line of sight, exactly what the seeker can lock.
   The ballistic prediction (`sightPoint`, `groundHit`) stays on the *round's*
   rule instead - leaves and smoke never stop a bullet.
+* **The countryside is groves, and there are 920 of them.**  The map's woods are
+  blobs, not a carpet: each one is a round stand of 2-12 tiles of radius with a
+  0.62-of-radius core of thick forest (`TILE_FOREST`, several trees a tile) and a
+  ragged edge of single-tree tiles, and lone trees are scattered over the plains
+  at 0.45 % of the grass.  The count is what changed in 1.27.0 (460 -> 920) and the
+  size of a stand is untouched - the map has more places to hide a hull in, and the
+  same ones to hide it in as before.  Roads and town squares are cleared *after*
+  the forests, so a trunk never lands on the asphalt or in a plaza.
 * **Towns are grown, not drawn.** Each one starts on its lane (`_on_lane` projects
   the spot onto the nearest lane point and returns the lane direction) and then
   `_town_streets` grows the network
@@ -1165,7 +1283,7 @@ frontend/
   whole column whether the entity owned the component or not, so a rifleman
   paid for a mech's arms, magazines and sight (56 of his 80 bytes empty, and
   `pad3` + `hp[1]` were never even written: `AllocateUninitializedArray` sent
-  heap bytes).  Row widths now follow what `scene.js` / `hud.js` actually read:
+  heap bytes).  Row widths now follow what `scene/` / `hud/` actually read:
   a mech keeps `syaw`/`spitch` (its own sight head is drawn on them) and
   `ammo`/`mag`/`weapon`/`arm_hp`, an APC keeps `turret`/`pitch`/`vel`/`target`
   (the turret, the lead rings, the laser warning), a base keeps `pitch`/
@@ -1202,10 +1320,10 @@ frontend/
   (`view.mech`), because `game.ownEntity()` returning null sends the camera to
   the base orbit - i.e. a drop looks like a death - and **the command bases**,
   because the HUD's base-integrity bars scan the entity table for `type === 5`
-  (`hud.js`), so a base at 2 km would blink out of the top bar for most of a
+  (`hud/`), so a base at 2 km would blink out of the top bar for most of a
   match.  Two rows are 2.4 kB/s.  A dead pilot's eye is his base
   (`view.at`), which is where the client's camera is anyway.
-  **Enter at R, leave at 1.15 R** (`TIER_DEAD_BAND`): `net.js` deletes every
+  **Enter at R, leave at 1.15 R** (`TIER_DEAD_BAND`): `net/` deletes every
   entity the newest frame does not mention, so without the band a hull parked on
   a circle is re-created (position snap, `mvx` smoothing reset) every crossing.
   The client needs **no change** for any of this - every consumer is map-driven
@@ -1359,13 +1477,24 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
 ### Client
 
 * The lobby's callsign is the one setting that is not the audio bus's
-  (`audio.js` keeps `mech.volume` / `mech.alarmvolume`); `game.js` keeps
+  (`audio/` keeps `mech.volume` / `mech.alarmvolume`); `game.js` keeps
   `mech.name` and writes it at `DEPLOY`, so a reload prefills the last callsign
   instead of `PILOT-<pid>`.
 * `game.js` sends input at 30 Hz (`{t:"in",yaw,pitch,mx,mz,fl,fr}`) and drives
   the frame: interpolate snapshots, aim, build the draw list, draw, HUD.  The
   `yaw` / `pitch` on the wire are the *sight* (where the pilot looks), never the
   hull: `player_input` writes them into `sight_yaw` / `sight_pitch`.
+* **The stick drives in the hull's frame** (`input/sight.js::moveVector`, handed
+  the newest hull `tyaw` off the wire).  `mx` / `mz` come off the hull's own yaw, so
+  W pushes along the machine and A pushes square across it, and turning is done with
+  the *sight*: `Gunnery` swings the hull after the look line at 80 deg/s and the
+  thrust goes with the hull.  ALT is then only a look (`freeYaw`) - it moves
+  nothing, because the stick never read the view.  `sendInput` runs before the
+  `own` stage, so it asks `ownEntity()` for the hull rather than reading `ctx.own`,
+  and the *eye*, the cross and the reported pose all still read the view.  The
+  minimap's own mark reads the view heading (`hudstate.viewYaw` ->
+  `minimap.js`): it points where the pilot is looking, and `own.yaw` on the wire is
+  the hull still swinging after it.
 * **Two headings, and the client keeps them apart.** `_aim` solves the centre
   cross, the range readout and the seeker ring from the view (`dirFrom(input)`,
   the sight line from `_sightEye`) and each arm's impact marker from the *bore*
@@ -1418,22 +1547,22 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
   `WEBGL_multi_draw` with a per-command fallback. Prop instances are batched
   per mesh (`this.meshes.length` batches) and culled in 640 m chunks
   (`CHUNK_TILES` = 40) by `_buildProps`, which plants the trees of
-  `map.js`'s `treeTrunks` (the same trunks the server collides against) and,
+  `map/`'s `treeTrunks` (the same trunks the server collides against) and,
   per building tile, a `MESH_FACADE` box as tall as `map.walls`
   (storeys and windows are painted in the shader off `vLocal`/`vScale`,
   `uFacade`), a roof slab with a parapet, an occasional plant box or annex.
-* `scene.js` builds unit models from primitives in a local frame: **+X
-  forward, +Y up, +Z right** (see `math.js compose`). A Y-axis primitive is
-  laid along the barrel with `pitch = FORWARD` (`-PI/2`); use
+* `scene/` builds unit models from primitives in a local frame: **+X
+  forward, +Y up, +Z right** (see `core/math.js`'s `composeInto`). A Y-axis
+  primitive is laid along the barrel with `pitch = FORWARD` (`-PI/2`); use
   `FORWARD + p` when a pitch is already in play. A **box** scales on X = along
-  the bore, **Y = up, Z = across** — `put('box', p, dist, len, height, width)`,
+  the bore, **Y = up, Z = across** — `put(MESH.BOX, p, dist, len, height, width, colour)`,
   and swapping the last two draws a tall pod lying on its side.
 * **An arm that carries its own launcher draws nothing behind it.** A weapon with
   a `rack` (the rocket nest, the top-attack rack) *is* the arm: the plain station
   body and the 0.66 m shoulder ball are skipped for it, because they swallow the
   tube mouths at both ends — which is exactly why the first top-attack rack could
-  not be seen from behind. `rack()` draws the body `defs.rack` derived plus one
-  hexagon per cell, dark for a cell that has fired.
+  not be seen from behind. `rack()` in `scene/arms.js` draws the body
+  `defs.rack` derived plus one hexagon per cell, dark for a cell that has fired.
 * **`at()` turns a piece's offset with the same yaw it turns the mesh with**,
   which is what everything bolted to a hull wants - and what the sight head must
   *not* do: its pivot is fixed to the hull, so the head has to rotate on the
@@ -1443,7 +1572,7 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
   `spitch`. Getting this wrong (passing the sight's angles to `at`) draws the
   head a metre and a half off its own pillar whenever the two disagree.
 * **The pre-aim ring reads the target's acceleration off the wire**
-  (`leadPoint`'s `ax` / `az`): nobody broadcasts throttle, so `net.js` measures
+  (`leadPoint`'s `ax` / `az`): nobody broadcasts throttle, so `net/` measures
   it - the difference of two velocity samples over the ticks between them, EMA
   smoothed on a 0.25 s time constant, a jump over 25 m/s^2 treated as a
   teleport rather than a pull, and a sample older than half a second ignored.
@@ -1467,7 +1596,7 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
   target's two rings, when they would overlap at the assist's width, are laid
   out as a pair along the line their own two solutions make - each ring on its
   own arm's side of its middle, and no closer in than `LEAD_PAIR_SEP` radii
-  (`hud.js`, 1.0), so the two **overlap** instead of standing tangent - and the
+  (`hud/`, 1.0), so the two **overlap** instead of standing tangent - and the
   direction is kept from the last frame while the two points are closer than a
   pixel - so the pair rides the true points and a fast target cannot make it
   swap arrangements between two frames. Overlap is what makes the pair handy:
@@ -1500,7 +1629,7 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
   (`input.onToggleAssist` -> `_toggleAssist`), so the pilot keeps the pointer and
   the cross is back under his hand without the panel; the message list says
   which way it went, and the panel's button reads the same field.
-* `map.js` must stay ballistically identical to the server: same gravity,
+* `map/` must stay ballistically identical to the server: same gravity,
   same 1/30 step, same launch bias (`wd.bias`), the same "building walls are
   columns, tree trunks are cylinders" rule (`wallAt`/`obstacleAt`/`trunkHit`),
   otherwise the predicted impact point drifts off the real one. It also carries
@@ -1524,7 +1653,7 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
   JSON, whose key names alone (`"t":"fx","k":"boom","x":…`) were 40 of every
   68 bytes.  Measured on a real 6-mech fight: 190 events/s, 2.41 kB/s, and the
   same batch serialised as JSON is 2.9x bigger; over minutes 8..15 of a battle
-  the fx line went 13.9 -> **4.1 kB/s**.  `net.js` dispatches binary frames by
+  the fx line went 13.9 -> **4.1 kB/s**.  `net/` dispatches binary frames by
   magic (`MECH` snapshot, `MECF` fx, `MECP` ping) and rebuilds the events in the
   shape `game._fx` already speaks, so nothing downstream knows the difference.
   `hearable` runs *before* the split, so the per-ear filter is unchanged: it
@@ -1735,8 +1864,10 @@ cd frontend && npm install && npm run build      # -> assets/
   ./dotnet.sh run -- --check diag --minutes 2      # what a few AI hulls are doing
   ./dotnet.sh run -- --check net --minutes 30 --from 8   # one pilot's download, per minute
   ./dotnet.sh run -- --check fcs                   # crew vs pilot, same scenarios
+  ./dotnet.sh run -- --check drive                 # the mech's thrust model vs its own algebra
   ./dotnet.sh run -- --check terrain                # facet slopes, lane drivability, sample cost
   ./dotnet.sh run -- --check nav                    # the navmesh: region, profiles, a 12.7 km plan, lanes
+  ./dotnet.sh run -- --check stuck --minutes 12    # does a battle keep moving: hulls ordered somewhere and still
   ```
   `MECH_PERF=1` on the battle check runs it without the per-tick event scan and
   prints the per-minute cost: on a 12 minute battle it is **1.5 ms/tick**
@@ -1746,6 +1877,47 @@ cd frontend && npm install && npm run build      # -> assets/
   what the crew believes"); before that look it was 1.3 ms.
   Every check ends with `ecs.validate()`, so bookkeeping that a value comparison
   would not catch (a row pointing past its buffer) fails the run.
+* **`--check stuck` asks whether a battle keeps moving** (`Harness/StuckCheck.cs`):
+  the failure no census line shows, because the field reads the same at 8 minutes
+  whether two crews are driving or nine are pushing at a wall.  Each crewed hull
+  (a mech or an APC - a pilot's machine is a puppet with no crew and is left out)
+  has its position pinned to an anchor, the anchor moves when the hull takes 2 m
+  off it, and the seconds since then are its clock; a hull that is still **and**
+  ordered somewhere (`nav_speed` over 0.5 m/s with a way point more than 15 m off,
+  read without touching the driver's cursor) is what the check calls stuck.  Hulls
+  never block each other, so that state is the ground or the route.  Per minute it
+  prints the crews alive, the crews with an order, the ones still for a minute, the
+  stuck ones, a `crawl` column (ordered and making under a tenth of what it was
+  told), and the kilometres the field walked; any hull still for 2 minutes while
+  ordered is a fault and a detail line says which chassis, where, what it wanted
+  against what it made, and what the ground is - in a wall or not, how many of eight
+  bearings it could step on, its own footprint, the slope against its own gradient
+  limit, and the distance to the nearest base.
+  Before `Systems/Unstick.cs` it found 0-1 trapped hull per 12 minutes across runs,
+  on both the current build and the 3 g one, and it was the same fault every time: a
+  mech spawned with its own footprint overlapping a structure 55-140 m off its base,
+  so `Integrate.step` refused every step (its five samples include the overlap the
+  hull already sits in) and the machine stood at full throttle for the rest of the
+  match.  The check also opens with two `planted` rows - a mech and an APC put down at
+  the centre of the tallest building on the map with a velocity - which is the one
+  reading that proves the repair, because the battle itself only produces that state
+  now and then.  Measured with the pass in: both planted rows come out 10 m away on
+  clear ground at 0.00 m/s, and 12 minutes of battle is 0 stuck hulls, exit 0.
+* **`--check drive` measures the mech's thrust law** (`Harness/DriveCheck.cs`): the
+  two design points off the constants (`sqrt(T/k)` = 180 km/h,
+  `sqrt((T cos30 + g sin30)/k)` = 220) and then a hull on a **treadmill** - put back
+  on its spot every tick with the velocity it made, so a drag balance can settle
+  without three kilometres of clear ground: flat, the steepest face the map has
+  (uphill and down, with the theory solved from the gradient it actually measured),
+  the brake's run-out from 180 km/h, a 12 m/s cruise, two `park` rows - braked to
+  rest on that same face, uphill and down, then ten seconds standing on it - and two
+  `redirect` rows: the command turned square at speed, with the `u` / `w` split of
+  the law integrated beside it.  Measured: 49.67 against 50.00 on the flat (the
+  tick's own discretisation), 38.01 against 38.18 up a 24 degree face, 56.78 against
+  57.10 down it, 78 m to a stop, 11.90 m/s of a 12 m/s cruise, 0.00 m of drift
+  parked, and a right angle in 4.10 s to 45 degrees and 16.7 s square from 176 km/h
+  (the integrated law says 4.07 and 16.7; the feet are planted before the clock
+  starts, so the row is the push and not the leg swing).
 * **`--check fcs` is the integration half of the fire control's proof**
   (`Harness/FcsCheck.cs`): a range world with everything but two hulls and the bases
   cleared off it, one flat 1.8 km corridor, and two ways to shoot the same target -
@@ -1788,7 +1960,7 @@ cd frontend && npm install && npm run build      # -> assets/
   sphere: the numbers move with where he is.
 * **`tools/gun_report.py`** is the weapon-report analysis (it reads a recording
   with ffmpeg and prints the third-octave spectrum per window; `--synth` renders
-  the cue `HEAVY_REPORT` in `audio.js` describes).  It is the one Python script
+  the cue `HEAVY_REPORT` in `audio/` describes).  It is the one Python script
   left, it needs `numpy` in `.venv`, and it never touches the server.
   `tools/smoke_lock_test.js` is a browser-console driver for the seeker's smoke
   A/B test.
@@ -1952,62 +2124,65 @@ when the code contains quotes.
 
 ### Looking at the world: a free camera
 
-The frame camera is built by `game._camera(own, dt)` from the mech's position,
-the yaw / pitch and the zoom. Replacing it from the console and passing a fake
-`own` puts the eye anywhere, which is how terrain, roads and props are
-inspected (the mech itself never has to move):
+`g.freeCam` puts the eye anywhere in the world, or parks it on a hull and follows
+it as it drives - the way to look *at* a machine, a road junction or a smoke
+screen instead of out of a cockpit.  It is the client's own debug door (no server
+flag), and `camera()` asks it before anything else, so the eye stands where it was
+put whatever the pilot is doing: dead, respawning, or looking through a 20x sight.
 
 ```js
 const g = window.__game;
-g.__origCam = g.__origCam || g._camera.bind(g);
-g.__cam = (eye, yaw, pitch) => { g._camera = (own, dt) => {
-  // `input.viewYaw` is a GETTER (yaw + freeYaw), its assignment is silently
-  // dropped - the real knobs are `yaw` and `freeYaw`
-  g.input.yaw = yaw; g.input.freeYaw = 0;
-  g.input.pitch = pitch;                     // -1.45 = straight down
-  // the eye is mounted on the hull `mech.sight_z` behind its rotation axis, so
-  // a fake `own` needs a `yaw` too - without one the mount offset is NaN and
-  // the camera goes with it
-  return g.__origCam({ x: eye[0], y: eye[1] - 5.05, z: eye[2], yaw }, dt);
-}; };
-g.__cam([x, y, z], Math.PI / 4, -0.45);      // yaw: dirFrom convention
+
+g.freeCam()                                 // the spec now set, or null
+g.freeCam(null)                             // back to the cockpit
+g.freeCam({ x, y, z, yaw, pitch, zoom })    // a fixed eye (dirFrom yaw; -1.45 = straight down)
+g.freeCam({ id, dist, yaw, height, zoom })  // watch entity `id`
+g.freeCam(id)                               // watch it from the standard vantage
 ```
 
-* `_camera` is a cockpit camera whose eye is the commander's sight head: it
-  sits at `defs.mech.eye` (5.05 m) above `own.y`, `defs.mech.sight_z` (-0.62 m)
-  behind the hull's rotation axis and carried by the hull's yaw - hence the
-  `- 5.05` above and the `yaw` in the fake `own`. `_sightEye` returns that same
-  point, and it is the origin the server's sight, seeker and fire control solve
-  from, so the cross, the range readout and the lead circles cannot disagree.
-  The sight *head's* own rotation does not move it (the head turns about the
-  pillar, the eye is the pivot); the hull swinging underneath does, which is
-  the geometry the decoupled sight is for. The pilot's own
-  machine is drawn like any other unit, in full: there is **no separate
-  first-person view model**, so the barrels on screen are the barrels the
-  rounds leave from. The one piece left out of it is the sight head the eye is
-  inside of (`scene.mech`, the `own` flag). That head is drawn with its optical
-  axis on `MECH_EYE` (`SIGHT_Y` in `scene.js` - the two numbers move together),
-  which is what keeps the eye *below* every other hull's sight roof instead of
-  looking down on it.
+* A **parked eye** is solved off that entity's drawn pose (`x` / `z` / `yaw`)
+  every frame, so a walking mech's arms are followed instead of left behind:
+  `dist` 12 m out, `height` 2.6 m above its ground, looking at the hull's own
+  centre (`defs.units[type].height * 0.5`) whichever way it turns.  `yaw` there is
+  the direction **from the hull to the eye** - left out it is the hull's own yaw +
+  0.9 rad, a three-quarter view from the front left - so the eye keeps that side
+  of the machine as the machine swings.  `zoom` is the optics step (1 = the plain
+  1x field of view; 4 puts a barrel or a tube rack in reach without walking in).
+* Every hull id is in `g.net.entities`; `[...g.net.entities].filter(([, e]) => e.type
+  === 4)` is every mech on the wire.  The snapshot is a sphere around the pilot's
+  eye (`Netcode.SnapshotView`), so what can be watched is what the tier carried: a
+  fixture worth a close look is `debug_spawn`ed first.
+* The HUD keeps drawing (cross, rings, the dial) and the *aim* still comes from the
+  pilot's own sight: the free camera moves the picture, not the machine.
+* `g._camera` stays replaceable for what a spec cannot express (a camera tied to a
+  point, an orbit).  It is a cockpit camera whose eye is the commander's sight
+  head: it sits at `defs.mech.eye` (5.05 m) above `own.y`, `defs.mech.sight_z`
+  (-0.62 m) behind the hull's rotation axis and carried by the hull's yaw, so a
+  fake `own` needs a `yaw` (`scene/helpers.js::SIGHT_Y` / `SIGHT_Z` are the same
+  two numbers).  `_sightEye` returns that same point, and it is the origin the
+  server's sight, seeker and fire control solve from, so the cross, the range
+  readout and the lead circles cannot disagree.  The sight *head's* own rotation
+  does not move it (the head turns about the pillar, the eye is the pivot); the
+  hull swinging underneath does, which is the geometry the decoupled sight is for.
+  The pilot's own machine is drawn like any other unit, in full: there is **no
+  separate first-person view model**, so the barrels on screen are the barrels the
+  rounds leave from.  The one piece left out of it is the sight head the eye is
+  inside of (`scene/units/mech.js`, the `own` flag).  That head is drawn with its
+  optical axis on `MECH_EYE` (`SIGHT_Y` in `scene/helpers.js` - the two numbers
+  move together), which is what keeps the eye *below* every other hull's sight
+  roof instead of looking down on it.
 * `input.pitch` is a plain field (settable), `input.viewYaw` is not: writing
-  `g.input.viewYaw = ...` does nothing and the eye keeps looking along
+  `g.input.viewYaw = ...` does nothing and the cockpit eye keeps looking along
   `input.yaw`, which is the *last thing sent to the server* - a still mech can
-  sit there for minutes with a stale yaw. `debug_tp` sets it, `g.input.yaw` is
+  sit there for minutes with a stale yaw.  `debug_tp` sets it, `g.input.yaw` is
   what the mech turns to.
-* The override survives until the page is reloaded — a `navigate` clears it and
-  drops you back in the lobby, so re-click `DEPLOY` (or re-click the element
-  whose `textContent` is `DEPLOY`).
+* The free camera survives until it is released or the page is reloaded - a
+  `navigate` clears it and drops you back in the lobby, so re-click `DEPLOY` (or
+  re-click the element whose `textContent` is `DEPLOY`).  A `MECH_DEBUG`-less
+  server still has it: it is the console's, not the wire's.
 * `g.renderer.roadCount = 0` (save the old value) hides the road pass;
-  replacing `g.renderer.draw` with a wrapper that calls `g.renderer.beginDynamic()`
-  first hides every dynamic body — including the pilot's own mech — which is
-  what a clean scenery shot needs:
-
-```js
-const r = g.renderer;
-r.__d = r.__d || r.draw.bind(r);
-r.draw = (cam) => { r.beginDynamic(); r.__d(cam); };
-```
-
+  `g.renderer.beginDynamic()` clears the dynamic bodies (hulls, rounds, props'
+  moving half), which is what a clean scenery shot wants.
 * `g.map.heightAt(x, z)`, `g.map.walls`, `g.map.roads`, `g.renderer.propStats`
   and `g.renderer.roadCount` are all readable, so a picture can be checked
   against the data it came from.

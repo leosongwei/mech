@@ -1144,9 +1144,56 @@ public static partial class Defs
     // the barrels cannot follow it there
     public const float MECH_PITCH_MIN = -0.45f;
     public const float MECH_PITCH_MAX = 0.75f;
-    // the hull rolls up to speed instead of snapping to it: 0-100 km/h in ~3 s,
-    // 0-180 in ~5.4 s
-    public const float MECH_ACCEL = 9.3f;               // m/s^2, top speed 180 km/h
+    // ---- the mech's power curve ---------------------------------------------
+    // The legs are an *engine*, and an engine is rated in horsepower
+    // (`Systems/Movement/Mech/`).  Power, not force: the push it makes is
+    // `P(v) / v`, so it is strongest against a hull that has hardly started and
+    // settles to a steady shove at speed.  That is the whole difference from a
+    // constant thrust, and it is what a pilot feels - a hard launch off the line,
+    // and the last 20 km/h of the top end taking as long as the first hundred.
+    //
+    //   P(v) = MECH_HP_LOW + (MECH_HP_HIGH - MECH_HP_LOW) * v / MECH_RATED_V
+    //   F(v) = min( P(v) / v , MECH_G_LIMIT * GRAVITY * MECH_MASS )
+    //   a(v) = F(v) / MECH_MASS            (m/s^2, times cos(slope) horizontally)
+    //
+    // The cap is the machine's own **g limit** - its drive, and gravity is counted
+    // apart from it: 1.5 g of push is 221 kN, and the curve only drops under that
+    // at about 76 km/h, so everything below that is a flat 1.5 g and everything
+    // above it is the engine.  Above `MECH_RATED_V` the power is capped at
+    // `MECH_HP_HIGH`.
+    //
+    // A power curve has no speed of its own at which it stops, so the drag is what
+    // gives the machine a top end, and `MECH_DRAG` is *solved* from it: the flat
+    // balance at the rated 180 km/h is `P(v0)/v0 = MECH_MASS * k * v0^2`.  What a
+    // hill then does is a consequence, not a constraint: 30 deg down 210 km/h,
+    // 35 deg up 114 km/h, both reported by `--check drive`
+    // (`docs/plans/mech_thrust.md`).
+    //
+    // `MECH_MASS` is the one place a mass appears anywhere in the simulation: every
+    // other system works in accelerations.  It is here because horsepower is.
+    public const float GRAVITY = 9.81f;                 // m/s^2, straight down
+    public const float HORSEPOWER = 745.7f;             // W, mechanical hp (the two figures below are in these)
+    public const float MECH_HP_LOW = 5000f;             // hp at a standstill
+    public const float MECH_HP_HIGH = 8000f;            // hp at the rated speed, and every speed above it
+    public const float MECH_MASS = 15000f;              // kg, the machine's design mass (15 t)
+    public const float MECH_RATED_V = 50f;              // m/s, where the curve tops out and the drag balances: 180 km/h
+    // the most push the drive may make, in g.  Gravity is *not* in this budget: a
+    // hull on a slope feels the hill on top of whatever the legs are doing
+    public const float MECH_G_LIMIT = 1.5f;
+    // solved, not tuned: the flat balance at MECH_RATED_V with the full 8000 hp
+    public const float MECH_DRAG =
+        MECH_HP_HIGH * HORSEPOWER / (MECH_RATED_V * MECH_MASS * MECH_RATED_V * MECH_RATED_V);
+    // The push is the whole of the steering: a hull pushes where it was told to and
+    // its velocity bends after the push at `a/v`, so a right angle at 180 km/h is a
+    // long, wide crossing of its own track (measured by `--check drive`).  Which is
+    // why a pilot's WASD is read in his own hull's frame (`input/sight.js`): the
+    // machine goes where the machine points.
+    public const float MECH_BRAKE = 12.0f;              // m/s^2 the legs plant with; above the steepest hill's pull
+    public const float MECH_GOVERNOR_BAND = 3.0f;        // m/s of speed error that puts the legs on full push
+    // a hull whose legs point across the way it was told to go pushes with the
+    // smaller part of its thrust, and it turns them round at `Integrate.turn_legs`
+    public const float MECH_LEG_ALIGN = 0.45f;          // thrust left at 90 deg of leg misalignment
+    public const float MECH_BROKEN = 0.2f;              // what a hull with its chassis out pushes with
 
     // ---- slopes -------------------------------------------------------------
     // Rise over run: 1.0 is 45 degrees.  The ground is a continuous field, so a

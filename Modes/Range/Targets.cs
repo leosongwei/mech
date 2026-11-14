@@ -114,9 +114,9 @@ public sealed class Targets
                 "the range map must carry 10 static posts and 2 patrols");
         // One moving *mech*, and it is a different test from the APC patrols: a
         // car crawling down a straight at a constant 8 m/s is the case a lead
-        // ring never gets wrong, while a hull pulling at `MECH_ACCEL` in and out
-        // of a turn is exactly what the second-order term is for.  It carries no
-        // `ai` component, so it never fires (the range's fixtures still do not
+        // ring never gets wrong, while a hull that pulls 5 g off the line and eases
+        // in and out of a turn is exactly what the second-order term is for.  It
+        // carries no `ai` component, so it never fires (its fixtures still do not
         // shoot back) and no weapon system ever looks at it - it is only a hull
         // to practise on, and it walks the same slot machinery a patrol does, so
         // a killed one comes back in place.
@@ -246,10 +246,10 @@ public sealed class Targets
         // the hull is told a speed down the patrol axis and drives itself there: at
         // the end of a leg that is a direction reversal, which the wheeled model
         // takes as a U-turn at its own radius (the steering is its state, not ours).
-        // The mech has no steering of its own to spend: `movement` pulls its
-        // velocity after the command at `MECH_ACCEL`, so the same reversal is a
-        // deceleration and an acceleration - the cleanest moving hull the range
-        // has to aim at.
+        // The mech has no steering of its own to spend: `movement` swings its legs
+        // round and pushes after the command off a power curve, so the same reversal
+        // is a deceleration and a 5 g launch - the cleanest moving hull the range has
+        // to aim at.
         float top = slot.speed > 0f ? slot.speed
             : slot.role == "mech" ? MECH_PATROL_SPEED : PATROL_SPEED;
         cmd.set(eid, k, d * top);

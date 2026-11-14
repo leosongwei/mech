@@ -34,10 +34,73 @@ public static class NavCheck
         profile(t);
         ridge(t);
         budget(t);
+        raiders(world);
         drive();
         walk();
         lane(world);
         return 0;
+    }
+
+    /// <summary>The strategic grid the raiders plan on: 128 m nodes, and the two
+    /// questions each of them answers for a chassis - is there a wall in it, and can
+    /// the machine climb what is left.  The second one is new, so what this row has
+    /// to show is that it closes the faces and cuts nothing off: how many nodes go,
+    /// and whether every town still has a route from both bases.</summary>
+    private static void raiders(World world)
+    {
+        var t = world.terrain;
+        var (_, force) = Raid._nav(world, Defs.FACTION_RED);
+        var profile = NavProfile.of(Defs.ETYPE_MECH);
+        Console.WriteLine($"\nraider grid: {Raid.NAV_CELL:0} m nodes for a raiding party of mechs "
+                          + $"(max_grad {profile.max_grad:0.00}), a node closes when "
+                          + $"{Raid.FieldNav.STEEP_SHARE:0.00} of its facets are over that limit");
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var nav = new Raid.FieldNav(t, force, profile);
+        double ms = sw.Elapsed.TotalMilliseconds;
+        int nodes = nav.cw * nav.cd;
+        var (bx, bz) = world.terrain.bases[Defs.FACTION_RED];
+        var reach = _flood(nav, nav.cell(bx, bz));
+        int towns = 0, ok = 0;
+        foreach (var town in world.towns)
+        {
+            towns++;
+            var c = nav.cell(town.x, town.z);
+            if (reach[c.j * nav.cw + c.i]) ok++;
+        }
+        Console.WriteLine($"  {nav.closed_wall} nodes walled, {nav.closed_steep} too steep "
+                          + $"of {nodes}; the steepest node on the map is "
+                          + $"{nav.worst_steep * 100f:0} % of its facets over 35 degrees; "
+                          + $"{ok}/{towns} towns reachable from the red base; "
+                          + $"{ms:0.0} ms to build");
+    }
+
+    /// <summary>Every node reachable from one over open ground, 8-connected.</summary>
+    private static bool[] _flood(Raid.FieldNav nav, (int i, int j) from)
+    {
+        var seen = new bool[nav.cw * nav.cd];
+        var q = new Queue<(int i, int j)>();
+        var start = Raid._drivable(nav, from);
+        if (start is null) return seen;
+        seen[start.Value.j * nav.cw + start.Value.i] = true;
+        q.Enqueue(start.Value);
+        while (q.Count > 0)
+        {
+            var (i, j) = q.Dequeue();
+            for (int dj = -1; dj <= 1; dj++)
+            {
+                for (int di = -1; di <= 1; di++)
+                {
+                    if (di == 0 && dj == 0) continue;
+                    int i2 = i + di, j2 = j + dj;
+                    if (i2 < 0 || j2 < 0 || i2 >= nav.cw || j2 >= nav.cd) continue;
+                    int n = j2 * nav.cw + i2;
+                    if (seen[n] || !nav.open[n]) continue;
+                    seen[n] = true;
+                    q.Enqueue((i2, j2));
+                }
+            }
+        }
+        return seen;
     }
 
     /// <summary>What one window costs: a 1 km plan and a 2 km one.</summary>

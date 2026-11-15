@@ -91,6 +91,10 @@ Systems/                   # mechanics shared by every mode, each exposes run(wo
                            #   Blasts.cs: an explosion is an entity; the only area damage
                            #   Mortality.cs: `hp <= 0` -> wreck, burst, kill money, victory
                            #   Rearm.cs: the bought job at the base, `work_remaining_time`
+                           #   Support/   the libraries a system calls, one folder per
+                           #     KillFeed.cs  block (`AI/Support`, `Movement/Support`):
+                           #             the line a pilot reads - who, with what, from
+                           #             how far, and whether it is announced at all
 Modes/                     # per-mode rule sets: map, setup, pipeline, spawn rules
   Mode.cs                  #   Mode interface every mode implements
   Modes.cs                 #   the registry `Modes.get(name)`
@@ -269,7 +273,9 @@ own; the wire is `net/wire.js` + `net/rows.js` and the picture is `net/view.js`.
   is the point: a server that had been idle for an hour used to hand a joining
   pilot a mid-war map.  `MECH_DEBUG=1` disables the pause (`PAUSE_WHEN_EMPTY`),
   because that is the run a script, a replay or a console session inspects from
-  the outside with no browser attached.  A tool that drives `world` directly
+  the outside with no browser attached.  A reader on `GET /events/kills` is a
+  listener, not a pilot: it never un-pauses the world - it gets its heartbeat and
+  the war stands where the last pilot left it.  A tool that drives `world` directly
   (`Harness/Check.cs`, ...) never goes through the loop and is unaffected
   either way.
 * **The sight leads, the machine follows** (`Gunnery.cs`, `defs.MECH_
@@ -974,8 +980,9 @@ own; the wire is `net/wire.js` + `net/rows.js` and the picture is `net/view.js`.
   where it died, victory) - they are rules, not unit properties. `kill()` is
   gone; so is `DEATH_BLAST_ETYPES` and the four-way `_leave_debris`.
 * **A kill is announced, but only to somebody who has a stake in it.**
-  `mortality._feed` writes the one line the HUD's message list shows -
-  `killer killed victim with weapon`, and nothing else: the money is a popup
+  `KillFeed.announce` (`Systems/Support/KillFeed.cs`, called by `mortality._kill`) writes
+  the one line the HUD's message list shows -
+  `killer killed victim with weapon from X km away`, and nothing else: the money is a popup
   beside the money readout (`game._moneyGain`), because that is the number it
   changes. The line stays silent for infantry (a battle kills them by the
   dozen) and for AI fighting AI (most of the war, none of a pilot's business),
@@ -997,16 +1004,39 @@ own; the wire is `net/wire.js` + `net/rows.js` and the picture is `net/view.js`.
   mech draws one off `defs.AI_NAMES` at spawn and a pilot's hull carries his
   callsign; `[bot]` is appended to the ones no pilot owns. **Who killed it is
   frozen at the hit, not looked up at the death** - `combat.apply` records
-  `last_pid` and `last_name` / `last_fac` / `last_etype` / `last_wid` next to
+  `last_pid` and `last_name` / `last_fac` / `last_etype` / `last_wid` / `last_dist`
+  next to
   `last_hit`, and
-  `blasts.spawn` freezes the same three onto the burst (`blast_name` /
-  `blast_etype` / `blast_wid`), because the shooter can be a wreck with its id
-  handed out again by the time `mortality` judges the kill. The client only
+  `blasts.spawn` freezes the same set onto the burst (`blast_name` /
+  `blast_etype` / `blast_wid` / `blast_dist`), because the shooter can be a wreck with its id
+  handed out again by the time `mortality` judges the kill.  One record carries
+  all of it (`Combat.HitAttributions`: who, with what, from how far), read off
+  whichever of the three carriers is still alive - the round at the muzzle, the
+  burst at creation, the hull at the death.  `last_dist` is the shot's own range,
+  measured from `proj_origin` to the point the round went off at, and it is what
+  the line's `from 2.6 km away` is written from. The client only
   paints the words: `game._killfeed` builds segments (`{text, fac, bold}`) and
   `hud._messages` resolves `fac` through `FACTION_COLORS` and draws a dark
   plate under the line, since 12px monospace in three colours is unreadable
   straight off a bright cloud. The payout is `hud._status`'s: one `+$N` per
   `kill` event on the pilot's own pid, on the money's own line and fading out.
+* **The same kill is on a wire of its own: `GET /events/kills`.** Server-sent
+  events, one JSON record per kill with a pilot on one end - the message stack's
+  own set, so crew against crew is on neither - shaped
+  `{"killed":{"name","is_player"},"by":{...},"weapon","distance"}`, with the plain
+  names (no `[bot]`), the weapon written small and `distance` in metres to one
+  decimal (-1 when there is no muzzle to measure from).  `KillFeed.publish` builds
+  it from the same `HitAttributions` the line is written from and hands it to
+  `KillFeed.on_kill`, which `Server.configure` points at `Net/KillStream.cs`; the
+  hook is null in a harness, so a check costs one null test per death.  Best
+  effort by design: no history (a subscriber starts at the next kill), one
+  64-kill bounded queue per reader with `DropOldest`, so a viewer that stops
+  reading loses kills and never a tick.  A kill is minutes apart on a quiet field,
+  so the stream says it is alive every `HEARTBEAT_S` (15 s) with an SSE comment
+  carrying the tick (`: tick 4210`) - `EventSource` ignores it, a proxy sees a busy
+  connection, and a script can tell "nothing is dying" from "nothing is running".
+  A reader is a listener and not a pilot: an empty server stays paused and sends
+  that heartbeat alone.
 * **An explosion is an entity** (`Blasts.cs`). Whoever wants one - a
   round landing, a proximity fuse, a wreck - only calls `blasts.spawn`, and the
   one implementation of area damage reads it a stage later: `blast_power` =

@@ -8,6 +8,7 @@
 //                            the whole of "dead" - there is no state flag)
 //     _leave_wreck           what is left: a corpse, a smoking hulk, or nothing
 //     Blasts.spawn           a wreck goes up, and the burst is judged next tick
+//     KillFeed.announce      the line the pilot reads: who, with what, from how far
 //     _award / _plan_respawn three match rules: kill money, the walk back, victory
 //
 // Keeping the judgement here rather than inside `apply` is what makes the damage
@@ -80,16 +81,10 @@ public static class Mortality
         int credit = e.has(eid, "last_hit") ? e.iv("last_hit")[eid] : -1;
         // the killing blow's own attribution, frozen on the dying hull: a hull that
         // comes apart takes a second one with it, and that burst announces the
-        // shooter this one already had - one round, one name, one pilot
-        int kpid = e.has(eid, "last_pid") ? e.iv("last_pid")[eid] : -1;
-        int kfac = e.uv("last_fac")[eid];
-        bool named = e.uv16("last_name")[eid] > 0
-                     && (kfac == Defs.FACTION_RED || kfac == Defs.FACTION_BLUE);
-        var kby = named
-            ? ((int)e.uv16("last_name")[eid], kfac, (int)e.uv("last_etype")[eid])
-            : ((int, int, int)?)null;
-        int kwid = named ? e.uv("last_wid")[eid] : -1;
-        _feed(world, eid);
+        // shooter this one already had - one round, one name, one pilot, one range
+        var kill = HitAttributions.from_victim(world, eid);
+        KillFeed.announce(world, eid);
+        KillFeed.publish(world, eid);
         _award(world, eid, credit, faction, d);
         _plan_respawn(world, eid, pos);
         if (dd is not null && dd.ends_match)
@@ -107,12 +102,12 @@ public static class Mortality
         {
             // no sides spared: what stands within thirty metres of a hull that just
             // came apart is in the wrong place whatever colour it is painted.  The
-            // burst is the *killer's* (`kpid` + `kby`, not the money's `credit`),
-            // because a chain reaction has to hash to the same shooter the line
-            // named - a burst that credits a pilot and names nobody announces a
-            // hull as killed by an unnamed `APC`
-            Blasts.spawn(world, pos, (blast[0], blast[1]), friendly: true, pid: kpid,
-                         faction: named ? kfac : faction, by: kby, wid: kwid);
+            // burst is the *killer's* (`kill`, not the money's `credit`), because a
+            // chain reaction has to hash to the same shooter the line named - a
+            // burst that credits a pilot and names nobody announces a hull as
+            // killed by an unnamed `APC`
+            Blasts.spawn(world, pos, (blast[0], blast[1]), kill, friendly: true,
+                         faction: kill.by?.fac ?? faction);
         }
     }
 
@@ -177,48 +172,6 @@ public static class Mortality
         // or not the kill was announced (an infantryman is not)
         world.emit("kill", ("pid", pid), ("victim", owner >= 0 ? owner : -1),
                    ("reward", reward), ("etype", (int)world.ecs.uv("etype")[eid]));
-    }
-
-    /// <summary>How the kill feed calls a hull: its name, or its type if it has none.</summary>
-    private static string _named(World world, int name_id, int etype, bool bot)
-    {
-        string name = world.name_of(name_id);
-        if (name.Length > 0) return bot ? name + "[bot]" : name;
-        return Defs.UNIT_DEFS.TryGetValue(etype, out var d) ? d.name : "?";
-    }
-
-    /// <summary>Announce a kill on the wire: who killed whom, with what.
-    ///
-    /// A line is for what a pilot has a stake in, and nothing else.  Infantry stay
-    /// off it - a battle kills them by the dozen and the line would bury everything
-    /// else - and so does AI fighting AI, which is most of the war and none of a
-    /// pilot's business.  All that is left is a kill with a pilot on one end of it:
-    /// his own, or the one that took his hull away from him.
-    ///
-    /// "A pilot on one end" is read off two columns, because the two ends are asked
-    /// of different things: the victim's own `owner`, and the pilot of the round
-    /// that delivered the *killing blow* (`last_pid`, -1 for a crew's round).  The
-    /// pilot a hull is still paid to (`last_hit`) was the last pilot to take a point
-    /// off it, which may have been minutes before a crew finished the job.</summary>
-    private static void _feed(World world, int eid)
-    {
-        var e = world.ecs;
-        if (e.has(eid, "person") || !e.has(eid, "last_name")) return;
-        int pid = e.has(eid, "last_pid") ? e.iv("last_pid")[eid] : -1;
-        int owner = e.has(eid, "owner") ? e.iv("owner")[eid] : -1;
-        if (pid < 0 && owner < 0) return;               // two crews, no pilot anywhere in it
-        int faction = e.uv("faction")[eid];
-        int kfac = e.uv("last_fac")[eid];
-        if ((kfac != Defs.FACTION_RED && kfac != Defs.FACTION_BLUE) || kfac == faction)
-            return;                       // uncrewed burst, or an accident inside the family
-        string killer = _named(world, e.uv16("last_name")[eid], e.uv("last_etype")[eid],
-                               bot: pid < 0);
-        int wid = e.uv("last_wid")[eid];
-        var wd = wid >= 0 && wid < Defs.WEAPONS.Length ? Defs.WEAPONS[wid] : null;
-        world.emit("killfeed", ("killer", killer), ("kfac", kfac),
-                   ("victim", _named(world, e.uv16("name_id")[eid], e.uv("etype")[eid],
-                                     bot: owner < 0)),
-                   ("vfac", faction), ("w", wd?.name ?? ""));
     }
 
     /// <summary>Where it died decides how long the walk back is - the mode says how long.</summary>

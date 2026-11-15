@@ -14,6 +14,7 @@
 | [weapons.md](weapons.md) | 每把武器的全参数表与开火机制（弹道、制导、半自动、溅射、锁定） |
 | [rwr.md](rwr.md) | 告警器（RWR）：盘面五个记号、五层判据（`heard`/`steady`/`seen`/`warn`/`aim`）、通视与激光告警、推导与实测记录 |
 | [range.md](range.md) | 靶场模式（`--range`）：4 km 小地图、山与平原、12 个 APC 靶、一台只拦导弹的防御机甲、随处换装 |
+| [killed_sse.md](killed_sse.md) | 击杀流 `GET /events/kills`（SSE）：记录格式、口径（至少一端是玩家）、距离语义、心跳与可靠性 |
 | [CHANGELOG.md](CHANGELOG.md) | 产品改动登记表，按时间倒序 |
 
 ## 一句话产品

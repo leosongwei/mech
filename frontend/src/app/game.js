@@ -26,6 +26,12 @@ import { camera } from './systems/camera.js';
 import { Lead } from './systems/lead.js';
 import { Rwr } from './systems/rwr.js';
 
+// Metres from the muzzle to where the round went off, as a kill line prints it:
+// kilometres, two decimals inside one so a close shot never reads `0.0 km`.
+function kmText(d) {
+  return `${(d / 1000).toFixed(d < 1000 ? 2 : 1)} km`;
+}
+
 export class Game {
   constructor() {
     this.glCanvas = document.getElementById('gl');
@@ -159,9 +165,11 @@ export class Game {
   }
 
   // A kill line, the way every shooter writes one: `killer killed victim with
-  // weapon`, the two hulls in their own side's colour, the weapon bold.  The
-  // server composes the words (it is the only side that knows who a nameless hull
-  // was), the client only paints them; the money is `moneyGain`'s.
+  // weapon from range away`, the two hulls in their own side's colour, the weapon
+  // and the number bold.  The server composes the words and measures the shot (it
+  // is the only side that knows who a nameless hull was, and the only one that
+  // still had the round when it landed), the client only paints them; the money is
+  // `moneyGain`'s.
   killfeed(ev) {
     const segs = [
       { text: ev.killer, fac: ev.kfac, bold: true },
@@ -170,6 +178,11 @@ export class Game {
     ];
     if (ev.w) segs.push({ text: ' with ', color: '#93a89c' },
                         { text: ev.w.toLowerCase(), color: '#e8f4ee', bold: true });
+    // -1 when the server had no muzzle to measure from (a debug knob's own damage,
+    // a burst nobody fired): the line keeps its three clauses and drops this one
+    if (ev.dist >= 0) segs.push({ text: ' from ', color: '#93a89c' },
+                                { text: kmText(ev.dist), color: '#e8f4ee', bold: true },
+                                { text: ' away', color: '#93a89c' });
     this.messages.push({ segs, life: KILL_LIFE_S });
     if (this.messages.length > 40) this.messages.shift();
   }

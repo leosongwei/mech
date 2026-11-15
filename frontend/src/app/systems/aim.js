@@ -6,7 +6,9 @@
 // for); the *bore* is the hull's `yaw` and the arms' `pitch`, both from the
 // server, both slewing after the sight.  Mid-flick the bore is behind the cross,
 // and every marker here is drawn off the bore so it trails exactly as far as the
-// machine does.
+// machine does.  A tube is one angle further up than the arm it hangs on: the
+// zeroing that puts the round on the cross at the setting he dialled in, solved
+// here for each arm and handed to the model (`app.bore`).
 //
 // One more split runs through the whole file: the *drawn* pose (`own.x/y/z`, a
 // smoothing time constant behind the wire) is what the camera and the line of
@@ -171,11 +173,16 @@ export class Aim {
   }
 
   // The frame's aiming pass: the centre cross's range and each arm's impact
-  // marker.  Writes `app.crosshairs` and `app.sightRange`.
+  // marker.  Writes `app.crosshairs`, `app.sightRange` and `app.bore`.
   run(own) {
     const { app } = this;
     app.crosshairs = [null, null];
     app.sightRange = null;
+    // the elevation each arm's tube is *actually* laid at, for the model: the
+    // arms on the wire follow the sight, and the zeroing that puts the round on
+    // the cross is a second angle on top of it.  `null` = the wire's own pitch
+    // (a guided round leaves down the sight line, so nothing is added there)
+    app.bore = [null, null];
     if (!own) return;
     // two headings, and they are different things.  `dir` is the sight: the
     // cross, the range readout, the seeker ring, the beam a SACLOS missile
@@ -228,6 +235,9 @@ export class Aim {
         // is absorbed by the solution, hence the copy with bias 0
         const z = app.init.zero || { range: 4000, max_elev: 1.05 };
         const theta = zeroAt(wd, byaw, bpitch, m[0], m[1], m[2], app.zeroRange, z.max_elev);
+        // the zeroing holds the tube above the arm it hangs on, so the barrel
+        // on the screen is drawn at `theta`
+        app.bore[arm] = theta;
         const shot = theta === null ? wd : { ...wd, bias: 0 };
         point = predictImpact(app.map, shot, m[0], m[1], m[2],
           theta === null ? bdir : dirFrom(byaw, theta), units, {}, own.faction);

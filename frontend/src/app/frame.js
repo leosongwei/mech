@@ -154,6 +154,7 @@ function render(app) {
   app.renderer.draw(cam, (b) => {
     emitUnits(b, app.net.entities, {
       defs: app.defs.weapons, flashes: app.flashes, ownId, now: ctx.now,
+      bore: app.bore,
     });
     emitProjectiles(b, app.net.projectiles, { defs: app.defs.weapons });
     emitSmoke(b, app.net.smoke);

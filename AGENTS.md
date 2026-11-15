@@ -1532,6 +1532,11 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
   which is the lag the pilot is meant to see.  A marker whose point falls behind
   the camera draws nothing at all - the old fallback dropped it on the centre of
   the screen, where it read as "on target" for exactly the moment it is not.
+  The tube itself is drawn at the elevation the fire control laid it at: the
+  same pass solves each arm's zeroing (`app.bore`) and `scene/arms.js` swings
+  the arm onto it, so turning the zero dial visibly raises the barrel and the
+  rack of tubes.  A hull that is not the pilot's own carries only the wire's arm
+  angle, and an arm whose round is guided leaves down the sight line.
 * **The eye reads the picture, the gun reads the wire.** `own.x/y/z` is the
   *drawn* pose: an EMA (`alpha = 1-exp(-dt*14)`, a 71 ms time constant) chasing a
   15 Hz snapshot, which is what the camera, the fx and the line of sight are

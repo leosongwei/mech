@@ -534,8 +534,8 @@ public static partial class Defs
         // round in the breech, three seconds of autoloader between shots, twelve
         // rounds in the rack - so the whole arm is twelve trigger pulls a battle, and
         // the magazine is 1 on purpose (`mag` 1 / `reserve` 11 is what makes the reload
-        // the cycle: a shot, then the countdown, then another).  1800 m/s of APFSDS:
-        // 24 m of drop at 4 km is the fire control's problem, not the pilot's, and
+        // the cycle: a shot, then the countdown, then another).  1600 m/s of APFSDS:
+        // 31 m of drop at 4 km is the fire control's problem, not the pilot's, and
         // 0.3 mrad of spread is a coin across 3 km.  AD 200 is past every hull pool in
         // the game and AP 120 past the base's 80 of plate, so it is the one gun that
         // takes a mech, an APC or a chunk of the enemy base apart with a single round -
@@ -544,8 +544,8 @@ public static partial class Defs
         {
             wid = WID_G105, key = "g105", name = "105mm SMOOTHBORE", kind = "bullet",
             ap = 120f, ad = 200f, ed = 15f, er = 3.0f,
-            rpm = 20, mag = 1, reserve = 11, reload = 3.0f, vel = 1800f, spread = 0.0003f,
-            bias = 0.0f, g = 9.81f, thrust = 0f, maxvel = 0f, life = 5.6f, range = 4000,
+            rpm = 20, mag = 1, reserve = 11, reload = 3.0f, vel = 1600f, spread = 0.0003f,
+            bias = 0.0f, g = 9.81f, thrust = 0f, maxvel = 0f, life = 6.3f, range = 4000,
             cost = 800, ammo_cost = 60.0f, @lock = 0, lock_time = 0f, salvo = 0, semi = 0,
             color = new[] { 1.0f, 0.90f, 0.55f }, cal = 105f, heavy = true, reach = 6.45f,
             desc = "APFSDS, 3 s autoloader",

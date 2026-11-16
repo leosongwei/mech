@@ -60,10 +60,9 @@ public static class Impact
                         spared = tid;
                         if (e.is_alive(tid))
                         {
-                            var by = ((int)e.uv16("proj_name")[pid], a.u8("faction")[row],
-                                      (int)e.uv("proj_etype")[row]);
                             Combat.splash(world, tid, Defs.MOD_CHASSIS, wd, gap,
-                                          e.iv("proj_pid")[pid], $"prox {gap:F1} m", by);
+                                          HitAttributions.from_round(world, pid, p),
+                                          $"prox {gap:F1} m");
                         }
                     }
                     _detonate(world, p, wd, pid, skip: spared);
@@ -95,22 +94,22 @@ public static class Impact
         // the credit was frozen at the muzzle (`proj_pid` / `proj_name`), because
         // the hull that fired this round can be a wreck by the time it lands - and
         // its id can already belong to the wreck it left.  A kill it lands is still
-        // the pilot's, and the kill feed still knows whose name to put on it.
-        int pid = e.iv("proj_pid")[proj_id];
+        // the pilot's, and the kill feed still knows whose name to put on it.  The
+        // same record carries the shot's own range, measured from the muzzle the
+        // round froze at the shot to `p`, where it went off.
         int faction = e.uv("faction")[proj_id];
-        var by = ((int)e.uv16("proj_name")[proj_id], faction,
-                  (int)e.uv("proj_etype")[proj_id]);
+        var attrs = HitAttributions.from_round(world, proj_id, p);
         float r = wd.er;
         world.emit("boom", ("x", p.x), ("y", p.y), ("z", p.z), ("r", r),
                    ("big", r >= 5f ? 1 : 0), ("wid", wd.wid), ("proj", proj_id));
         if (direct_unit >= 0)
         {
-            Combat.hit(world, direct_unit, direct_mod, wd, 0f, pid,
-                       $"{wd.key} direct", by);
+            Combat.hit(world, direct_unit, direct_mod, wd, attrs, 0f,
+                       $"{wd.key} direct");
         }
         if (r <= 0f || wd.ed <= 0f) return;
         int spared = direct_unit >= 0 ? direct_unit : skip;
-        Blasts.spawn(world, p, (wd.ed, r), friendly: false, skip: spared, pid: pid,
-                     faction: faction, by: by, wid: wd.wid);
+        Blasts.spawn(world, p, (wd.ed, r), attrs, friendly: false, skip: spared,
+                     faction: faction);
     }
 }

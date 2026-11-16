@@ -129,5 +129,10 @@ export function mech(b, e, ctx) {
       at(b, MESH.BOX, e, yaw, 0, side * 0.99, 3.55, 0.30, 0.30, 0.34, 0.22, METAL_D);
     }
   }
-  for (let arm = 0; arm < 2; arm++) armModel(b, e, arm, wdefs, flashes, ctx.now, 3.55, 1.43);
+  for (let arm = 0; arm < 2; arm++) {
+    // the pilot's own arms are drawn at the elevation the fire control laid them
+    // at; every other hull has only the arm the wire carries
+    const laid = own && ctx.bore ? ctx.bore[arm] : null;
+    armModel(b, e, arm, wdefs, flashes, ctx.now, 3.55, 1.43, laid);
+  }
 }

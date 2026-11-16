@@ -29,6 +29,7 @@ using System.Text.Json;
 using System.Threading.Channels;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging;
+using Microsoft.AspNetCore.Http.Features;
 
 namespace Mech.Server;
 
@@ -259,6 +260,9 @@ public static class Server
     public const int SNAP_EVERY = 2;        // 15 Hz snapshots
     public const int META_EVERY = 3;        // 10 Hz meta
     public const int IDLE_SLEEP_MS = 100;   // how often an empty server looks for a connection
+    // how long `GET /events/kills` stays quiet before it says it is alive: a kill
+    // is minutes apart on a quiet field, and a proxy drops an idle connection
+    public const int HEARTBEAT_S = 15;
     // the tick rate the loop actually achieves, averaged over the last second:
     // what the HUD's `TPS` reads.  `TPS_X100` is the wire's form (3000 = 30.00)
     public static float TPS = 30f;
@@ -392,6 +396,12 @@ public static class Server
 
         // NOTE: the websocket route stays below the static mount, as in main.py
         app.Map("/ws", (RequestDelegate)ws_endpoint);
+
+        // every kill, for a reader with no browser in it.  The simulation hands the
+        // record over through one hook (`KillFeed.publish`), which is the only place
+        // this file touches the kill path
+        Systems.KillFeed.on_kill = KillStream.publish;
+        app.MapGet("/events/kills", (RequestDelegate)kill_stream_endpoint);
     }
 
     // ------------------------------------------------------------------
@@ -493,7 +503,9 @@ public static class Server
                     // nobody is connected: no tick, no snapshot, no wall clock to
                     // keep.  `next_t` is re-based on the way out, so the world
                     // resumes on a clean tick instead of catching up on the time it
-                    // stood still.
+                    // stood still.  A reader on `GET /events/kills` is not a pilot:
+                    // it gets its heartbeat and nothing more, so the war is exactly
+                    // where the last pilot left it when the next one arrives.
                     await Task.Delay(IDLE_SLEEP_MS, ct);
                     next_t = sw.Elapsed.TotalSeconds;
                     continue;
@@ -536,6 +548,69 @@ public static class Server
         catch (OperationCanceledException)
         {
             // shutting down
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // the kill stream (`GET /events/kills`)
+    // ------------------------------------------------------------------
+    /// <summary>Every kill with a pilot on one end, as a server-sent event, and no
+    /// history.
+    ///
+    /// A viewer outside the game reads one JSON record per kill
+    /// (`{"killed":{"name","is_player"},"by":{...},"weapon","distance"}`) on a
+    /// stream that owes it nothing: a dropped frame is a dropped kill, a subscriber
+    /// that connects now starts with the next one, and a reader that stops reading
+    /// loses its queue rather than slowing the tick (`Net/KillStream.cs`).  Crew
+    /// against crew is not on it - the set is the message stack's.
+    ///
+    /// A kill is minutes apart on a quiet field, so the stream says it is alive
+    /// every `HEARTBEAT_S` with an SSE comment carrying the tick (`: tick 4210`): a
+    /// comment is ignored by `EventSource`, keeps a proxy from seeing an idle
+    /// connection, and lets a script tell "nothing is dying" from "nothing is
+    /// running" - an empty server is paused (`PAUSE_WHEN_EMPTY`), so a reader here
+    /// sees the same tick over and over and nothing else.</summary>
+    public static async Task kill_stream_endpoint(HttpContext ctx)
+    {
+        ctx.Response.Headers.ContentType = "text/event-stream";
+        ctx.Response.Headers.CacheControl = "no-cache";
+        ctx.Response.Headers["X-Accel-Buffering"] = "no";     // a proxy must not batch it
+        ctx.Features.Get<IHttpResponseBodyFeature>()?.DisableBuffering();
+        using var sub = KillStream.subscribe();
+        try
+        {
+            // an SSE comment, so a viewer knows the stream is open before the first
+            // kill rather than after the first minute of quiet
+            await ctx.Response.WriteAsync(": mech kills\n\n", ctx.RequestAborted);
+            await ctx.Response.Body.FlushAsync(ctx.RequestAborted);
+            while (true)
+            {
+                string frame;
+                using var quiet = CancellationTokenSource.CreateLinkedTokenSource(
+                    ctx.RequestAborted);
+                quiet.CancelAfter(HEARTBEAT_S * 1000);
+                try
+                {
+                    frame = await sub.reader.ReadAsync(quiet.Token);
+                }
+                catch (OperationCanceledException) when (!ctx.RequestAborted.IsCancellationRequested)
+                {
+                    frame = $": tick {world.tick}\n\n";     // nothing died; we are here
+                }
+                catch (Exception ex) when (ex is OperationCanceledException
+                                              or ChannelClosedException)
+                {
+                    // the client went away, or this subscription was completed:
+                    // the frame loop has nothing left to say
+                    break;
+                }
+                await ctx.Response.WriteAsync(frame, ctx.RequestAborted);
+                await ctx.Response.Body.FlushAsync(ctx.RequestAborted);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // a disconnected viewer: nothing to clean up beyond `using`
         }
     }
 
@@ -812,14 +887,14 @@ public static class Server
                 // development helper: wound the player or the enemy base
                 if (world.ecs.is_alive(pl.mech))
                     Combat.apply(world, pl.mech, inum(msg, "module", 1),
-                                 f32(msg, "amount", 100f), -1);
+                                 f32(msg, "amount", 100f), HitAttributions.none, "debug");
                 if (truthy(msg, "base"))
                 {
                     int base_fac = 1 - pl.faction;
                     if (world.base_entity.TryGetValue(base_fac, out int base_eid)
                         && world.ecs.is_alive(base_eid))
                         Combat.apply(world, base_eid, Defs.MOD_CHASSIS,
-                                     f32(msg, "base", 5000f), -1);
+                                     f32(msg, "base", 5000f), HitAttributions.none, "debug");
                 }
                 break;
             }

@@ -45,6 +45,89 @@ internal static class MechLog
     public static ILogger get(string name) => factory.CreateLogger(name);
 }
 
+/// <summary>Who dealt a blow, with what, and from how far.
+///
+/// One record, three carriers, because only one of them is still alive when the
+/// death is judged: a round freezes it at the muzzle (`proj_*`), a burst at
+/// creation (`blast_*`), and the hit writes it onto the hull it hurt (`last_*`) -
+/// the round is destroyed a stage before `Mortality` runs and its id can already
+/// belong to the burst it left.  `from_round` / `from_blast` / `from_victim` are
+/// those three reads; `Systems/Support/KillFeed.cs` is the one reader of the last.
+///
+/// `pid`, `by` and `wid` were the same three facts threaded through `apply` as
+/// three parameters plus a tuple; `range` is the fourth, and the reason the set is
+/// one record - a strike's distance is measured where it lands, so it can only
+/// travel with the rest of them.</summary>
+public readonly struct HitAttributions
+{
+    /// <summary>The pilot the blow belongs to; -1 when a crew's round landed it.</summary>
+    public readonly int pid;
+    /// <summary>Who to name - name id, side and type; null when nameless.</summary>
+    public readonly (int name_id, int fac, int etype)? by;
+    /// <summary>The weapon it came from, -1 unknown.</summary>
+    public readonly int wid;
+    /// <summary>Metres from the muzzle to where it went off; -1 = no muzzle to measure from.</summary>
+    public readonly float range;
+
+    public HitAttributions(int pid, (int name_id, int fac, int etype)? by, int wid, float range)
+    {
+        this.pid = pid;
+        this.by = by;
+        this.wid = wid;
+        this.range = range;
+    }
+
+    /// <summary>Nothing to attribute: a debug knob's raw number.</summary>
+    public static readonly HitAttributions none = new(-1, null, -1, -1f);
+
+    /// <summary>A round's credit as it left the muzzle, measured to `hit` - the
+    /// point this tick's leg of it stopped at (`first_hit_pos`).</summary>
+    public static HitAttributions from_round(World world, int proj, Vec3 hit)
+    {
+        var e = world.ecs;
+        var o = e.fv("proj_origin").get3(proj);
+        float dx = hit.x - o.x, dy = hit.y - o.y, dz = hit.z - o.z;
+        return new HitAttributions(
+            e.iv("proj_pid")[proj],
+            (e.uv16("proj_name")[proj], e.uv("faction")[proj], e.uv("proj_etype")[proj]),
+            e.uv("proj_wid")[proj],
+            MathF.Sqrt(dx * dx + dy * dy + dz * dz));
+    }
+
+    /// <summary>A burst's credit as it was created (`Systems/Blasts.cs`).  Its side
+    /// is the pattern's, which is what the burst spares by.</summary>
+    public static HitAttributions from_blast(World world, int bid)
+    {
+        var e = world.ecs;
+        return new HitAttributions(e.iv("blast_pid")[bid],
+                                   _by(e, "blast_etype", bid, e.uv16("blast_name")[bid],
+                                       e.uv("faction")[bid]),
+                                   e.uv("blast_wid")[bid], e.fv("blast_dist")[bid]);
+    }
+
+    /// <summary>The blow that killed a hull, as the hit froze it onto the hull
+    /// (`Combat.apply`).  Read before the hull is destroyed, which is the only
+    /// moment it exists.</summary>
+    public static HitAttributions from_victim(World world, int eid)
+    {
+        var e = world.ecs;
+        return new HitAttributions(e.iv("last_pid")[eid],
+                                   _by(e, "last_etype", eid, e.uv16("last_name")[eid],
+                                       e.uv("last_fac")[eid]),
+                                   e.uv("last_wid")[eid], e.fv("last_dist")[eid]);
+    }
+
+    /// <summary>Who to name, or null: a side that is neither red nor blue is no
+    /// side at all (an uncrewed burst reads 255), and no side names nobody - a
+    /// wreck going up is not a kill anyone made.</summary>
+    private static (int name_id, int fac, int etype)? _by(ECS e, string etype_col, int eid,
+                                                          int name_id, int fac)
+    {
+        if (name_id <= 0 || (fac != Defs.FACTION_RED && fac != Defs.FACTION_BLUE)) return null;
+        return (name_id, fac, e.uv(etype_col)[eid]);
+    }
+}
+
 public static class Combat
 {
     // the interception logger: a round in the air is worth a line of its own at
@@ -54,14 +137,13 @@ public static class Combat
 
     /// <summary>Take `amount` off the armour `module` names.  The only writer of `hp`.
     ///
-    /// `by` is the hull that landed it as `(name_id, faction, etype)`, frozen
-    /// here rather than looked up when the death is judged - a shooter can be a
-    /// wreck by then, and its id can already belong to the wreck it left.  `wid`
-    /// is the weapon it fired, for the kill feed's "with ..."
-    /// (`Systems/Mortality.cs`).</summary>
-    public static void apply(World world, int eid, int module, float amount, int pid = -1,
-                             string src = "", (int name_id, int fac, int etype)? by = null,
-                             int wid = -1)
+    /// `attrs` is the blow itself - who, with what, from how far - frozen where it
+    /// landed rather than looked up when the death is judged, because a shooter
+    /// can be a wreck by then and its id can already belong to the wreck it left.
+    /// It is written onto this hull as `last_*`, which is what the kill feed
+    /// reads a stage later (`Systems/Support/KillFeed.cs`).</summary>
+    public static void apply(World world, int eid, int module, float amount,
+                             in HitAttributions attrs, string src = "")
     {
         var e = world.ecs;
         if (!e.is_alive(eid) || amount <= 0.0f) return;
@@ -103,23 +185,27 @@ public static class Combat
         // the one that counts - the death itself is judged a stage later
         // (`Systems/Mortality.cs::_kill`), which reads this column to award the
         // kill money and to address the shot-down cue of a missile (`_kill_round`)
-        if (pid >= 0 && bufs.has("last_hit")) bufs.i("last_hit")[row] = pid;
+        if (attrs.pid >= 0 && bufs.has("last_hit")) bufs.i("last_hit")[row] = attrs.pid;
         // ...and the pilot the killing blow itself belonged to, which is another
         // question: a crew that finishes a hull a pilot softened up takes
         // `last_pid` to -1 while `last_hit` still holds the pilot, so a kill
         // nobody was flying is announced as nobody's
-        if (bufs.has("last_pid")) bufs.i("last_pid")[row] = pid;
+        if (bufs.has("last_pid")) bufs.i("last_pid")[row] = attrs.pid;
         // ...and who to *name*, which is not the same question: an AI crew's round
         // carries no pilot (`pid` is -1 for every one of them) but the crew, or the
         // car, still has to be called something on the feed
-        if (by is not null && bufs.has("last_name"))
+        if (attrs.by is not null && bufs.has("last_name"))
         {
-            var (name_id, fac, etype) = by.Value;
+            var (name_id, fac, etype) = attrs.by.Value;
             bufs.u16("last_name")[row] = (ushort)Math.Max(0, name_id);
             bufs.u8("last_fac")[row] = (byte)(fac < 0 ? 255 : fac);
             bufs.u8("last_etype")[row] = (byte)Math.Max(0, etype);
-            bufs.u8("last_wid")[row] = (byte)Math.Max(0, wid);
+            bufs.u8("last_wid")[row] = (byte)Math.Max(0, attrs.wid);
         }
+        // ...and how far the blow came from, which is measured where it landed and
+        // so goes with the same freeze - the muzzle it is measured from belongs to
+        // a round that is destroyed before the death is judged
+        if (bufs.has("last_dist")) bufs.f("last_dist")[row] = attrs.range;
         if (hp[row] <= 0.0f) _stop(bufs, row);
     }
 
@@ -142,14 +228,14 @@ public static class Combat
     ///
     /// `dist` is how far the target's nearest surface is from the burst - 0 for a
     /// direct hit - and the blast half falls off to nothing over the weapon's
-    /// `er`.</summary>
-    public static void hit(World world, int eid, int module, WeaponDef wd, float dist = 0.0f,
-                           int pid = -1, string src = "",
-                           (int name_id, int fac, int etype)? by = null)
+    /// `er`.  It is the *damage's* distance; the shot's own range comes in with
+    /// `attrs` and is never used here.</summary>
+    public static void hit(World world, int eid, int module, WeaponDef wd,
+                           in HitAttributions attrs, float dist = 0.0f, string src = "")
     {
         if (wd.ad <= 0.0f && wd.ed <= 0.0f) return;
         var (dp, de) = _armor(world, eid);
-        apply(world, eid, module, Defs.hit_damage(wd, dp, de, dist), pid, src, by, wd.wid);
+        apply(world, eid, module, Defs.hit_damage(wd, dp, de, dist), attrs, src);
     }
 
     /// <summary>Blast-only damage for a unit near (not under) a burst.
@@ -157,13 +243,11 @@ public static class Combat
     /// A charge going off a few metres away cannot punch a plate, so the
     /// penetration half of `hit` does not apply here.</summary>
     public static void splash(World world, int eid, int module, WeaponDef wd, float dist,
-                              int pid = -1, string src = "",
-                              (int name_id, int fac, int etype)? by = null)
+                              in HitAttributions attrs, string src = "")
     {
         if (wd.ed <= 0.0f) return;
         var (_, de) = _armor(world, eid);
-        apply(world, eid, module, Defs.blast_damage(wd.ed, de, wd.er, dist), pid, src, by,
-              wd.wid);
+        apply(world, eid, module, Defs.blast_damage(wd.ed, de, wd.er, dist), attrs, src);
     }
 
     /// <summary>Is the weapon in `arm` (0 left, 1 right) still there to be fired?</summary>

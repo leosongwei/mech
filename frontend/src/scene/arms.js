@@ -106,7 +106,13 @@ export function tubeOf(wd, e, arm) {
 
 // One high-mounted weapon station. Every piece is placed `dist` metres out
 // along the barrel, so pod, tubes and muzzle brake elevate as one assembly.
-export function armModel(b, e, arm, wdefs, flashes, now, shoulderY, lateral) {
+//
+// `laid` is the elevation the fire control holds this arm's tube at (it solved
+// the zeroing for the pilot's dial, `app/systems/aim.js`): the tube is drawn
+// there rather than at the arm, because that is the line the round leaves on.
+// `null` - every hull but the pilot's own, and an arm whose round is guided -
+// leaves the arm where the wire put it.
+export function armModel(b, e, arm, wdefs, flashes, now, shoulderY, lateral, laid) {
   const side = arm === 0 ? -1 : 1;
   const mod = arm === 0 ? 2 : 3;
   const hp = e.hp || [1, 1, 1, 1];
@@ -123,7 +129,8 @@ export function armModel(b, e, arm, wdefs, flashes, now, shoulderY, lateral) {
   // depress onto something close.
   const spec = wd.rack || null;
   const mount = spec ? spec.elev || 0 : 0;
-  const p = alive ? (spec && spec.bolted ? mount : e.pitch + mount) : -0.5;
+  const aim = laid === null || laid === undefined ? e.pitch : laid;
+  const p = alive ? (spec && spec.bolted ? mount : aim + mount) : -0.5;
   const yaw = e.yaw;
   const fac = facColor(e);
   const fl = flashes && flashes.get(e.id);

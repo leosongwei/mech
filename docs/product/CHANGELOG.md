@@ -11,6 +11,59 @@
 
 ---
 
+## 2026-11-15 · 调零时炮管跟着抬起来（1.31.0）
+
+- **玩家能感觉到的差别**：拨调零刻度盘（`CTRL`+滚轮，0.5–4 km）时，自机的炮口与火箭巢
+  现在压在**解出的发射仰角**上。以前刻度只改弹道和准星旁的落点，管口一动不动，看上去像
+  "炮弹自己会拐弯"。500 m → 4 km：30 mm 的管子抬 **0.12° → 0.96°**，火箭巢（机械调零
+  在 1 km = 2.46°）抬 **2.01° → 4.77°**；落点、伤害、散布、射速、弹数一律不变。制导的
+  那条臂（SACLOS / 攻顶）顺着瞄准线放出去，管口就在手臂上。
+- 手臂本身仍然按 `pitch` 追视线（50 °/s，仍然落后准星半拍），炮管的高出量是加在它上面
+  的第二个角，所以甩视角时管子照旧拖在后面。
+- 涉及文件：`frontend/src/app/systems/aim.js`（每帧把两臂的发射仰角写进 `app.bore`）、
+  `frontend/src/app/frame.js` / `scene/index.js` / `scene/units/mech.js` /
+  `scene/arms.js`（模型按这个角摆管）、`docs/product/weapons.md`（火控自动调零）。
+
+## 2026-11-15 · 105mm 初速 1800 → 1600 m/s（1.30.0）
+
+- **玩家能感觉到的差别**：105mm 滑膛炮的出膛速度从 **1800 m/s** 降到 **1600 m/s**
+  （每 tick 飞 **60 → 53 m**）。弹道变弯一点：1 km 下坠 **1.5 → 1.9 m**、4 km 下坠
+  **24 → 31 m**；飞行时间变长（1 km 0.56 → 0.63 s，4 km 2.2 → 2.5 s），所以打**移动
+  目标**的提前量跟着变大，远处横穿的车明显更难压。落点仍然由火控调零吸收（准星即
+  落点），散布、伤害、装填、弹数、价格一律不动。
+- 弹丸寿命按 **10 km ÷ 速度** 重算为 **6.3 s**（原 5.6 s），射程 4 km 不变。
+- 涉及文件：`Core/Defs.cs`（`WID_G105` 的 `vel` / `life`）、`docs/product/weapons.md`
+  （武器表与 APFSDS 说明）、`tests/cases/fcs.json`（`g105_*` 用例的行跟着换成本表的数）。
+
+## 2026-11-15 · 击杀消息带距离(1.29.0)
+
+- **击杀行末尾多一句 `from <距离> away`**：
+  `Char Aznable[bot] killed jack with SACLOS ATGM from 2.6 km away`。距离是**这一炮**
+  从弹药出膛的位置到它落点的直线距离（斜距），在出膛那一刻冻在弹药上，命中时算一次，
+  再跟着击杀归属一起写到被击毁者身上。所以开完炮被打死、炮弹随后落地命毙，距离仍然是
+  那一炮的；同一发炮弹炸死两个目标、或者残骸连锁引爆带走第二个，两条行报的都是同一个
+  距离。显示为千米：1 km 以内两位小数（`0.81 km`），以外一位（`2.6 km`）。
+- **同一批击杀另开一条 SSE 通道 `GET /events/kills`**，给游戏外的读者用（脚本、直播叠加层、
+  第二块屏）：每条一次
+  `{"killed":{"name":"jack","is_player":true},"by":{"name":"Char","is_player":false},"weapon":"105mm smoothbore","distance":1654.1}`。
+  口径和消息区一致——**至少一端是玩家**才发，AI 打 AI 不发；不补发历史，连上就等下一杀；
+  读不动的订阅者丢帧而不是拖慢服务器。击杀之间隔着几分钟，所以流每 **15 s** 发一条带 tick
+  的心跳注释（`: tick 4210`），一眼能分清"没人死"和"没在跑"；**流读者不算玩家**，
+  空服照旧暂停，只发心跳。
+- **没有发射点可量的伤害不写这一段**——调试旋钮直接扣血、无人引爆的爆炸，行尾停在武器
+  名上。
+- 归属那一组数据收成一个记录 `Combat.HitAttributions`（谁 / 用什么 / 从多远），三个载体
+  各一个工厂（`from_round` / `from_blast` / `from_victim`）：原先 `Impact`、`Blasts`、
+  `Mortality` 各自手读那几列的三份逻辑合成一份。击杀播报本身从 `Mortality` 拆到
+  `Systems/Support/KillFeed.cs`，死亡判定只留判定和死亡配方。
+- 涉及文件：`Ecs/Components.cs`（`proj_origin` / `last_dist` / `blast_dist`）、
+  `Core/World.cs`（`spawn_round` 冻结发射点）、`Core/Combat.cs`（`HitAttributions`，
+  `apply` / `hit` / `splash` 的签名）、`Systems/Impact.cs`、`Systems/Blasts.cs`、
+  `Systems/Mortality.cs`、`Systems/Support/KillFeed.cs`（新）、`Net/KillStream.cs`（新，
+  `/events/kills`）、`Net/Server.cs`（`debug_hurt`、SSE 路由与心跳、空服照旧暂停）、
+  `frontend/src/app/game.js`（`killfeed` 的距离分段）、`docs/product/killed_sse.md`（新，
+  这条流的字段、口径、心跳与可靠性）。
+
 ## 2026-11-14 · 卡在建筑里的机甲/APC 会自己走出来(1.28.0)
 
 - **机甲和 APC 不再被结构"冻死"**：碰撞圈一旦和建筑、岩石、基地台或树干重叠（实测是

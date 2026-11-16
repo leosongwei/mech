@@ -10,9 +10,11 @@
 // type numbers are the server's (`Core/Defs.cs`), and each one names the model
 // that owns it.
 //
-// `ctx` = { defs, flashes, ownId, now }: the weapon table, the muzzle flashes
-// keyed by entity id, the pilot's own hull (drawn without its sight head - the
-// eye is inside it) and the frame's clock in ms.
+// `ctx` = { defs, flashes, ownId, now, bore }: the weapon table, the muzzle
+// flashes keyed by entity id, the pilot's own hull (drawn without its sight head
+// - the eye is inside it), the frame's clock in ms and, for the pilot's own two
+// arms, the elevation the fire control laid each tube at (`app.bore`, solved in
+// `app/systems/aim.js`; `null` on an arm whose round leaves down the sight line).
 
 import { apc, base, wreck } from './units/vehicle.js';
 import { mech } from './units/mech.js';

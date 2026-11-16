@@ -100,6 +100,11 @@ public static class Components
         ecs.register("last_fac", Kind.U8);              // the killer's side, 255 = unknown
         ecs.register("last_etype", Kind.U8);            // the killer's type, for a nameless one
         ecs.register("last_wid", Kind.U8);              // the weapon that took the point
+        // ...and how far it came: metres from that weapon's muzzle to where the
+        // round went off, -1 when there is no muzzle to measure from (a debug
+        // knob's raw number).  Frozen with the rest, because the round is gone by
+        // the time the death is judged (`Combat.HitAttributions`).
+        ecs.register("last_dist", Kind.F, 1, -1.0);
 
         // ---- weapons ----------------------------------------------------
         ecs.register("weapon", Kind.U8, 2, 0);          // 0 = left arm, 1 = right arm
@@ -193,6 +198,10 @@ public static class Components
         ecs.register("blast_name", Kind.U16);            // the shooter's name id, 0 = none
         ecs.register("blast_etype", Kind.U8);            // ...and its type, if nameless
         ecs.register("blast_wid", Kind.U8);              // the weapon that left it
+        // ...and how far that weapon's round came: the burst is judged a stage
+        // after the round itself was destroyed, so the distance is frozen here
+        // with the rest of the credit (`Combat.HitAttributions.from_blast`)
+        ecs.register("blast_dist", Kind.F, 1, -1.0);
 
         // ---- smoke ------------------------------------------------------
         // A pull throws a lattice of `canister` entities; each one trades its
@@ -215,6 +224,11 @@ public static class Components
         ecs.register("proj_pid", Kind.I, 1, -1);         // the pilot who fired it
         ecs.register("proj_name", Kind.U16);             // ...the crew it belongs to
         ecs.register("proj_etype", Kind.U8);             // ...or its type, if nameless
+        // Where it left the muzzle, frozen at the shot like the credit above: the
+        // kill line's "at 812 m" is this point measured to the one it went off at
+        // (`Combat.HitAttributions.from_round`).  A round outlives its launch
+        // point's hull too, and a hull's `pos` moves.
+        ecs.register("proj_origin", Kind.F, 3, 0.0);
         ecs.register("proj_age", Kind.F);
         ecs.register("proj_seed", Kind.F);               // per round, drives the thrust jitter
         // where the round started this tick: the prox fuse solves the leg it
@@ -264,7 +278,7 @@ public static class Components
         "yaw", "pitch", "leg_yaw", "turret_yaw",
         "sight_yaw", "sight_pitch", "etype", "faction", "name_id",
         "owner", "hp", "hpmax", "armor", "last_hit", "last_pid",
-        "last_name", "last_fac", "last_etype", "last_wid",
+        "last_name", "last_fac", "last_etype", "last_wid", "last_dist",
         "weapon", "ammo", "mag", "cool", "reload_t",
         "trigger", "trigger_prev", "work_remaining_time", "target", "ai_state", "ai_timer",
         "path_i", "lane", "flags",
@@ -293,7 +307,7 @@ public static class Components
 
     public static readonly string[] BLAST_COMPS = {
         "pos", "faction", "blast_power", "blast_t", "blast_friendly",
-        "blast_skip", "blast_pid", "blast_name", "blast_etype", "blast_wid",
+        "blast_skip", "blast_pid", "blast_name", "blast_etype", "blast_wid", "blast_dist",
         "blast",
     };
 
@@ -304,7 +318,7 @@ public static class Components
     /// key, i.e. the round's `etype`.</summary>
     public static readonly string[] PROJ_COMPS = {
         "pos", "vel", "faction", "proj_kind", "proj_wid", "proj_life", "proj_src",
-        "proj_pid", "proj_name", "proj_etype",
+        "proj_pid", "proj_name", "proj_etype", "proj_origin",
         "proj_age", "proj_seed", "proj_prev", "proj_trav", "target",
         "first_hit_t", "first_hit_pos", "first_hit_kind",
         "first_hit_unit", "first_hit_mod", "first_hit_gap",

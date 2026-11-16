@@ -377,12 +377,16 @@ ENEMY BASE   ▇▇▇▇░░░░░░
 **存活 20 s**（一场仗几秒就写一条，抬头看战况时往往已经过了十几秒）：
 
 ```
-jack killed APC with 30mm autocannon
-Char Aznable[bot] killed jack with SACLOS ATGM
+jack killed APC with 30mm autocannon from 0.81 km away
+Char Aznable[bot] killed jack with SACLOS ATGM from 2.6 km away
 ```
 
-* 结构：`<击杀者> killed <被击杀者> with <武器>`。**赏金不在这行上**：
+* 结构：`<击杀者> killed <被击杀者> with <武器> from <距离> away`。**赏金不在这行上**：
   钱显示在左下角资金数字旁边（见 2.3），消息区只写字。
+* **距离是这一炮打的**：从**弹药出膛的位置**到**它落点**的直线距离（斜距），在出膛那一瞬
+  冻住，和击杀归属同一时刻记账——所以开完炮被打死、炮弹随后落地命毙，距离仍然是那一炮的。
+  显示为千米：1 km 以内两位小数（`0.81 km`），以外一位（`2.6 km`）。没有发射点可量的
+  伤害（调试旋钮直接扣血、无人引爆的爆炸）**不写这一段**，行尾停在武器名上。
 * 颜色：击杀者与被击杀者用**各自阵营色**（红/蓝），`killed` / `with` 灰，**武器名加粗**。
   整行画在一块半透明黑底板上（`rgba(8,14,10,0.62)`，四周各 6 px 留边），
   因为这一行要在天空背景上读。
@@ -398,6 +402,8 @@ Char Aznable[bot] killed jack with SACLOS ATGM
   （消息行与赏金照给）。
 * 赏金不论消息行发不发都会到账：打掉步兵没有消息行，钱照样在资金旁边冒一下
   `+$45`。
+* 同一条击杀也对外提供一份数据流（`GET /events/kills`，SSE，给脚本 / 直播叠加层这类
+  屏幕外的读者）：字段与口径见 [killed_sse.md](killed_sse.md)。
 
 ### 2.14 右下角状态
 

@@ -29,15 +29,17 @@ public static class Blasts
     ///
     /// `friendly` false means "enemies only" (a weapon burst), true means "no
     /// sides" (a wreck going up).  `life` is how many seconds it keeps burning - 0
-    /// is a single tick, which is every explosion in the game today.
+    /// is a single tick, which is every explosion in the game today.  `faction` is
+    /// the side the pattern spares, which is not always the side that names it: it
+    /// is 255 for a burst nobody owns.
     ///
-    /// `by` / `wid` are who the kill feed names and with what: frozen here for the
-    /// same reason the credit is (`blast_pid`) - the burst is judged a stage later,
-    /// and the hull that left it may be gone by then.</summary>
+    /// `attrs` (who the kill feed names, with what and from how far) is frozen
+    /// here for the same reason the credit is (`blast_pid`) - the burst is judged
+    /// a stage after the round that made it was destroyed, so its distance can
+    /// only be carried, never re-measured (`Combat.HitAttributions`).</summary>
     public static int spawn(World world, Vec3 pos, (float ed, float er) power,
-                            bool friendly = false, int skip = -1, int pid = -1,
-                            int faction = -1, float life = 0f,
-                            (int name_id, int fac, int etype)? by = null, int wid = -1)
+                            in HitAttributions attrs, bool friendly = false, int skip = -1,
+                            int faction = -1, float life = 0f)
     {
         float ed = power.ed;
         if (ed <= 0f) return -1;
@@ -53,13 +55,14 @@ public static class Blasts
         e.fv("blast_t")[bid] = life;
         e.uv("blast_friendly")[bid] = (byte)(friendly ? 1 : 0);
         e.iv("blast_skip")[bid] = skip;
-        e.iv("blast_pid")[bid] = pid;
-        if (by is not null)
+        e.iv("blast_pid")[bid] = attrs.pid;
+        if (attrs.by is not null)
         {
-            e.uv16("blast_name")[bid] = (ushort)Math.Max(0, by.Value.name_id);
-            e.uv("blast_etype")[bid] = (byte)Math.Max(0, by.Value.etype);
+            e.uv16("blast_name")[bid] = (ushort)Math.Max(0, attrs.by.Value.name_id);
+            e.uv("blast_etype")[bid] = (byte)Math.Max(0, attrs.by.Value.etype);
         }
-        e.uv("blast_wid")[bid] = (byte)Math.Max(0, wid);
+        e.uv("blast_wid")[bid] = (byte)Math.Max(0, attrs.wid);
+        e.fv("blast_dist")[bid] = attrs.range;
         return bid;
     }
 
@@ -88,10 +91,13 @@ public static class Blasts
         if (ed <= 0f) return;
         if (sph.n == 0) return;
         var p = e.fv("pos").get3(bid);
-        int name_id = e.uv16("blast_name")[bid];
+        // who is named on it, with what and from how far: frozen at creation.  An
+        // unnamed, unowned burst (a wreck going up) names nobody - it is not a kill
+        // anyone made
+        var attrs = HitAttributions.from_blast(world, bid);
         // the burst as a weapon: area damage only, so `ad` is 0 and nothing here
         // can punch a plate
-        var wd = new WeaponDef { ed = ed, er = er, ad = 0f, wid = e.uv("blast_wid")[bid] };
+        var wd = new WeaponDef { ed = ed, er = er, ad = 0f, wid = attrs.wid };
         int skip = e.iv("blast_skip")[bid];
         int fac = e.uv("faction")[bid];
         bool friendly = e.uv("blast_friendly")[bid] != 0;
@@ -130,12 +136,6 @@ public static class Blasts
             return c != 0 ? c : x.CompareTo(y);
         });
 
-        int pid = e.iv("blast_pid")[bid];
-        // who is named on it: the shooter, frozen at creation.  An unnamed, unowned
-        // burst (a wreck going up) names nobody - it is not a kill anyone made
-        (int name_id, int fac, int etype)? by = null;
-        if (name_id > 0 && (fac == Defs.FACTION_RED || fac == Defs.FACTION_BLUE))
-            by = (name_id, fac, (int)e.uv("blast_etype")[bid]);
         // the table was built earlier in this tick: an id it holds can have been
         // freed by a round landing since and handed out again (LIFO) to something
         // else - a burst, a puff.  `ecs.destroyed` is what this tick reaped, so it
@@ -150,8 +150,8 @@ public static class Blasts
             last = uid;
             if (e.destroyed.Contains(uid)) continue;
             float d = MathF.Max(h_d[h], 0f);
-            Combat.splash(world, uid, sph.modules[h_row[h]], wd, d, pid,
-                          $"blast {d:F1} m", by);
+            Combat.splash(world, uid, sph.modules[h_row[h]], wd, d, attrs,
+                          $"blast {d:F1} m");
         }
     }
 }

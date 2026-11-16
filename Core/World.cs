@@ -381,6 +381,9 @@ public sealed class World
         e.iv("proj_pid")[pid] = e.iv("owner").get(src, 0);
         e.uv16("proj_name")[pid] = e.uv16("name_id").get(src, 0);
         e.uv("proj_etype")[pid] = e.uv("etype").get(src, 0);
+        // where it left from, frozen with the credit: the hull it was fired from
+        // drives on, dies, and turns to a wreck while this round is in the air
+        e.fv("proj_origin").set3(pid, pos);
         e.fv("proj_age")[pid] = 0f;
         e.fv("proj_seed")[pid] = rng.random();
         e.fv("proj_trav")[pid] = 0f;

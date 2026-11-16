@@ -469,11 +469,17 @@ public static partial class Defs
         // 4000 hp much of a favour.
         //
         // The round rides a laser the launcher's computer holds on a *locked* target
-        // (`Systems/Beams.cs`), so the price is no longer the sight: it is the lock,
-        // which is the same interaction the top attack asks for.  Four channels are
-        // carried at once - the beam hops between them and the code in the laser says
-        // which round is which - so a machine can service a whole melee, and loses the
-        // beam on a target the moment that hull leaves the sight's own window.
+        // (`Systems/Beams.cs`): it is dumb hardware - a motor, four fins and a receiver
+        // for the beam - and all the electronics that make it work are the *machine's*,
+        // the sight that finds the hull and the computer that leads it.  Four channels
+        // are carried at once - the beam hops between them and the code in the laser
+        // says which round is which - so a machine can service a whole melee, and loses
+        // the beam on a target the moment that hull leaves the sight's own window.
+        //
+        // So it is priced as what it is: the cheapest guided round on the field, $200
+        // of launcher and $5 a shot ($280 loaded, against the top attack's $910).  What
+        // it buys is a slow round that has to be flown by hand for eight seconds; what
+        // it does not buy is the thing that makes it hit, which the hull already has.
         //
         // Sixteen rounds in a flat 4 x 4 pack, the same tubes as the top attack and
         // the same mechanism: one round per tube, no magazine, no reload, and 0.3 s
@@ -489,7 +495,7 @@ public static partial class Defs
             life = 36.0f, wob = 12.0f, wob_f = 1.5f, maxdist = 4000.0f,
             ignite = 0.40f, mass = 45.0f, dia = 0.13f, cd0 = 0.60f, k_cl = 0.12f,
             cl_alpha = 15.0f, cl_max = 4.5f,
-            range = 3400, cost = 350, ammo_cost = 10.0f, @lock = 1, salvo = 0,
+            range = 3400, cost = 200, ammo_cost = 5.0f, @lock = 1, salvo = 0,
             semi = 0, color = new[] { 0.35f, 1.0f, 0.55f }, cal = 152f,
             rcs = 0.02f, rack = RACK_SACLOS, desc = "Lock on, then ride the laser in",
         },

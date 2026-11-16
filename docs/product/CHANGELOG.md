@@ -11,6 +11,18 @@
 
 ---
 
+## 2026-11-15 · 击杀流不播报步兵（1.32.1）
+
+- **`GET /events/kills` 只发机器**：被击毁者是步兵（步枪兵 / 反坦克兵 / 平民，即所有带
+  `person` 的单位）的一律不发——一场仗打死几十个，流立刻变成刷屏。和消息区同一条规矩。
+- **步兵当击杀者的记录照发**（一个人用 RPG 掀掉一台机甲是条新闻）。所以
+  `killed.unit_type` 只可能是 `mech` / `apc` / `command_base`，而 `by.unit_type` 仍然
+  可能是 `rifleman` / `at_rifleman`。
+- 文档 `killed_sse.md`：§3.1 的枚举表改成"能出现在 `killed` / 能出现在 `by`"两列，
+  §4.2 补上步兵这一条（改成四种不上流的死亡），§4.4 改成"一行流和一行字的区别"。
+- 涉及文件：`Systems/Support/KillFeed.cs`（`publish` 的 `person` 门）、
+  `docs/product/killed_sse.md`。
+
 ## 2026-11-15 · 击杀流带上消息类型与单位类型（1.32.0）
 
 - **`GET /events/kills` 的记录多了两件事**：

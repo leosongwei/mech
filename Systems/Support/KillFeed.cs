@@ -99,17 +99,18 @@ public static class KillFeed
 
     /// <summary>Hand one kill to the stream.
     ///
-    /// The set is the HUD's own - **a pilot on one end of it** - because a crew
-    /// finishing a crew is most of a 16 km war and none of anybody's business;
-    /// `is_player` on both ends would read `false` anyway.  It is wider in exactly
-    /// one place: a rifleman's death is published when a pilot caused it or
-    /// suffered it, where the message stack keeps infantry off the screen because a
-    /// battle kills them by the dozen.</summary>
+    /// The set is the message stack's own, because a reader outside the game is
+    /// looking at the same war: **a pilot on one end of it**, and **a machine on
+    /// the other**.  Infantry stay off it - a battle kills them by the dozen and
+    /// they would bury the machines, which is why `killed.unit_type` is never
+    /// `rifleman`, `at_rifleman` or `civilian`.  A crew finishing a crew is off it
+    /// too: most of a 16 km war and none of anybody's business.</summary>
     public static void publish(World world, int eid)
     {
         var h = on_kill;
         if (h is null) return;
         var e = world.ecs;
+        if (e.has(eid, "person")) return;               // a man is not a kill, here either
         bool victim_is_player = e.iv("owner")[eid] >= 0;
         var kill = HitAttributions.from_victim(world, eid);
         if (kill.pid < 0 && !victim_is_player) return;      // two crews, no pilot anywhere

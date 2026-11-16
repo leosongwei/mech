@@ -1021,8 +1021,10 @@ own; the wire is `net/wire.js` + `net/rows.js` and the picture is `net/view.js`.
   straight off a bright cloud. The payout is `hud._status`'s: one `+$N` per
   `kill` event on the pilot's own pid, on the money's own line and fading out.
 * **The same kill is on a wire of its own: `GET /events/kills`.** Server-sent
-  events, one JSON record per kill with a pilot on one end - the message stack's
-  own set, so crew against crew is on neither - shaped
+  events, one JSON record per kill with a pilot on one end of it and a machine on
+  the other - the message stack's own set, so crew against crew is on neither and
+  neither is a rifleman's death (a battle kills them by the dozen, and the stream
+  would be nothing else) - shaped
   `{"type":"killed","killed":{"name","is_player","unit_type"},"by":{...},"weapon","distance"}`
   (`type` is the wire's message kind, so a later message is not a guess from the
   shape), with the plain

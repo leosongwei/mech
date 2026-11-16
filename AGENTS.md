@@ -127,6 +127,7 @@ tests/                     # unit tests, run by run_tests.sh - no server, no soc
 assets/                    # compiled client (webpack output, gitignored)
 tools/
   gun_report.py            # weapon-report audio analysis (numpy; the numbers in audio.js)
+  saclos_motor.py          # the beam rider's motor: the burn a thrust needs (stdlib)
   smoke_lock_test.js       # browser-console driver: seeker A/B smoke test
 frontend/                  # the client: four layers, one direction (checked by
                            #   scripts/depgraph.mjs); `npm run build` = deps check +
@@ -2082,7 +2083,11 @@ cd frontend && npm install && npm run build      # -> assets/
   the cue `HEAVY_REPORT` in `audio/` describes).  It is the one Python script
   left, it needs `numpy` in `.venv`, and it never touches the server.
   `tools/smoke_lock_test.js` is a browser-console driver for the seeker's smoke
-  A/B test.
+  A/B test.  `tools/saclos_motor.py` is the beam rider's motor as an idealised
+  integration of the same airframe (45 kg, S 0.0133 m^2, the real drag polar), so a
+  thrust and a burn can be priced before they are flown: `--tune 100` prints the
+  burn 100 m/s^2 needs to be at the clamp as it burns out, and the shipped rows of
+  `--check beam` sit inside half a percent of what it predicts.
 ## Run
 
 `dev.sh` is the normal entry point. It starts the server inside a detached

@@ -128,67 +128,44 @@ public static class Locking
                 if (!hold) Beams.free(world, eid, ch);
             }
 
-            // what the cross is on: a *candidate*, whose line only a shot claims.
-            // Sweeping the reticle over a hull therefore costs nothing and takes
-            // nothing away - a channel already held survives every near miss of
-            // the pilot's aim
-            int cand = _candidate(world, eid, wd, cone, ids, origin, d);
-
-            // what the reticle reads: the line a trigger pull would ride (a channel
-            // already held), and failing that the hull under the cross
-            _mirror(world, eid, pl, keep, cand);
+            // what the cross is on: the hull a trigger pull would take, and the only
+            // thing the reticle rings.  It costs nothing and claims nothing - the
+            // shot claims the channel, and the channels already held are the
+            // machine's *formal* targets (the wire's `locks`, the thin diamonds)
+            pl.lock_target = _candidate(world, eid, wd, cone, ids, origin, d);
         }
     }
 
-    /// <summary>The channel a shot from `wd` rides: the complete one nearest the
-    /// sight line, inside the cone that weapon's own seeker answers in - the
-    /// reticle circle for a fire-and-forget round, the whole window for a beam
-    /// rider, whose laser can be pointed at all of it.
+    /// <summary>What a trigger pull takes: the hull the reticle is on, which is the
+    /// machine's *candidate* (`Player.lock_target`, found by `run` this tick).
+    /// Nothing under the cross, nothing fired - and a hull is a formal target only
+    /// once a shot has claimed a channel for it (`Systems/Weapons.cs::fire`).
     ///
-    /// `target` is the hull the shot takes, and a line already held is not the only
-    /// thing that qualifies: the hull under the cross is a lock the shot can claim
-    /// there and then (`Systems/Weapons.cs::fire` lays its channel), which is what
-    /// makes "cross on the hull, pull the trigger" work on the tick the cross
-    /// arrives.  `target` is -1 when there is neither, and the trigger is
-    /// refused.</summary>
+    /// The return value is the channel that hull already rides, or -1 when the shot
+    /// has to claim a fresh one.</summary>
     public static int pick(World world, int eid, WeaponDef wd, Player pl, out int target)
     {
         target = -1;
+        if (pl is null) return -1;
         var e = world.ecs;
         if (!e.has(eid, "beam_tgt")) return -1;
-        float cone;
-        if (wd.kind == "saclos") cone = Defs.BEAM_CONE;
-        else if (pl is not null) cone = cone_of(pl);
-        else cone = _cone(1f, 16f / 9f, Defs.LOCK_FRAC);
-        var (origin, sy, sp) = Weapons.aim_of(world, eid);
-        var d = MathUtil.dir_from(sy, sp);
-        var tgt = e.iv("beam_tgt");
+        int tid = pl.lock_target;
+        if (tid < 0 || !e.is_alive(tid) || !e.has(tid, "lockable")) return -1;
+        if (e.uv("faction")[tid] == e.uv("faction")[eid]) return -1;
+        var (origin, _, _) = Weapons.aim_of(world, eid);
         var pos = e.fv("pos");
-        var etype = e.uv("etype");
-        int mine = e.uv("faction")[eid];
-        int best = -1;
-        float best_ang = cone;
-        for (int ch = 0; ch < Defs.BEAM_CHANNELS; ch++)
-        {
-            int tid = tgt.get(eid, ch);
-            if (tid < 0) continue;
-            if (!e.is_alive(tid) || e.uv("faction")[tid] == mine) continue;
-            var (ang, dist) = _angle_to(_sight_point(pos.get3(tid), etype[tid]), origin, d);
-            if (ang >= best_ang || dist > Defs.lock_range(wd)) continue;
-            best = ch;
-            best_ang = ang;
-            target = tid;
-        }
-        if (best >= 0) return best;
-        // nothing held on the line: the hull the cross is on is what the shot takes
-        if (pl is not null && pl.lock_target >= 0 && e.is_alive(pl.lock_target))
-            target = pl.lock_target;
-        return -1;
+        var aim = _sight_point(pos.get3(tid), e.uv("etype")[tid]);
+        float dx = aim.x - origin.x, dy = aim.y - origin.y, dz = aim.z - origin.z;
+        if (MathF.Sqrt(dx * dx + dy * dy + dz * dz) > Defs.lock_range(wd)) return -1;
+        target = tid;
+        return _channel_of(world, eid, tid);
     }
 
-    /// <summary>The hull the reticle is on that no line is held for: nearest the
-    /// cross, inside the reticle circle, in range, with a clear line of sight.  -1
-    /// = nothing there, so a trigger pull has nothing to claim.</summary>
+    /// <summary>The hull the reticle is on: nearest the cross, inside the reticle
+    /// circle, in range, with a clear line of sight.  A hull that already rides a
+    /// channel is one too - the pilot may put four more rounds into a target he is
+    /// already shooting at.  -1 = nothing there, so a trigger pull has nothing to
+    /// claim.</summary>
     private static int _candidate(World world, int eid, WeaponDef wd, float cone,
                                   int[] ids, Vec3 origin, Vec3 d)
     {
@@ -202,7 +179,6 @@ public static class Locking
         foreach (int tid in ids)
         {
             if (faction[tid] == mine) continue;
-            if (_channel_of(world, eid, tid) >= 0) continue;       // already held
             var tp = pos.get3(tid);
             float vx = tp.x - origin.x, vy = tp.y - origin.y, vz = tp.z - origin.z;
             float dist = MathF.Sqrt(vx * vx + vy * vy + vz * vz);
@@ -224,32 +200,6 @@ public static class Locking
         for (int ch = 0; ch < Defs.BEAM_CHANNELS; ch++)
             if (tgt.get(eid, ch) == tid) return ch;
         return -1;
-    }
-
-    /// <summary>Mirror the reticle's own lock into `Player`, which is what the wire
-    /// carries and the HUD draws: the channel nearest the cross, which is also the
-    /// one a trigger pull takes, and failing that the hull under the cross - a lock
-    /// the shot would claim, which is what the ring and the lock tone are for.</summary>
-    private static void _mirror(World world, int eid, Player pl, float cone, int cand)
-    {
-        var e = world.ecs;
-        var (origin, sy, sp) = Weapons.aim_of(world, eid);
-        var d = MathUtil.dir_from(sy, sp);
-        var tgt = e.iv("beam_tgt");
-        var pos = e.fv("pos");
-        var etype = e.uv("etype");
-        int best = -1;
-        float best_ang = float.MaxValue;
-        for (int ch = 0; ch < Defs.BEAM_CHANNELS; ch++)
-        {
-            int tid = tgt.get(eid, ch);
-            if (tid < 0 || !e.is_alive(tid)) continue;
-            var (ang, _) = _angle_to(_sight_point(pos.get3(tid), etype[tid]), origin, d);
-            if (ang > cone || ang >= best_ang) continue;
-            best = ch;
-            best_ang = ang;
-        }
-        pl.lock_target = best < 0 ? cand : tgt.get(eid, best);
     }
 
     /// <summary>Whether the machine carries a laser designator - a beam rider in

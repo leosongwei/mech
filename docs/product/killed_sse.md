@@ -53,7 +53,7 @@ SSE 的三条规矩在这个流里的样子：
 | `killed.name` | string | 被击毁者的名字。玩家是**大厅呼号**；AI 机甲是名字池里的驾驶员名；没有名字的单位用类型名（`APC`、`RIFLEMAN`、`COMMAND BASE`） |
 | `killed.is_player` | bool | 这一端有没有玩家在开（`owner >= 0`） |
 | `killed.unit_type` | string | 被击毁者的类型，枚举见 §3.1 |
-| `by.name` | string | 打出**最后一击**的那一发的发出者 |
+| `by.name` | string | 打出**最后一击**的那一发的发出者。玩家是呼号；AI 机甲是驾驶员名；**车和兵没有名字，用类型名**（`APC`、`RIFLEMAN`、`AT RIFLEMAN`） |
 | `by.is_player` | bool | 那一发是不是玩家打的（AI 车组/步兵为 `false`） |
 | `by.unit_type` | string | 击杀者的类型，枚举见 §3.1 |
 | `weapon` | string | 造成最后一击的武器名，小写，和消息区行里的写法一致，枚举见 §3.2 |

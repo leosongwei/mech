@@ -11,6 +11,22 @@
 
 ---
 
+## 2026-11-15 · 被 APC 或步兵打死的击杀终于会播报了（1.32.2）
+
+- **1.29.0 带进来的一处静默漏报**：归属判定把"击杀者没有名字"当成了"没有击杀者"。而
+  车（`APC`）和兵（`RIFLEMAN` / `AT RIFLEMAN`）本来就没有名字——它们按**类型名**播报——
+  于是**被 APC 或步兵打死的击杀，消息区和 `GET /events/kills` 上都没有**。机甲对机甲、
+  玩家对机甲的击杀一直正常，所以这个洞不容易撞见。
+- 现在判定只看**有没有阵营**：无名但有阵营的击杀者照常播报，名字写成类型名
+  （`APC[bot]`）。顺带修好同一处引出的另一个漏报：无名击杀者造成的残骸连锁引爆，以前
+  也认不出是谁。
+- 实测（`--check battle` 15 分钟，端到端跑 `KillStream` 的序列化）：
+  `by: {"name":"APC","is_player":false,"unit_type":"apc"}`、
+  `by: {"name":"AT RIFLEMAN",...,"unit_type":"at_rifleman"}`、
+  `by: {"name":"Bright Noa",...,"unit_type":"mech"}` 三种都出现在流上。
+- 涉及文件：`Core/Combat.cs`（`HitAttributions._by` 的判据）、`docs/product/killed_sse.md`
+  （`by.name` 的说明补上"车和兵用类型名"）。
+
 ## 2026-11-15 · 击杀流不播报步兵（1.32.1）
 
 - **`GET /events/kills` 只发机器**：被击毁者是步兵（步枪兵 / 反坦克兵 / 平民，即所有带

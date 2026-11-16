@@ -117,13 +117,17 @@ public readonly struct HitAttributions
                                    e.uv("last_wid")[eid], e.fv("last_dist")[eid]);
     }
 
-    /// <summary>Who to name, or null: a side that is neither red nor blue is no
-    /// side at all (an uncrewed burst reads 255), and no side names nobody - a
-    /// wreck going up is not a kill anyone made.</summary>
+    /// <summary>Who to name, or null when there is no side to name: a burst with no
+    /// owner reads 255 there, and it is not a kill anyone made.
+    ///
+    /// A *nameless* killer is still a killer - name id 0 is `World.names`' own
+    /// "answers to its type", which is a car, a man or a base, and `_named` writes
+    /// `APC` for it.  Gating on a name here is what quietly dropped every kill an
+    /// APC or a rifleman made.</summary>
     private static (int name_id, int fac, int etype)? _by(ECS e, string etype_col, int eid,
                                                           int name_id, int fac)
     {
-        if (name_id <= 0 || (fac != Defs.FACTION_RED && fac != Defs.FACTION_BLUE)) return null;
+        if (fac != Defs.FACTION_RED && fac != Defs.FACTION_BLUE) return null;
         return (name_id, fac, e.uv(etype_col)[eid]);
     }
 }

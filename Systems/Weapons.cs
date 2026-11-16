@@ -165,12 +165,15 @@ public static class Weapons
                 int target = -1;
                 if (wd.@lock != 0)
                 {
-                    if (world.players.TryGetValue(owner[eid], out _))
+                    if (world.players.TryGetValue(owner[eid], out var owner_pl))
                     {
-                        // the pilot's own lock: the complete channel nearest his
-                        // cross (`Systems/Locking.cs`).  Nothing locked, nothing
-                        // fired - which is the whole of "lock on, then launch"
-                        if (Locking.pick(world, eid, wd, out target) < 0) continue;
+                        // the pilot's own lock (`Systems/Locking.cs`): a line already
+                        // held, or the hull under his cross - which this shot then
+                        // claims a line for (`fire` below).  Nothing under the cross
+                        // and nothing held, nothing fired, which is the whole of
+                        // "lock on, then launch"
+                        Locking.pick(world, eid, wd, owner_pl, out target);
+                        if (target < 0) continue;
                     }
                     else
                     {

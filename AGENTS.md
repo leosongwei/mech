@@ -979,10 +979,19 @@ own; the wire is `net/wire.js` + `net/rows.js` and the picture is `net/view.js`.
   (`1` while the sight has it or the memory is young, `0` after), since a lit beam
   in a held-but-blind channel would steer rounds at a ghost.  `Systems/Locking.cs` is the acquisition
   half and the same interaction the top attack asks for - a channel *is* a lock,
-  laid in the tick the cross arrives, with no settle time anywhere in the table -
-  with the two weapons differing in what holds after: a seeker
+  with no settle time anywhere in the table - with the two weapons differing in what
+  holds after: a seeker
   drops the target the moment it leaves the reticle circle, a designator keeps it
-  for as long as it is anywhere in the picture.  The lock lives on the *hull*, not
+  for as long as it is anywhere in the picture.
+  **A line is claimed by the shot** (`Weapons.fire` calls `Beams.lay` for the hull it
+  is firing at), because laying on the cross makes *steering* cost lines: a cross
+  swept across four hulls on its way to the one being aimed at fills every channel
+  and evicts the oldest, i.e. the pilot loses his own held target to a near miss of
+  his aim.  What the cross is on before the shot is a *candidate* - the hull the
+  trigger would take - mirrored into `Player.lock_target` so the reticle rings it and
+  the lock tone sounds, and `Locking.pick` answers with a held line or with that
+  candidate, which is what keeps "cross on the hull, pull the trigger" working on the
+  tick the cross arrives.  The lock lives on the *hull*, not
   on `Player` (a machine's locks die with it, and the beam is what the round
   reads); `Player.lock_target` is the hull the HUD rings, mirrored by
   `Locking.run` for the wire, and the meta's `locks` list is the whole set.

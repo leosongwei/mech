@@ -341,10 +341,9 @@ public static class Flights
                             // tube with: a lead computed off the launch speed asks
                             // for a 30 s flight and throws the aim point a kilometre
                             // down the target's track, and it would then sweep
-                            // backwards through the sky as the motor lit.  The
-                            // motor ramps, so the average is the ramp's own
-                            // (`Flight.mean_speed`, not the mean of its ends)
-                            float avg = Flight.mean_speed(wd, speed, r.age);
+                            // backwards through the sky as the motor lit
+                            float avg = r.age < wd.ignite + wd.burn
+                                ? 0.5f * (speed + wd.maxvel) : speed;
                             aim = Beams.intercept(at, tv, ta, p0, avg);
                             aperture = origin;
                             // the line the laser is on: what the round is steered

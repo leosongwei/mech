@@ -273,11 +273,7 @@ public sealed class WeaponDef
     // tilted up so its slow round meets the cannon's line at 1 km
     public float bias;
     public float g;                 // gravity on the round, m/s^2 (0 = flies flat)
-    public float thrust;            // m/s^2 from the motor at ignition, 0 = none
-    // thrust_end: m/s^2 the motor makes as the burn ends, for a motor that ramps -
-    //          the round leaves the tube slow and pulls harder the longer it flies.
-    //          0 = flat: `thrust` from ignition to burnout.
-    public float thrust_end;
+    public float thrust;            // m/s^2 from the motor, 0 = none
     public float maxvel;            // m/s the motor tops out at
     public float life;              // s of flight before the round cooks off
     // what happens when `life` runs out: true = the warhead goes off where the
@@ -449,14 +445,17 @@ public static partial class Defs
             semi = 0, color = new[] { 1.0f, 0.45f, 0.15f }, cal = 80f, rcs = 0.005f,
             rack = RACK_ROCKET, desc = "40 rounds, hold to fire, sighted to 1 km",
         },
-        // Vikhr class: a 130 mm, 45 kg supersonic beam rider.  40 m/s soft launch, then
-        // a motor that ramps - 100 m/s^2 at ignition climbing to 500 by the end of a
-        // 2.1 s burn, which puts 600 m/s on the round *at* burnout, 580 m down range.  A
-        // flat 300 m/s^2 would be at the ceiling in 1.9 s and then push against the
-        // clamp for nothing; the measurement that sets the burn is `--check beam`'s
-        // `profile` row.  From there it is an *aeroplane*: `Flight.direct` flies the
-        // airframe, so the motor's burnout is the moment the flight starts to decay.  Drag (`cd0` 0.6 plus the transonic rise) bleeds 600 m/s down to ~400
-        // by the far end of the wire, and holding altitude costs a real angle of attack
+        // Vikhr class: a 130 mm, 45 kg supersonic beam rider.  A *soft* launch: 40 m/s
+        // off the rail, 0.4 s (16 m) clear of the hull before the motor lights, so the
+        // plume has somewhere to go.  Then one flat number - 100 m/s^2 for 7.3 s -
+        // which is what the airframe wants rather than what a hurry wants: with the
+        // drag left real (39 m/s^2 of it alone at 600 m/s) a 100 m/s^2 motor needs
+        // 7.3 s to net the 560 m/s, and the round is at the `maxvel` clamp exactly as
+        // it burns out, 2.6 km down range.  A 5.5 s burn would want 124 m/s^2.
+        // From there it is an *aeroplane*: `Flight.direct` flies the airframe, so the
+        // motor's burnout is the moment the flight starts to decay.  Drag (`cd0` 0.6
+        // plus the transonic rise) bleeds 600 m/s down to ~400 by the far end of the
+        // wire, and holding altitude costs a real angle of attack
         // the whole way: 0.6 deg at 600 m/s, 1.3 deg at 400, 3.3 deg at 250 - and below
         // about 110 m/s the wing cannot make 1 g at all, so the round sags out of the
         // beam with nothing left to pull with.  What it *can* pull is `q*S*cl_max/m`:
@@ -485,10 +484,10 @@ public static partial class Defs
             wid = WID_SACLOS, key = "saclos", name = "SACLOS ATGM", kind = "saclos",
             ap = 800f, ad = 120f, ed = 80f, er = 6.0f,
             rpm = 200, mag = 16, reserve = 0, reload = 0.0f, vel = 40f, spread = 0.003f,
-            bias = 0.0f, g = 0.0f, thrust = 100f, thrust_end = 500f, burn = 2.1f,
+            bias = 0.0f, g = 0.0f, thrust = 100f, burn = 7.3f,
             maxvel = 600f,
             life = 36.0f, wob = 12.0f, wob_f = 1.5f, maxdist = 4000.0f,
-            ignite = 0.10f, mass = 45.0f, dia = 0.13f, cd0 = 0.60f, k_cl = 0.12f,
+            ignite = 0.40f, mass = 45.0f, dia = 0.13f, cd0 = 0.60f, k_cl = 0.12f,
             cl_alpha = 15.0f, cl_max = 4.5f,
             range = 3400, cost = 350, ammo_cost = 10.0f, @lock = 1, salvo = 0,
             semi = 0, color = new[] { 0.35f, 1.0f, 0.55f }, cal = 152f,

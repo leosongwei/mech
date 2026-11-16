@@ -1003,11 +1003,14 @@ own; the wire is `net/wire.js` + `net/rows.js` and the picture is `net/view.js`.
   at 600 m/s, 3.3 at 250), pays induced drag for it, and its whole flight decays
   once the boost is out: 600 m/s at burnout, some 570 m down range and 2.1 s after
   the shot, then 483 at 2 km and 413 at 3.2 km (`--check beam`'s `profile` row).
-  **The motor ramps** (`thrust_end`): 100 m/s² at ignition climbing to 500 by
-  burnout over 2.1 s of burn, tuned so the peak *is* the clamp - the round runs out
-  of motor at exactly 600 m/s (measured 600 m/s at 560-580 m).  That is what makes it
-  leave the tube softly and still arrive with the old round's energy: 315 m/s at
-  200 m against 337 for a flat 300 m/s² motor, 569 at 500 m against 530.  What it can pull is `q·S·cl_max/m`
+  **The motor is a soft launch and a long pull**: 40 m/s off the rail, 0.4 s of coast
+  (16 m, clear of the hull) before ignition, then a flat 100 m/s² for 7.3 s, sized by
+  `tools`-side arithmetic and confirmed on the bench so that the round *is* at the
+  600 m/s clamp as it burns out (measured 600 m/s at 2.6 km / 7.7 s).  The drag is the
+  model's own: 100 m/s² nets 560 m/s in 7.3 s because the round is at 39 m/s² of drag
+  by the end, and a 5.5 s burn would need 124 m/s².  So it is 190 m/s at 200 m, 302 at
+  500, 420 at 1 km, 554 at 2 km - a slow, soft shot that is fast exactly where the
+  wire ends.  What it can pull is `q·S·cl_max/m`
   - 30 g at 600 m/s, 3 g at 200, nothing that holds 1 g below 110 - so a long shot
   is *aimed* rather than steered, and the purse is the launcher's: 3.4 km is the
   lock, and 36 m/s² of lift at 200 m/s is not a correction.

@@ -305,12 +305,16 @@ public static class BeamCheck
         Weapons.fire(world, shooter, 1, Defs.WID_SACLOS, wd, target);
         e.arch_of(shooter)!.i("mag")[row * 2 + 1] -= 1;
 
-        int[] at = { 500, 1000, 2000, 3000, 3200 };
+        // 200 m is inside the boost: it is where a ramped motor shows its soft end
+        int[] at = { 200, 500, 1000, 2000, 3000, 3200 };
         var speed = new float[at.Length];
         var when = new float[at.Length];
         var sag = new float[at.Length];
         int found = -1;
         float live = 0f, maxSag = 0f, lineY = fresh.y + MathF.Sin(pitch) * 1f;
+        // the motor's own numbers: the fastest the round ever goes and when, which
+        // is what a burn time is tuned against
+        float peak = 0f, peakT = 0f, peakD = 0f;
         for (int t = 0; t < 1200; t++)
         {
             world.update(DT);
@@ -327,6 +331,7 @@ public static class BeamCheck
             var rv = e.fv("vel").get3(found);
             float sp = MathF.Sqrt(rv.x * rv.x + rv.y * rv.y + rv.z * rv.z);
             live = sp;
+            if (sp > peak) { peak = sp; peakT = t * DT; peakD = dist; }
             // the line the tube is pointed down, at this range: how far the round
             // has wandered from it vertically
             float want = fresh.y + MathF.Tan(pitch) * dist;
@@ -365,6 +370,8 @@ public static class BeamCheck
                 : $"{at[k] / 1000f:0.0} km -");
         Console.WriteLine($"profile  {sb.ToString().TrimEnd()}");
         Console.WriteLine($"profile  worst off the line {maxSag,4:0.0} m, "
+                          + $"peak {peak,4:0} m/s at {peakD,4:0} m / {peakT,4:0.00} s "
+                          + $"(motor out at {wd.ignite + wd.burn:0.00} s), "
                           + $"alive {e.is_alive(found)}, last speed {live,4:0} m/s, "
                           + $"burst {burstAt,5:0.0} m from the hull's centre");
     }

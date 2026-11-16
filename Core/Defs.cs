@@ -273,7 +273,11 @@ public sealed class WeaponDef
     // tilted up so its slow round meets the cannon's line at 1 km
     public float bias;
     public float g;                 // gravity on the round, m/s^2 (0 = flies flat)
-    public float thrust;            // m/s^2 from the motor, 0 = none
+    public float thrust;            // m/s^2 from the motor at ignition, 0 = none
+    // thrust_end: m/s^2 the motor makes as the burn ends, for a motor that ramps -
+    //          the round leaves the tube slow and pulls harder the longer it flies.
+    //          0 = flat: `thrust` from ignition to burnout.
+    public float thrust_end;
     public float maxvel;            // m/s the motor tops out at
     public float life;              // s of flight before the round cooks off
     // what happens when `life` runs out: true = the warhead goes off where the
@@ -446,10 +450,12 @@ public static partial class Defs
             rack = RACK_ROCKET, desc = "40 rounds, hold to fire, sighted to 1 km",
         },
         // Vikhr class: a 130 mm, 45 kg supersonic beam rider.  40 m/s soft launch, then
-        // 300 m/s^2 of boost for 2 s puts 600 m/s on it - and that is where the motor
-        // burns out, 600 m down range.  From there it is an *aeroplane*: `Flight.direct`
-        // flies the airframe, so the motor's burnout is the moment the flight starts to
-        // decay.  Drag (`cd0` 0.6 plus the transonic rise) bleeds 600 m/s down to ~400
+        // a motor that ramps - 100 m/s^2 at ignition climbing to 500 by the end of a
+        // 2.1 s burn, which puts 600 m/s on the round *at* burnout, 580 m down range.  A
+        // flat 300 m/s^2 would be at the ceiling in 1.9 s and then push against the
+        // clamp for nothing; the measurement that sets the burn is `--check beam`'s
+        // `profile` row.  From there it is an *aeroplane*: `Flight.direct` flies the
+        // airframe, so the motor's burnout is the moment the flight starts to decay.  Drag (`cd0` 0.6 plus the transonic rise) bleeds 600 m/s down to ~400
         // by the far end of the wire, and holding altitude costs a real angle of attack
         // the whole way: 0.6 deg at 600 m/s, 1.3 deg at 400, 3.3 deg at 250 - and below
         // about 110 m/s the wing cannot make 1 g at all, so the round sags out of the
@@ -479,7 +485,8 @@ public static partial class Defs
             wid = WID_SACLOS, key = "saclos", name = "SACLOS ATGM", kind = "saclos",
             ap = 800f, ad = 120f, ed = 80f, er = 6.0f,
             rpm = 200, mag = 16, reserve = 0, reload = 0.0f, vel = 40f, spread = 0.003f,
-            bias = 0.0f, g = 0.0f, thrust = 300f, burn = 2.0f, maxvel = 600f,
+            bias = 0.0f, g = 0.0f, thrust = 100f, thrust_end = 500f, burn = 2.1f,
+            maxvel = 600f,
             life = 36.0f, wob = 12.0f, wob_f = 1.5f, maxdist = 4000.0f,
             ignite = 0.10f, mass = 45.0f, dia = 0.13f, cd0 = 0.60f, k_cl = 0.12f,
             cl_alpha = 15.0f, cl_max = 4.5f,

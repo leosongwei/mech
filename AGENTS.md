@@ -1001,15 +1001,21 @@ own; the wire is `net/wire.js` + `net/rows.js` and the picture is `net/view.js`.
   `CLOS_K` 16 is a stiff, damped ride), plus its own weight in the plane square to
   the flight path.  So a beam rider holds altitude at an *angle of attack* (0.6 deg
   at 600 m/s, 3.3 at 250), pays induced drag for it, and its whole flight decays
-  once the 2 s boost is out: 600 m/s at burnout 600 m down range, 490 at 2 km, 417
-  at 3.2 km (`--check beam`'s `profile` row).  What it can pull is `q·S·cl_max/m`
+  once the boost is out: 600 m/s at burnout, some 570 m down range and 2.1 s after
+  the shot, then 483 at 2 km and 413 at 3.2 km (`--check beam`'s `profile` row).
+  **The motor ramps** (`thrust_end`): 100 m/s² at ignition climbing to 500 by
+  burnout over 2.1 s of burn, tuned so the peak *is* the clamp - the round runs out
+  of motor at exactly 600 m/s (measured 600 m/s at 560-580 m).  That is what makes it
+  leave the tube softly and still arrive with the old round's energy: 315 m/s at
+  200 m against 337 for a flat 300 m/s² motor, 569 at 500 m against 530.  What it can pull is `q·S·cl_max/m`
   - 30 g at 600 m/s, 3 g at 200, nothing that holds 1 g below 110 - so a long shot
   is *aimed* rather than steered, and the purse is the launcher's: 3.4 km is the
   lock, and 36 m/s² of lift at 200 m/s is not a correction.
   `Beams.intercept` is solved with the speed the round will *average* over the
-  flight (`(v + maxvel)/2` while the motor is lit): a lead off the 40 m/s launch
-  speed asks for a 30 s flight and throws the aim point a kilometre down the
-  target's track, then sweeps it backwards through the sky as the motor lights.
+  flight (`Flight.mean_speed`, the ramp's own integral `v0 + a0·T/2 + (a1-a0)·T/6`
+  while the motor is lit): a lead off the 40 m/s launch speed asks for a 30 s
+  flight and throws the aim point a kilometre down the target's track, then sweeps
+  it backwards through the sky as the motor lights.
   Measured with `--check beam` (`MECH_SEED=7`): 4 rounds of 4 inside 2 m of a hull
   crossing at 30 m/s at 400, 800, 1600 and 3000 m, 4 more with the sight turned 30
   deg off and back (inside the cone, so the line survives), 4 through a smoke screen on the

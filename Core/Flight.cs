@@ -80,6 +80,41 @@ public static class Flight
         return new Vec3(a.x / n, a.y / n, a.z / n);
     }
 
+    /// <summary>m/s² the motor makes `age` seconds into the flight: `thrust` at
+    /// ignition, climbing to `thrust_end` by burnout and flat in between.  A motor
+    /// that leaves `thrust_end` at 0 pushes its `thrust` for the whole burn.
+    /// </summary>
+    public static float thrust_at(WeaponDef wd, float age)
+    {
+        if (wd.thrust_end <= 0f || wd.burn <= 0f) return wd.thrust;
+        float u = MathF.Min(1f, MathF.Max(0f, (age - wd.ignite) / wd.burn));
+        return wd.thrust + (wd.thrust_end - wd.thrust) * u;
+    }
+
+    /// <summary>m/s² the motor finishes the burn at.</summary>
+    public static float thrust_top(WeaponDef wd) =>
+        wd.thrust_end > 0f ? wd.thrust_end : wd.thrust;
+
+    /// <summary>The speed a round will *average* from here to a target: the motor's
+    /// ramp integrated over the seconds of burn it has left, or the coast when the
+    /// motor is out.
+    ///
+    /// A lead solved off the 40 m/s the round left the tube with asks for a 30 s
+    /// flight and throws the aim point a kilometre down the target's track, so the
+    /// beam's lead needs the average and not the launch speed.  Speed rises as
+    /// `v0 + a0*t + (a1-a0)*t²/2T` across the burn, so its mean is
+    /// `v0 + a0*T/2 + (a1-a0)*T/6` - the second term is the ramp's share, and it
+    /// is a sixth rather than a half of it because the motor is still soft while
+    /// the round is slow.</summary>
+    public static float mean_speed(WeaponDef wd, float speed, float age)
+    {
+        float left = wd.ignite + wd.burn - age;
+        if (left <= 0f) return speed;
+        float a0 = thrust_at(wd, age);
+        float a1 = thrust_top(wd);
+        return speed + a0 * left * 0.5f + (a1 - a0) * left / 6f;
+    }
+
     /// <summary>Frontal area from the calibre - the round's own size, not a knob.</summary>
     private static float _area(WeaponDef wd)
     {
@@ -344,7 +379,7 @@ public static class Flight
         }
         float push = 0f;
         if (age > wd.ignite && age <= wd.ignite + wd.burn && speed < wd.maxvel)
-            push = wd.thrust * wd.mass;                  // N along the nose
+            push = thrust_at(wd, age) * wd.mass;         // N along the nose
         float mfrac = 1f / wd.mass;
         // drag polar: profile drag, the induced price of the lift just commanded
         // (squared, so a pushover costs what a pull-up costs) and the transonic rise

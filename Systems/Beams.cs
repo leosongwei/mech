@@ -12,13 +12,18 @@
 //
 //   * a channel is laid on a **target**, so the computer aims it where that hull
 //     is going - it leads the shot, the pilot does not;
-//   * the beam is limited to the **sight's own window** (`Defs.BEAM_FRAC`, and it
-//     narrows with the optics), so a hull that leaves the picture leaves the beam;
+//   * the beam is limited to a **40 deg cone** about the sight line
+//     (`Defs.BEAM_CONE`, fixed whatever the optics are doing), so a hull that
+//     leaves that cone is the one thing the lock cannot follow - the picture is
+//     wider than the cone at 1x and narrower at 20x, and the cone does not care;
 //   * when the sight is cut - a stand of trees, a house, a screen of smoke - the
 //     channel keeps flying on what it measured: the point walks at the target's
 //     last velocity and pull for `Defs.BEAM_MEMORY` seconds and the round keeps
 //     arriving.  That is the difference between a beam that dies with the line of
-//     sight and one that was aimed a second ahead.
+//     sight and one that was aimed a second ahead;
+//   * past the memory the beam goes dark but the **lock is not given up**: the hull
+//     is still the machine's, so a hull that reappears inside the cone takes its
+//     line back and the round is corrected again.
 //
 // What this system does *not* own: acquiring a lock (`Systems/Locking.cs`), and
 // whether the round can still see the laser (asked from the round's end, in
@@ -112,7 +117,7 @@ public static class Beams
             // pointed in is the pilot's own picture
             var (eye, sy, sp) = Weapons.aim_of(world, eid);
             var sight = MathUtil.dir_from(sy, sp);
-            float cone = Locking.beam_cone_of(world, eid);
+            float cone = Defs.BEAM_CONE;
             for (int ch = 0; ch < Defs.BEAM_CHANNELS; ch++)
             {
                 int tid = tgt.get(eid, ch);
@@ -126,23 +131,23 @@ public static class Beams
                 var body = e.fv("pos").get3(tid);
                 float h = Defs.UNIT_DEFS[e.uv("etype")[tid]].height * 0.5f;
                 var at = new Vec3(body.x, body.y + h, body.z);
-                if (_in_window(eye, sight, cone, at)
-                    && Sight.clear(world, eye, at, Sight.LOS_STEP))
+                bool visible = _in_window(eye, sight, cone, at)
+                               && Sight.clear(world, eye, at, Sight.LOS_STEP);
+                if (visible)
                 {
                     _sample(world, eid, ch, tid, dt);
                 }
                 else
                 {
                     // the sight is cut: the channel walks on at the velocity and
-                    // pull it was measured making, until the computer gives it up
+                    // pull it was measured making.  Past `BEAM_MEMORY` the walk
+                    // stops - a guess that old is not worth flying - but the
+                    // *lock* stays: the hull is this machine's, and a hull that
+                    // comes back into the cone gets its line back the tick it is
+                    // seen again
                     float blind = seen.get(eid, ch) + dt;
                     seen.set(eid, ch, blind);
-                    if (blind > Defs.BEAM_MEMORY)
-                    {
-                        free(world, eid, ch);
-                        continue;
-                    }
-                    _walk(world, eid, ch, dt);
+                    if (blind <= Defs.BEAM_MEMORY) _walk(world, eid, ch, dt);
                 }
                 var mem = e.fv("beam_mem");
                 var point = new Vec3(mem.get(eid, ch * 3), mem.get(eid, ch * 3 + 1),
@@ -154,11 +159,11 @@ public static class Beams
                     free(world, eid, ch);
                     continue;
                 }
-                // the channel is lit: from here the round reads the track and leads
-                // *itself* off it (`intercept` below), which is the one thing a
-                // shared line cannot do - two rounds of one channel are at two
-                // different points of it and arrive at two different times
-                ok.set(eid, ch, 1);
+                // the channel is lit while the computer has something to point at:
+                // the hull itself, or a guess worth flying.  Dark after that, and
+                // still *held* - which is the difference between a lock that
+                // outlasts a screen and one that dies with it
+                ok.set(eid, ch, seen.get(eid, ch) <= Defs.BEAM_MEMORY ? (byte)1 : (byte)0);
             }
         }
     }

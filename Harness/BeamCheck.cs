@@ -12,8 +12,14 @@
 //   laser    trees between the launcher and the *round*: a beam is only light, so
 //            the round coasts on the heading it had
 //   kill     the launcher is destroyed mid-flight: the round coasts
-//   window   the sight is turned 70 deg off the target: a laser cannot be pointed
-//            outside the sight's window, so the channel goes and the round coasts
+//   window   the sight is turned 70 deg off the target: outside the designator's
+//            40 deg cone, so the channel goes and the round coasts
+//   cone     the sight is turned 30 deg off - still inside the cone - and then back
+//            onto the hull: the laser is allowed to be pointed away from the cross,
+//            and a hull that comes back inside the cone is corrected again
+//   held     (its own row) a screen that never lifts: the beam goes dark after the
+//            memory, the *lock* stays, and relighting it when the hull is visible
+//            again puts the laser back on it
 //   lock     the pilot's own path, through `PlayerInput` and `Locking`: the
 //            trigger does nothing without a lock, and a locked round arrives
 //   channels four targets, four rounds, four lines at once - and a fifth target
@@ -44,11 +50,15 @@ public static class BeamCheck
     // post's gatling stays out of the measurement
     private static readonly (float x, float z) LAUNCHER = (2000f, 1200f);
 
-    private enum Cut { None, Blind, Laser, Launcher, Window }
+    private enum Cut { None, Blind, Laser, Launcher, Window, Cone }
 
     /// <summary>Once a row has turned the sight away, the puppet launcher stops
     /// aiming: an operator who has looked off the target is not still tracking it.</summary>
     private static bool _freeze;
+
+    /// <summary>When a row turns the sight *back* onto the target (`Cut.Cone`): the
+    /// operator looks away, looks back, and the beam is his again.</summary>
+    private static float _lookBack = -1f;
 
     private sealed class Row_
     {
@@ -60,14 +70,19 @@ public static class BeamCheck
     public static int run()
     {
         Console.WriteLine("row        dist  fired  hits  guided  miss m  note");
+        Print("clear", 400f, One(400f, Cut.None));
         Print("clear", 800f, One(800f, Cut.None));
         Print("clear", 1600f, One(1600f, Cut.None));
+        Print("clear", 3000f, One(3000f, Cut.None));
         Print("blind", 800f, One(800f, Cut.Blind));
         Print("laser", 800f, One(800f, Cut.Laser));
         Print("kill", 800f, One(800f, Cut.Launcher));
         Print("window", 800f, One(800f, Cut.Window));
+        Print("cone", 1600f, One(1600f, Cut.Cone));
         Pilot();
         Channels();
+        Held();
+        Profile();
         return 0;
     }
 
@@ -84,6 +99,7 @@ public static class BeamCheck
     {
         var res = new Row_();
         _freeze = false;
+        _lookBack = -1f;
         var world = new World(7, "range");
         var e = world.ecs;
         var (lx, lz) = LAUNCHER;
@@ -108,6 +124,11 @@ public static class BeamCheck
         for (int t = 0; (float)t * DT < PRE + end; t++)
         {
             float now = t * DT - PRE;
+            if (_lookBack >= 0f && now >= _lookBack)
+            {
+                _lookBack = -1f;
+                _freeze = false;                 // the operator looks back on it
+            }
             _drive(world, shooter, target);
             if (now < 0f)
             {
@@ -137,7 +158,7 @@ public static class BeamCheck
             if (now >= cut_at)
             {
                 cut_at = float.MaxValue;
-                if (cut != Cut.None) _cut(world, cut, shooter, lx, lz, target);
+                if (cut != Cut.None) _cut(world, cut, shooter, lx, lz, target, now);
                 if (cut == Cut.Blind) blindAt = now + 0.1f;
                 // was the round this cut belongs to still on a live beam?
                 res.guided += _lit_count(world, shooter, CUT_AT + 0.2f);
@@ -175,6 +196,179 @@ public static class BeamCheck
         return res;
     }
 
+    // ---- the lock that outlives the sight ----------------------------------
+
+    /// <summary>A screen that never lifts: what the designator does with a hull it
+    /// cannot see any more.  The beam is lit on the walked point for `BEAM_MEMORY`,
+    /// goes dark when the guess is too old to fly - and the **channel is still
+    /// there**, because the hull is the machine's until it dies or leaves the cone.
+    /// Lift the screen and the laser is back on it the tick the sight is clear.</summary>
+    private static void Held()
+    {
+        var world = new World(7, "range");
+        var e = world.ecs;
+        var (lx, lz) = LAUNCHER;
+        int shooter = world.spawn_unit(Defs.ETYPE_MECH, Defs.FACTION_RED, lx, lz,
+                                       weapons: new[] { Defs.WID_AC30, Defs.WID_SACLOS },
+                                       crew: false);
+        int target = world.spawn_unit(Defs.ETYPE_MECH, Defs.FACTION_BLUE, lx + 800f, lz,
+                                      hp_scale: 200f, crew: false);
+        Beams.lay(world, shooter, target);          // the operator's lock
+        // when the screen goes up, when the guess behind it is too old to fly, and
+        // when the screen comes down again
+        float screenUp = 0.8f, tooOld = Defs.BEAM_MEMORY + 1.5f, liftAt = tooOld + 0.5f;
+        int puff = -1, stage = 0;
+        var at_ = new[] { 0.6f, screenUp + 0.7f, tooOld, liftAt + 0.3f };
+        var names = new[] { "tracking", "screened", "guess too old", "screen lifted" };
+        var state = new System.Text.StringBuilder();
+        for (int t = 0; t < (int)((liftAt + 1.5f) / DT); t++)
+        {
+            float now = t * DT;
+            _drive(world, shooter, target);
+            e.fv("vel_cmd").set3(target, 0f, 0f, 0f);   // a standing hull
+            // a screen that never lifts: a real puff lives `SMOKE_LIFE` (5 s) and the
+            // memory is 8, so it is laid again as it dies
+            if (now > screenUp && now < liftAt)
+            {
+                // laid again before the old one dies: one clear tick in between and
+                // the sight re-acquires, which is exactly what this row must not do
+                bool dying = puff >= 0 && e.fv("smoke_t").get(puff, 0) < 1.2f;
+                if (puff < 0 || !e.is_alive(puff) || dying)
+                {
+                    puff = _puff(world, new Vec3(lx + 720f,
+                                                 world.terrain.height_at(lx + 720f, lz) + 6f,
+                                                 lz), 45f);
+                }
+            }
+            if (now >= liftAt && puff >= 0) { e.destroy(puff); puff = -1; }
+            world.update(DT);
+            while (stage < at_.Length && now >= at_[stage])
+            {
+                string label = names[stage];
+                stage++;
+                int ch = _first_channel(world, shooter);
+                var mem = e.fv("beam_mem");
+                var point = ch < 0 ? Vec3.zero
+                    : new Vec3(mem.get(shooter, ch * 3), mem.get(shooter, ch * 3 + 1),
+                               mem.get(shooter, ch * 3 + 2));
+                float off = ch < 0 ? -1f : MathUtil.dist(point, e.fv("pos").get3(target));
+                state.Append($"{label}: {(ch < 0 ? "DROPPED" : "held")}"
+                             + $"{(ch >= 0 && e.uv("beam_ok").get(shooter, ch) != 0 ? " lit" : " dark")}"
+                             + $"{(off < 0f ? "" : $" {off:0} m off the hull")}   ");
+            }
+        }
+        Console.WriteLine($"held     {state.ToString().TrimEnd()}");
+        world.ecs.validate();
+    }
+
+    // ---- the round's own flight -------------------------------------------
+
+    /// <summary>What the motor, the wing and the drag do to one round over the whole
+    /// wire: the speed at each kilometre, the seconds it took, and how far the round
+    /// wandered off the straight line to a standing target.  The last row is the one
+    /// that says the airframe is real - the speed only ever falls after burnout, and
+    /// a slow round holds the line by flying at an angle of attack, so the sag under
+    /// it grows as the square of the speed drops.</summary>
+    private static void Profile()
+    {
+        var world = new World(7, "range");
+        var e = world.ecs;
+        // the long line: 3.1 km along the range's southern plain, which is the flat
+        // half of the map (the 200 m hill sits north-west of it) and as far as a
+        // beam rider can be locked at all (its `range`, 3400 m)
+        const float lx = 300f, lz = 3400f;
+        const float far = 3600f;                     // 3.3 km, inside the 3.4 km lock
+        int shooter = world.spawn_unit(Defs.ETYPE_MECH, Defs.FACTION_RED, lx, lz,
+                                       weapons: new[] { Defs.WID_AC30, Defs.WID_SACLOS },
+                                       crew: false);
+        int target = world.spawn_unit(Defs.ETYPE_MECH, Defs.FACTION_BLUE, far, far,
+                                      hp_scale: 200f, crew: false);
+        var wd = Defs.WEAPONS[Defs.WID_SACLOS];
+        var pos = e.fv("pos");
+        // straight at the target's centre: the beam's lead has nothing to do here, so
+        // what is measured is the airframe and nothing else
+        var fresh = new Vec3(pos.get3(shooter).x, pos.get3(shooter).y, pos.get3(shooter).z);
+        var tp = pos.get3(target);
+        float yaw = MathF.Atan2(tp.z - fresh.z, tp.x - fresh.x);
+        float pitch = MathF.Atan2(tp.y + Defs.UNIT_DEFS[Defs.ETYPE_MECH].height * 0.5f
+                                  - (fresh.y + Defs.MECH_EYE),
+                                  MathF.Sqrt((tp.x - fresh.x) * (tp.x - fresh.x)
+                                             + (tp.z - fresh.z) * (tp.z - fresh.z)));
+        e.fv("yaw")[shooter] = yaw;
+        e.fv("sight_yaw")[shooter] = yaw;
+        e.fv("pitch")[shooter] = pitch;
+        e.fv("sight_pitch")[shooter] = pitch;
+        for (int t = 0; t < 40; t++) world.update(DT);       // let the hulls settle
+
+        int row = e.row_of(shooter);
+        e.arch_of(shooter)!.i("mag")[row * 2 + 1] = 4;
+        Weapons.fire(world, shooter, 1, Defs.WID_SACLOS, wd, target);
+        e.arch_of(shooter)!.i("mag")[row * 2 + 1] -= 1;
+
+        int[] at = { 500, 1000, 2000, 3000, 3200 };
+        var speed = new float[at.Length];
+        var when = new float[at.Length];
+        var sag = new float[at.Length];
+        int found = -1;
+        float live = 0f, maxSag = 0f, lineY = fresh.y + MathF.Sin(pitch) * 1f;
+        for (int t = 0; t < 1200; t++)
+        {
+            world.update(DT);
+            if (found < 0)
+            {
+                var ids = world.projectiles();
+                for (int k = 0; k < ids.Length; k++)
+                    if (e.uv("proj_kind")[ids[k]] == Defs.PROJ_SACLOS) found = ids[k];
+                if (found < 0) continue;
+            }
+            if (!e.is_alive(found)) break;
+            float dist = e.fv("proj_trav")[found];
+            var rp = e.fv("pos").get3(found);
+            var rv = e.fv("vel").get3(found);
+            float sp = MathF.Sqrt(rv.x * rv.x + rv.y * rv.y + rv.z * rv.z);
+            live = sp;
+            // the line the tube is pointed down, at this range: how far the round
+            // has wandered from it vertically
+            float want = fresh.y + MathF.Tan(pitch) * dist;
+            float off = rp.y - want;
+            if (MathF.Abs(off) > maxSag) maxSag = MathF.Abs(off);
+            for (int k = 0; k < at.Length; k++)
+                if (speed[k] <= 0f && dist >= at[k])
+                {
+                    speed[k] = sp;
+                    when[k] = t * DT;
+                    sag[k] = off;
+                }
+        }
+        // where the warhead went off, against the hull it was after
+        float burstAt = -1f;
+        for (int t = 0; t < 120; t++)
+        {
+            world.update(DT);
+            var tp2 = pos.get3(target);
+            float cy = tp2.y + Defs.UNIT_DEFS[Defs.ETYPE_MECH].height * 0.5f;
+            foreach (var ev in world.events)
+            {
+                if (!ev.TryGetValue("k", out var kv) || (string?)kv != "boom") continue;
+                float bx = (float)ev["x"]!, by = (float)ev["y"]!, bz = (float)ev["z"]!;
+                float d = MathF.Sqrt((bx - tp2.x) * (bx - tp2.x) + (by - cy) * (by - cy)
+                                     + (bz - tp2.z) * (bz - tp2.z));
+                if (burstAt < 0f || d < burstAt) burstAt = d;
+            }
+            world.events.Clear();
+            if (burstAt >= 0f) break;
+        }
+        var sb = new System.Text.StringBuilder();
+        for (int k = 0; k < at.Length; k++)
+            sb.Append(speed[k] > 0f
+                ? $"{at[k] / 1000f:0.0} km {speed[k],5:0} m/s {when[k],5:0.0} s {sag[k],+5:0.0} m   "
+                : $"{at[k] / 1000f:0.0} km -");
+        Console.WriteLine($"profile  {sb.ToString().TrimEnd()}");
+        Console.WriteLine($"profile  worst off the line {maxSag,4:0.0} m, "
+                          + $"alive {e.is_alive(found)}, last speed {live,4:0} m/s, "
+                          + $"burst {burstAt,5:0.0} m from the hull's centre");
+    }
+
     /// <summary>The puppets: the target cruises across at 30 m/s, the launcher keeps
     /// its bore on it as an operator would (the lead is the beam's job).</summary>
     private static void _drive(World world, int shooter, int target)
@@ -202,14 +396,15 @@ public static class BeamCheck
     /// <summary>A deployed screen: the entity `Systems/Smoke.cs` leaves when a
     /// canister bursts, so the harness can put one where it wants without waiting
     /// for a hull to throw it.</summary>
-    private static void _puff(World world, Vec3 at, float radius)
+    private static int _puff(World world, Vec3 at, float radius, float ttl = 5f)
     {
         var e = world.ecs;
         int sid = e.create(Components.PUFF_COMPS);
         e.fv("pos").set3(sid, at);
         e.fv("smoke_r").set3(sid, radius, radius * 1.1f, radius);
-        e.fv("smoke_t")[sid] = 5f;
+        e.fv("smoke_t")[sid] = ttl;
         e.fv("smoke_s")[sid] = 1f;
+        return sid;
     }
 
     /// <summary>Whether this launcher holds at least one channel.</summary>
@@ -238,7 +433,8 @@ public static class BeamCheck
     /// the blast a dead one leaves behind holds the id for a tick.</summary>
     private static bool _hull(ECS e, int eid) => e.is_alive(eid) && e.has(eid, "unit");
 
-    private static void _cut(World world, Cut cut, int shooter, float lx, float lz, int target)
+    private static void _cut(World world, Cut cut, int shooter, float lx, float lz, int target,
+                             float now)
     {
         var e = world.ecs;
         var tp = e.fv("pos").get3(target);
@@ -272,9 +468,16 @@ public static class BeamCheck
                 Combat.apply(world, shooter, 0, 9999f, default);
                 break;
             case Cut.Window:
-                // the pilot looks away: outside the sight's window the channel goes
+                // the pilot looks away: outside the designator's cone the channel goes
                 _freeze = true;
                 e.fv("sight_yaw")[shooter] = e.fv("sight_yaw")[shooter] + 1.2f;
+                break;
+            case Cut.Cone:
+                // 30 deg off the hull - inside the 40 deg cone the laser may be
+                // pointed in - and back on it 0.8 s later
+                _freeze = true;
+                e.fv("sight_yaw")[shooter] = e.fv("sight_yaw")[shooter] + 0.52f;
+                _lookBack = now + 0.8f;
                 break;
         }
     }
@@ -347,6 +550,7 @@ public static class BeamCheck
         var tgt = e.fv("pos");
 
         int leaked = 0, rounds = 0, fired_while_locked = 0;
+        bool _aligned = false;
         float closest = -1f;
         for (int t = 0; t < 60 * 16; t++)
         {
@@ -358,8 +562,15 @@ public static class BeamCheck
             pl.in_yaw = MathF.Atan2(dz, dx);
             pl.in_pitch = MathF.Atan2(dy, MathF.Sqrt(dx * dx + dz * dz));
             pl.zoom = 1f;
-            // the first second: the trigger, with nothing locked
+            // the first second: the trigger, with nothing locked.  After that the
+            // row waits for the hull to come round onto the target before it holds
+            // the trigger - a round leaves along the *bore*, and a pilot who fires
+            // mid-turn is firing where his arm points (`Systems/Weapons.cs`)
+            float off = MathF.Abs(MathF.IEEERemainder(e.fv("yaw")[pl.mech] - pl.in_yaw,
+                                                      MathF.PI * 2f));
             pl.fire = now < 1f ? (false, true) : (false, false);
+            if (now > 1f && off < 0.02f) _aligned = true;
+            if (_aligned) pl.fire = (false, true);
             world.update(DT);
             // a round may only exist while a channel is complete: that is the
             // lock gate, asked of the machine rather than of the trigger
@@ -370,7 +581,7 @@ public static class BeamCheck
                 else leaked++;
                 rounds = Math.Max(rounds, n);
             }
-            if (now >= 1.4f) pl.fire = (false, true);            // and hold it
+
             var tp = tgt.get3(target);
             float tcy = tp.y + 3f;
             foreach (var ev in world.events)

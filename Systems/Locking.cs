@@ -10,9 +10,11 @@
 //     moment it leaves that circle - there is no hysteresis to hold a strafing
 //     hull;
 //   * the designator (`kind` saclos) keeps up to `Defs.BEAM_CHANNELS` lines, each
-//     held as long as the hull stays inside the sight's own window
-//     (`Defs.BEAM_FRAC`, the whole picture), because a laser is *pointed* rather
-//     than stared at.  A fifth target takes the oldest one's place.
+//     held while the point the laser is on stays inside a 40 deg cone about the
+//     sight line (`Defs.BEAM_CONE`), because a laser is *pointed* rather than
+//     stared at - and held *through* a lost sight line, on the memory
+//     (`Systems/Beams.cs`), so a hull that comes back into the cone takes its line
+//     back.  A fifth target takes the oldest one's place.
 //
 // The channels themselves live in the designator component on the hull
 // (`Systems/Beams.cs`), not in `Player`: a lock belongs to a machine, dies with
@@ -45,20 +47,6 @@ public static class Locking
 
     /// <summary>Angular radius of the reticle circle, in radians.</summary>
     public static float cone_of(Player pl) => _cone(pl.zoom, pl.aspect, Defs.LOCK_FRAC);
-
-    /// <summary>Angular radius of the sight head's own window: everything the
-    /// laser can be pointed at, as opposed to the small circle a seeker locks
-    /// in.</summary>
-    public static float beam_cone_of(Player pl) => _cone(pl.zoom, pl.aspect, Defs.BEAM_FRAC);
-
-    /// <summary>...and the same for a hull nobody is looking through: a crew has
-    /// no optics, so its window is the plain 1x view.</summary>
-    public static float beam_cone_of(World world, int eid)
-    {
-        int pid = world.ecs.iv("owner").get(eid, 0);
-        if (pid >= 0 && world.players.TryGetValue(pid, out var pl)) return beam_cone_of(pl);
-        return _cone(1f, 16f / 9f, Defs.BEAM_FRAC);
-    }
 
     private static float _cone(float zoom, float aspect, float frac)
     {
@@ -106,9 +94,10 @@ public static class Locking
             var d = MathUtil.dir_from(sy, sp);
             float cone = cone_of(pl);
             // what a held channel has to stay inside: the seeker's circle, or the
-            // whole window when the machine carries a designator
+            // designator's cone - which `Systems/Beams.cs` tests on the point the
+            // beam is actually on, so a hull nobody can see keeps its line
             bool beam_rider = _carries_beam(world, eid);
-            float keep = beam_rider ? beam_cone_of(pl) : cone;
+            float keep = beam_rider ? Defs.BEAM_CONE : cone;
             int mine = faction[eid];
             var tgt = e.iv("beam_tgt");
             for (int ch = 0; ch < Defs.BEAM_CHANNELS; ch++)
@@ -118,9 +107,13 @@ public static class Locking
                 bool hold = e.is_alive(tid) && faction[tid] != mine && e.has(tid, "lockable");
                 if (hold)
                 {
+                    // a beam rider's cone is asked of the designator (the tracked
+                    // point, walked when the sight is cut); a seeker needs the hull
+                    // itself inside the reticle circle
                     var sp_at = _sight_point(pos.get3(tid), etype[tid]);
                     var (ang, dist) = _angle_to(sp_at, origin, d);
-                    if (ang > keep || dist > Defs.lock_range(wd)) hold = false;
+                    if (dist > Defs.lock_range(wd)) hold = false;
+                    else if (!beam_rider && ang > keep) hold = false;
                 }
                 // a channel is a lock: once it is laid on the hull the sight line
                 // and the window are the only things that can give it up
@@ -154,7 +147,7 @@ public static class Locking
 
             // what the reticle reads: the channel a trigger pull would take, and
             // failing that the one closest to being locked
-            _mirror(world, eid, pl, beam_rider ? beam_cone_of(pl) : cone);
+            _mirror(world, eid, pl, keep);
         }
     }
 
@@ -170,10 +163,9 @@ public static class Locking
         if (!e.has(eid, "beam_tgt")) return -1;
         int pid = e.iv("owner").get(eid, 0);
         float cone;
-        if (pid >= 0 && world.players.TryGetValue(pid, out var pl))
-            cone = wd.kind == "saclos" ? beam_cone_of(pl) : cone_of(pl);
-        else
-            cone = _cone(1f, 16f / 9f, Defs.BEAM_FRAC);
+        if (wd.kind == "saclos") cone = Defs.BEAM_CONE;
+        else if (pid >= 0 && world.players.TryGetValue(pid, out var pl)) cone = cone_of(pl);
+        else cone = _cone(1f, 16f / 9f, Defs.LOCK_FRAC);
         var (origin, sy, sp) = Weapons.aim_of(world, eid);
         var d = MathUtil.dir_from(sy, sp);
         var tgt = e.iv("beam_tgt");

@@ -52,7 +52,8 @@ Core/
   Ballistics.cs            # elevation for a range (`zero_at`), flight path (`flight_at`)
   FireControl.cs           # THE fire control law: shot + track -> point/angles/elevation
                            #   (both hosts; `frontend/src/fcs.js` is its twin)
-  Flight.cs                # aerodynamics + guidance of a winged round (the top-attack missile)
+  Flight.cs                # aerodynamics + guidance of a winged round: one airframe,
+                           #   two laws (the top attack's arc, the beam rider's CLOS)
   Seeker.cs                # an IR round's lock: what it stares at, and what it re-locks on
   Combat.cs                # damage resolution: the only writer of `hp` (apply/hit/splash)
   Shop.cs                  # the rearm panel: quote, buy, the time a job costs
@@ -964,10 +965,18 @@ own; the wire is `net/wire.js` + `net/rows.js` and the picture is `net/view.js`.
   `Sight.clear` says it can see it and *walks* it (velocity, plus the measured pull
   on `Defs.BEAM_ACCEL_TAU`) for `Defs.BEAM_MEMORY` seconds when it cannot - the
   smoke screen, the tree stand, the house - so a round fired before the screen
-  still arrives.  A channel is given up when its hull leaves the sight's own
-  window (`Defs.BEAM_FRAC`, the whole picture at 1x, 2.6 deg at 20x), when the
-  hull dies, or when the memory runs out; `Beams.lay` allocates one and displaces
-  the *oldest* when all four are used.  `Systems/Locking.cs` is the acquisition
+  still arrives.  What the beam may be pointed in is a **40 deg cone about the sight
+  line** (`Defs.BEAM_CONE`), fixed whatever the optics are doing - the pilot's cross
+  still has to be on the hull to *acquire* (`LOCK_FRAC`), and a hull already held is
+  a hull the computer is tracking, so zoom does not narrow the lock.  A channel is
+  given up when the point the beam is on leaves that cone or when the hull dies, and
+  `Beams.lay` allocates one and displaces the *oldest* when all four are used.  Past
+  `Defs.BEAM_MEMORY` (8 s blind) the walk stops and the beam goes **dark** - the
+  guess is too old to fly a round on - but the **lock stays**: a hull that comes
+  back into the cone is seen again the tick the sight is clear, the line relights
+  and a round still in the air is corrected again.  `beam_ok` is written every tick
+  (`1` while the sight has it or the memory is young, `0` after), since a lit beam
+  in a held-but-blind channel would steer rounds at a ghost.  `Systems/Locking.cs` is the acquisition
   half and the same interaction the top attack asks for - a channel *is* a lock,
   laid in the tick the cross arrives, with no settle time anywhere in the table -
   with the two weapons differing in what holds after: a seeker
@@ -981,18 +990,33 @@ own; the wire is `net/wire.js` + `net/rows.js` and the picture is `net/view.js`.
   designator cannot answer for it: is the launcher alive with that channel lit,
   and does the laser still *reach* the round (`Sight.clear` from the sight head to
   the missile: a beam is light, and a ridge between the two cuts it).  With no
-  answer the round coasts - motor and drag unchanged, guidance stopped - which is
-  also what a lost launcher leaves behind.  The steering law is the same 1.35 rad/s
-  turn it always was; what changed is the point it turns to: the *intercept*, solved
-  per round (`Beams.intercept`) off the channel's track and the round's own speed,
-  because riding a line aimed at a hull that is crossing at 30 m/s makes the round
-  overtake the hull's position and leave the map past it (measured: 800 m, four
-  rounds, four misses 1.2 km out).  Measured with `--check beam` (`MECH_SEED=7`):
-  four rounds inside 2 m of a hull crossing at 30 m/s at 800 m and at 1600 m, four
-  through a smoke screen on the memory (0.5 m - the measured pull is trusted for
-  `FireControl.ACCEL_S` and then the ghost flies a straight line), 0 of 4 when the
-  laser is cut, the launcher is destroyed or the sight is turned away, and the
-  trigger does nothing without a lock.
+  answer the round coasts - motor and drag unchanged, guidance stopped, and since a
+  round with no lift demand falls, the ground comes up - which is also what a lost
+  launcher leaves behind.
+  **The round is flown, not slid** (`Core/Flight.cs`): the same airframe as the top
+  attack, with the arc law replaced by a command-to-line-of-sight one.  Every tick
+  `Flight.direct` gets the beam - the aperture it starts at and the point
+  `Beams.intercept` leads to - and asks for two accelerations: the offset and its
+  rate, nulled as `K(d + ḋ·t_go)/t_go²` (the law's damping is `sqrt(K)/2`, so
+  `CLOS_K` 16 is a stiff, damped ride), plus its own weight in the plane square to
+  the flight path.  So a beam rider holds altitude at an *angle of attack* (0.6 deg
+  at 600 m/s, 3.3 at 250), pays induced drag for it, and its whole flight decays
+  once the 2 s boost is out: 600 m/s at burnout 600 m down range, 490 at 2 km, 417
+  at 3.2 km (`--check beam`'s `profile` row).  What it can pull is `q·S·cl_max/m`
+  - 30 g at 600 m/s, 3 g at 200, nothing that holds 1 g below 110 - so a long shot
+  is *aimed* rather than steered, and the purse is the launcher's: 3.4 km is the
+  lock, and 36 m/s² of lift at 200 m/s is not a correction.
+  `Beams.intercept` is solved with the speed the round will *average* over the
+  flight (`(v + maxvel)/2` while the motor is lit): a lead off the 40 m/s launch
+  speed asks for a 30 s flight and throws the aim point a kilometre down the
+  target's track, then sweeps it backwards through the sky as the motor lights.
+  Measured with `--check beam` (`MECH_SEED=7`): 4 rounds of 4 inside 2 m of a hull
+  crossing at 30 m/s at 400, 800, 1600 and 3000 m, 4 more with the sight turned 30
+  deg off and back (inside the cone, so the line survives), 4 through a smoke screen on the
+  memory (1.5 m - the measured pull is trusted for `FireControl.ACCEL_S` and then
+  the ghost flies a straight line), 4 of 4 shot down by the AI post at 1000 m,
+  0 of 4 when the laser is cut, the launcher is destroyed or the sight is turned
+  away, and the trigger does nothing without a lock.
 * **Damage** is two halves, never one number. `defs.pen_damage(ap, ad, dp)`:
   beating the target's `dp` outright delivers the full `ad`, beating only half
   of it shaves `ad/5`, anything duller does nothing. `defs.blast_damage(ed, de,

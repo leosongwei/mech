@@ -345,7 +345,6 @@ public sealed class WeaponDef
 
     // ---- the airframe / the motor, per kind ----
     public float burn;              // s the motor burns
-    public float drag;              // quadratic drag per metre (a SACLOS coasts on it)
     public float wob;               // beam-rider wobble, m
     public float wob_f = 1.0f;      // Hz the wobble swings at
     public float maxdist;           // m the wire / command link reaches
@@ -446,13 +445,20 @@ public static partial class Defs
             semi = 0, color = new[] { 1.0f, 0.45f, 0.15f }, cal = 80f, rcs = 0.005f,
             rack = RACK_ROCKET, desc = "40 rounds, hold to fire, sighted to 1 km",
         },
-        // TOW class: 40 m/s soft launch, then 100 m/s^2 of boost for 5.6 s takes it to
-        // its 600 m/s cruise - and that is where the motor burns out, 1.8 km down
-        // range.  After that it coasts on the airframe alone, and a missile is a blunt
-        // thing: quadratic drag (`drag` per metre) bleeds it back down, ~385 m/s by the
-        // far end of the wire.  The wire itself is 4 km (`maxdist`): the round cooks
-        // off where it runs out, so the reach is the wire and not the motor.  Fast
-        // out, lazy in, and a long shot is a commitment rather than a sniper rifle.
+        // Vikhr class: a 130 mm, 45 kg supersonic beam rider.  40 m/s soft launch, then
+        // 300 m/s^2 of boost for 2 s puts 600 m/s on it - and that is where the motor
+        // burns out, 600 m down range.  From there it is an *aeroplane*: `Flight.direct`
+        // flies the airframe, so the motor's burnout is the moment the flight starts to
+        // decay.  Drag (`cd0` 0.6 plus the transonic rise) bleeds 600 m/s down to ~400
+        // by the far end of the wire, and holding altitude costs a real angle of attack
+        // the whole way: 0.6 deg at 600 m/s, 1.3 deg at 400, 3.3 deg at 250 - and below
+        // about 110 m/s the wing cannot make 1 g at all, so the round sags out of the
+        // beam with nothing left to pull with.  What it *can* pull is `q*S*cl_max/m`:
+        // 30 g at 600 m/s, 13 at 400, 3 at 200 - which is why a long shot is aimed
+        // rather than corrected, and why the lead is the launcher's job
+        // (`Systems/Beams.cs`).
+        // The wire is 4 km (`maxdist`): the round cooks off where it runs out, so the
+        // reach is the wire and not the motor.
         // A tandem HEAT warhead: AD 120 is past every hull pool in the game (mech 120,
         // APC 100, arm 50), so one hit takes a machine apart without doing the base's
         // 4000 hp much of a favour.
@@ -473,8 +479,10 @@ public static partial class Defs
             wid = WID_SACLOS, key = "saclos", name = "SACLOS ATGM", kind = "saclos",
             ap = 800f, ad = 120f, ed = 80f, er = 6.0f,
             rpm = 200, mag = 16, reserve = 0, reload = 0.0f, vel = 40f, spread = 0.003f,
-            bias = 0.0f, g = 0.0f, thrust = 100f, burn = 5.6f, drag = 0.0002f, maxvel = 600f,
-            life = 36.0f, wob = 30.0f, wob_f = 1.5f, maxdist = 4000.0f,
+            bias = 0.0f, g = 0.0f, thrust = 300f, burn = 2.0f, maxvel = 600f,
+            life = 36.0f, wob = 12.0f, wob_f = 1.5f, maxdist = 4000.0f,
+            ignite = 0.10f, mass = 45.0f, dia = 0.13f, cd0 = 0.60f, k_cl = 0.12f,
+            cl_alpha = 15.0f, cl_max = 4.5f,
             range = 3400, cost = 500, ammo_cost = 30.0f, @lock = 1, salvo = 0,
             semi = 0, color = new[] { 0.35f, 1.0f, 0.55f }, cal = 152f,
             rcs = 0.02f, rack = RACK_SACLOS, desc = "Lock on, then ride the laser in",
@@ -574,8 +582,10 @@ public static partial class Defs
             wid = WID_APC_ATGM, key = "apc_atgm", name = "APC ATGM", kind = "saclos",
             ap = 800f, ad = 120f, ed = 80f, er = 6.0f,
             rpm = 12, mag = 16, reserve = 0, reload = 0.0f, vel = 40f, spread = 0.003f,
-            bias = 0.0f, g = 0.0f, thrust = 100f, burn = 5.6f, drag = 0.0002f, maxvel = 600f,
-            life = 36.0f, wob = 30.0f, wob_f = 1.5f, maxdist = 4000.0f, range = 3000,
+            bias = 0.0f, g = 0.0f, thrust = 300f, burn = 2.0f, maxvel = 600f,
+            life = 36.0f, wob = 12.0f, wob_f = 1.5f, maxdist = 4000.0f, range = 3000,
+            ignite = 0.10f, mass = 45.0f, dia = 0.13f, cd0 = 0.60f, k_cl = 0.12f,
+            cl_alpha = 15.0f, cl_max = 4.5f,
             expire_burst = true,
             cost = -1, ammo_cost = 0.0f, @lock = 1, salvo = 0, semi = 0,
             color = new[] { 0.35f, 1.0f, 0.55f }, cal = 152f, rcs = 0.02f,
@@ -1351,10 +1361,13 @@ public static partial class Defs
     // so what limits the launcher is the sight head's own window and how many lines
     // the beam can hop between - not a cross the pilot has to keep on the hull.
     public const int BEAM_CHANNELS = 4;         // targets one launcher can service at once
-    // the window the laser can be pointed in, as a fraction of the view width (1 =
-    // the whole sight picture).  It follows the optics, so a 20x sight is a 2.6 deg
-    // window: a pilot zoomed in on one hull is not tracking three others
-    public const float BEAM_FRAC = 1.0f;
+    // the cone the laser can be pointed in: a half-angle of 40 deg about the sight
+    // line, fixed, whatever the optics are doing.  A beam is *pointed*, so the
+    // machine holds a line anywhere in here - and a hull that leaves this cone is
+    // the one thing a lock cannot follow.  Zoom does not narrow it on purpose: the
+    // pilot's cross still has to be on the hull to *acquire* (`LOCK_FRAC`), and a
+    // hull already held is a hull the computer is tracking
+    public const float BEAM_CONE = 0.69813f;    // rad, 40 deg
     // s of blind extrapolation the computer will fly a channel for.  Its memory
     // walks at the target's own velocity and pull, which is what carries a round
     // through the seconds a hull spends behind a stand of trees

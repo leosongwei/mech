@@ -1002,8 +1002,8 @@ own; the wire is `net/wire.js` + `net/rows.js` and the picture is `net/view.js`.
   `CLOS_K` 16 is a stiff, damped ride), plus its own weight in the plane square to
   the flight path.  So a beam rider holds altitude at an *angle of attack* (0.6 deg
   at 600 m/s, 3.3 at 250), pays induced drag for it, and its whole flight decays
-  once the boost is out: 600 m/s at burnout, some 570 m down range and 2.1 s after
-  the shot, then 483 at 2 km and 413 at 3.2 km (`--check beam`'s `profile` row).
+  once the boost is out: 600 m/s at burnout, 2.6 km down range and 7.7 s after the
+  shot, then 560 at 3 km and 542 at 3.2 km (`--check beam`'s `profile` row).
   **The motor is a soft launch and a long pull**: 40 m/s off the rail, 0.4 s of coast
   (16 m, clear of the hull) before ignition, then a flat 100 m/s² for 7.3 s, sized by
   `tools`-side arithmetic and confirmed on the bench so that the round *is* at the

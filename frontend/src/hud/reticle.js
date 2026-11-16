@@ -158,7 +158,11 @@ export function seekerRing(ctx, s, c, arm, w, shift) {
   const y = c.screen[1];
   const col = ARM_COLORS[arm];
   const L = s.lock;
-  const locked = !!L;
+  // the candidate *stays* named after the cross leaves it (`Systems/Locking.cs`), so
+  // what the ring says is "the cross is on it": the hull's own projection inside the
+  // circle.  A named candidate the sight has moved off is the diamond's job.
+  const locked = !!L && !!L.screen
+    && Math.hypot(L.screen[0] - x, L.screen[1] - y) <= r * 1.15;
   ctx.save();
   ctx.globalAlpha = c.disabled ? 0.2 : locked ? 1 : 0.55;
   ctx.strokeStyle = col;
@@ -215,7 +219,9 @@ export function lock(ctx, s) {
     }
     ctx.restore();
   }
-  if (!L || !L.screen) return;
+  // a candidate a shot has already claimed reads as a formal target, and the thin
+  // diamonds above have drawn it
+  if (!L || !L.screen || L.thin) return;
   const x = L.screen[0];
   const y = L.screen[1];
   ctx.save();

@@ -988,10 +988,17 @@ own; the wire is `net/wire.js` + `net/rows.js` and the picture is `net/view.js`.
   swept across four hulls on its way to the one being aimed at fills every channel
   and evicts the oldest, i.e. the pilot loses his own held target to a near miss of
   his aim.  What the cross is on before the shot is a *candidate* - the hull the
-  trigger would take - mirrored into `Player.lock_target` so the reticle rings it and
-  the lock tone sounds, and `Locking.pick` answers with a held line or with that
-  candidate, which is what keeps "cross on the hull, pull the trigger" working on the
-  tick the cross arrives.  The lock lives on the *hull*, not
+  trigger would take - written to `Player.lock_target` so the reticle rings it and the
+  lock tone sounds, and `Locking.pick` answers with that candidate (the line already
+  held on it, or -1 so the shot claims one), which is what keeps "cross on the hull,
+  pull the trigger" working on the tick the cross arrives.
+  **The candidate sticks** (`Locking._hold`): the cross *names* a hull and is then free
+  to go where the shot has to be aimed.  A candidate that swept away with the cross
+  would make a leading weapon unusable - the pilot would be choosing between aiming and
+  having a target.  A hull the cross picks stays picked until another hull is picked,
+  or it dies or leaves `lock_range`; the wire carries it as `lock_target` (the bold
+  diamond) and the formal targets as `locks` (the thin ones), and `lockInfo.thin` on the
+  client draws a candidate as a formal target once a shot has claimed its line.  The lock lives on the *hull*, not
   on `Player` (a machine's locks die with it, and the beam is what the round
   reads); `Player.lock_target` is the hull the HUD rings, mirrored by
   `Locking.run` for the wire, and the meta's `locks` list is the whole set.

@@ -65,28 +65,33 @@ export function updateLockTone(app, own, dt) {
   const t = app.net.entities.get(m.lock_target);
   app.lockExtra = lockExtras(app, m);
   if (!t) { app.lockInfo = null; return; }
+  const thin = !!(app.lockExtra && app.lockExtra.some((e) => e.id === id));
   app.lockInfo = {
     screen: app.hud._project(t.x, t.y + (t.type === 4 ? 3.5 : t.type === 5 ? 6 : 1), t.z),
     dist: Math.hypot(t.x - own.x, t.z - own.z),
     target: t,
+    // the candidate is already a formal target (a shot claimed its line), so it is
+    // drawn as one: the thin diamond, not the bold one
+    thin,
   };
 }
 
-// The lines the designator is holding that the cross is not on.  A beam rider
-// carries four channels and drops one the moment its hull leaves the sight's
-// window (`Systems/Locking.cs`), so the pilot who wants to know what his machine
-// is still tracking reads this - the primary lock is the one he can fire.
+// The lines the designator is holding: the formal targets, one thin diamond each.  A
+// beam rider carries four channels and drops one the moment its hull leaves the
+// sight's window (`Systems/Locking.cs`), so the pilot who wants to know what his
+// machine is still tracking reads this.  The candidate is in here too when a shot
+// has already claimed a line for it - it is a formal target then, and `lockInfo`
+// says so (`thin`), which is what stops it being drawn twice.
 function lockExtras(app, m) {
   const list = m.locks;
-  if (!list || list.length < 2) return null;
+  if (!list || !list.length) return null;
   const out = [];
   for (const l of list) {
-    if (l.id === m.lock_target) continue;
     const t = app.net.entities.get(l.id);
     if (!t) continue;
     const screen = app.hud._project(t.x, t.y + (t.type === 4 ? 3.5 : t.type === 5 ? 6 : 1), t.z);
     if (!screen) continue;
-    out.push({ screen, target: t });
+    out.push({ id: l.id, screen, target: t });
   }
   return out.length ? out : null;
 }

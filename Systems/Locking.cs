@@ -131,8 +131,12 @@ public static class Locking
             // what the cross is on: the hull a trigger pull would take, and the only
             // thing the reticle rings.  It costs nothing and claims nothing - the
             // shot claims the channel, and the channels already held are the
-            // machine's *formal* targets (the wire's `locks`, the thin diamonds)
-            pl.lock_target = _candidate(world, eid, wd, cone, ids, origin, d);
+            // machine's *formal* targets (the wire's `locks`, the thin diamonds).
+            // The candidate *stays* named once the cross has picked it, so the
+            // pilot chooses a hull and is then free to move his sight where the shot
+            // needs it - another hull under the circle takes over as the candidate
+            int cand = _candidate(world, eid, wd, cone, ids, origin, d);
+            pl.lock_target = _hold(world, eid, pl.lock_target, cand, wd);
         }
     }
 
@@ -191,6 +195,27 @@ public static class Locking
             best_ang = ang;
         }
         return best;
+    }
+
+    /// <summary>The candidate this tick: a hull the cross has just picked takes
+    /// over, and with nothing under the cross the one already named is kept while
+    /// it is a live enemy hull inside the weapon's lock range.
+    ///
+    /// The cross is for *choosing*.  A candidate that evaporated the moment the
+    /// sight moved would make the weapon unusable the way a trigger that only works
+    /// while the cross is on the mark is: the shot has to be aimed, and aiming means
+    /// looking somewhere else.</summary>
+    private static int _hold(World world, int eid, int cur, int cand, WeaponDef wd)
+    {
+        if (cand >= 0) return cand;
+        var e = world.ecs;
+        if (cur < 0 || !e.is_alive(cur) || !e.has(cur, "lockable")) return -1;
+        if (e.uv("faction")[cur] == e.uv("faction")[eid]) return -1;
+        var (origin, _, _) = Weapons.aim_of(world, eid);
+        var aim = _sight_point(e.fv("pos").get3(cur), e.uv("etype")[cur]);
+        float dx = aim.x - origin.x, dy = aim.y - origin.y, dz = aim.z - origin.z;
+        float range = Defs.lock_range(wd);
+        return MathF.Sqrt(dx * dx + dy * dy + dz * dz) <= range ? cur : -1;
     }
 
     /// <summary>The channel this launcher already has on `tid`, or -1.</summary>

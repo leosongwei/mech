@@ -165,11 +165,12 @@ public static class Weapons
                 int target = -1;
                 if (wd.@lock != 0)
                 {
-                    if (world.players.TryGetValue(owner[eid], out var pl))
+                    if (world.players.TryGetValue(owner[eid], out _))
                     {
-                        if (pl.lock_target < 0 || pl.lock_progress < 1f) continue;
-                        if (!e.is_alive(pl.lock_target)) continue;
-                        target = pl.lock_target;
+                        // the pilot's own lock: the complete channel nearest his
+                        // cross (`Systems/Locking.cs`).  Nothing locked, nothing
+                        // fired - which is the whole of "lock on, then launch"
+                        if (Locking.pick(world, eid, wd, out target) < 0) continue;
                     }
                     else
                     {
@@ -187,15 +188,16 @@ public static class Weapons
                 // reference taken before the shot
                 a.i("mag")[c] -= 1;
                 float cycle = 60f / MathF.Max(wd.rpm, 1f);
-                if (wd.@lock != 0 && owner[eid] < 0)
+                if (wd.ai_gap > 0f && owner[eid] < 0)
                 {
                     // an AI crew does not empty a rack of fire-and-forget rounds at
                     // the rack's own cycle: it launches one, watches it arrive, and
                     // only then thinks about the next.  Eight tubes at the rack's
                     // own cycle is the whole nest gone in two and a half seconds; at
                     // `AI_LAUNCH_GAP` a top attack is something that keeps coming
-                    // back instead
-                    cycle = MathF.Max(cycle, Defs.AI_LAUNCH_GAP);
+                    // back instead.  A beam rider has no floor: its price is the
+                    // sight it is holding, not the tube
+                    cycle = MathF.Max(cycle, wd.ai_gap);
                 }
                 a.f("cool")[c] = cycle;
             }
@@ -311,6 +313,12 @@ public static class Weapons
                 zero = Ballistics.zero_at(origin, yaw, pitch, wd, Defs.ZERO_DEFAULT);
         }
 
+        // a beam rider is handed the laser channel it will ride: the one already
+        // laid on its target, or a fresh one (`Systems/Beams.cs`).  The rounds of
+        // one salvo share it - the beam is a line, and the code in it says which
+        // round is on which line
+        int beam = wd.kind == "saclos" ? Beams.lay(world, eid, target) : -1;
+
         for (int k = 0; k < n; k++)
         {
             float sp = wd.spread * (k == 0 ? 1f : 0.6f);
@@ -324,7 +332,7 @@ public static class Weapons
             // carries a seeker - is decided once, in the factory
             world.spawn_round(eid, e.uv("faction")[eid], wid, kind,
                               origin, new Vec3(d.x * wd.vel, d.y * wd.vel, d.z * wd.vel),
-                              life, target);
+                              life, target, beam);
         }
         world.emit("shot", ("x", origin.x), ("y", origin.y), ("z", origin.z),
                    ("wid", wid), ("eid", eid), ("arm", arm));

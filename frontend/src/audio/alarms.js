@@ -5,7 +5,7 @@
 // frame, so a stuttering frame cannot smear it.
 //
 // The state a voice keeps between calls lives on the facade (`a.warbles`,
-// `a.beeps`, `a.beepWave`, `a.mode`, `a.beepTimer`, `a.lockOsc`, `a.lockGain`),
+// `a.beeps`, `a.beepWave`, `a.mode`, `a.lockOsc`, `a.lockGain`),
 // because the recipes here are functions over it: a cue is a shape, and what
 // survives between frames belongs to the object the app holds.
 
@@ -43,8 +43,6 @@ const MISSILE_VOL = 0.06;           // the trill sits well above it
 const ALARM_STALE_MS = 1000;        // nobody fed this alarm for a second
 const LOCK_HZ = 1500;
 const LOCK_VOL = 0.055;
-const PIP_HZ = 950;                 // the acquiring pip
-const PIP_PERIOD = 0.24;
 
 // One long-lived voice per alarm: a square oscillator (odd harmonics, like the real
 // RWR tone) through a soft lowpass so it buzzes without the raw square's fizz on
@@ -210,15 +208,15 @@ export function pump(a) {
   }
 }
 
-// The IR seeker's tone: a steady 1500 Hz sine while a lock holds, and a pip every
-// `PIP_PERIOD` while one is settling.  Both are the machine's own voice - centred,
-// undamped by distance, no room - so they land on the master bus.
+// The seeker's tone: a steady 1500 Hz sine while a lock holds.  It is the
+// machine's own voice - centred, undamped by distance, no room - so it lands on
+// the master bus, and the caller (`app/systems/feedback.js`) opens it for the
+// second a fresh lock is worth hearing.
 export function setLock(a, state, dt) {
   a.ensure();
   if (!a.ctx) return;
   if (state !== a.mode) {
     a.mode = state;
-    a.beepTimer = 0;
     if (state !== 'locked' && a.lockOsc) {
       try { a.lockOsc.stop(); } catch (e) { }
       a.lockOsc = null;
@@ -237,13 +235,6 @@ export function setLock(a, state, dt) {
       o.start();
       a.lockOsc = o;
       a.lockGain = g;
-    }
-  }
-  if (state === 'acquiring') {
-    a.beepTimer -= dt;
-    if (a.beepTimer <= 0) {
-      a.beepTimer = PIP_PERIOD;
-      blip(a, { type: 'square', f0: PIP_HZ, gain: 0.05, decay: 0.09, dur: 0.1 });
     }
   }
 }
@@ -277,7 +268,6 @@ export function stopVoices(a) {
     a.lockGain = null;
   }
   a.mode = 'none';
-  a.beepTimer = 0;
   // the wave belongs to the context that made it, and the next `ensure()` builds a
   // new one: keeping it would hand a closed context's wave to a fresh oscillator
   a.beepWave = null;

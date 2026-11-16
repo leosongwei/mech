@@ -27,34 +27,66 @@ export function noLockFeedback(app, own, dt) {
     const wd = app.defs.weapons[own.weapon[arm]];
     if (!wd || !wd.lock) continue;
     const m = app.net.meta || {};
-    if (m.lock_progress >= 1 && m.lock_target >= 0) continue;
+    if (m.lock_target >= 0) continue;
     if (app.denyTimer > 0) continue;
     app.denyTimer = 0.7;
     app.audio.denied();
-    const acquiring = m.lock_target >= 0;
-    app.message(acquiring ? 'LOCKING - HOLD SIGHTS ON TARGET'
-                          : 'NO LOCK - IR SEEKER HAS NO TARGET', '#ff9a9a');
+    const beam = wd.kind === 'saclos';
+    app.message(beam ? 'NO LOCK - LASER HAS NO TARGET'
+                     : 'NO LOCK - IR SEEKER HAS NO TARGET', '#ff9a9a');
   }
 }
 
-// The IR lock's own tone and the marker on the hull it holds.  Two states, and
-// the transition is the tone: acquiring is a slow pip, locked is a solid sine,
-// none is silence - what a pilot hears instead of reading `lock_progress`.
-export function updateLockTone(app, own) {
+// The lock's own tone, and the marker on the hull it holds.
+//
+// The *edge* is the tone: a lock is taken in the tick the circle arrives on the
+// hull (`Systems/Locking.cs`), so what the ear hears is the chime, and then
+// silence while it is held.  A solid sine for as long as a channel is held is a
+// machine that never stops talking - with four of them it is a drone under the
+// whole battle - so what says a lock is still there is the marker drawn on the
+// hull (in the reticle's own colour) until it dies or the channel goes.
+const LOCK_TONE_S = 1.0;
+
+export function updateLockTone(app, own, dt) {
   const m = app.net.meta;
   if (!own || !m || m.lock_target < 0) {
     app.audio.setLock('none', 0.016);
     app.lockInfo = null;
+    app.lockExtra = null;
+    app.lockRung = -1;
+    app.lockRingT = 0;
     return;
   }
-  const locked = m.lock_progress >= 1;
-  app.audio.setLock(locked ? 'locked' : 'acquiring', 0.016);
+  const id = m.lock_target;
+  // chimed once per hull: the edge is what rings, so a held lock sits silent
+  if (app.lockRung !== id) { app.lockRung = id; app.lockRingT = LOCK_TONE_S; }
+  app.lockRingT = Math.max(0, (app.lockRingT || 0) - dt);
+  app.audio.setLock(app.lockRingT > 0 ? 'locked' : 'none', dt);
   const t = app.net.entities.get(m.lock_target);
+  app.lockExtra = lockExtras(app, m);
   if (!t) { app.lockInfo = null; return; }
   app.lockInfo = {
     screen: app.hud._project(t.x, t.y + (t.type === 4 ? 3.5 : t.type === 5 ? 6 : 1), t.z),
-    progress: m.lock_progress,
     dist: Math.hypot(t.x - own.x, t.z - own.z),
     target: t,
   };
+}
+
+// The lines the designator is holding that the cross is not on.  A beam rider
+// carries four channels and drops one the moment its hull leaves the sight's
+// window (`Systems/Locking.cs`), so the pilot who wants to know what his machine
+// is still tracking reads this - the primary lock is the one he can fire.
+function lockExtras(app, m) {
+  const list = m.locks;
+  if (!list || list.length < 2) return null;
+  const out = [];
+  for (const l of list) {
+    if (l.id === m.lock_target) continue;
+    const t = app.net.entities.get(l.id);
+    if (!t) continue;
+    const screen = app.hud._project(t.x, t.y + (t.type === 4 ? 3.5 : t.type === 5 ? 6 : 1), t.z);
+    if (!screen) continue;
+    out.push({ screen, target: t });
+  }
+  return out.length ? out : null;
 }

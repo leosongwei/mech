@@ -82,6 +82,9 @@ Systems/                   # mechanics shared by every mode, each exposes run(wo
                            #   Smoke.cs: hot smoke canisters, opaque puffs, blocks(a, b)
                            #   Sweep.cs: the tick's hit spheres, its broad phase, and the one
                            #             "segment vs moving sphere" solve (the spheres system)
+                           #   Locking.cs: the lock both guided weapons ask for
+                           #   Beams.cs: the laser a beam rider flies - one track per
+                           #             channel, its memory through cover, the beam
                            #   Flights.cs: one system per kind of round (bullet / rocket /
                            #             saclos / top) plus Expire, which ends a flight
                            #   FirstHit.cs: what each leg ran into, one system per shape
@@ -108,6 +111,7 @@ Modes/                     # per-mode rule sets: map, setup, pipeline, spawn rul
                            #   Bunkers.cs: ridge blockhouses, Record.cs: the top-attack trace,
                            #   Interceptor.cs: the missile-defence post
 Harness/                   # headless checks, no socket: Check.cs (battle/range/diag),
+                           # BeamCheck.cs (the designator and a beam rider),
                            # InterceptCheck.cs (missile defence, target hits),
                            # FcsCheck.cs (crew vs pilot on the same scenarios),
                            # NetCheck.cs (one pilot's wire, per minute)
@@ -950,6 +954,45 @@ own; the wire is `net/wire.js` + `net/rows.js` and the picture is `net/view.js`.
   `re-locked on hull N`, which nothing but a reader of the log sees - the
   pilot is not told that his round changed its mind, and the client shows no
   cue at all.  Numbered in `docs/top_attack_relock.md`.
+* **A beam rider flies a laser, and the launcher does the tracking**
+  (`Systems/Beams.cs`).  A SACLOS round has no seeker: the machine that fired it
+  holds up to `Defs.BEAM_CHANNELS` (4) *channels* - one per locked hull, in the
+  channels of the designator component the `designator` tag puts on a mech and an
+  APC (`Components.BEAM_COMPS`) - and each channel is a *track*: the aim point on
+  that hull, the velocity it is moving at, the pull measured on it, and how long
+  the sight has been cut.  `Beams.run` refreshes the track off the live hull while
+  `Sight.clear` says it can see it and *walks* it (velocity, plus the measured pull
+  on `Defs.BEAM_ACCEL_TAU`) for `Defs.BEAM_MEMORY` seconds when it cannot - the
+  smoke screen, the tree stand, the house - so a round fired before the screen
+  still arrives.  A channel is given up when its hull leaves the sight's own
+  window (`Defs.BEAM_FRAC`, the whole picture at 1x, 2.6 deg at 20x), when the
+  hull dies, or when the memory runs out; `Beams.lay` allocates one and displaces
+  the *oldest* when all four are used.  `Systems/Locking.cs` is the acquisition
+  half and the same interaction the top attack asks for - a channel *is* a lock,
+  laid in the tick the cross arrives, with no settle time anywhere in the table -
+  with the two weapons differing in what holds after: a seeker
+  drops the target the moment it leaves the reticle circle, a designator keeps it
+  for as long as it is anywhere in the picture.  The lock lives on the *hull*, not
+  on `Player` (a machine's locks die with it, and the beam is what the round
+  reads); `Player.lock_target` is the hull the HUD rings, mirrored by
+  `Locking.run` for the wire, and the meta's `locks` list is the whole set.
+  The round itself (`Flights.Saclos`) reads one byte, `beam_ch` - the line the
+  laser encoded it on, so four rounds are four lines - plus two questions the
+  designator cannot answer for it: is the launcher alive with that channel lit,
+  and does the laser still *reach* the round (`Sight.clear` from the sight head to
+  the missile: a beam is light, and a ridge between the two cuts it).  With no
+  answer the round coasts - motor and drag unchanged, guidance stopped - which is
+  also what a lost launcher leaves behind.  The steering law is the same 1.35 rad/s
+  turn it always was; what changed is the point it turns to: the *intercept*, solved
+  per round (`Beams.intercept`) off the channel's track and the round's own speed,
+  because riding a line aimed at a hull that is crossing at 30 m/s makes the round
+  overtake the hull's position and leave the map past it (measured: 800 m, four
+  rounds, four misses 1.2 km out).  Measured with `--check beam` (`MECH_SEED=7`):
+  four rounds inside 2 m of a hull crossing at 30 m/s at 800 m and at 1600 m, four
+  through a smoke screen on the memory (0.5 m - the measured pull is trusted for
+  `FireControl.ACCEL_S` and then the ghost flies a straight line), 0 of 4 when the
+  laser is cut, the launcher is destroyed or the sight is turned away, and the
+  trigger does nothing without a lock.
 * **Damage** is two halves, never one number. `defs.pen_damage(ap, ad, dp)`:
   beating the target's `dp` outright delivers the full `ad`, beating only half
   of it shaves `ad/5`, anything duller does nothing. `defs.blast_damage(ed, de,
@@ -1902,6 +1945,7 @@ cd frontend && npm install && npm run build      # -> assets/
   ./dotnet.sh run -- --check range  --minutes 2    # range world, a pilot firing
   ./dotnet.sh run -- --check hit                   # every weapon vs a parked APC
   ./dotnet.sh run -- --check intercept             # every missile vs the defence post
+  ./dotnet.sh run -- --check beam                  # a beam rider: hits, cover, cut laser
   ./dotnet.sh run -- --check diag --minutes 2      # what a few AI hulls are doing
   ./dotnet.sh run -- --check net --minutes 30 --from 8   # one pilot's download, per minute
   ./dotnet.sh run -- --check fcs                   # crew vs pilot, same scenarios

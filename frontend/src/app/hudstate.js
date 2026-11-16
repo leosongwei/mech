@@ -50,6 +50,7 @@ function ownState(app, own) {
     crosshairs: app.crosshairs,
     sightRange: app.sightRange,
     lock: app.lockInfo,
+    lockExtra: app.lockExtra,
     lockFrac: app.lockFrac,
   };
 }
@@ -133,6 +134,21 @@ function shopBill(app, meta, draft) {
   return billOut;
 }
 
+// Our own guided rounds in the air, projected for the HUD.  The wire says whose
+// round each one is and what kind, which is the whole filter: a rocket is not
+// steered by anything, so it gets no mark.
+function missiles(app, own) {
+  if (!own) return null;
+  const out = [];
+  for (const p of app.net.projectiles) {
+    if (p.kind !== 2 && p.kind !== 3) continue;
+    if (p.faction !== own.faction) continue;
+    const s = app.hud._project(p.x, p.y, p.z);
+    if (s) out.push({ x: s[0], y: s[1] });
+  }
+  return out.length ? out : null;
+}
+
 export function hudstate(app, own = app.ownEntity()) {
   const m = app.net.meta || {};
   const faction = m.faction !== undefined ? m.faction : app.playerFaction;
@@ -143,6 +159,7 @@ export function hudstate(app, own = app.ownEntity()) {
     entities: app.net.entities,
     contacts: app.net.contacts,
     leads: app.leads,
+    missiles: missiles(app, own),
     atBase: atBase(app, own, faction),
   };
 }

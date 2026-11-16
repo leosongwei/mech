@@ -818,6 +818,23 @@ public static class Netcode
                 ["kills"] = p.kills, ["deaths"] = p.deaths,
                 ["money"] = _iround(p.money), ["alive"] = p.mech >= 0,
             });
+        // the designator's channels: every lock the machine is holding, which is
+        // what the reticle marks one by one (`Systems/Locking.cs`)
+        var locks = new List<object?>(Defs.BEAM_CHANNELS);
+        if (mech_ok && e.has(pl.mech, "beam_tgt"))
+        {
+            var tgt = e.iv("beam_tgt");
+            for (int ch = 0; ch < Defs.BEAM_CHANNELS; ch++)
+            {
+                int tid = tgt.get(pl.mech, ch);
+                if (tid < 0 || !e.is_alive(tid)) continue;
+                locks.Add(new Dictionary<string, object?>
+                {
+                    ["id"] = tid,
+                    ["ch"] = ch,
+                });
+            }
+        }
         var towns = new List<object?>(world.towns.Count);
         foreach (var t in world.towns)
             towns.Add(new Dictionary<string, object?>
@@ -838,8 +855,9 @@ public static class Netcode
             ["respawn"] = _r(MathF.Max(0f, pl.respawn), 2),
             ["god"] = pl.god,
             ["hp"] = hp,
-            ["lock_target"] = pl.lock_progress > 0f ? pl.lock_target : -1,
-            ["lock_progress"] = _r(pl.lock_progress, 3),
+            // the lock a trigger pull would take, and the whole set behind it
+            ["lock_target"] = pl.lock_target,
+            ["locks"] = locks,
             ["smoke"] = pl.smoke_charges,
             ["arms"] = new object?[] { _arm_meta(world, pl, 0), _arm_meta(world, pl, 1) },
             ["work"] = work,

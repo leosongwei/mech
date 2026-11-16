@@ -1,22 +1,29 @@
-// Infrared lock-on: the server owns the lock state, the client mirrors it.
+// Lock-on: the server owns the lock state, the client mirrors it.
 //
-// The seeker only sees what sits inside the reticle circle: a target has to stay
-// within 5 % of the view width (`Defs.LOCK_FRAC`) for `lock_time` seconds, and
-// the lock drops the moment it leaves the circle - there is no hysteresis to
-// hold a strafing hull.  Infantry is too small and too cold for the seeker: only
-// vehicles and mechs can be locked.
+// One interaction, two weapons.  The IR top attack and the laser beam rider ask
+// the pilot for the same thing: put the cross on a hull and the seeker takes it,
+// in the same tick - the circle being on the hull *is* the lock - and they differ
+// in what the lock *is* once it is held:
 //
-// The seeker needs to *see* the hull: anything that cuts a line of sight blocks
-// the acquisition and breaks a lock that is already held - the ground, a
-// building, a tree canopy, and a screen of smoke, which is a temporary piece of
-// cover like the others.  That question is asked of `Systems/Sight.cs` and of
-// nothing else, because the pilot's lock used to ask only for the field and so
-// let a hull be locked straight through a screen of smoke, leaving a lock box
-// standing on a target the missile could no longer see.
+//   * the seeker (`kind` top) answers in the reticle circle (`Defs.LOCK_FRAC` of
+//     the view, so the cone shrinks as the optics zoom) and drops the target the
+//     moment it leaves that circle - there is no hysteresis to hold a strafing
+//     hull;
+//   * the designator (`kind` saclos) keeps up to `Defs.BEAM_CHANNELS` lines, each
+//     held as long as the hull stays inside the sight's own window
+//     (`Defs.BEAM_FRAC`, the whole picture), because a laser is *pointed* rather
+//     than stared at.  A fifth target takes the oldest one's place.
 //
-// The circle is a fixed fraction of the screen, so the angular cone shrinks as
-// the optics zoom in; the pilot sends the zoom and the viewport aspect with every
-// input message and the server keeps both numbers the same as the client.
+// The channels themselves live in the designator component on the hull
+// (`Systems/Beams.cs`), not in `Player`: a lock belongs to a machine, dies with
+// it, and is what the beam reads.  `Player` keeps one mirrored number - the hull
+// the reticle rings - because that is what the client's HUD is drawn from.
+//
+// The seeker needs to *see* the hull before it takes it: anything that cuts a line
+// of sight blocks the acquisition - the ground, a building, a tree canopy, and a
+// screen of smoke, which is a temporary piece of cover like the others.  A channel
+// already held does not need the line of sight: the designator flies it on what it
+// has measured (`Systems/Beams.cs`), which is the whole point of the CV module.
 //
 // Ported from `backend/server/systems/locking.py`.
 
@@ -33,28 +40,51 @@ public static class Locking
                                         // can never slip between two samples
 
     /// <summary>What the seeker looks at: the middle of the hull, not the tracks.</summary>
-    private static Vec3 _sight_point(Vec3 p) => new(p.x, p.y + 1.5f, p.z);
+    private static Vec3 _sight_point(Vec3 p, int etype) =>
+        new(p.x, p.y + Defs.UNIT_DEFS[etype].height * 0.5f, p.z);
 
     /// <summary>Angular radius of the reticle circle, in radians.</summary>
-    public static float cone_of(Player pl)
+    public static float cone_of(Player pl) => _cone(pl.zoom, pl.aspect, Defs.LOCK_FRAC);
+
+    /// <summary>Angular radius of the sight head's own window: everything the
+    /// laser can be pointed at, as opposed to the small circle a seeker locks
+    /// in.</summary>
+    public static float beam_cone_of(Player pl) => _cone(pl.zoom, pl.aspect, Defs.BEAM_FRAC);
+
+    /// <summary>...and the same for a hull nobody is looking through: a crew has
+    /// no optics, so its window is the plain 1x view.</summary>
+    public static float beam_cone_of(World world, int eid)
     {
-        float zoom = Math.Clamp(pl.zoom, MIN_ZOOM, MAX_ZOOM);
-        float aspect = Math.Clamp(pl.aspect, MIN_ASPECT, MAX_ASPECT);
-        float fov = Defs.BASE_FOV / zoom;
-        return MathF.Atan(MathF.Tan(fov * 0.5f) * Defs.LOCK_FRAC * aspect);
+        int pid = world.ecs.iv("owner").get(eid, 0);
+        if (pid >= 0 && world.players.TryGetValue(pid, out var pl)) return beam_cone_of(pl);
+        return _cone(1f, 16f / 9f, Defs.BEAM_FRAC);
+    }
+
+    private static float _cone(float zoom, float aspect, float frac)
+    {
+        float fov = Defs.BASE_FOV / Math.Clamp(zoom, MIN_ZOOM, MAX_ZOOM);
+        return MathF.Atan(MathF.Tan(fov * 0.5f) * frac
+                          * Math.Clamp(aspect, MIN_ASPECT, MAX_ASPECT));
     }
 
     public static void run(World world, float dt)
     {
         var e = world.ecs;
         var pos = e.fv("pos");
+        var etype = e.uv("etype");
         var faction = e.uv("faction");
         var ids = world.lockable_units();
 
         foreach (var pl in world.players.Values)
         {
             int eid = pl.mech;
-            if (eid < 0 || !e.is_alive(eid)) continue;
+            // a lock belongs to the machine: a dead pilot, or one whose hull never
+            // carried a launcher, holds nothing
+            if (eid < 0 || !e.is_alive(eid) || !e.has(eid, "beam_tgt"))
+            {
+                pl.lock_target = -1;
+                continue;
+            }
             WeaponDef? wd = null;
             for (int arm = 0; arm < 2; arm++)
             {
@@ -64,8 +94,8 @@ public static class Locking
             }
             if (wd is null)
             {
+                Beams.free_all(world, eid);
                 pl.lock_target = -1;
-                pl.lock_progress = 0f;
                 continue;
             }
 
@@ -75,90 +105,143 @@ public static class Locking
             var (origin, sy, sp) = Weapons.aim_of(world, eid);
             var d = MathUtil.dir_from(sy, sp);
             float cone = cone_of(pl);
+            // what a held channel has to stay inside: the seeker's circle, or the
+            // whole window when the machine carries a designator
+            bool beam_rider = _carries_beam(world, eid);
+            float keep = beam_rider ? beam_cone_of(pl) : cone;
             int mine = faction[eid];
-
-            int tracked = pl.lock_target;
-            if (tracked >= 0)
+            var tgt = e.iv("beam_tgt");
+            for (int ch = 0; ch < Defs.BEAM_CHANNELS; ch++)
             {
-                // the hull left the circle (or died / turned friendly, or slid
-                // behind cover): drop it
-                if (!e.is_alive(tracked) || faction[tracked] == mine
-                    || !e.has(tracked, "lockable"))
+                int tid = tgt.get(eid, ch);
+                if (tid < 0) continue;
+                bool hold = e.is_alive(tid) && faction[tid] != mine && e.has(tid, "lockable");
+                if (hold)
                 {
-                    tracked = -1;
+                    var sp_at = _sight_point(pos.get3(tid), etype[tid]);
+                    var (ang, dist) = _angle_to(sp_at, origin, d);
+                    if (ang > keep || dist > Defs.lock_range(wd)) hold = false;
                 }
-                else
-                {
-                    var (ang, dist) = _angle_to(_sight_point(pos.get3(tracked)), origin, d);
-                    if (ang > cone || dist > Defs.lock_range(wd)
-                        || !Sight.clear(world, origin, _sight_point(pos.get3(tracked)), LOS_STEP))
-                        tracked = -1;
-                }
-                if (tracked < 0)
-                {
-                    pl.lock_target = -1;
-                    pl.lock_progress = 0f;
-                }
+                // a channel is a lock: once it is laid on the hull the sight line
+                // and the window are the only things that can give it up
+                if (!hold) Beams.free(world, eid, ch);
             }
 
-            if (tracked < 0)
+            // acquire: one new hull per tick, the one nearest the cross
+            int best = -1;
+            float best_ang = cone;
+            if (ids.Length > 0)
             {
-                int best = -1;
-                if (ids.Length > 0)
+                foreach (int tid in ids)
                 {
-                    // candidates: in range, an enemy, and closer than the crosshair
-                    // is wide.  Closest to the crosshair first, but a hull in cover
-                    // is never a candidate: take the first one the seeker can see
-                    int n = 0;
-                    var cand = new int[ids.Length];
-                    var pang = new float[ids.Length];
-                    foreach (int tid in ids)
-                    {
-                        var tp = pos.get3(tid);
-                        float vx = tp.x - origin.x, vy = tp.y - origin.y, vz = tp.z - origin.z;
-                        float dist = MathF.Sqrt(vx * vx + vy * vy + vz * vz);
-                        if (!(dist > MIN_DIST) || !(dist < Defs.lock_range(wd))) continue;
-                        if (faction[tid] == mine) continue;
-                        var aim = _sight_point(tp);
-                        float ax = aim.x - origin.x, ay = aim.y - origin.y, az = aim.z - origin.z;
-                        float an = MathF.Sqrt(ax * ax + ay * ay + az * az);
-                        if (an < 1e-3f) continue;
-                        float dot = (ax * d.x + ay * d.y + az * d.z) / an;
-                        float ang = MathF.Acos(Math.Clamp(dot, -1f, 1f));
-                        if (ang >= cone) continue;
-                        cand[n] = tid;
-                        pang[n] = ang;
-                        n++;
-                    }
-                    if (n > 0)
-                    {
-                        Array.Sort(pang, cand, 0, n);
-                        for (int j = 0; j < n; j++)
-                        {
-                            int c = cand[j];
-                            if (!e.is_alive(c)) continue;
-                            if (Sight.clear(world, origin, _sight_point(pos.get3(c)), LOS_STEP))
-                            {
-                                best = c;
-                                break;
-                            }
-                        }
-                    }
-                }
-                if (best >= 0)
-                {
-                    pl.lock_target = best;
-                    pl.lock_progress = 0f;
-                }
-                else
-                {
-                    pl.lock_progress = MathF.Max(0f, pl.lock_progress - dt * 2f);
-                    continue;
+                    if (faction[tid] == mine) continue;
+                    if (_channel_of(world, eid, tid) >= 0) continue;   // already held
+                    var tp = pos.get3(tid);
+                    float vx = tp.x - origin.x, vy = tp.y - origin.y, vz = tp.z - origin.z;
+                    float dist = MathF.Sqrt(vx * vx + vy * vy + vz * vz);
+                    if (!(dist > MIN_DIST) || !(dist < Defs.lock_range(wd))) continue;
+                    var aim = _sight_point(tp, etype[tid]);
+                    var (ang, _) = _angle_to(aim, origin, d);
+                    if (ang >= best_ang) continue;
+                    if (!Sight.clear(world, origin, aim, LOS_STEP)) continue;
+                    best = tid;
+                    best_ang = ang;
                 }
             }
+            // the channel is laid *as* the lock, so the trigger works on the tick
+            // the cross arrives
+            if (best >= 0) Beams.lay(world, eid, best);
 
-            pl.lock_progress = MathF.Min(1f, pl.lock_progress + dt / MathF.Max(wd.lock_time, 0.05f));
+            // what the reticle reads: the channel a trigger pull would take, and
+            // failing that the one closest to being locked
+            _mirror(world, eid, pl, beam_rider ? beam_cone_of(pl) : cone);
         }
+    }
+
+    /// <summary>The channel a shot from `wd` takes: the complete one nearest the
+    /// sight line, inside the cone that weapon's own seeker answers in - the
+    /// reticle circle for a fire-and-forget round, the whole window for a beam
+    /// rider, whose laser can be pointed at all of it.  -1 = no lock, and the
+    /// trigger is refused.</summary>
+    public static int pick(World world, int eid, WeaponDef wd, out int target)
+    {
+        target = -1;
+        var e = world.ecs;
+        if (!e.has(eid, "beam_tgt")) return -1;
+        int pid = e.iv("owner").get(eid, 0);
+        float cone;
+        if (pid >= 0 && world.players.TryGetValue(pid, out var pl))
+            cone = wd.kind == "saclos" ? beam_cone_of(pl) : cone_of(pl);
+        else
+            cone = _cone(1f, 16f / 9f, Defs.BEAM_FRAC);
+        var (origin, sy, sp) = Weapons.aim_of(world, eid);
+        var d = MathUtil.dir_from(sy, sp);
+        var tgt = e.iv("beam_tgt");
+        var pos = e.fv("pos");
+        var etype = e.uv("etype");
+        int mine = e.uv("faction")[eid];
+        int best = -1;
+        float best_ang = cone;
+        for (int ch = 0; ch < Defs.BEAM_CHANNELS; ch++)
+        {
+            int tid = tgt.get(eid, ch);
+            if (tid < 0) continue;
+            if (!e.is_alive(tid) || e.uv("faction")[tid] == mine) continue;
+            var (ang, dist) = _angle_to(_sight_point(pos.get3(tid), etype[tid]), origin, d);
+            if (ang >= best_ang || dist > Defs.lock_range(wd)) continue;
+            best = ch;
+            best_ang = ang;
+            target = tid;
+        }
+        return best;
+    }
+
+    /// <summary>The channel this launcher already has on `tid`, or -1.</summary>
+    private static int _channel_of(World world, int eid, int tid)
+    {
+        var tgt = world.ecs.iv("beam_tgt");
+        for (int ch = 0; ch < Defs.BEAM_CHANNELS; ch++)
+            if (tgt.get(eid, ch) == tid) return ch;
+        return -1;
+    }
+
+    /// <summary>Mirror the reticle's own lock into `Player`, which is what the wire
+    /// carries and the HUD draws: the channel nearest the cross, which is also the
+    /// one a trigger pull takes.</summary>
+    private static void _mirror(World world, int eid, Player pl, float cone)
+    {
+        var e = world.ecs;
+        var (origin, sy, sp) = Weapons.aim_of(world, eid);
+        var d = MathUtil.dir_from(sy, sp);
+        var tgt = e.iv("beam_tgt");
+        var pos = e.fv("pos");
+        var etype = e.uv("etype");
+        int best = -1;
+        float best_ang = float.MaxValue;
+        for (int ch = 0; ch < Defs.BEAM_CHANNELS; ch++)
+        {
+            int tid = tgt.get(eid, ch);
+            if (tid < 0 || !e.is_alive(tid)) continue;
+            var (ang, _) = _angle_to(_sight_point(pos.get3(tid), etype[tid]), origin, d);
+            if (ang > cone || ang >= best_ang) continue;
+            best = ch;
+            best_ang = ang;
+        }
+        pl.lock_target = best < 0 ? -1 : tgt.get(eid, best);
+    }
+
+    /// <summary>Whether the machine carries a laser designator - a beam rider in
+    /// either arm.</summary>
+    private static bool _carries_beam(World world, int eid)
+    {
+        var e = world.ecs;
+        for (int arm = 0; arm < 2; arm++)
+        {
+            int wid = e.uv("weapon").get(eid, arm);
+            if (wid != 0 && Defs.WEAPONS[wid].kind == "saclos"
+                && Combat.arm_alive(world, eid, arm)) return true;
+        }
+        return false;
     }
 
     /// <summary>Angle between the sight line and a hull, and the range to it.

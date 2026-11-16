@@ -10,7 +10,7 @@
 // and where the two overlap each one keeps only the arc outside its partner -
 // the pair is divided by a white line, `ringCut`.
 
-import { ARM_COLORS, LEAD_COLOR, LEAD_RING, TAU } from './layout.js';
+import { ARM_COLORS, LEAD_COLOR, LEAD_RING, MISSILE_RING, TAU } from './layout.js';
 
 // The two cuts of one pair, reused: a target's rings are cut once per frame each
 // and the frame is 16 ms long, so two objects serve every pair on the screen.
@@ -18,6 +18,26 @@ const CUT_A = { a0: 0, a1: 0, x0: 0, y0: 0, x1: 0, y1: 0 };
 const CUT_B = { a0: 0, a1: 0, x0: 0, y0: 0, x1: 0, y1: 0 };
 // and the pair of cuts itself, in `marks` order
 const CUTS = [null, null];
+
+// Our own guided rounds, in the air and on their way: one small circle each, in
+// the same white as the box an enemy hull gets - a circle instead of a box
+// because it is not a target, it is a machine of ours being steered into one.
+// The coordinate is the wire's own (`net.projectiles` is rebuilt from every
+// snapshot, un-interpolated), so the mark steps at 15 Hz like the round does.
+export function friendlyMissiles(ctx, s) {
+  const list = s.missiles;
+  if (!list || !list.length) return;
+  ctx.save();
+  ctx.strokeStyle = LEAD_COLOR;
+  ctx.lineWidth = 1.2;
+  ctx.globalAlpha = 0.85;
+  for (const m of list) {
+    ctx.beginPath();
+    ctx.arc(m.x, m.y, MISSILE_RING, 0, TAU);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
 
 export function leads(ctx, s) {
   const list = s.leads;

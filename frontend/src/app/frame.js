@@ -144,7 +144,7 @@ function senseStage(app) {
   app.lead.update(ctx.own);
   app.lead.screen(ctx.own);
   app.rwr.alarms(app, ctx.own);
-  updateLockTone(app, ctx.own);
+  updateLockTone(app, ctx.own, ctx.dt);
   app.rwr.arrows(app);
 }
 

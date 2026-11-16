@@ -21,8 +21,7 @@ public sealed class Player
     public float in_pitch;
     public (float x, float z) in_move = (0f, 0f);
     public (bool left, bool right) fire = (false, false);
-    public int lock_target = -1;
-    public float lock_progress;
+    public int lock_target = -1;             // the hull the reticle is ringing
     public int[] loadout = (int[])Defs.DEFAULT_LOADOUT.Clone();
     public int last_seq;
     public int score;
@@ -200,6 +199,10 @@ public sealed class World
             // (a missile's `pos` is the start of the tick, its displacement is
             // predicted from its velocity)
             Systems.Sweep.Spheres.run,
+            // the laser designator: the beams a SACLOS round rides, tracked on the
+            // positions the drivers have just finished writing and published for
+            // the flights below (`Systems/Beams.cs`)
+            Systems.Beams.run,
             // battery and wire, settled before anything moves
             Systems.Flights.Expire.run,
             // one system per kind of round, by tag: no `proj_kind` switch
@@ -255,6 +258,9 @@ public sealed class World
             ? Components.CIV_COMPS : Components.UNIT_COMPS);
         bool arms = d.arms is { Length: > 0 };
         if (arms) comps.AddRange(Components.ARM_COMPS);
+        // a launcher that can fire a beam rider carries the laser's four channels
+        // (`Systems/Beams.cs`), declared by the type the same way `arms` is
+        if (d.tags.Contains("designator")) comps.AddRange(Components.BEAM_COMPS);
         // the invariant a system may rely on (Components.cs): everything that
         // moves owns a place and a velocity, and a hull owns the intent too.
         // Asserted at the factory so a new entity type that forgets one dies at
@@ -356,8 +362,10 @@ public sealed class World
     /// The credit (`proj_pid` / `proj_name` / `proj_etype`) is frozen at the
     /// muzzle: a round outlives the hull that fired it by a second to several, and
     /// its id can already belong to the wreck it left.</summary>
+    /// <param name="beam">the designator channel a beam rider rides
+    /// (`Systems/Beams.cs`), -1 for a round nobody is steering.</param>
     public int spawn_round(int src, int faction, int wid, int kind, Vec3 pos, Vec3 vel,
-                           float life, int target)
+                           float life, int target, int beam = -1)
     {
         var e = ecs;
         var wd = Defs.WEAPONS[wid];
@@ -365,6 +373,9 @@ public sealed class World
         var comps = new List<string>(pooled ? Components.MISSILE_COMPS
                                             : Components.PROJ_COMPS);
         if (kind == 3) comps.AddRange(Components.SEEKER_COMPS);
+        // a beam rider rides one line of its launcher's laser, and the line is
+        // encoded in the beam: that is what lets four rounds be steered at once
+        if (wd.kind == "saclos") comps.AddRange(Components.BEAM_ROUND_COMPS);
         if (Defs.KIND_TAGS.TryGetValue(wd.kind, out var tags)) comps.AddRange(tags);
         if (!comps.Contains("first_hit_t"))
             throw new InvalidOperationException("a round must own first_hit_record");
@@ -388,6 +399,7 @@ public sealed class World
         e.fv("proj_seed")[pid] = rng.random();
         e.fv("proj_trav")[pid] = 0f;
         e.iv("target")[pid] = target;
+        if (e.has(pid, "beam_ch")) e.uv("beam_ch")[pid] = (byte)Math.Max(0, beam);
         if (pooled)
         {
             e.fv("hp")[pid] = wd.aim_hp;
@@ -659,7 +671,6 @@ public sealed class World
             pl.respawn = mode_mod.restart_respawn;
             pl.death_pos = null;
             pl.lock_target = -1;
-            pl.lock_progress = 0f;
             pl.end_work();
         }
         emit("newmatch");

@@ -289,8 +289,12 @@ public sealed class WeaponDef
     public float ammo_cost;         // $ per round of a full load
     // `lock` is a C# keyword, so the field is written `@lock` - the metadata name,
     // and therefore the JSON key, is the Python one.
-    public int @lock;                // 1 = needs an IR lock before it can be fired
-    public float lock_time;         // s the seeker takes to lock
+    public int @lock;                // 1 = needs a lock before it can be fired.  A lock
+                                     // is the circle being on the hull: the seeker
+                                     // answers, it does not settle
+    /// <summary>s between two launches by an AI crew (`AI_LAUNCH_GAP` sits here, on
+    /// the weapon that needs the floor).  0 = the rack's own cycle.</summary>
+    public float ai_gap;
     public int salvo;               // rounds one pull of the trigger lets go
     public int semi;                // 1 = semi-automatic (one round per pull)
     public float[] color = new float[3];  // tracer / body colour, rgb 0..1
@@ -374,7 +378,7 @@ public static partial class Defs
             ap = 0f, ad = 0f, ed = 0f, er = 0f,
             rpm = 1, mag = 0, reserve = 0, reload = 1f, vel = 1f, spread = 0f, bias = 0.0f,
             g = 0f, thrust = 0f, maxvel = 0f, life = 1f, range = 0, cost = 0, ammo_cost = 0f,
-            @lock = 0, lock_time = 0f, salvo = 0, semi = 0,
+            @lock = 0, salvo = 0, semi = 0,
             color = new[] { 0.8f, 0.8f, 0.8f }, cal = 0f, desc = "No weapon fitted",
         },
         // one belt of 400, no reload: the magazine boundary is gone, so a pull of
@@ -402,7 +406,7 @@ public static partial class Defs
             ap = 15f, ad = 7f, ed = 18f, er = 8.0f,
             rpm = 300, mag = 400, reserve = 0, reload = 0.0f, vel = 1080f, spread = 0.0011f,
             bias = 0.0f, g = 9.81f, thrust = 0f, maxvel = 0f, life = 9.3f, range = 3400,
-            cost = 300, ammo_cost = 0.5f, @lock = 0, lock_time = 0f, salvo = 0, semi = 0,
+            cost = 300, ammo_cost = 0.5f, @lock = 0, salvo = 0, semi = 0,
             color = new[] { 1.0f, 0.82f, 0.25f }, cal = 30f, prox = 2.5f,
             desc = "High velocity, 3.4 km effective",
         },
@@ -418,7 +422,7 @@ public static partial class Defs
             ap = 8f, ad = 10f, ed = 0f, er = 0f,
             rpm = 1800, mag = 1500, reserve = 0, reload = 0.0f, vel = 890f, spread = 0.00225f,
             bias = 0.0f, g = 9.81f, thrust = 0f, maxvel = 0f, life = 11.2f, range = 1000,
-            cost = 180, ammo_cost = 0.1f, @lock = 0, lock_time = 0f, salvo = 0, semi = 0,
+            cost = 180, ammo_cost = 0.1f, @lock = 0, salvo = 0, semi = 0,
             color = new[] { 1.0f, 0.68f, 0.20f }, cal = 12.7f, gatling = true,
             desc = "1.0 km suppressive fire",
         },
@@ -438,7 +442,7 @@ public static partial class Defs
             ap = 40f, ad = 25f, ed = 35f, er = 10.0f,
             rpm = 600, mag = 40, reserve = 0, reload = 0.0f, vel = 55f, spread = 0.003f,
             bias = 0.0429f, g = 9.81f, thrust = 560f, maxvel = 610f, life = 16.4f,
-            range = 1000, cost = 350, ammo_cost = 4.0f, @lock = 0, lock_time = 0f, salvo = 1,
+            range = 1000, cost = 350, ammo_cost = 4.0f, @lock = 0, salvo = 1,
             semi = 0, color = new[] { 1.0f, 0.45f, 0.15f }, cal = 80f, rcs = 0.005f,
             rack = RACK_ROCKET, desc = "40 rounds, hold to fire, sighted to 1 km",
         },
@@ -451,8 +455,14 @@ public static partial class Defs
         // out, lazy in, and a long shot is a commitment rather than a sniper rifle.
         // A tandem HEAT warhead: AD 120 is past every hull pool in the game (mech 120,
         // APC 100, arm 50), so one hit takes a machine apart without doing the base's
-        // 4000 hp much of a favour - the price is that the operator has to hold the
-        // sight on it.
+        // 4000 hp much of a favour.
+        //
+        // The round rides a laser the launcher's computer holds on a *locked* target
+        // (`Systems/Beams.cs`), so the price is no longer the sight: it is the lock,
+        // which is the same interaction the top attack asks for.  Four channels are
+        // carried at once - the beam hops between them and the code in the laser says
+        // which round is which - so a machine can service a whole melee, and loses the
+        // beam on a target the moment that hull leaves the sight's own window.
         //
         // Sixteen rounds in a flat 4 x 4 pack, the same tubes as the top attack and
         // the same mechanism: one round per tube, no magazine, no reload, and 0.3 s
@@ -465,9 +475,9 @@ public static partial class Defs
             rpm = 200, mag = 16, reserve = 0, reload = 0.0f, vel = 40f, spread = 0.003f,
             bias = 0.0f, g = 0.0f, thrust = 100f, burn = 5.6f, drag = 0.0002f, maxvel = 600f,
             life = 36.0f, wob = 30.0f, wob_f = 1.5f, maxdist = 4000.0f,
-            range = 3400, cost = 500, ammo_cost = 30.0f, @lock = 0, lock_time = 0f, salvo = 0,
-            semi = 0, color = new[] { 0.35f, 1.0f, 0.55f }, cal = 152f, rcs = 0.02f,
-            rack = RACK_SACLOS, desc = "Beam riding, keep the sight on target",
+            range = 3400, cost = 500, ammo_cost = 30.0f, @lock = 1, salvo = 0,
+            semi = 0, color = new[] { 0.35f, 1.0f, 0.55f }, cal = 152f,
+            rcs = 0.02f, rack = RACK_SACLOS, desc = "Lock on, then ride the laser in",
         },
         // Javelin class, flown as an aeroplane rather than as a curve: the tube is
         // elevated to `loft`, a 20 m/s soft launch, then 3.4 s of motor (11.2 g) that
@@ -507,7 +517,7 @@ public static partial class Defs
             cl_max = 5.0f, burn = 3.4f, ignite = 0.15f, loft = RACK_TOP.elev, apex = 950.0f,
             turn_r = 700.0f, pn_n = 4.0f, pn_r = 300.0f, pn_v = 120.0f,
             rack = RACK_TOP, body = new[] { 0.18f, 1.30f },
-            @lock = 1, lock_time = 0.3f, salvo = 0, semi = 0,
+            @lock = 1, ai_gap = AI_LAUNCH_GAP, salvo = 0, semi = 0,
             color = new[] { 1.0f, 0.35f, 0.9f }, cal = 127f, rcs = 0.02f,
             desc = "4 km lock-on, fire and forget",
         },
@@ -517,7 +527,7 @@ public static partial class Defs
             ap = 5f, ad = 4f, ed = 0f, er = 0f,
             rpm = 430, mag = 30, reserve = 900, reload = 2.2f, vel = 900f, spread = 0.007f,
             bias = 0.0f, g = 9.81f, thrust = 0f, maxvel = 0f, life = 11.1f, range = 800,
-            cost = -1, ammo_cost = 0.05f, @lock = 0, lock_time = 0f, salvo = 0, semi = 0,
+            cost = -1, ammo_cost = 0.05f, @lock = 0, salvo = 0, semi = 0,
             color = new[] { 1.0f, 0.9f, 0.5f }, cal = 5.56f, desc = "800 m rifle",
         },
         new WeaponDef
@@ -526,7 +536,7 @@ public static partial class Defs
             ap = 100f, ad = 40f, ed = 20f, er = 3.0f,
             rpm = 25, mag = 1, reserve = 900, reload = 6.5f, vel = 50f, spread = 0.008f,
             bias = 0.0f, g = 9.81f, thrust = 380f, maxvel = 300f, life = 33.3f, range = 800,
-            cost = -1, ammo_cost = 8.0f, @lock = 0, lock_time = 0f, salvo = 0, semi = 0,
+            cost = -1, ammo_cost = 8.0f, @lock = 0, salvo = 0, semi = 0,
             color = new[] { 1.0f, 0.5f, 0.2f }, cal = 85f, rcs = 0.002f,
             desc = "800 m anti-tank rocket",
         },
@@ -546,7 +556,7 @@ public static partial class Defs
             ap = 120f, ad = 200f, ed = 15f, er = 3.0f,
             rpm = 20, mag = 1, reserve = 11, reload = 3.0f, vel = 1600f, spread = 0.0003f,
             bias = 0.0f, g = 9.81f, thrust = 0f, maxvel = 0f, life = 6.3f, range = 4000,
-            cost = 800, ammo_cost = 60.0f, @lock = 0, lock_time = 0f, salvo = 0, semi = 0,
+            cost = 800, ammo_cost = 60.0f, @lock = 0, salvo = 0, semi = 0,
             color = new[] { 1.0f, 0.90f, 0.55f }, cal = 105f, heavy = true, reach = 6.45f,
             desc = "APFSDS, 3 s autoloader",
         },
@@ -567,7 +577,7 @@ public static partial class Defs
             bias = 0.0f, g = 0.0f, thrust = 100f, burn = 5.6f, drag = 0.0002f, maxvel = 600f,
             life = 36.0f, wob = 30.0f, wob_f = 1.5f, maxdist = 4000.0f, range = 3000,
             expire_burst = true,
-            cost = -1, ammo_cost = 0.0f, @lock = 0, lock_time = 0f, salvo = 0, semi = 0,
+            cost = -1, ammo_cost = 0.0f, @lock = 1, salvo = 0, semi = 0,
             color = new[] { 0.35f, 1.0f, 0.55f }, cal = 152f, rcs = 0.02f,
             rack = RACK_SACLOS, desc = "Beam riding, one round every five seconds",
         },
@@ -806,8 +816,9 @@ public static partial class Defs
     // eight fire-and-forget rounds at the rack's own 0.3 s cycle is two and a half
     // seconds of war and an empty arm for the rest of the battle, so the crew
     // launches one, watches it arrive and picks the next moment
-    // (`Systems/Weapons.cs`).  A beam rider is not on this clock: its price is
-    // holding the sight on the target, so it fires at the rack's own rate.
+    // (`Systems/Weapons.cs`).  It is a *weapon* property (`WeaponDef.ai_gap`), so a
+    // beam rider is not on this clock: it fires at the rack's own rate, and what it
+    // costs a crew is the channel it has to keep lit (`Systems/Beams.cs`).
     public const float AI_LAUNCH_GAP = 15.0f;
 
     // Which arm a crew lays its *sight* on, when the two arms want different leads.
@@ -1018,7 +1029,7 @@ public static partial class Defs
                 blast = new[] { DEATH_BLAST.ed, DEATH_BLAST.er }, loud = "blast",
                 wreck = new[] { (float)ETYPE_DEBRIS, WRECK_TIME, 1f },
             },
-            tags = new[] { "unit", "combat", "lockable", "moves", "vehicle" },
+            tags = new[] { "unit", "combat", "lockable", "moves", "vehicle", "designator" },
         },
         // hull pool 120 (chassis + torso), one arm 50 each; armour of a light tank.  The
         // hull was 100 until the autocannon went to 300 rpm: 120 is what keeps a
@@ -1049,7 +1060,7 @@ public static partial class Defs
                 blast = new[] { DEATH_BLAST.ed, DEATH_BLAST.er }, loud = "blast",
                 wreck = new[] { (float)ETYPE_DEBRIS, WRECK_TIME, 2f },
             },
-            tags = new[] { "unit", "combat", "lockable", "moves" },
+            tags = new[] { "unit", "combat", "lockable", "moves", "designator" },
         },
         // the objective: a target, but it never moves and cannot be locked.  4000 hp
         // behind 80 of plate: neither 80 mm rockets (AP 40) nor 30 mm rounds (AP 15) get
@@ -1334,6 +1345,23 @@ public static partial class Defs
     // optics / IR seeker
     public const float BASE_FOV = 1.05f;        // vertical field of view at 1x, radians
     public const float LOCK_FRAC = 0.05f;       // lock circle diameter as a fraction of the view width
+
+    // ---- the laser designator (`Systems/Beams.cs`) ----
+    // A beam rider is guided by a laser the launcher's computer holds on its target,
+    // so what limits the launcher is the sight head's own window and how many lines
+    // the beam can hop between - not a cross the pilot has to keep on the hull.
+    public const int BEAM_CHANNELS = 4;         // targets one launcher can service at once
+    // the window the laser can be pointed in, as a fraction of the view width (1 =
+    // the whole sight picture).  It follows the optics, so a 20x sight is a 2.6 deg
+    // window: a pilot zoomed in on one hull is not tracking three others
+    public const float BEAM_FRAC = 1.0f;
+    // s of blind extrapolation the computer will fly a channel for.  Its memory
+    // walks at the target's own velocity and pull, which is what carries a round
+    // through the seconds a hull spends behind a stand of trees
+    public const float BEAM_MEMORY = 8.0f;
+    // s; the time constant the designator smooths a target's measured pull over -
+    // the same figure a crew measures one with (`Systems/AI/Support/Crew.cs`)
+    public const float BEAM_ACCEL_TAU = 0.25f;
     // Where a seeker looks at a hull - the deck it dives on, as a fraction of the type's
     // `height`.  It has to stay *inside* the hull's own hit spheres or a round that flies
     // the aim point perfectly still misses the body: 0.92 of a mech's 6.5 m is 5.98 m

@@ -35,6 +35,10 @@ export const LEAD_RING = 7;         // px, radius of a pre-aim circle; the aim
 // cut by one white line, and the cross no longer has to travel two full radii
 // out to the side to pick one.
 export const LEAD_PAIR_SEP = 1.0;
+// A round of our own in the air that is being steered: a circle, where an enemy
+// hull gets a box.  It marks a *machine*, so an unguided rocket - which is not
+// steered by anything - gets nothing at all.
+export const MISSILE_RING = 5;      // px, radius of the circle round a friendly missile
 export const RADAR_PX = 78;                // px, outer radius of the threat circle
 export const RADAR_MARGIN = 22;            // px between the dial and the screen edges
 export const GEAR_EDGE = 8;                // px from the top and right edges to the gear

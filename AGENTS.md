@@ -1015,13 +1015,14 @@ own; the wire is `net/wire.js` + `net/rows.js` and the picture is `net/view.js`.
   is *aimed* rather than steered, and the purse is the launcher's: 3.4 km is the
   lock, and 36 m/s² of lift at 200 m/s is not a correction.
   `Beams.intercept` is solved with the speed the round will *average* over the
-  flight (`Flight.mean_speed`, the ramp's own integral `v0 + a0·T/2 + (a1-a0)·T/6`
-  while the motor is lit): a lead off the 40 m/s launch speed asks for a 30 s
-  flight and throws the aim point a kilometre down the target's track, then sweeps
-  it backwards through the sky as the motor lights.
-  Measured with `--check beam` (`MECH_SEED=7`): 4 rounds of 4 inside 2 m of a hull
-  crossing at 30 m/s at 400, 800, 1600 and 3000 m, 4 more with the sight turned 30
-  deg off and back (inside the cone, so the line survives), 4 through a smoke screen on the
+  flight (`(v + maxvel)/2` while the motor is lit): a lead off the 40 m/s launch
+  speed asks for a 30 s flight and throws the aim point a kilometre down the
+  target's track, then sweeps it backwards through the sky as the motor lights.
+  Measured with `--check beam` (`MECH_SEED=7`): 4 rounds of 4 inside 1.2 m of a hull
+  crossing at 30 m/s at 400, 800 and 1600 m and 3 of 4 at 3000 m (the round is a
+  second slower to 2 km than it was, so the far row is the edge of the wire), 4 more
+  with the sight turned 30 deg off and back (inside the cone, so the line survives),
+  4 through a smoke screen on the
   memory (1.5 m - the measured pull is trusted for `FireControl.ACCEL_S` and then
   the ghost flies a straight line), 4 of 4 shot down by the AI post at 1000 m,
   0 of 4 when the laser is cut, the launcher is destroyed or the sight is turned

@@ -11,6 +11,27 @@
 
 ---
 
+## 2026-11-15 · 击杀流带上消息类型与单位类型（1.32.0）
+
+- **`GET /events/kills` 的记录多了两件事**：
+  - 顶层 **`"type": "killed"`**：这条消息*是什么*。以后流里放别的类型（占领、重开……）
+    时靠它区分，读者应当先读这个字段，而不是从形状去猜。
+  - **`killed.unit_type` / `by.unit_type`**：两端单位的类型，取
+    `Defs.UNIT_DEFS[etype].key` —— `mech` / `apc` / `rifleman` / `at_rifleman` /
+    `command_base` / `civilian`（另有 `bunker` / `wreck` / `corpse`，它们永远不会以
+    击杀者或被击杀者的身份出现）。
+- 实测一条（`--check fcs`，端到端跑 `KillStream` 的序列化）：
+  `{"type":"killed","killed":{"name":"APC","is_player":false,"unit_type":"apc"},"by":{"name":"FCS","is_player":true,"unit_type":"mech"},"weapon":"30mm autocannon","distance":798.1}`
+- **文档 `killed_sse.md` §3 重写**：字段表加上 `type` 与两个 `unit_type`；新增 §3.1
+  `unit_type` 枚举表（谁能被打死、谁能当击杀者）和 §3.2 `weapon` 枚举表（武器名 →
+  代码 `key` → 挂载平台）。示例代码也跟着改成先判 `type`。
+- **单位表多一个 `key`**：`UnitDef.key`（`mech`、`at_rifleman`……）与
+  `Defs.unit_key(etype)`，和 `WeaponDef.key` 一个角色——对外的叫法由表自己说，不由调用
+  方拼字符串。它跟着 init payload 一起发给客户端，客户端不用。
+- 涉及文件：`Core/Defs.cs`（`UnitDef.key`、9 个单位类型的关键字、`Defs.unit_key`）、
+  `Systems/Support/KillFeed.cs`（`KillRecord` 带两端 `etype`）、`Net/KillStream.cs`
+  （`type` 与两个 `unit_type`）、`docs/product/killed_sse.md`。
+
 ## 2026-11-15 · 调零时炮管跟着抬起来（1.31.0）
 
 - **玩家能感觉到的差别**：拨调零刻度盘（`CTRL`+滚轮，0.5–4 km）时，自机的炮口与火箭巢

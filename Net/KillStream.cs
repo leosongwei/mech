@@ -72,15 +72,22 @@ public static class KillStream
 
     private static Dictionary<string, object?> _payload(Systems.KillFeed.KillRecord rec) => new()
     {
+        // what this frame *is*: the stream may carry other kinds of message later,
+        // and a reader should read a key rather than guess from the shape
+        ["type"] = "killed",
         ["killed"] = new Dictionary<string, object?>
         {
             ["name"] = rec.victim,
             ["is_player"] = rec.victim_is_player,
+            // `mech`, `apc`, `rifleman`, ... - the token in `UnitDef.key`, so a
+            // consumer branches on one word instead of on the HUD's shouting
+            ["unit_type"] = Defs.unit_key(rec.victim_etype),
         },
         ["by"] = new Dictionary<string, object?>
         {
             ["name"] = rec.killer,
             ["is_player"] = rec.killer_is_player,
+            ["unit_type"] = Defs.unit_key(rec.killer_etype),
         },
         // the weapon's name as the HUD says it: `Defs` keeps the table in capitals
         // (`30mm AUTOCANNON`), and both readers of this name write it small

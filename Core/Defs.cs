@@ -917,7 +917,11 @@ public sealed class DeathDef
 // one (see the radar block above).
 public sealed class UnitDef
 {
+    // what the HUD shouts on a kill line (`RIFLEMAN`), and the token it is called
+    // by *outside* the game - the kill stream's `unit_type`, where a reader has to
+    // branch on it and wants `at_rifleman`, not `AT RIFLEMAN`
     public string name = "";
+    public string key = "";
     public float hp;
     // the left / right arm pools, when the hull is built out of modules; null for
     // everything that is not a mech
@@ -965,7 +969,7 @@ public static partial class Defs
         // with a heavy machine gun looks at it.
         [ETYPE_INF_RIFLE] = new UnitDef
         {
-            name = "RIFLEMAN", hp = 10f, dp = 1f, de = 1f,
+            key = "rifleman", name = "RIFLEMAN", hp = 10f, dp = 1f, de = 1f,
             speed = 5.5f, radius = 0.55f, height = 1.8f,
             weapons = new[] { WID_RIFLE556, WID_NONE }, ai_range = 800, sight = 800,
             reward = 45, splat = 1.0f, targets = new[] { ETYPE_INF_RIFLE, ETYPE_INF_ROCKET },
@@ -978,7 +982,7 @@ public static partial class Defs
         },
         [ETYPE_INF_ROCKET] = new UnitDef
         {
-            name = "AT RIFLEMAN", hp = 10f, dp = 1f, de = 1f,
+            key = "at_rifleman", name = "AT RIFLEMAN", hp = 10f, dp = 1f, de = 1f,
             speed = 5.0f, radius = 0.55f, height = 1.8f,
             weapons = new[] { WID_RPG, WID_NONE }, ai_range = 800, sight = 800,
             reward = 70, splat = 1.0f,
@@ -996,7 +1000,7 @@ public static partial class Defs
         // it takes its time getting there (see APC_THRUST)
         [ETYPE_APC] = new UnitDef
         {
-            name = "APC", hp = 100f, dp = 10f, de = 20f,
+            key = "apc", name = "APC", hp = 100f, dp = 10f, de = 20f,
             speed = 100.0f / 3.6f, radius = 2.2f, height = 2.8f,
             max_grad = APC_MAX_GRADIENT,
             // self-defence radar: half the mech's discovery range, i.e. a sixteenth of
@@ -1025,7 +1029,7 @@ public static partial class Defs
         // so it is 42 % of the hull now rather than half
         [ETYPE_MECH] = new UnitDef
         {
-            name = "MECH", hp = 120f, arms = new[] { 50, 50 }, dp = 10f, de = 20f,
+            key = "mech", name = "MECH", hp = 120f, arms = new[] { 50, 50 }, dp = 10f, de = 20f,
             speed = 50.0f, radius = 1.9f, height = 6.5f,
             max_grad = MECH_MAX_GRADIENT,
             // A doppler receiver answers `d^2 <= K * v_closing`, so where a round is
@@ -1053,7 +1057,7 @@ public static partial class Defs
         // rockets (15 each) or 1112 cannon rounds (3.6 each)
         [ETYPE_BASE] = new UnitDef
         {
-            name = "COMMAND BASE", hp = 4000f, dp = 80f, de = 20f,
+            key = "command_base", name = "COMMAND BASE", hp = 4000f, dp = 80f, de = 20f,
             speed = 0.0f, radius = 7.0f, height = 12.0f,
             weapons = new[] { WID_NONE, WID_NONE }, ai_range = 0, sight = 0, reward = 2000,
             splat = 8.0f,
@@ -1063,7 +1067,7 @@ public static partial class Defs
         },
         [ETYPE_CIV] = new UnitDef
         {
-            name = "CIVILIAN", hp = 10f, dp = 1f, de = 1f,
+            key = "civilian", name = "CIVILIAN", hp = 10f, dp = 1f, de = 1f,
             speed = 4.0f, radius = 0.5f, height = 1.7f,
             weapons = new[] { WID_NONE, WID_NONE }, ai_range = 0, sight = 60, reward = 0,
             splat = 1.0f,
@@ -1077,7 +1081,7 @@ public static partial class Defs
         // inert: drawn by the client, but not a unit any more
         [ETYPE_DEBRIS] = new UnitDef
         {
-            name = "WRECK", hp = 0f, dp = 0f, de = 0f,
+            key = "wreck", name = "WRECK", hp = 0f, dp = 0f, de = 0f,
             speed = 0.0f, radius = 2.0f, height = 2.6f,
             weapons = new[] { WID_NONE, WID_NONE }, ai_range = 0, sight = 0, reward = 0,
             splat = 2.0f,
@@ -1086,7 +1090,7 @@ public static partial class Defs
         },
         [ETYPE_CORPSE] = new UnitDef
         {
-            name = "CORPSE", hp = 0f, dp = 0f, de = 0f,
+            key = "corpse", name = "CORPSE", hp = 0f, dp = 0f, de = 0f,
             speed = 0.0f, radius = 0.5f, height = 0.4f,
             weapons = new[] { WID_NONE, WID_NONE }, ai_range = 0, sight = 0, reward = 0,
             splat = 1.0f,
@@ -1096,7 +1100,7 @@ public static partial class Defs
         // concrete blockhouse: rounds stop on it, damage does not
         [ETYPE_BUNKER] = new UnitDef
         {
-            name = "BUNKER", hp = 999999f, dp = 1000f, de = 1000f,
+            key = "bunker", name = "BUNKER", hp = 999999f, dp = 1000f, de = 1000f,
             speed = 0.0f, radius = 6.0f, height = 9.0f,
             weapons = new[] { WID_NONE, WID_NONE }, ai_range = 0, sight = 0, reward = 0,
             splat = 6.0f,
@@ -1209,6 +1213,11 @@ public static partial class Defs
     public const float FOOT_MAX_GRADIENT = 0.80f;      // 39 deg, a man on foot
     /// <summary>The slope a chassis will not climb, by its own def.</summary>
     public static float max_gradient(int etype) => UNIT_DEFS[etype].max_grad;
+
+    /// <summary>What a unit type is called outside the game (the kill stream's
+    /// `unit_type`), or "" for a type nothing declares.</summary>
+    public static string unit_key(int etype) =>
+        UNIT_DEFS.TryGetValue(etype, out var d) ? d.key : "";
 
     // ---- wheeled hulls ------------------------------------------------------
     // An APC is tagged `vehicle`, and a vehicle steers instead of strafing.  It is a

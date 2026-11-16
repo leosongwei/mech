@@ -1023,9 +1023,13 @@ own; the wire is `net/wire.js` + `net/rows.js` and the picture is `net/view.js`.
 * **The same kill is on a wire of its own: `GET /events/kills`.** Server-sent
   events, one JSON record per kill with a pilot on one end - the message stack's
   own set, so crew against crew is on neither - shaped
-  `{"killed":{"name","is_player"},"by":{...},"weapon","distance"}`, with the plain
-  names (no `[bot]`), the weapon written small and `distance` in metres to one
-  decimal (-1 when there is no muzzle to measure from).  `KillFeed.publish` builds
+  `{"type":"killed","killed":{"name","is_player","unit_type"},"by":{...},"weapon","distance"}`
+  (`type` is the wire's message kind, so a later message is not a guess from the
+  shape), with the plain
+  names (no `[bot]`), the two `unit_type`s as `UnitDef.key` (`mech`, `apc`,
+  `at_rifleman`, ... - a token, not the HUD's shouting), the weapon written small
+  and `distance` in metres to one decimal (-1 when there is no muzzle to measure
+  from).  `KillFeed.publish` builds
   it from the same `HitAttributions` the line is written from and hands it to
   `KillFeed.on_kill`, which `Server.configure` points at `Net/KillStream.cs`; the
   hook is null in a harness, so a check costs one null test per death.  Best

@@ -80,11 +80,16 @@ public static class KillFeed
     }
 
     /// <summary>One kill as it happened, for a reader outside the HUD: the plain
-    /// names (no `[bot]` - `is_player` says which end was a pilot), the weapon's
-    /// own name, and the shot's range in metres (-1 when there is no muzzle to
-    /// measure from).  `Net/KillStream.cs` writes it out on `GET /events/kills`.</summary>
-    public readonly record struct KillRecord(string victim, bool victim_is_player,
-                                             string killer, bool killer_is_player,
+    /// names (no `[bot]` - `is_player` says which end was a pilot), the two unit
+    /// types as their `etype`, the weapon's own name, and the shot's range in
+    /// metres (-1 when there is no muzzle to measure from).  The types travel as
+    /// numbers and are named where the record is written
+    /// (`Defs.unit_key`), so the vocabulary lives with the table it describes.
+    /// `Net/KillStream.cs` writes it out on `GET /events/kills`.</summary>
+    public readonly record struct KillRecord(string victim, int victim_etype,
+                                             bool victim_is_player,
+                                             string killer, int killer_etype,
+                                             bool killer_is_player,
                                              string weapon, float distance);
 
     /// <summary>Where every kill is also published - the server's stream.  Assigned
@@ -113,11 +118,14 @@ public static class KillFeed
         if (kfac == e.uv("faction")[eid]) return;
         int wid = kill.wid;
         var wd = wid >= 0 && wid < Defs.WEAPONS.Length ? Defs.WEAPONS[wid] : null;
-        h(new KillRecord(_named(world, e.uv16("name_id")[eid], e.uv("etype")[eid], bot: false),
-                         victim_is_player,
-                         _named(world, kname, ketype, bot: false),
-                         kill.pid >= 0,
-                         wd?.name ?? "",
-                         kill.range));
+        h(new KillRecord(victim: _named(world, e.uv16("name_id")[eid], e.uv("etype")[eid],
+                                       bot: false),
+                         victim_etype: e.uv("etype")[eid],
+                         victim_is_player: victim_is_player,
+                         killer: _named(world, kname, ketype, bot: false),
+                         killer_etype: ketype,
+                         killer_is_player: kill.pid >= 0,
+                         weapon: wd?.name ?? "",
+                         distance: kill.range));
     }
 }

@@ -380,10 +380,10 @@ public static partial class Defs
             @lock = 0, salvo = 0, semi = 0,
             color = new[] { 0.8f, 0.8f, 0.8f }, cal = 0f, desc = "No weapon fitted",
         },
-        // one belt of 300, no reload: the magazine boundary is gone, so a pull of
+        // one belt of 400, no reload: the magazine boundary is gone, so a pull of
         // the trigger runs the whole load downrange and the gun only goes quiet when
-        // the arm is dry.  300 rounds is 60 s of held trigger at the 300 rpm below,
-        // and a full load costs $150 + 300 x $0.4 = $270.
+        // the arm is dry.  400 rounds is 80 s of held trigger at the 300 rpm below,
+        // and a full load costs $150 + 400 x $0.375 = $300.
         // 300 rpm is six ticks a round: the 30 Hz clock divides it outright, where
         // the old 190 (9.47 ticks) fired an uneven 9/10 tick pulse.  It is also the
         // real 2A72's cadence, and it is what the 10.6 a round direct hit is *for* -
@@ -403,9 +403,9 @@ public static partial class Defs
         {
             wid = WID_AC30, key = "ac30", name = "30mm AUTOCANNON", kind = "bullet",
             ap = 15f, ad = 7f, ed = 18f, er = 8.0f,
-            rpm = 300, mag = 300, reserve = 0, reload = 0.0f, vel = 1080f, spread = 0.0011f,
+            rpm = 300, mag = 400, reserve = 0, reload = 0.0f, vel = 1080f, spread = 0.0011f,
             bias = 0.0f, g = 9.81f, thrust = 0f, maxvel = 0f, life = 9.3f, range = 3400,
-            cost = 150, ammo_cost = 0.4f, @lock = 0, salvo = 0, semi = 0,
+            cost = 150, ammo_cost = 0.375f, @lock = 0, salvo = 0, semi = 0,
             color = new[] { 1.0f, 0.82f, 0.25f }, cal = 30f, prox = 2.5f,
             desc = "High velocity, 3.4 km effective",
         },

@@ -380,10 +380,10 @@ public static partial class Defs
             @lock = 0, salvo = 0, semi = 0,
             color = new[] { 0.8f, 0.8f, 0.8f }, cal = 0f, desc = "No weapon fitted",
         },
-        // one belt of 400, no reload: the magazine boundary is gone, so a pull of
+        // one belt of 300, no reload: the magazine boundary is gone, so a pull of
         // the trigger runs the whole load downrange and the gun only goes quiet when
-        // the arm is dry.  400 rounds is 80 s of held trigger at the 300 rpm below,
-        // and a full load costs $300 + 400 x $0.5 = $500.
+        // the arm is dry.  300 rounds is 60 s of held trigger at the 300 rpm below,
+        // and a full load costs $150 + 300 x $0.4 = $270.
         // 300 rpm is six ticks a round: the 30 Hz clock divides it outright, where
         // the old 190 (9.47 ticks) fired an uneven 9/10 tick pulse.  It is also the
         // real 2A72's cadence, and it is what the 10.6 a round direct hit is *for* -
@@ -403,9 +403,9 @@ public static partial class Defs
         {
             wid = WID_AC30, key = "ac30", name = "30mm AUTOCANNON", kind = "bullet",
             ap = 15f, ad = 7f, ed = 18f, er = 8.0f,
-            rpm = 300, mag = 400, reserve = 0, reload = 0.0f, vel = 1080f, spread = 0.0011f,
+            rpm = 300, mag = 300, reserve = 0, reload = 0.0f, vel = 1080f, spread = 0.0011f,
             bias = 0.0f, g = 9.81f, thrust = 0f, maxvel = 0f, life = 9.3f, range = 3400,
-            cost = 300, ammo_cost = 0.5f, @lock = 0, salvo = 0, semi = 0,
+            cost = 150, ammo_cost = 0.4f, @lock = 0, salvo = 0, semi = 0,
             color = new[] { 1.0f, 0.82f, 0.25f }, cal = 30f, prox = 2.5f,
             desc = "High velocity, 3.4 km effective",
         },
@@ -421,7 +421,7 @@ public static partial class Defs
             ap = 8f, ad = 10f, ed = 0f, er = 0f,
             rpm = 1800, mag = 1500, reserve = 0, reload = 0.0f, vel = 890f, spread = 0.00225f,
             bias = 0.0f, g = 9.81f, thrust = 0f, maxvel = 0f, life = 11.2f, range = 1000,
-            cost = 180, ammo_cost = 0.1f, @lock = 0, salvo = 0, semi = 0,
+            cost = 100, ammo_cost = 0.05f, @lock = 0, salvo = 0, semi = 0,
             color = new[] { 1.0f, 0.68f, 0.20f }, cal = 12.7f, gatling = true,
             desc = "1.0 km suppressive fire",
         },
@@ -441,7 +441,7 @@ public static partial class Defs
             ap = 40f, ad = 25f, ed = 35f, er = 10.0f,
             rpm = 600, mag = 40, reserve = 0, reload = 0.0f, vel = 55f, spread = 0.003f,
             bias = 0.0429f, g = 9.81f, thrust = 560f, maxvel = 610f, life = 16.4f,
-            range = 1000, cost = 350, ammo_cost = 4.0f, @lock = 0, salvo = 1,
+            range = 1000, cost = 50, ammo_cost = 0.2f, @lock = 0, salvo = 1,
             semi = 0, color = new[] { 1.0f, 0.45f, 0.15f }, cal = 80f, rcs = 0.005f,
             rack = RACK_ROCKET, desc = "40 rounds, hold to fire, sighted to 1 km",
         },
@@ -483,7 +483,7 @@ public static partial class Defs
             life = 36.0f, wob = 12.0f, wob_f = 1.5f, maxdist = 4000.0f,
             ignite = 0.10f, mass = 45.0f, dia = 0.13f, cd0 = 0.60f, k_cl = 0.12f,
             cl_alpha = 15.0f, cl_max = 4.5f,
-            range = 3400, cost = 500, ammo_cost = 30.0f, @lock = 1, salvo = 0,
+            range = 3400, cost = 350, ammo_cost = 10.0f, @lock = 1, salvo = 0,
             semi = 0, color = new[] { 0.35f, 1.0f, 0.55f }, cal = 152f,
             rcs = 0.02f, rack = RACK_SACLOS, desc = "Lock on, then ride the laser in",
         },
@@ -520,7 +520,7 @@ public static partial class Defs
             ap = 900f, ad = 120f, ed = 60f, er = 7.0f,
             rpm = 200, mag = 8, reserve = 0, reload = 0.0f, vel = 20f, spread = 0.002f,
             bias = 0.0f, g = 9.81f, thrust = 110.0f, maxvel = 306.0f, life = 30.0f,
-            expire_burst = true, range = 3000, lock_range = 4000, cost = 700, ammo_cost = 45.0f,
+            expire_burst = true, range = 3000, lock_range = 4000, cost = 550, ammo_cost = 45.0f,
             mass = 20.0f, dia = 0.127f, cd0 = 0.75f, k_cl = 0.12f, cl_alpha = 16.0f,
             cl_max = 5.0f, burn = 3.4f, ignite = 0.15f, loft = RACK_TOP.elev, apex = 950.0f,
             turn_r = 700.0f, pn_n = 4.0f, pn_r = 300.0f, pn_v = 120.0f,
@@ -557,14 +557,14 @@ public static partial class Defs
         // 0.3 mrad of spread is a coin across 3 km.  AD 200 is past every hull pool in
         // the game and AP 120 past the base's 80 of plate, so it is the one gun that
         // takes a mech, an APC or a chunk of the enemy base apart with a single round -
-        // which is what a $800 barrel and $600 of ammunition buys.
+        // which is what a $900 barrel and $360 of ammunition buys.
         new WeaponDef
         {
             wid = WID_G105, key = "g105", name = "105mm SMOOTHBORE", kind = "bullet",
             ap = 120f, ad = 200f, ed = 15f, er = 3.0f,
             rpm = 20, mag = 1, reserve = 11, reload = 3.0f, vel = 1600f, spread = 0.0003f,
             bias = 0.0f, g = 9.81f, thrust = 0f, maxvel = 0f, life = 6.3f, range = 4000,
-            cost = 800, ammo_cost = 60.0f, @lock = 0, salvo = 0, semi = 0,
+            cost = 900, ammo_cost = 30.0f, @lock = 0, salvo = 0, semi = 0,
             color = new[] { 1.0f, 0.90f, 0.55f }, cal = 105f, heavy = true, reach = 6.45f,
             desc = "APFSDS, 3 s autoloader",
         },
@@ -993,7 +993,7 @@ public static partial class Defs
             key = "rifleman", name = "RIFLEMAN", hp = 10f, dp = 1f, de = 1f,
             speed = 5.5f, radius = 0.55f, height = 1.8f,
             weapons = new[] { WID_RIFLE556, WID_NONE }, ai_range = 800, sight = 800,
-            reward = 45, splat = 1.0f, targets = new[] { ETYPE_INF_RIFLE, ETYPE_INF_ROCKET },
+            reward = 20, splat = 1.0f, targets = new[] { ETYPE_INF_RIFLE, ETYPE_INF_ROCKET },
             spheres = new[] { new[] { (float)MOD_CHASSIS, 0.0f, 0.9f, 0.0f, 0.65f } },
             death = new DeathDef
             {
@@ -1006,7 +1006,7 @@ public static partial class Defs
             key = "at_rifleman", name = "AT RIFLEMAN", hp = 10f, dp = 1f, de = 1f,
             speed = 5.0f, radius = 0.55f, height = 1.8f,
             weapons = new[] { WID_RPG, WID_NONE }, ai_range = 800, sight = 800,
-            reward = 70, splat = 1.0f,
+            reward = 40, splat = 1.0f,
             spheres = new[] { new[] { (float)MOD_CHASSIS, 0.0f, 0.9f, 0.0f, 0.65f } },
             death = new DeathDef
             {
@@ -1028,7 +1028,7 @@ public static partial class Defs
             // its `radar_strength` (d^4), so the warning time is halved as well
             radar_strength = 3.125e12f,
             weapons = new[] { WID_MG127, WID_APC_ATGM }, ai_range = 3000, sight = 3000,
-            reward = 180, splat = DEATH_BLAST.er,
+            reward = 200, splat = DEATH_BLAST.er,
             spheres = new[]
             {
                 new[] { (float)MOD_CHASSIS, 0.0f, 1.1f, 0.0f, 1.7f },
@@ -1064,7 +1064,7 @@ public static partial class Defs
             // cone, so the burst has to be laid, not sprayed
             radar_strength = 1.75e14f,
             weapons = new[] { WID_AC30, WID_ROCKET }, ai_range = 3500, sight = 3500,
-            reward = 350, splat = DEATH_BLAST.er, spheres = MECH_HITSPHERES,
+            reward = 500, splat = DEATH_BLAST.er, spheres = MECH_HITSPHERES,
             death = new DeathDef
             {
                 blast = new[] { DEATH_BLAST.ed, DEATH_BLAST.er }, loud = "blast",
@@ -1138,7 +1138,7 @@ public static partial class Defs
     // repair: welding a mech from nothing back to full armour costs REPAIR_FULL_COST,
     // split evenly over the machine's own points (hull 120 + arms 50 + 50).  Kept as a
     // total so the bill stays sane if the hp table moves.
-    public const float REPAIR_FULL_COST = 400.0f;
+    public const float REPAIR_FULL_COST = 200.0f;
     public static readonly float REPAIR_COST_PER_HP = REPAIR_FULL_COST / MathF.Max(
         1.0f, UNIT_DEFS[ETYPE_MECH].hp + UNIT_DEFS[ETYPE_MECH].arms!.Sum());
 
@@ -1317,7 +1317,7 @@ public static partial class Defs
     public const float SMOKE_SIZE_JITTER = 0.20f;   // +-fraction of the puff size, per canister
     public const int SMOKE_CHARGES = 10;            // pulls a full rack holds (a life's worth)
     public const float SMOKE_COOLDOWN = 0.5f;       // seconds between pulls
-    public const int SMOKE_LOAD_COST = 10;          // $ per canister loaded at the base
+    public const int SMOKE_LOAD_COST = 5;           // $ per canister loaded at the base
     public const float SMOKE_LOAD_S = 2.0f;         // seconds at the wrench for a reload
 
     /// <summary>Canister lattice covering the whole front hemisphere.</summary>

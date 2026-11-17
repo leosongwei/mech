@@ -322,6 +322,21 @@ public static class Weapons
         // round is on which line
         int beam = wd.kind == "saclos" ? Beams.lay(world, eid, target) : -1;
 
+        // a seeker leaves the tube on what its *shooter* knows, not on where the hull
+        // happens to be: a lock weapon fired through a screen flies the belief the
+        // pilot was shown (`systems/belief.js` -> `Player.belief_*`), which is the
+        // walked point when his sight has lost it.  Only that hull's belief is used,
+        // only while it is fresh, and only inside the weapon's own reach - a round
+        // nobody handed a belief starts on the hull itself (`World.spawn_round`)
+        Vec3? mem = null, memv = null;
+        if (kind == 3 && target >= 0 && world.players.TryGetValue(e.iv("owner")[eid], out var shp)
+            && shp.belief_id == target && world.tick - shp.belief_tick <= 15
+            && MathUtil.dist(shp.belief_pos, origin) <= Defs.lock_range(wd) * 1.5f)
+        {
+            mem = shp.belief_pos;
+            memv = shp.belief_vel;
+        }
+
         for (int k = 0; k < n; k++)
         {
             float sp = wd.spread * (k == 0 ? 1f : 0.6f);
@@ -335,7 +350,7 @@ public static class Weapons
             // carries a seeker - is decided once, in the factory
             world.spawn_round(eid, e.uv("faction")[eid], wid, kind,
                               origin, new Vec3(d.x * wd.vel, d.y * wd.vel, d.z * wd.vel),
-                              life, target, beam);
+                              life, target, beam, mem, memv);
         }
         world.emit("shot", ("x", origin.x), ("y", origin.y), ("z", origin.z),
                    ("wid", wid), ("eid", eid), ("arm", arm));

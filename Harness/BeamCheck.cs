@@ -86,6 +86,8 @@ public static class BeamCheck
         Pilot();
         Channels();
         Paint();
+        Belief();
+        Ghost();
         Held();
         Profile();
         return 0;
@@ -371,6 +373,136 @@ public static class BeamCheck
         var e = world.ecs;
         if (ch < 0 || e.iv("beam_tgt").get(shooter, ch) < 0) return "channel given up";
         return e.uv("beam_lit").get(shooter, ch) != 0 ? "beam on it" : "beam off it, lock held";
+    }
+
+    // ---- what a blind shot is launched on ------------------------------------
+
+    /// <summary>A seeker round leaves the tube on what its *shooter* knows: the
+    /// belief his client has been drawing (his HUD's mark) travels with his input and
+    /// `Weapons.fire` seeds the round from it, so a launch made at a walked point is a
+    /// launch at a walked point.  The row drives one of each - a belief handed over,
+    /// and none - and reads the two numbers a round starts with.</summary>
+    private static void Belief()
+    {
+        var world = new World(7, "range");
+        var e = world.ecs;
+        var pl = world.add_player("BLIND");
+        // the shop is what fits an arm in the game; here the arm is written on, through
+        // the views so no row index is held across a spawn
+        e.uv("weapon").set(pl.mech, 1, (byte)Defs.WID_TOPATTACK);
+        var me = e.fv("pos").get3(pl.mech);
+        int target = world.spawn_unit(Defs.ETYPE_MECH, 1 - pl.faction,
+                                      me.x + 1200f, me.z, hp_scale: 200f, crew: false);
+        var truth = e.fv("pos").get3(target);
+        // a screen between the two, so the shot really is a blind one
+        _puff(world, new Vec3(me.x + 600f, world.terrain.height_at(me.x + 600f, me.z) + 6f,
+                              me.z), 45f);
+        // the candidate, and how far the pilot's own picture has walked away from the
+        // hull while he has not been able to see it
+        pl.lock_target = target;
+        var walked = new Vec3(truth.x - 120f, truth.y + 3f, truth.z + 60f);
+        var sb = new System.Text.StringBuilder();
+        for (int pass = 0; pass < 2; pass++)
+        {
+            if (pass == 1)
+            {
+                pl.belief_id = target;
+                pl.belief_pos = walked;
+                pl.belief_vel = new Vec3(-20f, 0f, 10f);
+                pl.belief_tick = world.tick;
+            }
+            pl.lock_target = target;
+            pl.fire = (false, true);
+            e.fv("cool").set(pl.mech, 1, 0f);
+            e.iv("mag").set(pl.mech, 1, 8);
+            // the round this pass fires, told from the one still flying from the last
+            var had = new HashSet<int>(world.projectiles());
+            for (int t = 0; t < 3; t++) world.update(DT);
+            pl.fire = (false, false);
+            world.update(DT);            // a semi-automatic arm wants the release seen
+            int round = -1;
+            foreach (int id in world.projectiles())
+                if (e.uv("proj_kind")[id] == Defs.PROJ_TOP && !had.Contains(id)) { round = id; break; }
+            if (round < 0)
+            {
+                sb.Append(pass == 0 ? " no round (no belief)" : " no round (belief)");
+                continue;
+            }
+            var mem = e.fv("tgt_mem").get3(round);
+            var mvel = e.fv("tgt_vel").get3(round);
+            float toBelief = MathUtil.dist(mem, walked);
+            float toHull = MathUtil.dist(mem, new Vec3(truth.x, truth.y + 3f, truth.z));
+            sb.Append(pass == 0
+                ? $" no belief: memory {toHull,4:0} m from the hull, {toBelief,4:0} m from the walk"
+                : $" belief:    memory {toHull,4:0} m from the hull, {toBelief,4:0} m from the walk,"
+                  + $" vel ({mvel.x:0},{mvel.z:0})");
+        }
+        Console.WriteLine($"belief  {sb.ToString().TrimEnd()}");
+        world.ecs.validate();
+    }
+
+    // ---- what the pilot is shown while the sight is cut ---------------------
+
+    /// <summary>How far the designator's own answer is from the truth once it stops
+    /// seeing the hull.  A channel that loses the sight keeps flying a *guess* - the
+    /// point walked at the target's last velocity and pull (`Beams._walk`) - and the
+    /// guess is the only honest place to put a mark on that hull: the marker a client
+    /// draws from the snapshot's own row is the hull itself, through a screen that
+    /// hides it.  This row is that distance, per second, for a hull crossing at
+    /// `GHOST_SPEED`.</summary>
+    private static void Ghost()
+    {
+        const float GHOST_SPEED = 30f;
+        var world = new World(7, "range");
+        var e = world.ecs;
+        var (lx, lz) = LAUNCHER;
+        int shooter = world.spawn_unit(Defs.ETYPE_MECH, Defs.FACTION_RED, lx, lz,
+                                       weapons: new[] { Defs.WID_AC30, Defs.WID_SACLOS },
+                                       crew: false);
+        int target = world.spawn_unit(Defs.ETYPE_MECH, Defs.FACTION_BLUE, lx + 800f, lz,
+                                      hp_scale: 200f, crew: false);
+        float pitch = 0f;
+        var sb = new System.Text.StringBuilder();
+        for (int t = 0; t < (int)((Defs.BEAM_MEMORY + 2.5f) / DT); t++)
+        {
+            float now = t * DT;
+            // the launcher tracks the hull until the screen goes up, then holds the
+            // last line it was given - an operator with no sight to correct on
+            if (now >= 0.9f) { e.fv("vel_cmd").set3(target, 0f, 0f, GHOST_SPEED); }
+            if (now < 1f)
+            {
+                var tp = e.fv("pos").get3(target);
+                var sp = e.fv("pos").get3(shooter);
+                e.fv("sight_yaw")[shooter] = MathF.Atan2(tp.z - sp.z, tp.x - sp.x);
+                e.fv("pitch")[shooter] = pitch;
+                Beams.lay(world, shooter, target);
+            }
+            // ...and a screen a third of the way out, laid again before it dies: one
+            // clear tick and the sight would re-acquire, which is the thing this row
+            // is measuring the absence of
+            if (now >= 1f)
+            {
+                var ids = e.query("smoke");
+                bool dying = true;
+                foreach (int sid in ids) if (e.fv("smoke_t")[sid] > 1.2f) { dying = false; break; }
+                if (dying)
+                    _puff(world, new Vec3(lx + 260f, world.terrain.height_at(lx + 260f, lz) + 6f, lz), 45f);
+            }
+            world.update(DT);
+            int ch = _first_channel(world, shooter);
+            if (ch < 0) { sb.Append($" {now:0.0}s: DROPPED"); break; }
+            var mem = e.fv("beam_mem");
+            var point = new Vec3(mem.get(shooter, ch * 3), mem.get(shooter, ch * 3 + 1),
+                                 mem.get(shooter, ch * 3 + 2));
+            var truth = e.fv("pos").get3(target);
+            float off = MathUtil.dist(point, truth);
+            if (MathF.Abs(now - MathF.Round(now)) < DT * 0.5f && now >= 1f)
+                sb.Append($" {now:0}s {off,4:0} m"
+                          + (e.uv("beam_ok").get(shooter, ch) != 0 ? " lit" : " dark")
+                          + (e.uv("beam_lit").get(shooter, ch) != 0 ? "+on" : ""));
+        }
+        Console.WriteLine($"ghost    crossing at {GHOST_SPEED:0} m/s, sight cut at 1 s:" + sb);
+        world.ecs.validate();
     }
 
     // ---- the round's own flight -------------------------------------------

@@ -24,6 +24,7 @@ import { savedAssist, savedRing, closeSettings, settingsClick, toggleAssist, tog
 import { Aim } from './systems/aim.js';
 import { camera } from './systems/camera.js';
 import { Lead } from './systems/lead.js';
+import { Beliefs } from './systems/belief.js';
 import { Rwr } from './systems/rwr.js';
 
 // Metres from the muzzle to where the round went off, as a kill line prints it:
@@ -92,6 +93,8 @@ export class Game {
     this.rwr = new Rwr();
     this.aim = new Aim(this);
     this.lead = new Lead(this);
+    /** where the tracked hulls (four channels + the candidate) are believed to be */
+    this.beliefs = new Beliefs();
   }
 
   async boot() {

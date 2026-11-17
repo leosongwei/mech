@@ -62,14 +62,17 @@ export function updateLockTone(app, own, dt) {
   if (app.lockRung !== id) { app.lockRung = id; app.lockRingT = LOCK_TONE_S; }
   app.lockRingT = Math.max(0, (app.lockRingT || 0) - dt);
   app.audio.setLock(app.lockRingT > 0 ? 'locked' : 'none', dt);
-  const t = app.net.entities.get(m.lock_target);
   app.lockExtra = lockExtras(app, m);
-  if (!t) { app.lockInfo = null; return; }
+  // the marker sits on the *belief*, not on the snapshot's row: while the sight has
+  // the hull those are the same point, and once it does not the mark walks where the
+  // machine would have the hull (`systems/belief.js`)
+  const b = app.beliefs.get(id);
+  if (!b) { app.lockInfo = null; return; }
   const thin = !!(app.lockExtra && app.lockExtra.some((e) => e.id === id));
   app.lockInfo = {
-    screen: app.hud._project(t.x, t.y + (t.type === 4 ? 3.5 : t.type === 5 ? 6 : 1), t.z),
-    dist: Math.hypot(t.x - own.x, t.z - own.z),
-    target: t,
+    screen: app.hud._project(b.x, b.y, b.z),
+    dist: Math.hypot(b.x - own.x, b.z - own.z),
+    seen: b.seen,
     // the candidate is already a formal target (a shot claimed its line), so it is
     // drawn as one: the thin diamond, not the bold one
     thin,
@@ -87,11 +90,11 @@ function lockExtras(app, m) {
   if (!list || !list.length) return null;
   const out = [];
   for (const l of list) {
-    const t = app.net.entities.get(l.id);
-    if (!t) continue;
-    const screen = app.hud._project(t.x, t.y + (t.type === 4 ? 3.5 : t.type === 5 ? 6 : 1), t.z);
+    const b = app.beliefs.get(l.id);
+    if (!b) continue;
+    const screen = app.hud._project(b.x, b.y, b.z);
     if (!screen) continue;
-    out.push({ id: l.id, screen, target: t });
+    out.push({ id: l.id, screen, seen: b.seen });
   }
   return out.length ? out : null;
 }

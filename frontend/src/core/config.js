@@ -29,6 +29,15 @@ export const MSG_LIFE_S = 6;
 // and how long `+$N` sits beside the money readout before it fades
 export const MONEY_POP_S = 2.5;
 
+// The belief a tracked hull is drawn at once the pilot's sight has lost it
+// (`app/systems/belief.js`): the point walks at the velocity and the pull last
+// measured on the hull, the pull is trusted for the same second the server's
+// `Beams._walk` trusts it (`FireControl.ACCEL_S`), and the walk stops after the
+// channel's own memory (`Defs.BEAM_MEMORY`) - past that a guess is not worth
+// drawing either.
+export const BELIEF_ACCEL_S = 1.0;
+export const BELIEF_WALK_S = 8.0;
+
 // The alarm is the same detector as the track, run 12 dB looser: one frame, no
 // track initiation, no angle association, no range solve.  So the distance at
 // which a round is *heard* is sqrt(10^0.6) = 1.995 times the distance at which

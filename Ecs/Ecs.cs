@@ -543,6 +543,12 @@ public sealed class ECS
         if (_views.TryGetValue(name, out var v)) return v;
         if (!_specs.TryGetValue(name, out var s))
             throw new KeyNotFoundException($"unknown component '{name}'");
+        // the cache is one view per *name*, so a caller asking for the wrong kind
+        // would hand every later caller a poisoned entry and fail far away from the
+        // typo: say so here, where the name and the kind are both in hand
+        if (s.kind != kind)
+            throw new InvalidOperationException(
+                $"component '{name}' is {s.kind}, asked for {kind}");
         v = kind switch
         {
             Kind.F => new FView(this, name),

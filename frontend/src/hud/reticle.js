@@ -203,8 +203,10 @@ export function lock(ctx, s) {
     ctx.save();
     ctx.strokeStyle = col;
     ctx.lineWidth = 1.1;
-    ctx.globalAlpha = 0.45;
     for (const e of extra) {
+      // dim while the sight has lost that hull: the mark is then a belief walking
+      // on what the machine last measured, and it reads as one
+      ctx.globalAlpha = e.seen ? 0.95 : 0.45;
       if (!e.screen) continue;
       const x = e.screen[0];
       const y = e.screen[1];
@@ -227,7 +229,9 @@ export function lock(ctx, s) {
   ctx.save();
   ctx.strokeStyle = col;
   ctx.lineWidth = 2;
-  ctx.globalAlpha = 0.9;
+  // the same rule as a channel's mark: solid colour while the pilot's sight has
+  // the hull, dim once the mark is a walked belief
+  ctx.globalAlpha = L.seen ? 0.9 : 0.45;
   const m = 9;
   ctx.beginPath();
   ctx.moveTo(x, y - m);

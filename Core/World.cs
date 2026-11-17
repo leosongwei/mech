@@ -22,6 +22,15 @@ public sealed class Player
     public (float x, float z) in_move = (0f, 0f);
     public (bool left, bool right) fire = (false, false);
     public int lock_target = -1;             // the hull the reticle is ringing
+    // the pilot's own belief about the hull his cross has named (`systems/belief.js`
+    // on the client): where this machine thinks it is and how fast it is going.  A
+    // seeker round is launched at what its shooter *knows*, so the machine that knows
+    // hands it over with the trigger - `Weapons.fire` seeds the round from here, and
+    // the round's own seeker takes it from there
+    public int belief_id = -1;
+    public Vec3 belief_pos;
+    public Vec3 belief_vel;
+    public int belief_tick = int.MinValue;
     public int[] loadout = (int[])Defs.DEFAULT_LOADOUT.Clone();
     public int last_seq;
     public int score;
@@ -365,7 +374,8 @@ public sealed class World
     /// <param name="beam">the designator channel a beam rider rides
     /// (`Systems/Beams.cs`), -1 for a round nobody is steering.</param>
     public int spawn_round(int src, int faction, int wid, int kind, Vec3 pos, Vec3 vel,
-                           float life, int target, int beam = -1)
+                           float life, int target, int beam = -1,
+                           Vec3? mem = null, Vec3? memVel = null)
     {
         var e = ecs;
         var wd = Defs.WEAPONS[wid];
@@ -409,11 +419,15 @@ public sealed class World
             // the seeker leaves the launcher already knowing what it is looking
             // at, and how fast that thing was going: from here on the round owns
             // the lock, and its memory is what carries it through a lock cut
-            // before the first tick of flight
+            // before the first tick of flight.  `mem` / `memVel` are what the
+            // *shooter* knew - his own belief about the hull, which is the walked
+            // point when his sight had lost it (`Weapons.fire`, a pilot's
+            // `Player.belief_*`); a round with no shooter's belief to carry starts
+            // on the hull itself
             if (kind == 3 && target >= 0 && e.is_alive(target))
             {
-                e.fv("tgt_mem").set3(pid, Seeker.roof(this, target));
-                e.fv("tgt_vel").set3(pid, e.fv("vel").get3(target));
+                e.fv("tgt_mem").set3(pid, mem ?? Seeker.roof(this, target));
+                e.fv("tgt_vel").set3(pid, memVel ?? e.fv("vel").get3(target));
             }
         }
         return pid;

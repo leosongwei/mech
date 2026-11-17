@@ -158,7 +158,7 @@ frontend/                  # the client: four layers, one direction (checked by
     fx/                    # dispatch.js (the server's event stream), particles.js
     input/                 # bindings.js pointer.js sight.js index.js
     app/                   # game.js frame.js boot.js panels.js hudstate.js
-                           #   systems/{aim,lead,rwr,camera,feedback,shop,settings}.js
+                           #   systems/{aim,lead,rwr,camera,feedback,belief,shop,settings}.js
 ```
 
 `render/passes.js` is the draw order and `app/frame.js`'s `STAGES` is the frame
@@ -963,13 +963,24 @@ own; the wire is `net/wire.js` + `net/rows.js` and the picture is `net/view.js`.
   takes a hull height).  Re-acquisition is then one question per tick:
   `seeker.acquire` looks for an enemy `lockable` hull within
   `defs.SEEKER_CONE` (3°) of the stare *line* - measured from the round's own
-  eye, on the deck it would be dived on, nearest to the line first - and takes
-  the first one with a clear sight line.  It does not care whether that is the
+  eye, on the deck it would be dived on - and takes the first one with a clear
+  sight line, **nearest the belief point first**.  The order is the distance to
+  `spot`, not the angle off the line, because a salvo is a salvo: rounds fired at
+  four hulls each stare at their own walked point, and ordering by angle herds
+  all of them onto whichever hull sits closest to the line - one machine taking
+  the whole salvo while the other three drive away.  It does not care whether that is the
   hull it was fired at, nor whether it is a mech or an APC: friend or foe is
   the whole of the test.  `weapons.fire` writes the memory at the shot, so a
   lock cut before the first tick of flight still leaves something to fly at; a
   round with no memory at all (a lock weapon cannot be fired without one) is
-  still a rock.  Both events are logged (`mech.smoke`, at DEBUG): the loss,
+  still a rock.  **What is written there is the shooter's belief, not the
+  truth**: a pilot's client sends the belief its HUD was drawing (`in.lb` =
+  `[id, x, y, z, vx, vy, vz]`, `app/systems/belief.js`) and `Weapons.fire` seeds
+  `tgt_mem` / `tgt_vel` from it - only for that hull, only while it is under half
+  a second old, and only inside `lock_range` x 1.5 - so a shot fired through a
+  screen is launched at the walked point the pilot was shown (`World.spawn_round`
+  takes it as `mem` / `memVel`).  An AI crew and a scripted shooter hand nothing
+  over and start on the hull itself, which is what their own sight is on.  Both events are logged (`mech.smoke`, at DEBUG): the loss,
   which the range's smoke test reads (`MECH_LOG_LEVEL=DEBUG`), and
   `re-locked on hull N`, which nothing but a reader of the log sees - the
   pilot is not told that his round changed its mind, and the client shows no
@@ -1024,6 +1035,20 @@ own; the wire is `net/wire.js` + `net/rows.js` and the picture is `net/view.js`.
   on `Player` (a machine's locks die with it, and the beam is what the round
   reads); `Player.lock_target` is the hull the HUD rings, mirrored by
   `Locking.run` for the wire, and the meta's `locks` list is the whole set.
+  **A mark sits on a belief, not on the row** (`app/systems/belief.js`).  The wire
+  carries ids - `lock_target` and `locks` - and nothing about where those hulls
+  *are*; the client's snapshot does, but it is the truth, so drawing the diamond
+  from it would show a hull through the screen that hides it.  Instead the mark
+  sits on the point the machine would have: while the pilot's sight reaches the
+  hull (`sightBlocked`, the same door the pre-aim box uses) the belief *is* the
+  hull, refreshed every frame; once that line is cut it walks at the velocity and
+  the pull `net` last measured on it, the pull trusted for `BELIEF_ACCEL_S` (1 s,
+  `Beams._walk`'s own second) and the walk stopping after `BELIEF_WALK_S` (8 s,
+  the channel's memory).  Both weapons share it - a seeker holds a candidate, a
+  designator four channels, and a belief of a hull is the same either way.  The
+  mark is drawn solid while `seen` and dim while blind, so "I am looking at a
+  guess" reads off the glass; a top-attack pilot may fire at that guess
+  (`Locking.pick` asks the candidate, not the sight line).
   The round itself (`Flights.Saclos`) reads one byte, `beam_ch` - the line the
   laser encoded it on, so four rounds are four lines - plus two questions the
   designator cannot answer for it: is the launcher alive with that channel lit,
@@ -1632,7 +1657,10 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
   (`audio/` keeps `mech.volume` / `mech.alarmvolume`); `game.js` keeps
   `mech.name` and writes it at `DEPLOY`, so a reload prefills the last callsign
   instead of `PILOT-<pid>`.
-* `game.js` sends input at 30 Hz (`{t:"in",yaw,pitch,mx,mz,fl,fr}`) and drives
+* `game.js` sends input at 30 Hz (`{t:"in",yaw,pitch,mx,mz,fl,fr,z,a,zr,q,st,lb}`,
+  where `lb` is the belief about the candidate - `[id, x, y, z, vx, vy, vz]`, the
+  point the HUD's marker is drawn on; `Systems/Weapons.cs` launches a seeker round
+  on it) and drives
   the frame: interpolate snapshots, aim, build the draw list, draw, HUD.  The
   `yaw` / `pitch` on the wire are the *sight* (where the pilot looks), never the
   hull: `player_input` writes them into `sight_yaw` / `sight_pitch`.

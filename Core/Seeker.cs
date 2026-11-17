@@ -20,8 +20,11 @@
 // The cone is measured from the seeker's own eye, against the line eye -> stare
 // point, so it re-locks onto what is in front of it, not onto what is merely near
 // the estimate: a hull beside the round is not a target until the round turns
-// onto it.  Losers of the sweep are not ordered beyond that - the one nearest the
-// stare line goes first, and the first one with a clear sight line is taken.
+// onto it.  Losers of the sweep are ordered by how near they are to the *stare
+// point* - the belief the round is flying at, walked from the last measurement -
+// and the first one with a clear sight line is taken: a salvo fired at four hulls
+// is four beliefs, and ordering by angle would herd every round onto whichever
+// hull sits closest to the line.
 
 using Microsoft.Extensions.Logging;
 
@@ -118,11 +121,16 @@ public static class Seeker
         return st;
     }
 
-    /// <summary>First enemy hull with a clear sight line inside the cone, or -1.
+    /// <summary>The enemy hull this round takes, or -1: inside the cone, in sight, and
+    /// **nearest to the point the seeker was staring at**.
     ///
     /// The candidates are judged on the deck they would be dived on (the point the
-    /// seeker looks at), not on their tracks: at 1 km the two are a third of a
-    /// degree apart, which is a fifth of the cone.</summary>
+    /// seeker looks at), not on their tracks: at 1 km the two are a third of a degree
+    /// apart, which is a fifth of the cone.  The *order* is the distance to `spot` and
+    /// not the angle off the stare line, because a salvo is a salvo: four rounds fired
+    /// at four hulls each stare at their own walked point, and ordering by angle would
+    /// herd every one of them onto whichever hull happens to sit closest to the line -
+    /// one machine taking the whole salvo while the other three drive away.</summary>
     public static int acquire(World world, Vec3 p0, Vec3 spot, int mine)
     {
         var e = world.ecs;
@@ -135,7 +143,7 @@ public static class Seeker
         var pos = e.fv("pos");
         var etype = e.uv("etype");
         var faction = e.uv("faction");
-        var cand = new List<(float ang, int tid, Vec3 deck)>();
+        var cand = new List<(float off, int tid, Vec3 deck)>();
         for (int k = 0; k < ids.Length; k++)
         {
             int tid = ids[k];
@@ -148,11 +156,11 @@ public static class Seeker
             if (faction[tid] == mine) continue;
             float ang = MathF.Acos(MathUtil.clamp(v.dot(d) / MathF.Max(dist, 1e-3f), -1f, 1f));
             if (!(ang <= Defs.SEEKER_CONE)) continue;
-            cand.Add((ang, tid, c));
+            cand.Add((MathUtil.dist(c, spot), tid, c));
         }
-        // nearest to the stare line first, but a hull in cover is never a
-        // candidate: take the first one the seeker can actually see
-        cand.Sort((a, b) => a.ang.CompareTo(b.ang));
+        // nearest to where this round believes its target is, and a hull in cover is
+        // never a candidate: take the first one the seeker can actually see
+        cand.Sort((a, b) => a.off.CompareTo(b.off));
         foreach (var (_, tid, deck) in cand)
         {
             if (Systems.Sight.clear(world, p0, deck)) return tid;

@@ -129,9 +129,9 @@ export function thump(a, freq, dur, gain, dist = 0, pan = 0, behind = 0, opts = 
 
 // A one-shot oscillator: `type` for the tone, the pitch falling `f0 -> f1` over
 // `sweep` (0 for a flat pip), the gain falling from `gain` to `floor` over
-// `decay`, and the node stopped `dur` after it starts.  Two callers, both machine
-// voices that land on the master bus with no bus and no room: the empty-trigger
-// buzz and the lock tone's acquiring pip.
+// `decay`, and the node stopped `dur` after it starts.  It is the machine's own
+// voice - no bus, no room, straight onto master - which is what the empty-trigger
+// buzz is (`cues.denied`).
 export function blip(a, { type = 'square', f0, f1 = 0, sweep = 0, gain,
                           floor = 0.001, decay, dur, dest = null }) {
   const ctx = a.ctx;

@@ -1,24 +1,29 @@
-// Aerodynamics and guidance for a winged round - today the top-attack missile.
+// Aerodynamics and guidance for a winged round: one airframe, two guidance laws
+// (the top attack and the beam rider).
 //
 // A guided round used to be a point moving at a constant speed along a
-// hand-drawn three-leg path (`_steer` toward a way point at a fixed 1.9 rad/s):
-// no mass, no angle of attack, no energy.  This module flies it instead.  Every
-// tick it turns a guidance demand into a lift coefficient, and the lift
-// coefficient into drag, and integrates thrust along the nose, lift square to the
-// velocity, drag against it and gravity.  The round climbs because the motor
-// pushes it, glides because altitude is worth range, and pays for a hard pull in
-// speed.
+// hand-drawn path (`_steer` toward a way point at a fixed turn rate): no mass, no
+// angle of attack, no energy.  This module flies it instead.  Every tick it turns
+// a guidance demand into a lift coefficient, and the lift coefficient into drag,
+// and integrates thrust along the nose, lift square to the velocity, drag against
+// it and gravity.  A round climbs because the motor pushes it, glides because
+// altitude is worth range, and pays for a hard pull in speed - which is why the
+// *pull* is the fragile thing: it is `q*S*cl_max/m`, and `q` is speed squared.
 //
 // Nothing here is state: the airframe is a pure function of (position, velocity,
 // age, target, defs).  That is what keeps the round in the archetype it was born
 // in (`Components.MISSILE_COMPS`) - no `nose`, no `fuel`, no `cl` buffer.
 //
-//     v = Flight.step(p, v, age, trav, tgt_pos, tgt_vel, wd, dt)
+//     v = Flight.step(p, v, age, trav, tgt_pos, tgt_vel, wd, dt)    the arc law
+//     v = Flight.direct(p, v, age, aim, aim_vel, wd, dt)            the beam law
 //
-// It returns the new *velocity* and nothing else; the caller advances the
+// Both return the new *velocity* and nothing else; the caller advances the
 // position by it (`p1 = p0 + v * dt`), exactly as `Systems/Flights.cs` does.
+// Only the demand differs - what the round *wants* to do this tick - and both
+// demands are clipped by the same lift ceiling, so a slow round of either kind
+// stops answering.
 //
-// Guidance is three phases and one aim:
+// The arc law is three phases and one aim:
 //
 //   * BOOST    (motor lit)  the reference arc's slope, capped by the tube's own
 //                           quadrant (`loft`): a stable climb angle, all the way
@@ -37,6 +42,15 @@
 // still elevated at `loft`, so the guidance demands a *downward* lift and the
 // round pushes its nose under the velocity (negative angle of attack, thrust
 // helping it down, drag against the pull).
+//
+// The direct law (`Flight.direct`) is a beam rider's, and it has no arc at all:
+// the round flies at the point the launcher's laser leads to, and what it owes
+// every tick is the turn onto that line *plus its own weight*.  So it holds
+// altitude by flying at an angle of attack rather than by being pushed up, the
+// angle costs induced drag, and the motor's burnout is the moment the flight
+// starts to decay: the round slows, the lift ceiling falls with the square of
+// the speed, and past the point where the wing can make 1 g it sags out of the
+// beam instead of turning.
 
 namespace Mech.Server;
 
@@ -49,6 +63,9 @@ public static class Flight
     public const float K_P = 3f;            // heading-error gain of the turn (1/s)
     public const float ELEV_MAX = 1.2f;     // rad, the tracker's own clamp
     public const float MIN_REF = 60f;       // m, floor on the height-error look-ahead
+    public const float CLOS_K = 16f;        // beam rider: offset gain, in `t_go` units
+                                            // (the law's damping is sqrt(K)/2)
+    public const float CLOS_T_MIN = 0.15f;  // s, floor on the time left (it divides)
 
     private static float _dot(Vec3 a, Vec3 b) => a.x * b.x + a.y * b.y + a.z * b.z;
 
@@ -121,7 +138,12 @@ public static class Flight
         return new Vec3(a.x * k, a.y * k, a.z * k);
     }
 
-    /// <summary>Fly one round for one tick.  Returns the new velocity.
+    // ------------------------------------------------------------------
+    // the two guidance laws
+    // ------------------------------------------------------------------
+
+    /// <summary>Fly the top attack for one tick: the ARC law.  Returns the new
+    /// velocity.
     ///
     /// `p` is the round's position, `v` its velocity, `age` the seconds it has
     /// been in the air, `trav` the ground distance it has covered (both already
@@ -137,65 +159,169 @@ public static class Flight
     public static Vec3 step(Vec3 p, Vec3 v, float age, float trav, Vec3? tgt_pos,
                             Vec3? tgt_vel, WeaponDef wd, float dt)
     {
+        var (a_dir, a_want) = _arc_demand(p, v, age, trav, tgt_pos, tgt_vel, wd);
+        return _airframe(v, age, wd, dt, a_dir, a_want);
+    }
+
+    /// <summary>Fly a beam rider for one tick: the DIRECT law, a command-to-line-of-
+    /// sight ride.  Returns the new velocity.
+    ///
+    /// A beam rider is a flat, fast round pointed at what it is going to hit, so its
+    /// law is the opposite of the arc's: no climb, no glide, no dive.  It is told
+    /// where the laser *is* - the ray from the launcher's aperture (`origin`) to the
+    /// point `Systems/Beams.cs` leads the target to (`aim`) - and its whole job is to
+    /// sit on that ray:
+    ///
+    ///   * the offset from the line, and the rate it is growing at, nulled over the
+    ///     time left before the target is reached (`a = K(d + ḋ·t_go)/t_go²`).  A
+    ///     round that only chases the *point* lags the beam for its whole flight -
+    ///     measured, 18 m off at 3 km with the round arriving with no time left;
+    ///   * its own weight.  A missile is not a rock: it carries itself, so `g` in
+    ///     the plane square to the flight path is part of the demand, and the angle
+    ///     of attack that buys it is real angle of attack - induced drag included.
+    ///     That is the whole of "the round sags when it is slow": under about
+    ///     100 m/s the wing cannot make 1 g any more at all, and it drops out of the
+    ///     beam with no authority to get back into it.
+    ///
+    /// `aim` null means the beam is gone.  The round has nothing to fly to and no
+    /// lift demand, so it keeps its heading, drags down and falls.</summary>
+    public static Vec3 direct(Vec3 p, Vec3 v, float age, Vec3 origin, Vec3? aim,
+                              WeaponDef wd, float dt)
+    {
+        var (a_dir, a_want) = _direct_demand(p, v, origin, aim, wd);
+        return _airframe(v, age, wd, dt, a_dir, a_want);
+    }
+
+    // ------------------------------------------------------------------
+    // the two demands: what the guidance wants, square to the flight path
+    // ------------------------------------------------------------------
+
+    /// <summary>The arc law's demand: the reference parabola while the round is
+    /// far out, proportional navigation inside `pn_r`.</summary>
+    private static (Vec3 dir, float mag) _arc_demand(Vec3 p, Vec3 v, float age, float trav,
+                                                     Vec3? tgt_pos, Vec3? tgt_vel,
+                                                     WeaponDef wd)
+    {
+        var vhat = _unit(v);
+        float speed = MathF.Sqrt(_dot(v, v));
+        float lift_max = _lift_max(wd, speed);
+        var a_dir = Vec3.zero;
+        float a_want = 0f;
+        if (tgt_pos is null) return (a_dir, a_want);
+        var tp = tgt_pos.Value;
+        float dx = tp.x - p.x;
+        float dz = tp.z - p.z;
+        float r = MathF.Sqrt(dx * dx + dz * dz);
+        float above = p.y - tp.y;
+        float r0 = MathF.Max(trav + r, 1f);
+        if (r <= wd.pn_r && speed >= wd.pn_v)
+        {
+            var a = pn_accel(p, v, tp, tgt_vel ?? Vec3.zero, wd.pn_n);
+            // the fins can only pull square to the flight path
+            float d = _dot(a, vhat);
+            a = new Vec3(a.x - vhat.x * d, a.y - vhat.y * d, a.z - vhat.z * d);
+            a_want = MathF.Sqrt(_dot(a, a));
+            a_dir = a_want > 1e-9f ? _unit(a) : Vec3.zero;
+        }
+        else
+        {
+            float elev = arc(r, above, r0, wd);
+            if (age <= wd.ignite + wd.burn)
+            {
+                // the motor is still lit: the tube's quadrant is a ceiling on
+                // the climb, so a close target pulls the nose down here
+                elev = MathF.Min(elev, wd.loft);
+            }
+            float hx, hz;
+            if (r > 1e-3f)
+            {
+                hx = dx / r;
+                hz = dz / r;
+            }
+            else
+            {
+                hx = 1f;
+                hz = 0f;
+            }
+            float ce = MathF.Cos(elev), se = MathF.Sin(elev);
+            var want = new Vec3(hx * ce, se, hz * ce);
+            a_dir = lift_dir(vhat, want);
+            // the pull owed is proportional to the heading error and capped by
+            // what the airframe can make at this speed: the round crabs onto
+            // the arc rather than snapping onto it
+            var axis = _cross(vhat, want);
+            float beta = MathF.Asin(MathF.Min(1f, MathF.Sqrt(_dot(axis, axis))));
+            a_want = K_P * speed * beta;
+        }
+        return (a_dir, MathF.Min(a_want, lift_max));
+    }
+
+    /// <summary>The direct law's demand: the pull back onto the laser line, plus the
+    /// weight the wing is carrying.</summary>
+    private static (Vec3 dir, float mag) _direct_demand(Vec3 p, Vec3 v, Vec3 origin,
+                                                       Vec3? aim, WeaponDef wd)
+    {
+        if (aim is null) return (Vec3.zero, 0f);
+        var vhat = _unit(v);
+        float speed = MathF.Sqrt(_dot(v, v));
+        float lift_max = _lift_max(wd, speed);
+        // the beam: where the round is along it, how far off it, and how fast that
+        // gap is opening
+        var to_aim = new Vec3(aim.Value.x - origin.x, aim.Value.y - origin.y,
+                              aim.Value.z - origin.z);
+        float line_len = MathF.Sqrt(_dot(to_aim, to_aim));
+        var line = line_len > 1e-3f ? _unit(to_aim) : new Vec3(1f, 0f, 0f);
+        var from_origin = new Vec3(p.x - origin.x, p.y - origin.y, p.z - origin.z);
+        float along = _dot(from_origin, line);
+        var off = new Vec3(from_origin.x - line.x * along,
+                           from_origin.y - line.y * along,
+                           from_origin.z - line.z * along);
+        float v_along = _dot(v, line);
+        var off_rate = new Vec3(v.x - line.x * v_along, v.y - line.y * v_along,
+                                v.z - line.z * v_along);
+        // the time this round has left to be on the line: what is left of the beam,
+        // over the speed it is getting there at
+        float t_go = MathF.Max((line_len - along) / MathF.Max(speed, 1f), CLOS_T_MIN);
+        float k = CLOS_K / (t_go * t_go);
+        var a = new Vec3(-k * (off.x + off_rate.x * t_go),
+                         -k * (off.y + off_rate.y * t_go),
+                         -k * (off.z + off_rate.z * t_go));
+        // the weight, in the plane the wing can push in: on a level round that is
+        // the full 1 g straight up, on a diving one only its square-to-the-path
+        // part
+        var g = new Vec3(0f, GRAVITY, 0f);
+        float gv = _dot(g, vhat);
+        a = new Vec3(a.x - vhat.x * gv, a.y + GRAVITY - vhat.y * gv, a.z - vhat.z * gv);
+        float d = _dot(a, vhat);
+        a = new Vec3(a.x - vhat.x * d, a.y - vhat.y * d, a.z - vhat.z * d);
+        float mag = MathF.Min(MathF.Sqrt(_dot(a, a)), lift_max);
+        return (mag > 1e-9f ? _unit(a) : Vec3.zero, mag);
+    }
+
+    /// <summary>m/s² of lift the wing can make at this speed - the ceiling on
+    /// everything the guidance asks for, and the reason a slow round stops
+    /// answering the beam.</summary>
+    private static float _lift_max(WeaponDef wd, float speed)
+    {
+        float q = 0.5f * RHO * speed * speed;
+        return q * _area(wd) * wd.cl_max / wd.mass;
+    }
+
+    // ------------------------------------------------------------------
+    // the airframe: a demand in, a new velocity out
+    // ------------------------------------------------------------------
+
+    /// <summary>One tick of the airframe both laws share: the demand becomes a
+    /// lift coefficient, the coefficient an angle of attack and an induced drag,
+    /// and thrust along the nose, lift square to the velocity, drag against it and
+    /// gravity are integrated.</summary>
+    private static Vec3 _airframe(Vec3 v, float age, WeaponDef wd, float dt,
+                                  Vec3 a_dir, float a_want)
+    {
         float speed = MathF.Sqrt(_dot(v, v));
         var vhat = _unit(v);
         float q = 0.5f * RHO * speed * speed;
         float s = _area(wd);
-        float lift_max = q * s * wd.cl_max / wd.mass;
-
-        var a_dir = Vec3.zero;
-        float a_want = 0f;
-        if (tgt_pos is not null)
-        {
-            var tp = tgt_pos.Value;
-            float dx = tp.x - p.x;
-            float dz = tp.z - p.z;
-            float r = MathF.Sqrt(dx * dx + dz * dz);
-            float above = p.y - tp.y;
-            float r0 = MathF.Max(trav + r, 1f);
-            if (r <= wd.pn_r && speed >= wd.pn_v)
-            {
-                var a = pn_accel(p, v, tp, tgt_vel ?? Vec3.zero, wd.pn_n);
-                // the fins can only pull square to the flight path
-                float d = _dot(a, vhat);
-                a = new Vec3(a.x - vhat.x * d, a.y - vhat.y * d, a.z - vhat.z * d);
-                a_want = MathF.Sqrt(_dot(a, a));
-                a_dir = a_want > 1e-9f ? _unit(a) : Vec3.zero;
-            }
-            else
-            {
-                float elev = arc(r, above, r0, wd);
-                if (age <= wd.ignite + wd.burn)
-                {
-                    // the motor is still lit: the tube's quadrant is a ceiling on
-                    // the climb, so a close target pulls the nose down here
-                    elev = MathF.Min(elev, wd.loft);
-                }
-                float hx, hz;
-                if (r > 1e-3f)
-                {
-                    hx = dx / r;
-                    hz = dz / r;
-                }
-                else
-                {
-                    hx = 1f;
-                    hz = 0f;
-                }
-                float ce = MathF.Cos(elev), se = MathF.Sin(elev);
-                var want = new Vec3(hx * ce, se, hz * ce);
-                a_dir = lift_dir(vhat, want);
-                // the pull owed is proportional to the heading error and capped by
-                // what the airframe can make at this speed: the round crabs onto
-                // the arc rather than snapping onto it
-                var axis = _cross(vhat, want);
-                float beta = MathF.Asin(MathF.Min(1f, MathF.Sqrt(_dot(axis, axis))));
-                a_want = K_P * speed * beta;
-            }
-            a_want = MathF.Min(a_want, lift_max);
-        }
-
-        // ---- airframe ------------------------------------------------------
         float cl = 0f;
         float alpha = 0f;
         Vec3 nose;

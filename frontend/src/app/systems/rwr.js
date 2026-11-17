@@ -15,7 +15,7 @@
 
 import {
   ALARM_GAIN, ARROW_HEAD, ARROW_LEN, ARROW_RGB, ARROW_WID, BEAR_MAX, BEAR_WIN,
-  LASER_CONE, LASER_RANGE, RWR_ARROWS, RWR_RANGE, STEADY_T, WARN_CONE, WARN_MARGIN,
+  RWR_ARROWS, RWR_RANGE, STEADY_T, WARN_CONE, WARN_MARGIN,
 } from '../../core/config.js';
 import { clamp, dirFrom } from '../../core/math.js';
 import { arrowRingAt } from '../../hud/index.js';
@@ -39,7 +39,7 @@ export function rayMiss(dx, dz, vx, vz) {
 export class Rwr {
   constructor() {
     this.threats = [];     // placed rounds, nearest first (the dial and the boxes)
-    this.lasers = [];      // enemy sights on this hull
+    this.lasers = [];      // enemy lasers on this hull (the server's answer)
     this.alarm = 0;        // the one boolean the rim, the arrows and the tone read
     this.ring = 0;         // the hull's own discovery range, metres
     this._bear = new Map();   // round id -> bearing history (no position yet)
@@ -159,36 +159,21 @@ export class Rwr {
       }
     }
 
-    this._lasers(app, own, eye, puffs);
+    this._lasers(app);
   }
 
-  // Laser warning: who has his sight *on me*.  Only a vehicle carries a laser
-  // designator - a rifleman looking at the mech is not a threat the receiver is
-  // meant to sing about.  For an AI hull the snapshot carries its current target,
-  // so it has to name my mech - that is the truth, and it keeps the circle quiet
-  // when a hundred hulls are just looking the other way.  A human opponent
-  // exposes no target, so there the fallback is a tight cone on his sight line.
-  _lasers(app, own, eye, puffs) {
-    for (const e of app.net.entities.values()) {
-      if (e.faction === own.faction) continue;
-      if (e.type < 3 || e.type > 4) continue;           // apc / mech only
-      const dx = eye[0] - e.x, dy = eye[1] - (e.y + 2.5), dz = eye[2] - e.z;
-      const d = Math.hypot(dx, dy, dz);
-      if (d > LASER_RANGE || d < 20) continue;
-      let aimed = e.target === own.id;
-      if (!aimed && e.owner !== 255) {                  // human pilot: cone test
-        const yaw = e.type === 3 ? e.turret : e.yaw;
-        const cp = Math.cos(e.pitch);
-        const dot = (dx * cp * Math.cos(yaw) + dy * Math.sin(e.pitch) + dz * cp * Math.sin(yaw)) / d;
-        aimed = dot > Math.cos(LASER_CONE);
-      }
-      if (!aimed) continue;
-      // a laser is light: a ridge, a canopy or a screen of smoke between us is
-      // the same wall it is for a round, so his sight line has to pass the one
-      // sight rule before the receiver says a word about it
-      if (sightBlocked(app.map, eye[0], eye[1], eye[2], e.x, e.y + 2.5, e.z, puffs)) continue;
-      this.lasers.push({ x: e.x, z: e.z, dist: d, id: e.id });
-    }
+  // Laser warning: the server's answer, drawn.  Every machine of the other side is
+  // emitting lasers all the time - the four channels its computer steers at the hulls
+  // it holds, and the one down its sight, because a sight *is* a designator - and
+  // `Systems/Beams.cs::painting` asks the same question of all five: does this beam
+  // cross that hull's body (its collision circle grown by `Defs.LASER_SPHERE`) with
+  // nothing between.  The answer is the launcher's, not the picture's: a SACLOS lock
+  // steers its line at the lead point, up to `BEAM_CONE` off its pilot's cross, so the
+  // light can be on a hull with nothing in the view to show it.  `meta.lasers` is the
+  // list of machines it is on this one from, and this draws one mark each.
+  _lasers(app) {
+    const painted = (app.net.meta && app.net.meta.lasers) || [];
+    for (const l of painted) this.lasers.push({ x: l.x, z: l.z, dist: l.dist, id: l.id });
   }
 
   // The bearing history of one round: the last `BEAR_WIN` seconds of samples, the

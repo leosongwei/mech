@@ -45,7 +45,8 @@ public static class Flights
 
         public static readonly string[] OnBullet = Components.Cat(names, "bullet");
         public static readonly string[] OnRocket = Components.Cat(names, "unguided_missile");
-        public static readonly string[] OnSaclos = Components.Cat(names, "saclos");
+        // a beam rider owns one component more (the laser line it rides), so its
+        // schema and its query are `SaclosColumns` below
 
         public RoundColumns(Group g) : base(g) { bind(g); }
 
@@ -111,6 +112,26 @@ public static class Flights
         public float seed => _c.seed[i];
         public byte wid => _c.wid[i];
         public int src => _c.src[i];
+    }
+
+    /// <summary>A beam rider's columns: the round's, plus the line of the laser it
+    /// was encoded on (`Systems/Beams.cs` holds the channels on the launcher).</summary>
+    public sealed class SaclosColumns : RoundColumns
+    {
+        public byte[] ch = null!;
+
+        private static readonly string[] beam_names = Components.Cat(names, "beam_ch");
+        public static readonly string[] OnSaclos = Components.Cat(beam_names, "saclos");
+
+        public SaclosColumns(Group g) : base(g) { }
+
+        public override string[] Names => beam_names;
+
+        protected override void bind(Group g)
+        {
+            base.bind(g);
+            ch = g.u8("beam_ch");
+        }
     }
 
     /// <summary>The top attack's columns: the round's, plus the velocity its stare
@@ -250,91 +271,110 @@ public static class Flights
         }
     }
 
-    /// <summary>A beam rider: it flies the launcher's sight line, so its aim is
-    /// re-read every tick off the hull that fired it, and a hull that dies leaves
-    /// the round to coast straight on.  The motor burns for `burn`, then the
-    /// airframe's quadratic drag bleeds the cruise speed back down.</summary>
-    /// <summary>A beam rider: it flies the launcher's sight line, so its aim is
-    /// re-read every tick off the hull that fired it, and a hull that dies leaves
-    /// the round to coast straight on.  The motor burns for `burn`, then the
-    /// airframe's quadratic drag bleeds the cruise speed back down.</summary>
+    /// <summary>A beam rider: it rides one line of its launcher's laser, which
+    /// `Systems/Beams.cs` has laid on a locked target and leads for it.  The round
+    /// knows only the line, so four of them can be in the air on four lines of the
+    /// same beam.
+    ///
+    /// It is flown, not slid (`Flight.direct`): the same airframe as the top
+    /// attack, with a law that has no arc in it - the motor puts 600 m/s on a 45 kg
+    /// round in two seconds, the wing carries the weight at an angle of attack the
+    /// rest of the way, and the pull available to correct anything falls with the
+    /// square of the speed.  So a shot has to be *aimed*: the laser leads the
+    /// target, the tube points where the pilot's arm is laid, and a round that
+    /// arrives with no energy left sags out of the beam instead of turning.
+    ///
+    /// Two things take the line away, and both leave the round flying on its
+    /// heading - the motor and the drag go on, the guidance is what stops:
+    /// the launcher dying (nothing is designating), and the laser not reaching the
+    /// round any more (a ridge or a house between the launcher and the missile cut
+    /// a beam that is only light).  A round with no line has no lift demand either,
+    /// so it keeps its heading and falls like anything else without a wing.</summary>
     public static class Saclos
     {
         public static void run(World world, float dt)
         {
             var e = world.ecs;
-            foreach (var g in e.groups(RoundColumns.OnSaclos))
+            foreach (var g in e.groups(SaclosColumns.OnSaclos))
             {
-                var c = new RoundColumns(g);
+                var c = new SaclosColumns(g);
                 foreach (var r in c)
                 {
                     if (!_begin(r)) continue;
                     var wd = Defs.WEAPONS[r.wid];
                     var p0 = r.pos;
                     var vel = r.vel;
-                    float vx = vel.x, vy = vel.y, vz = vel.z;
-                    var (sp, _) = _norm(new Vec3(vx, vy, vz));
-                    float speed = MathF.Sqrt(vx * vx + vy * vy + vz * vz);
+                    var (sp, _) = _norm(vel);
+                    float speed = MathF.Sqrt(vel.x * vel.x + vel.y * vel.y
+                                             + vel.z * vel.z);
 
+                    // the beam: which channel this round was encoded on, whether
+                    // the launcher is still lighting it, and whether the light
+                    // still reaches the round.  What comes back is the channel's
+                    // *track* - a point and the velocity it is moving at - and the
+                    // round leads itself off it (`Systems/Beams.cs::intercept`)
+                    Vec3? aim = null;
+                    var aperture = Vec3.zero;
+                    var line = Vec3.zero;
                     int shooter = r.src;
-                    bool has_aim = false;
-                    var d = Vec3.zero;
-                    float ax = 0f, ay = 0f, az = 0f;
-                    if (shooter >= 0 && e.is_alive(shooter)
-                        && e.uv("etype")[shooter] != Defs.ETYPE_BASE)
+                    int ch = c.ch[r.index];
+                    if (shooter >= 0 && ch < Defs.BEAM_CHANNELS && e.is_alive(shooter)
+                        && e.has(shooter, "beam_tgt")
+                        && e.uv("beam_ok").get(shooter, ch) != 0)
                     {
-                        var (origin, sy, spitch) = Weapons.aim_of(world, shooter);
-                        d = MathUtil.dir_from(sy, spitch);
-                        float relx = p0.x - origin.x, rely = p0.y - origin.y,
-                              relz = p0.z - origin.z;
-                        float along = relx * d.x + rely * d.y + relz * d.z;
-                        // steer for a point well *ahead* on the sight line: the
-                        // foot of the perpendicular sits 90 deg off the round's
-                        // heading, so aiming there commands a full-rate turn for
-                        // any lateral error and the round slithers across the beam
-                        // instead of settling.
-                        float lead = MathF.Max(0f, along) + MathF.Max(90f, speed * 1.2f);
-                        ax = origin.x + d.x * lead;
-                        ay = origin.y + d.y * lead;
-                        az = origin.z + d.z * lead;
-                        has_aim = true;
-                    }
-                    // the motor has a burn time, then it is out and the airframe
-                    // coasts: quadratic drag bleeds the cruise speed back down for
-                    // the rest of the flight, so a long shot arrives slow
-                    if (wd.burn <= 0f || r.age < wd.burn)
-                        speed = MathF.Min(wd.maxvel, speed + wd.thrust * dt);
-                    else
-                        speed = MathF.Max(0f, speed - wd.drag * speed * speed * dt);
-                    if (has_aim)
-                    {
-                        var v = _steer(new Vec3(vx, vy, vz),
-                                       new Vec3(ax - p0.x, ay - p0.y, az - p0.z),
-                                       speed, 1.35f, dt);
-                        vx = v.x; vy = v.y; vz = v.z;
-                        // thrust misalignment / crosswind: a slow push square to
-                        // the sight line, seeded per round, that the guidance has
-                        // to chase down.  Bounded because the beam always wins.
-                        float wob = wd.wob;
-                        float side = MathF.Sqrt(d.x * d.x + d.z * d.z);
-                        if (wob != 0f && side > 1e-3f)
+                        var (origin, _, _) = Weapons.aim_of(world, shooter);
+                        if (Sight.clear(world, origin, p0, Sight.LOS_STEP))
                         {
-                            float s = r.seed;                       // random per round
-                            float f = wd.wob_f * (0.75f + 0.5f * s);
-                            float ph = s * MathUtil.TAU;
-                            float am = wob * (0.7f + 0.6f * ((s * 3.7f) % 1f))
-                                       * (MathF.Sin(r.age * f * 2.1f + ph)
-                                          + 0.55f * MathF.Sin(r.age * f * 5.3f
-                                                              + ph * 2.3f));
-                            vx -= d.z / side * am * dt;
-                            vz += d.x / side * am * dt;
+                            var mem = e.fv("beam_mem");
+                            var bvel = e.fv("beam_vel");
+                            var bacc = e.fv("beam_acc");
+                            var at = new Vec3(mem.get(shooter, ch * 3),
+                                              mem.get(shooter, ch * 3 + 1),
+                                              mem.get(shooter, ch * 3 + 2));
+                            var tv = new Vec3(bvel.get(shooter, ch * 3),
+                                              bvel.get(shooter, ch * 3 + 1),
+                                              bvel.get(shooter, ch * 3 + 2));
+                            var ta = new Vec3(bacc.get(shooter, ch * 2), 0f,
+                                              bacc.get(shooter, ch * 2 + 1));
+                            // the lead is solved with the speed this round will
+                            // *average* to the target, not the 40 m/s it left the
+                            // tube with: a lead computed off the launch speed asks
+                            // for a 30 s flight and throws the aim point a kilometre
+                            // down the target's track, and it would then sweep
+                            // backwards through the sky as the motor lit
+                            float avg = r.age < wd.ignite + wd.burn
+                                ? 0.5f * (speed + wd.maxvel) : speed;
+                            aim = Beams.intercept(at, tv, ta, p0, avg);
+                            aperture = origin;
+                            // the line the laser is on: what the round is steered
+                            // against, and what the wobble pushes square to
+                            var a = aim.Value;
+                            line = _norm(new Vec3(a.x - origin.x, a.y - origin.y,
+                                                  a.z - origin.z)).dir;
                         }
                     }
-                    else
+                    // one tick of the airframe: the motor, the wing, the drag and
+                    // gravity.  The age is the one the last step produced, since
+                    // `Expire` has already counted this tick's second
+                    var v = Flight.direct(p0, vel, r.age - dt, aperture, aim, wd, dt);
+                    // thrust misalignment / crosswind: a slow push square to the
+                    // sight line, seeded per round, that the guidance has to chase
+                    // down.  Bounded because the beam always wins.
+                    float wob = wd.wob;
+                    float side = MathF.Sqrt(line.x * line.x + line.z * line.z);
+                    if (aim is not null && wob != 0f && side > 1e-3f)
                     {
-                        vx = sp.x * speed; vy = sp.y * speed; vz = sp.z * speed;
+                        float sd = r.seed;                      // random per round
+                        float f = wd.wob_f * (0.75f + 0.5f * sd);
+                        float ph = sd * MathUtil.TAU;
+                        float am = wob * (0.7f + 0.6f * ((sd * 3.7f) % 1f))
+                                   * (MathF.Sin(r.age * f * 2.1f + ph)
+                                      + 0.55f * MathF.Sin(r.age * f * 5.3f
+                                                          + ph * 2.3f));
+                        v = new Vec3(v.x - line.z / side * am * dt, v.y,
+                                     v.z + line.x / side * am * dt);
                     }
-                    _move(world, r, p0, new Vec3(vx, vy, vz), dt);
+                    _move(world, r, p0, v, dt);
                 }
             }
         }

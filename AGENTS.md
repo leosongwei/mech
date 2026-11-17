@@ -52,7 +52,8 @@ Core/
   Ballistics.cs            # elevation for a range (`zero_at`), flight path (`flight_at`)
   FireControl.cs           # THE fire control law: shot + track -> point/angles/elevation
                            #   (both hosts; `frontend/src/fcs.js` is its twin)
-  Flight.cs                # aerodynamics + guidance of a winged round (the top-attack missile)
+  Flight.cs                # aerodynamics + guidance of a winged round: one airframe,
+                           #   two laws (the top attack's arc, the beam rider's CLOS)
   Seeker.cs                # an IR round's lock: what it stares at, and what it re-locks on
   Combat.cs                # damage resolution: the only writer of `hp` (apply/hit/splash)
   Shop.cs                  # the rearm panel: quote, buy, the time a job costs
@@ -82,6 +83,9 @@ Systems/                   # mechanics shared by every mode, each exposes run(wo
                            #   Smoke.cs: hot smoke canisters, opaque puffs, blocks(a, b)
                            #   Sweep.cs: the tick's hit spheres, its broad phase, and the one
                            #             "segment vs moving sphere" solve (the spheres system)
+                           #   Locking.cs: the lock both guided weapons ask for
+                           #   Beams.cs: the laser a beam rider flies - one track per
+                           #             channel, its memory through cover, the beam
                            #   Flights.cs: one system per kind of round (bullet / rocket /
                            #             saclos / top) plus Expire, which ends a flight
                            #   FirstHit.cs: what each leg ran into, one system per shape
@@ -108,6 +112,7 @@ Modes/                     # per-mode rule sets: map, setup, pipeline, spawn rul
                            #   Bunkers.cs: ridge blockhouses, Record.cs: the top-attack trace,
                            #   Interceptor.cs: the missile-defence post
 Harness/                   # headless checks, no socket: Check.cs (battle/range/diag),
+                           # BeamCheck.cs (the designator and a beam rider),
                            # InterceptCheck.cs (missile defence, target hits),
                            # FcsCheck.cs (crew vs pilot on the same scenarios),
                            # NetCheck.cs (one pilot's wire, per minute)
@@ -122,6 +127,7 @@ tests/                     # unit tests, run by run_tests.sh - no server, no soc
 assets/                    # compiled client (webpack output, gitignored)
 tools/
   gun_report.py            # weapon-report audio analysis (numpy; the numbers in audio.js)
+  saclos_motor.py          # the beam rider's motor: the burn a thrust needs (stdlib)
   smoke_lock_test.js       # browser-console driver: seeker A/B smoke test
 frontend/                  # the client: four layers, one direction (checked by
                            #   scripts/depgraph.mjs); `npm run build` = deps check +
@@ -152,7 +158,7 @@ frontend/                  # the client: four layers, one direction (checked by
     fx/                    # dispatch.js (the server's event stream), particles.js
     input/                 # bindings.js pointer.js sight.js index.js
     app/                   # game.js frame.js boot.js panels.js hudstate.js
-                           #   systems/{aim,lead,rwr,camera,feedback,shop,settings}.js
+                           #   systems/{aim,lead,rwr,camera,feedback,belief,shop,settings}.js
 ```
 
 `render/passes.js` is the draw order and `app/frame.js`'s `STAGES` is the frame
@@ -785,6 +791,24 @@ own; the wire is `net/wire.js` + `net/rows.js` and the picture is `net/view.js`.
   holds, whatever its course), a laser inside 3 km (a red **triangle** at its
   true position with a dashed beam) and a laser further out (the same triangle
   **pinned to the rim**: the bearing is real, the range is "3 km or more").
+  **The laser marks are the server's answer, drawn** (`Beams.painting`, sent per
+  pilot in `meta.lasers`).  A machine of the other side emits five lasers - the
+  four channels its computer steers at the hulls it holds, and the one down its
+  sight, which burns whether it is guiding anything or not - and all five are
+  asked one question: does this ray reach that hull's **body**, a sphere of
+  `Defs.LASER_SPHERE` (10 m, around the hull's centre) - wider than any hull on
+  purpose, because a designator is a lamp and a receiver has a threshold, so light
+  passing ten metres over the machine is light in its eye - with nothing in
+  between.  An angle can never answer it: a SACLOS lock steers its line at the
+  lead point, up to `BEAM_CONE` (40 deg) off the pilot's cross, so the launch a
+  pilot cannot see is the one that warns him.  The cut is the usual one - ground,
+  facade, canopy, smoke through `Sight.clear` - plus *other hulls*, because the
+  first body a ray meets is where the light ended; the ray is `LASER_RANGE`
+  (3.4 km) long.  A channel that walks its memory after the sight was cut is
+  still a lock and no longer light on the hull, so the lock holds and the
+  receiver is quiet.  One machine is one mark however many of its lines are on
+  the hull.  `beam_lit` is that same verdict per channel, written by
+  `Beams.run`.
   Five judgements, three outputs (`docs/product/rwr.md`):
   `heard` is `d² <= Λ²·K·v_c` with `Λ² = 10^(ΔL/20)` and ΔL = 12 dB
   (`ALARM_DB` / `ALARM_GAIN`), `seen` is `d² <= K·v_c`, `steady` is a horizontal
@@ -939,17 +963,148 @@ own; the wire is `net/wire.js` + `net/rows.js` and the picture is `net/view.js`.
   takes a hull height).  Re-acquisition is then one question per tick:
   `seeker.acquire` looks for an enemy `lockable` hull within
   `defs.SEEKER_CONE` (3°) of the stare *line* - measured from the round's own
-  eye, on the deck it would be dived on, nearest to the line first - and takes
-  the first one with a clear sight line.  It does not care whether that is the
+  eye, on the deck it would be dived on - and takes the first one with a clear
+  sight line, **nearest the belief point first**.  The order is the distance to
+  `spot`, not the angle off the line, because a salvo is a salvo: rounds fired at
+  four hulls each stare at their own walked point, and ordering by angle herds
+  all of them onto whichever hull sits closest to the line - one machine taking
+  the whole salvo while the other three drive away.  It does not care whether that is the
   hull it was fired at, nor whether it is a mech or an APC: friend or foe is
   the whole of the test.  `weapons.fire` writes the memory at the shot, so a
   lock cut before the first tick of flight still leaves something to fly at; a
   round with no memory at all (a lock weapon cannot be fired without one) is
-  still a rock.  Both events are logged (`mech.smoke`, at DEBUG): the loss,
+  still a rock.  **What is written there is the shooter's belief, not the
+  truth**: a pilot's client sends the belief its HUD was drawing (`in.lb` =
+  `[id, x, y, z, vx, vy, vz]`, `app/systems/belief.js`) and `Weapons.fire` seeds
+  `tgt_mem` / `tgt_vel` from it - only for that hull, only while it is under half
+  a second old, and only inside `lock_range` x 1.5 - so a shot fired through a
+  screen is launched at the walked point the pilot was shown (`World.spawn_round`
+  takes it as `mem` / `memVel`).  A crew hands over the one its own lookout keeps
+  (`ai_tgt`, position + velocity + the age since it really saw the hull, lifted to
+  the deck the seeker dives on), so a crew's shot is launched on what the crew
+  believes too; a scripted shooter (a harness puppet) has no belief column and
+  starts on the hull itself, which is where its sight is.
+
+  **The round refreshes on the truth only through its own sight line**
+  (`Seeker.track`): `tgt_mem` / `tgt_vel` are copied off the live hull on a tick
+  where `Sight.why` says the line is clear, and on a tick where it is not the
+  point only walks at `tgt_vel` - no acceleration term, the same shape a
+  fire-and-forget round has.  The one way a blinded round takes a hull is
+  `Seeker.acquire`, which casts `Sight.clear` to every candidate it is judging, so
+  the authority it grabs is one it can see.  `--check beam`'s `belief` row is that
+  rule end to end: a blind round walks straight while its hull turns (lock open,
+  178 m off), and the tick the hull is back in the cone with the screen down the
+  stare is 0 m off its deck and the target id is back.  Both events are logged (`mech.smoke`, at DEBUG): the loss,
   which the range's smoke test reads (`MECH_LOG_LEVEL=DEBUG`), and
   `re-locked on hull N`, which nothing but a reader of the log sees - the
   pilot is not told that his round changed its mind, and the client shows no
   cue at all.  Numbered in `docs/top_attack_relock.md`.
+* **A beam rider flies a laser, and the launcher does the tracking**
+  (`Systems/Beams.cs`).  A SACLOS round has no seeker: the machine that fired it
+  holds up to `Defs.BEAM_CHANNELS` (4) *channels* - one per locked hull, in the
+  channels of the designator component the `designator` tag puts on a mech and an
+  APC (`Components.BEAM_COMPS`) - and each channel is a *track*: the aim point on
+  that hull, the velocity it is moving at, the pull measured on it, and how long
+  the sight has been cut.  `Beams.run` refreshes the track off the live hull while
+  `Sight.clear` says it can see it and *walks* it (velocity, plus the measured pull
+  on `Defs.BEAM_ACCEL_TAU`) for `Defs.BEAM_MEMORY` seconds when it cannot - the
+  smoke screen, the tree stand, the house - so a round fired before the screen
+  still arrives.  What the beam may be pointed in is a **40 deg cone about the sight
+  line** (`Defs.BEAM_CONE`), fixed whatever the optics are doing - the pilot's cross
+  still has to be on the hull to *acquire* (`LOCK_FRAC`), and a hull already held is
+  a hull the computer is tracking, so zoom does not narrow the lock.  A channel is
+  given up when the point the beam is on leaves that cone or when the hull dies, and
+  `Beams.lay` allocates one and displaces the *oldest* when all four are used.  Past
+  `Defs.BEAM_MEMORY` (8 s blind) the walk stops and the beam goes **dark** - the
+  guess is too old to fly a round on - but the **lock stays**: a hull that comes
+  back into the cone is seen again the tick the sight is clear, the line relights
+  and a round still in the air is corrected again.  `beam_ok` is written every tick
+  (`1` while the sight has it or the memory is young, `0` after), since a lit beam
+  in a held-but-blind channel would steer rounds at a ghost.  `beam_lit` is the
+  other half of the same tick: is this channel's *line* - out of the sight head at
+  the aim point the computer holds - crossing the hull's body with nothing in
+  between.  That is the target's laser warning, and `Beams.painting` asks it of
+  the sight line too (`meta.lasers`).  `Systems/Locking.cs` is the acquisition
+  half and the same interaction the top attack asks for - a channel *is* a lock,
+  with no settle time anywhere in the table - with the two weapons differing in what
+  holds after: a seeker
+  drops the target the moment it leaves the reticle circle, a designator keeps it
+  for as long as it is anywhere in the picture.
+  **A line is claimed by the shot** (`Weapons.fire` calls `Beams.lay` for the hull it
+  is firing at), because laying on the cross makes *steering* cost lines: a cross
+  swept across four hulls on its way to the one being aimed at fills every channel
+  and evicts the oldest, i.e. the pilot loses his own held target to a near miss of
+  his aim.  What the cross is on before the shot is a *candidate* - the hull the
+  trigger would take - written to `Player.lock_target` so the reticle rings it and the
+  lock tone sounds, and `Locking.pick` answers with that candidate (the line already
+  held on it, or -1 so the shot claims one), which is what keeps "cross on the hull,
+  pull the trigger" working on the tick the cross arrives.
+  **The candidate sticks** (`Locking._hold`): the cross *names* a hull and is then free
+  to go where the shot has to be aimed.  A candidate that swept away with the cross
+  would make a leading weapon unusable - the pilot would be choosing between aiming and
+  having a target.  A hull the cross picks stays picked until another hull is picked,
+  or it dies or leaves `lock_range`; the wire carries it as `lock_target` (the bold
+  diamond) and the formal targets as `locks` (the thin ones), and `lockInfo.thin` on the
+  client draws a candidate as a formal target once a shot has claimed its line.  The lock lives on the *hull*, not
+  on `Player` (a machine's locks die with it, and the beam is what the round
+  reads); `Player.lock_target` is the hull the HUD rings, mirrored by
+  `Locking.run` for the wire, and the meta's `locks` list is the whole set.
+  **A mark sits on a belief, not on the row** (`app/systems/belief.js`).  The wire
+  carries ids - `lock_target` and `locks` - and nothing about where those hulls
+  *are*; the client's snapshot does, but it is the truth, so drawing the diamond
+  from it would show a hull through the screen that hides it.  Instead the mark
+  sits on the point the machine would have: while the pilot's sight reaches the
+  hull (`sightBlocked`, the same door the pre-aim box uses) the belief *is* the
+  hull, refreshed every frame; once that line is cut it walks at the velocity and
+  the pull `net` last measured on it, the pull trusted for `BELIEF_ACCEL_S` (1 s,
+  `Beams._walk`'s own second) and the walk stopping after `BELIEF_WALK_S` (8 s,
+  the channel's memory).  Both weapons share it - a seeker holds a candidate, a
+  designator four channels, and a belief of a hull is the same either way.  The
+  mark is drawn solid while `seen` and dim while blind, so "I am looking at a
+  guess" reads off the glass; a top-attack pilot may fire at that guess
+  (`Locking.pick` asks the candidate, not the sight line).
+  The round itself (`Flights.Saclos`) reads one byte, `beam_ch` - the line the
+  laser encoded it on, so four rounds are four lines - plus two questions the
+  designator cannot answer for it: is the launcher alive with that channel lit,
+  and does the laser still *reach* the round (`Sight.clear` from the sight head to
+  the missile: a beam is light, and a ridge between the two cuts it).  With no
+  answer the round coasts - motor and drag unchanged, guidance stopped, and since a
+  round with no lift demand falls, the ground comes up - which is also what a lost
+  launcher leaves behind.
+  **The round is flown, not slid** (`Core/Flight.cs`): the same airframe as the top
+  attack, with the arc law replaced by a command-to-line-of-sight one.  Every tick
+  `Flight.direct` gets the beam - the aperture it starts at and the point
+  `Beams.intercept` leads to - and asks for two accelerations: the offset and its
+  rate, nulled as `K(d + ḋ·t_go)/t_go²` (the law's damping is `sqrt(K)/2`, so
+  `CLOS_K` 16 is a stiff, damped ride), plus its own weight in the plane square to
+  the flight path.  So a beam rider holds altitude at an *angle of attack* (0.6 deg
+  at 600 m/s, 3.3 at 250), pays induced drag for it, and its whole flight decays
+  once the boost is out: 600 m/s at burnout, 2.6 km down range and 7.7 s after the
+  shot, then 560 at 3 km and 542 at 3.2 km (`--check beam`'s `profile` row).
+  **The motor is a soft launch and a long pull**: 40 m/s off the rail, 0.4 s of coast
+  (16 m, clear of the hull) before ignition, then a flat 100 m/s² for 7.3 s, sized by
+  `tools`-side arithmetic and confirmed on the bench so that the round *is* at the
+  600 m/s clamp as it burns out (measured 600 m/s at 2.6 km / 7.7 s).  The drag is the
+  model's own: 100 m/s² nets 560 m/s in 7.3 s because the round is at 39 m/s² of drag
+  by the end, and a 5.5 s burn would need 124 m/s².  So it is 190 m/s at 200 m, 302 at
+  500, 420 at 1 km, 554 at 2 km - a slow, soft shot that is fast exactly where the
+  wire ends.  What it can pull is `q·S·cl_max/m`
+  - 30 g at 600 m/s, 3 g at 200, nothing that holds 1 g below 110 - so a long shot
+  is *aimed* rather than steered, and the purse is the launcher's: 3.4 km is the
+  lock, and 36 m/s² of lift at 200 m/s is not a correction.
+  `Beams.intercept` is solved with the speed the round will *average* over the
+  flight (`(v + maxvel)/2` while the motor is lit): a lead off the 40 m/s launch
+  speed asks for a 30 s flight and throws the aim point a kilometre down the
+  target's track, then sweeps it backwards through the sky as the motor lights.
+  Measured with `--check beam` (`MECH_SEED=7`): 4 rounds of 4 inside 1.2 m of a hull
+  crossing at 30 m/s at 400, 800 and 1600 m and 3 of 4 at 3000 m (the round is a
+  second slower to 2 km than it was, so the far row is the edge of the wire), 4 more
+  with the sight turned 30 deg off and back (inside the cone, so the line survives),
+  4 through a smoke screen on the
+  memory (1.5 m - the measured pull is trusted for `FireControl.ACCEL_S` and then
+  the ghost flies a straight line), 4 of 4 shot down by the AI post at 1000 m,
+  0 of 4 when the laser is cut, the launcher is destroyed or the sight is turned
+  away, and the trigger does nothing without a lock.
 * **Damage** is two halves, never one number. `defs.pen_damage(ap, ad, dp)`:
   beating the target's `dp` outright delivers the full `ad`, beating only half
   of it shaves `ad/5`, anything duller does nothing. `defs.blast_damage(ed, de,
@@ -1021,11 +1176,17 @@ own; the wire is `net/wire.js` + `net/rows.js` and the picture is `net/view.js`.
   straight off a bright cloud. The payout is `hud._status`'s: one `+$N` per
   `kill` event on the pilot's own pid, on the money's own line and fading out.
 * **The same kill is on a wire of its own: `GET /events/kills`.** Server-sent
-  events, one JSON record per kill with a pilot on one end - the message stack's
-  own set, so crew against crew is on neither - shaped
-  `{"killed":{"name","is_player"},"by":{...},"weapon","distance"}`, with the plain
-  names (no `[bot]`), the weapon written small and `distance` in metres to one
-  decimal (-1 when there is no muzzle to measure from).  `KillFeed.publish` builds
+  events, one JSON record per kill with a pilot on one end of it and a machine on
+  the other - the message stack's own set, so crew against crew is on neither and
+  neither is a rifleman's death (a battle kills them by the dozen, and the stream
+  would be nothing else) - shaped
+  `{"type":"killed","killed":{"name","is_player","unit_type"},"by":{...},"weapon","distance"}`
+  (`type` is the wire's message kind, so a later message is not a guess from the
+  shape), with the plain
+  names (no `[bot]`), the two `unit_type`s as `UnitDef.key` (`mech`, `apc`,
+  `at_rifleman`, ... - a token, not the HUD's shouting), the weapon written small
+  and `distance` in metres to one decimal (-1 when there is no muzzle to measure
+  from).  `KillFeed.publish` builds
   it from the same `HitAttributions` the line is written from and hands it to
   `KillFeed.on_kill`, which `Server.configure` points at `Net/KillStream.cs`; the
   hook is null in a harness, so a check costs one null test per death.  Best
@@ -1510,7 +1671,10 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
   (`audio/` keeps `mech.volume` / `mech.alarmvolume`); `game.js` keeps
   `mech.name` and writes it at `DEPLOY`, so a reload prefills the last callsign
   instead of `PILOT-<pid>`.
-* `game.js` sends input at 30 Hz (`{t:"in",yaw,pitch,mx,mz,fl,fr}`) and drives
+* `game.js` sends input at 30 Hz (`{t:"in",yaw,pitch,mx,mz,fl,fr,z,a,zr,q,st,lb}`,
+  where `lb` is the belief about the candidate - `[id, x, y, z, vx, vy, vz]`, the
+  point the HUD's marker is drawn on; `Systems/Weapons.cs` launches a seeker round
+  on it) and drives
   the frame: interpolate snapshots, aim, build the draw list, draw, HUD.  The
   `yaw` / `pitch` on the wire are the *sight* (where the pilot looks), never the
   hull: `player_input` writes them into `sight_yaw` / `sight_pitch`.
@@ -1896,6 +2060,7 @@ cd frontend && npm install && npm run build      # -> assets/
   ./dotnet.sh run -- --check range  --minutes 2    # range world, a pilot firing
   ./dotnet.sh run -- --check hit                   # every weapon vs a parked APC
   ./dotnet.sh run -- --check intercept             # every missile vs the defence post
+  ./dotnet.sh run -- --check beam                  # a beam rider: hits, cover, cut laser
   ./dotnet.sh run -- --check diag --minutes 2      # what a few AI hulls are doing
   ./dotnet.sh run -- --check net --minutes 30 --from 8   # one pilot's download, per minute
   ./dotnet.sh run -- --check fcs                   # crew vs pilot, same scenarios
@@ -1998,7 +2163,11 @@ cd frontend && npm install && npm run build      # -> assets/
   the cue `HEAVY_REPORT` in `audio/` describes).  It is the one Python script
   left, it needs `numpy` in `.venv`, and it never touches the server.
   `tools/smoke_lock_test.js` is a browser-console driver for the seeker's smoke
-  A/B test.
+  A/B test.  `tools/saclos_motor.py` is the beam rider's motor as an idealised
+  integration of the same airframe (45 kg, S 0.0133 m^2, the real drag polar), so a
+  thrust and a burn can be priced before they are flown: `--tune 100` prints the
+  burn 100 m/s^2 needs to be at the clamp as it burns out, and the shipped rows of
+  `--check beam` sit inside half a percent of what it predicts.
 ## Run
 
 `dev.sh` is the normal entry point. It starts the server inside a detached

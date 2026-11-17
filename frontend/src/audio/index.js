@@ -56,8 +56,7 @@ export class GameAudio {
     this.warbles = {};
     this.beeps = {};
     this.beepWave = null;
-    this.mode = 'none';                   // the lock tone: 'none' | 'acquiring' | 'locked'
-    this.beepTimer = 0;
+    this.mode = 'none';                   // the lock tone: 'none' | 'locked'
     this.lockOsc = null;
     this.lockGain = null;
   }

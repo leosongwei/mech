@@ -709,6 +709,11 @@ public static class Server
                 pl.zero_range = Math.Clamp(zr, Defs.ZERO_STEPS[0], Defs.ZERO_STEPS[^1]);
                 // Q: one-shot hot smoke, latched until Systems/Smoke.cs eats it
                 if (flag(msg, "q", false)) pl.smoke_q = true;
+                // the pilot's belief about the hull his cross has named
+                // (`systems/belief.js`): [id, x, y, z, vx, vy, vz].  A seeker round is
+                // launched at what its shooter *knows*, so the machine that knows hands
+                // it over with his own input - the round's seeker takes it from there
+                _belief(msg, pl, world);
                 // the newest tick this client has *seen* (a snapshot or a clock
                 // block): the frame clock reads it, and every binary frame
                 // echoes it back so the client can time a round trip.  A report
@@ -945,6 +950,32 @@ public static class Server
         client.offer("t", json(new Dictionary<string, object?> { ["t"] = "info", ["msg"] = msg }));
 
     private static string trunc(string s, int n) => s.Length <= n ? s : s[..n];
+
+    /// <summary>Read the pilot's belief about the hull he is aiming at off his own
+    /// input message (`in.lb`), and keep it on the `Player`: `Systems/Weapons.cs`
+    /// seeds a seeker round with it.  A message from outside the map, a velocity no
+    /// machine can make, or a malformed array is dropped - the belief the shot is
+    /// fired on is always one this machine could have held.</summary>
+    private static void _belief(JsonElement msg, Player pl, World world)
+    {
+        if (!has(msg, "lb", out var lb) || lb.ValueKind != JsonValueKind.Array
+            || lb.GetArrayLength() < 7) return;
+        for (int k = 0; k < 7; k++)
+            if (lb[k].ValueKind != JsonValueKind.Number) return;
+        int id = (int)lb[0].GetDouble();
+        float x = (float)lb[1].GetDouble(), y = (float)lb[2].GetDouble();
+        float z = (float)lb[3].GetDouble();
+        float vx = (float)lb[4].GetDouble(), vy = (float)lb[5].GetDouble();
+        float vz = (float)lb[6].GetDouble();
+        float size = world.terrain.w * Terrain.TILE;
+        if (!(x >= 0f && z >= 0f && x <= size && z <= size)) return;
+        if (!(y > -200f && y < 2000f)) return;
+        if (vx * vx + vy * vy + vz * vz > 40000f) return;    // 200 m/s, well past a mech
+        pl.belief_id = id;
+        pl.belief_pos = new Vec3(x, y, z);
+        pl.belief_vel = new Vec3(vx, vy, vz);
+        pl.belief_tick = world.tick;
+    }
 
     private static bool has(JsonElement o, string key, out JsonElement v)
     {

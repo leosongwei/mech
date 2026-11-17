@@ -59,6 +59,10 @@ public static class Components
         ecs.register("lockable", Kind.U8);              // an IR seeker can track it
         ecs.register("moves", Kind.U8);                 // has locomotion
         ecs.register("vehicle", Kind.U8);               // a wheeled hull: steers, does not strafe
+        // a launcher that can fire a beam rider: it owns the laser's four channels
+        // (`Components.BEAM_COMPS`), which is what a machine that can steer a round
+        // has and a machine that cannot has nothing of
+        ecs.register("designator", Kind.U8);
         ecs.register("person", Kind.U8);                // a man on foot: a prox fuse goes off on him
         ecs.register("invulnerable", Kind.U8);          // rounds stop, damage does nothing
         // what it is *called*: an index into `World.names`, 0 for a hull with no
@@ -267,6 +271,36 @@ public static class Components
         // it was last seen (`Seeker.cs`).
         ecs.register("tgt_mem", Kind.F, 3, 0.0);
         ecs.register("tgt_vel", Kind.F, 3, 0.0);
+
+        // ---- laser designator -------------------------------------------
+        // A beam rider is not told where to fly: it flies the laser, and the
+        // launcher's fire-control computer is what points the laser.  One component
+        // per *channel* - the beam switches between targets fast enough that four
+        // lines coexist, and the code in the laser tells the rounds apart - so a
+        // channel is: what it is pointed at, where that hull was the last time the
+        // sight could see it, and how it was moving.  `Systems/Beams.cs` owns the
+        // tracking, `Systems/Locking.cs` the acquisition.
+        ecs.register("beam_tgt", Kind.I, 4, -1);          // target id per channel, -1 = free
+        ecs.register("beam_age", Kind.F, 4, 0.0);         // s since laid: the FIFO order
+        ecs.register("beam_seen", Kind.F, 4, 0.0);        // s since the sight last saw it
+        ecs.register("beam_mem", Kind.F, 12, 0.0);        // last aim point x,y,z per channel
+        ecs.register("beam_vel", Kind.F, 12, 0.0);        // the velocity it had there
+        // the pull measured on it: [ax, az] and the previous sample [vx, vz] the
+        // difference is taken against (the same measurement `ai_tacc` makes)
+        ecs.register("beam_acc", Kind.F, 8, 0.0);
+        ecs.register("beam_pv", Kind.F, 8, 0.0);
+        // whether the channel has a live beam this tick: the one thing the designator
+        // tells the round beyond the track itself
+        ecs.register("beam_ok", Kind.U8, 4, 0);
+        // whether that channel's *hull* is the thing the beam is on this tick - in
+        // the sight head's window and in sight, i.e. the laser reaching it.  The
+        // target's own warning receiver reads it (`Netcode.meta_payload`), because
+        // a beam is steered by the launcher's computer and can sit well off the
+        // cross the pilot is looking down
+        ecs.register("beam_lit", Kind.U8, 4, 0);
+        // which channel a beam rider rides (`Systems/Flights.cs::Saclos`): the
+        // laser is encoded per round, so four rounds in the air are four lines
+        ecs.register("beam_ch", Kind.U8);
     }
 
     // ---------------------------------------------------------------------
@@ -291,6 +325,18 @@ public static class Components
     public static readonly string[] ARM_COMPS = { "arm_hp", "arm_hpmax" };
 
     public static readonly string[] CIV_COMPS = Cat(UNIT_COMPS, "home_x", "home_z");
+
+    /// <summary>The laser designator: the four channels a launcher that can fire a
+    /// beam rider owns, added by the factory when the type declares the
+    /// `designator` tag.  A hull without a launcher never carries one.</summary>
+    public static readonly string[] BEAM_COMPS = {
+        "beam_tgt", "beam_age", "beam_seen", "beam_mem",
+        "beam_vel", "beam_acc", "beam_pv", "beam_ok", "beam_lit",
+    };
+
+    /// <summary>...and the one byte a beam rider needs to know which line of the
+    /// laser it is riding (`Systems/Flights.cs::Saclos`).</summary>
+    public static readonly string[] BEAM_ROUND_COMPS = { "beam_ch" };
 
     /// <summary>What a crew owns on top of its hull: the fire control's answer per
     /// arm, the target's measured pull, and what it believes about that target.  A

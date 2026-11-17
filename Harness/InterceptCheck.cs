@@ -82,7 +82,12 @@ public static class InterceptCheck
                 tgtPos = new Vec3(tgtPos.x, world.terrain.height_at(tgtPos.x, tgtPos.z), tgtPos.z);
                 int target = world.spawn_unit(Defs.ETYPE_APC, Defs.FACTION_BLUE, tgtPos.x, tgtPos.z,
                                               crew: false);
-                var sp = new Vec3(tgtPos.x + dist, 0f, tgtPos.z);
+                // the shooter on open ground, along +x unless that is off the
+                // range's 4 km map - a hull built past the edge stands on nothing
+                // and every round it fires bursts at its own muzzle (the 1600 m row
+                // used to read "no hits" for exactly that reason)
+                float side = tgtPos.x + dist > world.terrain.w * Terrain.TILE - 100f ? -1f : 1f;
+                var sp = new Vec3(tgtPos.x + dist * side, 0f, tgtPos.z);
                 sp = new Vec3(sp.x, world.terrain.height_at(sp.x, sp.z), sp.z);
                 int shooter = world.spawn_unit(Defs.ETYPE_MECH, Defs.FACTION_RED, sp.x, sp.z,
                                                weapons: new[] { Defs.WID_AC30, wid },

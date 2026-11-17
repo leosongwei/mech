@@ -101,6 +101,16 @@ function sendInput(app) {
     // stamps the moment this value first goes out.
     st: app.net.ack(),
   };
+  // the pilot's belief about the hull his cross has named - where his machine thinks
+  // it is, not where it is (`systems/belief.js`).  A seeker round is launched on it,
+  // so the shot a pilot fires at a guess is a guess, and the server is handed the
+  // same point the HUD drew.  Sent while there is a candidate, rounded to a decimetre
+  const lockId = app.net.meta ? app.net.meta.lock_target : -1;
+  const b = lockId >= 0 ? app.beliefs.get(lockId) : null;
+  if (b) {
+    const r1 = (v) => Math.round(v * 10) / 10;
+    msg.lb = [lockId, r1(b.x), r1(b.y), r1(b.z), r1(b.vx), r1(b.vy), r1(b.vz)];
+  }
   app.net.send(msg);
   app.input.qPressed = false;
 }
@@ -144,7 +154,9 @@ function senseStage(app) {
   app.lead.update(ctx.own);
   app.lead.screen(ctx.own);
   app.rwr.alarms(app, ctx.own);
-  updateLockTone(app, ctx.own);
+  // the belief of every tracked hull first: the markers are drawn on it
+  app.beliefs.update(app, ctx.own, ctx.dt);
+  updateLockTone(app, ctx.own, ctx.dt);
   app.rwr.arrows(app);
 }
 

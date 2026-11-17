@@ -7,7 +7,7 @@
 // the guns are when the aim assist has taken the sight off the view.  So the
 // reticle is never one mark - the lag between them is the machine.
 
-import { ARM_COLORS, ARM_NAMES, FAR_COLOR, TAU } from './layout.js';
+import { ARM_COLORS, ARM_NAMES, FAR_COLOR } from './layout.js';
 import { circle, dot, font } from './canvas.js';
 
 // Which arm owns the seeker, asked once and read by both things that need it:
@@ -149,33 +149,26 @@ export function crosshairs(ctx, s, w, h) {
 
 // 5 % of the view width across: the seeker's field of view.  The ring keeps its
 // arm colour (cyan left, amber right) in every state - a lock is shown by the
-// thicker rim, the diamond and the full progress arc.  `shift` slides the ring
-// sideways, in radii, when both arms carry a seeker.
+// heavier rim and the diamond, and the circle being on the hull *is* the lock, so
+// there is no partial state to draw.  `shift` slides the ring sideways, in radii,
+// when both arms carry a seeker.
 export function seekerRing(ctx, s, c, arm, w, shift) {
   const r = 0.5 * (s.lockFrac || 0.05) * w;
   const x = c.screen[0] + (shift || 0) * r;
   const y = c.screen[1];
   const col = ARM_COLORS[arm];
   const L = s.lock;
-  const p = L ? Math.max(0, Math.min(1, L.progress)) : 0;
-  const locked = p >= 1;
-  const held = L && p > 0;
+  // the candidate *stays* named after the cross leaves it (`Systems/Locking.cs`), so
+  // what the ring says is "the cross is on it": the hull's own projection inside the
+  // circle.  A named candidate the sight has moved off is the diamond's job.
+  const locked = !!L && !!L.screen
+    && Math.hypot(L.screen[0] - x, L.screen[1] - y) <= r * 1.15;
   ctx.save();
-  // idle rim
-  ctx.globalAlpha = c.disabled ? 0.2 : 0.55;
+  ctx.globalAlpha = c.disabled ? 0.2 : locked ? 1 : 0.55;
   ctx.strokeStyle = col;
-  ctx.lineWidth = 1.3;
+  ctx.lineWidth = locked ? 3.2 : 1.3;
   circle(ctx, x, y, r);
   ctx.stroke();
-  if (held) {
-    // acquisition progress runs round the rim, in the arm's own colour
-    ctx.globalAlpha = c.disabled ? 0.2 : 1;
-    ctx.strokeStyle = col;
-    ctx.lineWidth = locked ? 3.2 : 2.4;
-    ctx.beginPath();
-    ctx.arc(x, y, r, -Math.PI / 2, -Math.PI / 2 + p * TAU);
-    ctx.stroke();
-  }
   ctx.globalAlpha = c.disabled ? 0.2 : 0.95;
   ctx.fillStyle = col;
   dot(ctx, x, y, 1.5);
@@ -198,20 +191,48 @@ export function seekerRing(ctx, s, c, arm, w, shift) {
 
 // The tracked hull: a small marker on the target itself, in the colour of the
 // seeker that is tracking it, so the pilot can tell which vehicle was picked
-// from inside the circle.
+// from inside the circle.  A laser rider services four targets at once, so the
+// lines the designator holds that the cross is *not* on are drawn too, dimmer -
+// the pilot reads the whole set off the glass.
 export function lock(ctx, s) {
   const L = s.lock;
-  if (!L || !L.screen) return;
+  const arm = armOwner(s).arm;
+  const col = ARM_COLORS[arm];
+  const extra = s.lockExtra;
+  if (extra && extra.length) {
+    ctx.save();
+    ctx.strokeStyle = col;
+    ctx.lineWidth = 1.1;
+    for (const e of extra) {
+      // dim while the sight has lost that hull: the mark is then a belief walking
+      // on what the machine last measured, and it reads as one
+      ctx.globalAlpha = e.seen ? 0.95 : 0.45;
+      if (!e.screen) continue;
+      const x = e.screen[0];
+      const y = e.screen[1];
+      const m = 6;
+      ctx.beginPath();
+      ctx.moveTo(x, y - m);
+      ctx.lineTo(x + m, y);
+      ctx.lineTo(x, y + m);
+      ctx.lineTo(x - m, y);
+      ctx.closePath();
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+  // a candidate a shot has already claimed reads as a formal target, and the thin
+  // diamonds above have drawn it
+  if (!L || !L.screen || L.thin) return;
   const x = L.screen[0];
   const y = L.screen[1];
-  const p = Math.max(0, Math.min(1, L.progress));
-  const locked = p >= 1;
-  const arm = armOwner(s).arm;
   ctx.save();
-  ctx.strokeStyle = ARM_COLORS[arm];
-  ctx.lineWidth = locked ? 2 : 1.3;
-  ctx.globalAlpha = 0.9;
-  const m = locked ? 9 : 7;
+  ctx.strokeStyle = col;
+  ctx.lineWidth = 2;
+  // the same rule as a channel's mark: solid colour while the pilot's sight has
+  // the hull, dim once the mark is a walked belief
+  ctx.globalAlpha = L.seen ? 0.9 : 0.45;
+  const m = 9;
   ctx.beginPath();
   ctx.moveTo(x, y - m);
   ctx.lineTo(x + m, y);

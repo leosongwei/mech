@@ -39,8 +39,9 @@ SSE 的三条规矩在这个流里的样子：
 
 ```json
 {
-  "killed": { "name": "jack", "is_player": true },
-  "by":     { "name": "Char", "is_player": false },
+  "type": "killed",
+  "killed": { "name": "jack", "is_player": true, "unit_type": "mech" },
+  "by":     { "name": "Char", "is_player": false, "unit_type": "mech" },
   "weapon": "105mm smoothbore",
   "distance": 1654.1
 }
@@ -48,15 +49,59 @@ SSE 的三条规矩在这个流里的样子：
 
 | 字段 | 类型 | 含义 |
 | --- | --- | --- |
+| `type` | string | **这条消息是什么**。现在只有 `killed` 一种；以后流里放别的消息（比如占领、重开）时用它区分，读者应当先读这个字段，而不是从形状去猜 |
 | `killed.name` | string | 被击毁者的名字。玩家是**大厅呼号**；AI 机甲是名字池里的驾驶员名；没有名字的单位用类型名（`APC`、`RIFLEMAN`、`COMMAND BASE`） |
 | `killed.is_player` | bool | 这一端有没有玩家在开（`owner >= 0`） |
-| `by.name` | string | 打出**最后一击**的那一发的发出者 |
+| `killed.unit_type` | string | 被击毁者的类型，枚举见 §3.1 |
+| `by.name` | string | 打出**最后一击**的那一发的发出者。玩家是呼号；AI 机甲是驾驶员名；**车和兵没有名字，用类型名**（`APC`、`RIFLEMAN`、`AT RIFLEMAN`） |
 | `by.is_player` | bool | 那一发是不是玩家打的（AI 车组/步兵为 `false`） |
-| `weapon` | string | 造成最后一击的武器名，小写，和消息区行里的写法一致（`105mm smoothbore`、`saclos atgm`、`unguided rocket pod`） |
+| `by.unit_type` | string | 击杀者的类型，枚举见 §3.1 |
+| `weapon` | string | 造成最后一击的武器名，小写，和消息区行里的写法一致，枚举见 §3.2 |
 | `distance` | number | 这一发从**出膛位置**到**落点**的直线距离（斜距），米，一位小数；`-1` 表示没有发射点可量（见 §4.3） |
 
 名字里**没有 `[bot]` 后缀**（消息区有），因为 `is_player` 已经把这件事说清楚了：
 外面读这条流的人要的是数据，不是给眼睛看的排版。
+
+### 3.1 `unit_type` 枚举
+
+就是 `Core/Defs.cs` 里 `Defs.UNIT_DEFS[etype].key`，跟着单位表走（加单位就加一行）。
+一律小写下划线，不随消息区的叫法变。
+
+| `unit_type` | 是什么 | 能出现在 `killed` | 能出现在 `by` |
+| --- | --- | --- | --- |
+| `mech` | 机甲（玩家与 AI 的主力） | ✔ | ✔ |
+| `apc` | 轮式装甲车 | ✔ | ✔ |
+| `command_base` | 指挥部 | ✔（整场胜负的那一杀） | ✘（没有武器） |
+| `rifleman` | 步枪兵 | ✘（步兵不播报，见 §4.2） | ✔ |
+| `at_rifleman` | 反坦克兵（RPG） | ✘（同上） | ✔ |
+| `civilian` | 平民 | ✘（同上） | ✘ |
+| `bunker` | 混凝土碉堡 | ✘（`invulnerable`，打不坏） | ✘ |
+| `wreck` / `corpse` | 残骸 / 尸体 | ✘（不是 `unit`，不进击杀判定） | ✘ |
+
+所以实际上：`killed.unit_type` 只会是 `mech` / `apc` / `command_base` 三者之一；
+`by.unit_type` 是 `mech` / `apc` / `rifleman` / `at_rifleman` 之一（步兵开着枪打死机甲
+算一条，被打死的步兵不算）。
+
+### 3.2 `weapon` 枚举
+
+是 `Defs.WEAPONS[*].name` 转小写（`Defs` 里存的是大写，消息区也写小写）。括号里是它
+在代码和商店里的 `key`，加上挂它的平台：
+
+| `weapon` | `key` | 谁用 |
+| --- | --- | --- |
+| `30mm autocannon` | `ac30` | 机甲左臂（**所有**机甲配置的左臂都是它） |
+| `105mm smoothbore` | `g105` | 机甲右臂 / 靶场防御机甲 |
+| `unguided rocket pod` | `rocket` | 机甲右臂（玩家默认配置的右臂） |
+| `saclos atgm` | `saclos` | 机甲右臂 |
+| `top-attack ir atgm` | `topattack` | 机甲右臂 |
+| `rpg launcher` | `rpg` | 机甲右臂 / 反坦克兵 |
+| `12.7mm machine gun` | `mg127` | APC 左臂 / 机甲右臂（AI） |
+| `apc atgm` | `apc_atgm` | APC 右臂 |
+| `5.56mm rifle` | `rifle556` | 步枪兵 |
+| `empty` | `none` | 空挂点：正常击杀不会出现，见到就当未知 |
+
+武器名随 `Core/Defs.cs` 的 `WEAPONS` 表走（[weapons.md](weapons.md) 有全参数表）；新增
+武器时这张表要跟着加一行。
 
 ## 4. 口径
 
@@ -70,8 +115,11 @@ SSE 的三条规矩在这个流里的样子：
 击杀，因此**不出现在流里**；赏金照旧归玩家（那是显示器左下角的事，见
 [screens.md](screens.md) 第 2.3 节）。
 
-### 4.2 三种不上流的死亡
+### 4.2 四种不上流的死亡
 
+* **步兵**（步枪兵 / 反坦克兵 / 平民，即所有带 `person` 的单位）。一场仗打死几十个，
+  发出来就是刷屏——和消息区同一条规矩。**步兵当击杀者的那一条照发**（一个人用 RPG
+  掀掉一台机甲是条新闻），只有"被击毁者是步兵"被丢掉。
 * **两端都不是玩家**（AI 打 AI、车组打车组）。
 * **无名爆炸**：一发没人认领的爆炸（比如连环引爆里没有击杀者的那种）没有 `by`，
   也就没有可以写的名字。
@@ -88,11 +136,11 @@ SSE 的三条规矩在这个流里的样子：
 * 消息区把同一个数显示成千米（`0.81 km` / `2.6 km`），流里给的是**米的原值**，怎么
   写由读者决定。
 
-### 4.4 步兵也在流里
+### 4.4 一行流和一行字的区别
 
-消息区不刷步兵（一场仗打死几十个，会把整列刷满）。这条流只在**玩家参与的**那些死亡上
-二者一致；**玩家打死一个步兵会出现在流里**（`killed.name` 是 `RIFLEMAN` 之类），因为
-对屏幕外的读者来说那仍然是一条击杀记录。
+只有一处：消息区把那一行**画在屏幕上**给人看（带阵营颜色、底板、`[bot]` 后缀、千米），
+流给**程序和叠加层**（纯数据、裸名字、米）。所以两端是同一批击杀、同一份归属、同一个
+距离，读出来的东西可以互相对照。
 
 ## 5. 心跳与空服暂停
 
@@ -128,7 +176,9 @@ curl -sN http://127.0.0.1:8010/events/kills
 const es = new EventSource('http://127.0.0.1:8010/events/kills');
 es.onmessage = (e) => {
   const k = JSON.parse(e.data);
-  console.log(`${k.by.name} killed ${k.killed.name} with ${k.weapon} at ${k.distance} m`);
+  if (k.type !== 'killed') return;      // 以后可能还有别的消息类型
+  console.log(`${k.by.name} (${k.by.unit_type}) killed ${k.killed.name} `
+            + `(${k.killed.unit_type}) with ${k.weapon} at ${k.distance} m`);
 };
 ```
 
@@ -141,7 +191,9 @@ with urllib.request.urlopen('http://127.0.0.1:8010/events/kills') as r:
     for raw in r:                      # 一帧一行，空行是帧结束
         line = raw.decode().rstrip('\n')
         if line.startswith('data: '):
-            print(json.loads(line[6:]))
+            kill = json.loads(line[6:])
+            if kill['type'] == 'killed':
+                print(kill)
 ```
 
 `data:` 之后是一个完整的 JSON 对象，一帧只有一行数据，所以按行解析就够了（不用处理
@@ -150,9 +202,11 @@ with urllib.request.urlopen('http://127.0.0.1:8010/events/kills') as r:
 ## 8. 这一版不提供的
 
 * **历史击杀**、断线补偿、`Last-Event-ID` 续传。
-* **阵营、单位类型、时间戳、坐标**：现在只有名字、是不是玩家、武器、距离。要加字段
-  就得同时改 `KillFeed.KillRecord`、`KillStream._payload` 和本文档。
+* **阵营、时间戳、坐标、模块**（打的是底盘还是手臂、是不是残骸连锁引爆）：现在只有
+  类型、名字、是不是玩家、武器、距离。要加字段就得同时改 `KillFeed.KillRecord`、
+  `KillStream._payload` 和本文档。
 * **事件过滤参数**（比如 `?player_only=1`）：口径是固定的，见 §4。
+* **其它消息类型**：`type` 字段留着位置，但今天只有 `killed`。
 
 ## 9. 实现位置（维护者）
 

@@ -24,6 +24,10 @@
 //            trigger does nothing without a lock, and a locked round arrives
 //   channels four targets, four rounds, four lines at once - and a fifth target
 //            displacing the oldest
+//   paint    the *target's* end: what a pilot's warning receiver is told.  Every
+//            laser a machine emits is judged the same way - one down its sight,
+//            four steered at the hulls it holds - by whether the beam crosses
+//            that hull's body with nothing in between (`Beams.painting`)
 //
 // Every row prints the closest approach of its rounds to the target's centre and
 // how many of them were riding a live beam when the row did its damage, so a row
@@ -81,6 +85,7 @@ public static class BeamCheck
         Print("cone", 1600f, One(1600f, Cut.Cone));
         Pilot();
         Channels();
+        Paint();
         Held();
         Profile();
         return 0;
@@ -259,6 +264,113 @@ public static class BeamCheck
         }
         Console.WriteLine($"held     {state.ToString().TrimEnd()}");
         world.ecs.validate();
+    }
+
+    // ---- the other end of the laser ---------------------------------------
+
+    /// <summary>What the *target* is told, through the one rule every laser is judged
+    /// by: a beam is on a hull when it reaches that hull's body (`Defs.LASER_SPHERE`,
+    /// ten metres, around its centre) with nothing in between.  Every machine emits five
+    /// of them - the four channels its computer steers at the hulls it holds, and the
+    /// one down its sight, which burns whether it is guiding anything or not - and the
+    /// row walks the cases where the answer is not obvious: a sight merely laid on the
+    /// hull, a sight past the sphere, a lock steered 25 deg off the cross, a screen, a
+    /// body in the way.</summary>
+    private static void Paint()
+    {
+        var world = new World(7, "range");
+        var e = world.ecs;
+        var pl = world.add_player("PAINT");
+        // the range's own fixtures are hulls with a sight line too, and this row counts
+        // every mark the pilot's meta carries: nothing but this hull and the machine
+        // doing the painting is left on the map
+        foreach (int id in world.units()) if (id != pl.mech) e.destroy(id);
+        var me = e.fv("pos").get3(pl.mech);
+        int shooter = world.spawn_unit(Defs.ETYPE_MECH, 1 - pl.faction,
+                                       me.x + 800f, me.z, crew: false);
+        var sp = e.fv("pos").get3(shooter);
+        var ud = Defs.UNIT_DEFS[e.uv("etype")[pl.mech]];
+        var body = new Vec3(me.x, me.y + ud.height * 0.5f, me.z);
+        float r = Defs.LASER_SPHERE;
+        var sb = new System.Text.StringBuilder();
+
+        // a sight laid on the hull and nothing else: the cross is a laser, and it is
+        // burning whether or not this machine has a launcher fitted
+        _aim(world, shooter, body);
+        for (int t = 0; t < 3; t++) world.update(DT);
+        sb.Append($"sight on it: {_marks(world, pl)}");
+        // ...past the sphere the receiver answers to: the same sight, and the light
+        // misses it.  Nothing about the *angle* decides this, the sphere does
+        _aim(world, shooter, new Vec3(body.x, body.y, body.z + r * 2.2f));
+        for (int t = 0; t < 3; t++) world.update(DT);
+        sb.Append($"   sight {r * 2.2f:0.0} m off it: {_marks(world, pl)}");
+
+        // the lock: the computer steers a line at the hull it holds, and the operator's
+        // cross is 25 deg off the whole time - inside `BEAM_CONE`, which is where a
+        // SACLOS lock lives
+        e.fv("sight_yaw")[shooter] = MathF.Atan2(body.z - sp.z, body.x - sp.x) + 0.44f;
+        e.fv("sight_pitch")[shooter] = 0f;
+        int ch = Beams.lay(world, shooter, pl.mech);
+        for (int t = 0; t < 3; t++) world.update(DT);
+        sb.Append($"   lock, cross 25 deg off: {_marks(world, pl)}");
+
+        // a screen between the two: the channel is still held, the beam is not on the
+        // hull, and a receiver that rang through a screen would be ringing at nothing
+        float mid = (sp.x + me.x) * 0.5f;
+        int puff = _puff(world, new Vec3(mid, world.terrain.height_at(mid, sp.z) + 6f, sp.z), 45f);
+        for (int t = 0; t < 3; t++) world.update(DT);
+        sb.Append($"   screened: {_marks(world, pl)} ({_beam(world, shooter, ch)})");
+        if (puff >= 0 && e.is_alive(puff)) e.destroy(puff);
+        for (int t = 0; t < 3; t++) world.update(DT);
+        sb.Append($"   screen lifted: {_marks(world, pl)}");
+
+        // a hull parked on the line: the beam stops on the first body it meets, so the
+        // machine behind it is in the dark with the lock still on it
+        int block = world.spawn_unit(Defs.ETYPE_MECH, 1 - pl.faction,
+                                     me.x + 400f, me.z, crew: false);
+        for (int t = 0; t < 3; t++) world.update(DT);
+        sb.Append($"   hull in the way: {_marks(world, pl)} ({_beam(world, shooter, ch)})");
+        if (e.is_alive(block)) e.destroy(block);
+        for (int t = 0; t < 3; t++) world.update(DT);
+
+        // ...and a sight turned out of the cone takes the hull out of the picture: the
+        // channel goes with it
+        e.fv("sight_yaw")[shooter] = MathF.Atan2(body.z - sp.z, body.x - sp.x) + 1.05f;
+        for (int t = 0; t < 3; t++) world.update(DT);
+        sb.Append($"   looked away: {_marks(world, pl)} ({_beam(world, shooter, ch)})");
+        Console.WriteLine($"paint    {sb}");
+        world.ecs.validate();
+    }
+
+    /// <summary>Lay a designator's sight on a point, from the eye it looks out of.</summary>
+    private static void _aim(World world, int shooter, Vec3 at)
+    {
+        var e = world.ecs;
+        var (eye, _, _) = Weapons.aim_of(world, shooter);
+        float dx = at.x - eye.x, dy = at.y - eye.y, dz = at.z - eye.z;
+        e.fv("sight_yaw")[shooter] = MathF.Atan2(dz, dx);
+        e.fv("sight_pitch")[shooter] = MathF.Atan2(dy, MathF.Sqrt(dx * dx + dz * dz));
+    }
+
+    /// <summary>The machines the pilot's own meta says have a laser on his hull.</summary>
+    private static string _marks(World world, Player pl)
+    {
+        var meta = Netcode.meta_payload(world, pl);
+        if (meta["lasers"] is not List<object?> list || list.Count == 0) return "no mark";
+        var ids = new System.Text.StringBuilder();
+        foreach (var row in list)
+            if (row is Dictionary<string, object?> d && d.TryGetValue("id", out var id))
+                ids.Append(ids.Length > 0 ? "," : "").Append(id);
+        return $"{list.Count} mark (id {ids})";
+    }
+
+    /// <summary>What the launcher's channel is doing, read on its own: a lock that is
+    /// still held with the beam off it is a different thing from a lost lock.</summary>
+    private static string _beam(World world, int shooter, int ch)
+    {
+        var e = world.ecs;
+        if (ch < 0 || e.iv("beam_tgt").get(shooter, ch) < 0) return "channel given up";
+        return e.uv("beam_lit").get(shooter, ch) != 0 ? "beam on it" : "beam off it, lock held";
     }
 
     // ---- the round's own flight -------------------------------------------

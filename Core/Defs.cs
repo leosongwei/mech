@@ -1387,6 +1387,24 @@ public static partial class Defs
     // s; the time constant the designator smooths a target's measured pull over -
     // the same figure a crew measures one with (`Systems/AI/Support/Crew.cs`)
     public const float BEAM_ACCEL_TAU = 0.25f;
+
+    // ---- the warning receiver's side of the same lasers ----
+    // A laser is light and it is *on* a hull or it is not: the receiver's question is
+    // "does an enemy beam reach me", so the body it is asked about is a sphere - the
+    // hull's centre and a radius far wider than the hull itself - and every laser a
+    // machine emits (`Systems/Beams.cs::painting`) is tested against it, the four it
+    // steers and the one down its sight, in one loop.
+    //
+    // 10 m is the beam's own spread as the receiver sees it - a designator is a lamp,
+    // not a needle: an aperture scatters, the spot grows with range and the sensor has
+    // a threshold, so light that passes ten metres over the machine is still light in
+    // the receiver's eye.  It is the only number that sets how *sensitive* the warning
+    // is, and it is deliberately generous: the hull is 1.9 m across and the warning is
+    // worth hearing before the round is.
+    public const float LASER_SPHERE = 10.0f;    // m, the radius the receiver answers to
+    // m, how far a beam still counts: the SACLOS lock's own reach, which is the
+    // distance an enemy could be shooting a laser at this hull from at all
+    public const float LASER_RANGE = 3400f;
     // Where a seeker looks at a hull - the deck it dives on, as a fraction of the type's
     // `height`.  It has to stay *inside* the hull's own hit spheres or a round that flies
     // the aim point perfectly still misses the body: 0.92 of a mech's 6.5 m is 5.98 m

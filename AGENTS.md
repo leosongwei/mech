@@ -791,6 +791,24 @@ own; the wire is `net/wire.js` + `net/rows.js` and the picture is `net/view.js`.
   holds, whatever its course), a laser inside 3 km (a red **triangle** at its
   true position with a dashed beam) and a laser further out (the same triangle
   **pinned to the rim**: the bearing is real, the range is "3 km or more").
+  **The laser marks are the server's answer, drawn** (`Beams.painting`, sent per
+  pilot in `meta.lasers`).  A machine of the other side emits five lasers - the
+  four channels its computer steers at the hulls it holds, and the one down its
+  sight, which burns whether it is guiding anything or not - and all five are
+  asked one question: does this ray reach that hull's **body**, a sphere of
+  `Defs.LASER_SPHERE` (10 m, around the hull's centre) - wider than any hull on
+  purpose, because a designator is a lamp and a receiver has a threshold, so light
+  passing ten metres over the machine is light in its eye - with nothing in
+  between.  An angle can never answer it: a SACLOS lock steers its line at the
+  lead point, up to `BEAM_CONE` (40 deg) off the pilot's cross, so the launch a
+  pilot cannot see is the one that warns him.  The cut is the usual one - ground,
+  facade, canopy, smoke through `Sight.clear` - plus *other hulls*, because the
+  first body a ray meets is where the light ended; the ray is `LASER_RANGE`
+  (3.4 km) long.  A channel that walks its memory after the sight was cut is
+  still a lock and no longer light on the hull, so the lock holds and the
+  receiver is quiet.  One machine is one mark however many of its lines are on
+  the hull.  `beam_lit` is that same verdict per channel, written by
+  `Beams.run`.
   Five judgements, three outputs (`docs/product/rwr.md`):
   `heard` is `d² <= Λ²·K·v_c` with `Λ² = 10^(ΔL/20)` and ΔL = 12 dB
   (`ALARM_DB` / `ALARM_GAIN`), `seen` is `d² <= K·v_c`, `steady` is a horizontal
@@ -977,7 +995,11 @@ own; the wire is `net/wire.js` + `net/rows.js` and the picture is `net/view.js`.
   back into the cone is seen again the tick the sight is clear, the line relights
   and a round still in the air is corrected again.  `beam_ok` is written every tick
   (`1` while the sight has it or the memory is young, `0` after), since a lit beam
-  in a held-but-blind channel would steer rounds at a ghost.  `Systems/Locking.cs` is the acquisition
+  in a held-but-blind channel would steer rounds at a ghost.  `beam_lit` is the
+  other half of the same tick: is this channel's *line* - out of the sight head at
+  the aim point the computer holds - crossing the hull's body with nothing in
+  between.  That is the target's laser warning, and `Beams.painting` asks it of
+  the sight line too (`meta.lasers`).  `Systems/Locking.cs` is the acquisition
   half and the same interaction the top attack asks for - a channel *is* a lock,
   with no settle time anywhere in the table - with the two weapons differing in what
   holds after: a seeker

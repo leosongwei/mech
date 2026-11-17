@@ -66,8 +66,6 @@ export const ARROW_LEN = 66;                // px, the centre of the ring to the
 export const ARROW_HEAD = 26;               // px, the cone on the end
 export const ARROW_WID = 14;                // px, the shaft's diameter
 export const ARROW_RGB = [1.0, 0.29, 0.29];
-export const LASER_RANGE = 3400;            // longest sight an enemy could shoot at
-export const LASER_CONE = 0.05;             // rad, "his gun is pointed at me"
 
 // settings keys and the ring the aim assist catches the cross with: a multiple
 // of the plain pre-aim circle - wide grabs from further off, narrow asks the

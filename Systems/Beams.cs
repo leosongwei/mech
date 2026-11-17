@@ -81,6 +81,7 @@ public static class Beams
         e.fv("beam_seen").set(eid, ch, 0f);
         e.fv("beam_age").set(eid, ch, 0f);
         e.uv("beam_ok").set(eid, ch, 0);
+        e.uv("beam_lit").set(eid, ch, 0);
     }
 
     /// <summary>Give every channel up - the hull carries no launcher that could use
@@ -105,6 +106,10 @@ public static class Beams
         var age = e.fv("beam_age");
         var seen = e.fv("beam_seen");
         var ok = e.uv("beam_ok");
+        var lit = e.uv("beam_lit");
+        // the bodies a beam can be stopped by, asked once: a laser is a line and a hull
+        // is a sphere, so whatever crosses one of these first is where the light ended
+        var hulls = e.query("lockable");
         foreach (int eid in ids)
         {
             // most designators hold nothing most of the time: one pass over the
@@ -164,6 +169,14 @@ public static class Beams
                 // still *held* - which is the difference between a lock that
                 // outlasts a screen and one that dies with it
                 ok.set(eid, ch, seen.get(eid, ch) <= Defs.BEAM_MEMORY ? (byte)1 : (byte)0);
+                // the one byte the target's warning receiver reads: *is* this channel's
+                // laser on that hull this tick.  The line is the one the computer
+                // steers - out of the sight head at the aim point it holds - so a hull
+                // the beam leads hard enough, a screen, or a body in between all put
+                // the beam off it, and the receiver stays quiet while the channel walks
+                // on a guess
+                lit.set(eid, ch, visible && _body_hit(world, eye, _dir(eye, point), tid, eid, hulls)
+                                    ? (byte)1 : (byte)0);
             }
         }
     }
@@ -273,5 +286,106 @@ public static class Beams
         if (n < 1e-3f) return false;
         float dot = (vx * sight.x + vy * sight.y + vz * sight.z) / n;
         return MathF.Acos(Math.Clamp(dot, -1f, 1f)) <= cone;
+    }
+
+    // ---- the receiving end -------------------------------------------------
+    //
+    // A laser is light, and light is either on a hull or it is not - so every laser a
+    // machine emits is asked the same question of the hull it might be on: does this
+    // ray reach that hull's body (`Defs.LASER_SPHERE` around its centre), and does
+    // anything stand in between.  One loop answers it for the four channels
+    // the computer steers and for the sight, which burns whether or not the machine is
+    // guiding anything - which is what makes the warning receiver one rule instead of
+    // two (`painting`).
+
+    /// <summary>The sphere a beam has to reach to be on a hull: the body's own centre and
+    /// `Defs.LASER_SPHERE` - ten metres, the spread of the spot and the threshold of the
+    /// sensor rather than the hull's own width.</summary>
+    public static void hull_sphere(World world, int eid, out Vec3 centre, out float r)
+    {
+        var e = world.ecs;
+        var p = e.fv("pos").get3(eid);
+        var ud = Defs.UNIT_DEFS[e.uv("etype")[eid]];
+        centre = new Vec3(p.x, p.y + ud.height * 0.5f, p.z);
+        r = Defs.LASER_SPHERE;
+    }
+
+    /// <summary>The unit direction from `a` to `b` (zero when the two are the same).</summary>
+    private static Vec3 _dir(Vec3 a, Vec3 b)
+    {
+        float dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
+        float n = MathF.Sqrt(dx * dx + dy * dy + dz * dz);
+        return n < 1e-3f ? Vec3.zero : new Vec3(dx / n, dy / n, dz / n);
+    }
+
+    /// <summary>Where a ray meets a sphere, as the distance along it.  False when it
+    /// misses or the sphere is past `max_t`; a ray that starts inside answers 0.</summary>
+    private static bool _ray(Vec3 o, Vec3 d, Vec3 c, float r, float max_t, out float t)
+    {
+        float ox = o.x - c.x, oy = o.y - c.y, oz = o.z - c.z;
+        float b = ox * d.x + oy * d.y + oz * d.z;
+        float disc = b * b - (ox * ox + oy * oy + oz * oz - r * r);
+        if (disc < 0f) { t = 0f; return false; }
+        float s = MathF.Sqrt(disc);
+        float near = -b - s;
+        t = near >= 0f ? near : (-b + s >= 0f ? 0f : -1f);
+        return t >= 0f && t <= max_t;
+    }
+
+    /// <summary>Does this ray touch the hull `tid`'s body - and nothing before it.  A
+    /// machine in the way is a body too, so it stops the light: the closest hit along
+    /// the ray is the one that decides.</summary>
+    private static bool _body_hit(World world, Vec3 eye, Vec3 dir, int tid, int from,
+                                  int[] hulls, out Vec3 landed)
+    {
+        landed = Vec3.zero;
+        if (dir.x == 0f && dir.y == 0f && dir.z == 0f) return false;
+        hull_sphere(world, tid, out var centre, out float r);
+        if (!_ray(eye, dir, centre, r, Defs.LASER_RANGE, out float t)) return false;
+        // the machine firing is skipped: its eye sits inside its own body
+        foreach (int other in hulls)
+        {
+            if (other == tid || other == from) continue;
+            hull_sphere(world, other, out var oc, out float orad);
+            if (_ray(eye, dir, oc, orad, t, out _)) return false;
+        }
+        landed = new Vec3(eye.x + dir.x * t, eye.y + dir.y * t, eye.z + dir.z * t);
+        return true;
+    }
+
+    private static bool _body_hit(World world, Vec3 eye, Vec3 dir, int tid, int from,
+                                  int[] hulls) =>
+        _body_hit(world, eye, dir, tid, from, hulls, out _);
+
+    /// <summary>Every enemy machine with a laser on the hull `tid` right now - the one
+    /// question a warning receiver asks.  The lasers are all of them: the four channels
+    /// a designator steers at the hulls it holds (`beam_tgt`, its line the aim point in
+    /// `beam_mem`, its verdict already in `beam_lit`) and the one down its sight, which
+    /// is always burning because the sight *is* the designator.  Both end at the same
+    /// test - a ray against a hull's body, through whatever is in between - and a
+    /// machine is one mark however many of its lines are on the hull.</summary>
+    public static void painting(World world, int tid, List<int> into)
+    {
+        var e = world.ecs;
+        if (tid < 0 || !e.is_alive(tid) || !e.has(tid, "etype")) return;
+        var hulls = e.query("lockable");
+        var btgt = e.iv("beam_tgt");
+        var lit = e.uv("beam_lit");
+        byte faction = e.uv("faction")[tid];
+        foreach (int did in e.query("beam_tgt"))
+        {
+            if (e.uv("faction")[did] == faction) continue;
+            bool on = false;
+            for (int ch = 0; ch < Defs.BEAM_CHANNELS && !on; ch++)
+                on = btgt.get(did, ch) == tid && lit.get(did, ch) != 0;
+            if (!on)
+            {
+                var (eye, sy, sp) = Weapons.aim_of(world, did);
+                on = _body_hit(world, eye, MathUtil.dir_from(sy, sp), tid, did, hulls,
+                               out var landed)
+                     && Sight.clear(world, eye, landed, Sight.LOS_STEP);
+            }
+            if (on) into.Add(did);
+        }
     }
 }

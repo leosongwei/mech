@@ -292,6 +292,12 @@ public static class Components
         // whether the channel has a live beam this tick: the one thing the designator
         // tells the round beyond the track itself
         ecs.register("beam_ok", Kind.U8, 4, 0);
+        // whether that channel's *hull* is the thing the beam is on this tick - in
+        // the sight head's window and in sight, i.e. the laser reaching it.  The
+        // target's own warning receiver reads it (`Netcode.meta_payload`), because
+        // a beam is steered by the launcher's computer and can sit well off the
+        // cross the pilot is looking down
+        ecs.register("beam_lit", Kind.U8, 4, 0);
         // which channel a beam rider rides (`Systems/Flights.cs::Saclos`): the
         // laser is encoded per round, so four rounds in the air are four lines
         ecs.register("beam_ch", Kind.U8);
@@ -325,7 +331,7 @@ public static class Components
     /// `designator` tag.  A hull without a launcher never carries one.</summary>
     public static readonly string[] BEAM_COMPS = {
         "beam_tgt", "beam_age", "beam_seen", "beam_mem",
-        "beam_vel", "beam_acc", "beam_pv", "beam_ok",
+        "beam_vel", "beam_acc", "beam_pv", "beam_ok", "beam_lit",
     };
 
     /// <summary>...and the one byte a beam rider needs to know which line of the

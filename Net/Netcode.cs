@@ -34,6 +34,7 @@
 
 using System.Buffers.Binary;
 using System.IO.Compression;
+using Mech.Server.Systems;
 
 namespace Mech.Server;
 
@@ -835,6 +836,29 @@ public static class Netcode
                 });
             }
         }
+        // who has a laser on this hull: one question, asked of every laser an enemy
+        // machine emits - the four it steers at the hulls it holds and the one down
+        // its sight - in `Systems/Beams.cs::painting`.  A laser is light, so a beam a
+        // ridge, a stand of trees or a screen has cut says nothing, and a machine is
+        // one mark however many of its lines are on this hull.
+        var lasers = new List<object?>(Defs.BEAM_CHANNELS);
+        if (mech_ok)
+        {
+            var ids = new List<int>(Defs.BEAM_CHANNELS);
+            Beams.painting(world, pl.mech, ids);
+            Beams.hull_sphere(world, pl.mech, out var at, out _);
+            foreach (int did in ids)
+            {
+                // the laser's aperture is the sight head it comes out of
+                var from = Weapons.aim_of(world, did).origin;
+                lasers.Add(new Dictionary<string, object?>
+                {
+                    ["id"] = did,
+                    ["x"] = _r(from.x, 1), ["z"] = _r(from.z, 1),
+                    ["dist"] = _r(MathUtil.dist(from, at), 1),
+                });
+            }
+        }
         var towns = new List<object?>(world.towns.Count);
         foreach (var t in world.towns)
             towns.Add(new Dictionary<string, object?>
@@ -858,6 +882,8 @@ public static class Netcode
             // the lock a trigger pull would take, and the whole set behind it
             ["lock_target"] = pl.lock_target,
             ["locks"] = locks,
+            // the machines whose laser is on this hull, and where each one is
+            ["lasers"] = lasers,
             ["smoke"] = pl.smoke_charges,
             ["arms"] = new object?[] { _arm_meta(world, pl, 0), _arm_meta(world, pl, 1) },
             ["work"] = work,

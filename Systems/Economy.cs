@@ -14,7 +14,7 @@ namespace Mech.Server.Systems;
 
 public static class Economy
 {
-    public const float INCOME = 200f / 60f;   // $/s: $200 a minute, the same for everyone
+    public const float INCOME = 100f / 60f;   // $/s: $100 a minute, the same for everyone
 
     public static void run(World world, float dt)
     {

@@ -979,8 +979,22 @@ own; the wire is `net/wire.js` + `net/rows.js` and the picture is `net/view.js`.
   `tgt_mem` / `tgt_vel` from it - only for that hull, only while it is under half
   a second old, and only inside `lock_range` x 1.5 - so a shot fired through a
   screen is launched at the walked point the pilot was shown (`World.spawn_round`
-  takes it as `mem` / `memVel`).  An AI crew and a scripted shooter hand nothing
-  over and start on the hull itself, which is what their own sight is on.  Both events are logged (`mech.smoke`, at DEBUG): the loss,
+  takes it as `mem` / `memVel`).  A crew hands over the one its own lookout keeps
+  (`ai_tgt`, position + velocity + the age since it really saw the hull, lifted to
+  the deck the seeker dives on), so a crew's shot is launched on what the crew
+  believes too; a scripted shooter (a harness puppet) has no belief column and
+  starts on the hull itself, which is where its sight is.
+
+  **The round refreshes on the truth only through its own sight line**
+  (`Seeker.track`): `tgt_mem` / `tgt_vel` are copied off the live hull on a tick
+  where `Sight.why` says the line is clear, and on a tick where it is not the
+  point only walks at `tgt_vel` - no acceleration term, the same shape a
+  fire-and-forget round has.  The one way a blinded round takes a hull is
+  `Seeker.acquire`, which casts `Sight.clear` to every candidate it is judging, so
+  the authority it grabs is one it can see.  `--check beam`'s `belief` row is that
+  rule end to end: a blind round walks straight while its hull turns (lock open,
+  178 m off), and the tick the hull is back in the cone with the screen down the
+  stare is 0 m off its deck and the target id is back.  Both events are logged (`mech.smoke`, at DEBUG): the loss,
   which the range's smoke test reads (`MECH_LOG_LEVEL=DEBUG`), and
   `re-locked on hull N`, which nothing but a reader of the log sees - the
   pilot is not told that his round changed its mind, and the client shows no

@@ -324,17 +324,35 @@ public static class Weapons
 
         // a seeker leaves the tube on what its *shooter* knows, not on where the hull
         // happens to be: a lock weapon fired through a screen flies the belief the
-        // pilot was shown (`systems/belief.js` -> `Player.belief_*`), which is the
-        // walked point when his sight has lost it.  Only that hull's belief is used,
-        // only while it is fresh, and only inside the weapon's own reach - a round
-        // nobody handed a belief starts on the hull itself (`World.spawn_round`)
+        // machine was working on, which is the walked point when its sight has lost
+        // the hull.  A pilot's belief comes up with his input (`in.lb` ->
+        // `Player.belief_*`); a crew's is the one its own lookout maintains
+        // (`ai_tgt`, `Systems/AI/Sense.cs`).  Only that hull's belief is used, only
+        // while it is fresh, and only inside the weapon's own reach - a round nobody
+        // handed a belief starts on the hull itself (`World.spawn_round`)
         Vec3? mem = null, memv = null;
-        if (kind == 3 && target >= 0 && world.players.TryGetValue(e.iv("owner")[eid], out var shp)
-            && shp.belief_id == target && world.tick - shp.belief_tick <= 15
-            && MathUtil.dist(shp.belief_pos, origin) <= Defs.lock_range(wd) * 1.5f)
+        if (kind == 3 && target >= 0)
         {
-            mem = shp.belief_pos;
-            memv = shp.belief_vel;
+            if (world.players.TryGetValue(e.iv("owner")[eid], out var shp))
+            {
+                if (shp.belief_id == target && world.tick - shp.belief_tick <= 15
+                    && MathUtil.dist(shp.belief_pos, origin) <= Defs.lock_range(wd) * 1.5f)
+                {
+                    mem = shp.belief_pos;
+                    memv = shp.belief_vel;
+                }
+            }
+            else if (e.has(eid, "ai_tgt") && (int)e.fv("ai_tgt").get(eid, 7) != 0
+                     && e.fv("ai_tgt").get(eid, 6) <= AI.Crew.MEMORY)
+            {
+                // [x, y, z, vx, vy, vz, age, etype]: the point the crew believes the
+                // hull is at, lifted to the deck the seeker dives on
+                var b = e.fv("ai_tgt");
+                int bt = (int)b.get(eid, 7);
+                float bh = Defs.UNIT_DEFS.TryGetValue(bt, out var bud) ? bud.height : 6f;
+                mem = new Vec3(b.get(eid, 0), b.get(eid, 1) + Defs.AIM_ROOF * bh, b.get(eid, 2));
+                memv = new Vec3(b.get(eid, 3), b.get(eid, 4), b.get(eid, 5));
+            }
         }
 
         for (int k = 0; k < n; k++)

@@ -436,6 +436,34 @@ public static class BeamCheck
                 ? $" no belief: memory {toHull,4:0} m from the hull, {toBelief,4:0} m from the walk"
                 : $" belief:    memory {toHull,4:0} m from the hull, {toBelief,4:0} m from the walk,"
                   + $" vel ({mvel.x:0},{mvel.z:0})");
+            if (pass == 0) continue;
+
+            // ---- the rule the round lives by: authority only through a sight line
+            //
+            // blind, and the hull turns: the stare point must keep walking the velocity
+            // it was given, never snap onto where the hull actually went
+            e.fv("vel_cmd").set3(target, 0f, 0f, -18f);
+            var before = e.fv("tgt_mem").get3(round);
+            for (int t = 0; t < 45; t++) world.update(DT);
+            var blind = e.fv("tgt_mem").get3(round);
+            var hull = e.fv("pos").get3(target);
+            sb.Append($" | 1.5 s blind, hull turned: stare moved {MathUtil.dist(before, blind),4:0} m,"
+                      + $" {(e.iv("target").get(round, 0) < 0 ? "lock open" : "STILL LOCKED")},"
+                      + $" {MathUtil.dist(blind, hull),4:0} m off the hull");
+            // ...the hull drives back into the seeker's cone, the screen lifts, and
+            // the stare is the hull's own deck on that very tick
+            float ground = e.fv("pos").get3(target).y;
+            e.fv("pos").set3(target, blind.x, ground, blind.z);
+            e.fv("vel").set3(target, 0f, 0f, 0f);
+            e.fv("vel_cmd").set3(target, 0f, 0f, 0f);
+            foreach (int sid in e.query("smoke")) e.destroy(sid);
+            for (int t = 0; t < 3; t++) world.update(DT);
+            var seen = e.fv("tgt_mem").get3(round);
+            var now = e.fv("pos").get3(target);
+            var deck = new Vec3(now.x, now.y + Defs.AIM_ROOF *
+                                 Defs.UNIT_DEFS[Defs.ETYPE_MECH].height, now.z);
+            sb.Append($" | screen lifted: {MathUtil.dist(seen, deck),4:0} m off the deck,"
+                      + $" {(e.iv("target").get(round, 0) == target ? "re-locked" : "NO LOCK")}");
         }
         Console.WriteLine($"belief  {sb.ToString().TrimEnd()}");
         world.ecs.validate();

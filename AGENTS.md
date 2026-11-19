@@ -804,7 +804,7 @@ own; the wire is `net/wire.js` + `net/rows.js` and the picture is `net/view.js`.
   pilot cannot see is the one that warns him.  The cut is the usual one - ground,
   facade, canopy, smoke through `Sight.clear` - plus *other hulls*, because the
   first body a ray meets is where the light ended; the ray is `LASER_RANGE`
-  (3.4 km) long.  A channel that walks its memory after the sight was cut is
+  (4 km) long, the reach of the lock that aims it.  A channel that walks its memory after the sight was cut is
   still a lock and no longer light on the hull, so the lock holds and the
   receiver is quiet.  One machine is one mark however many of its lines are on
   the hull.  `beam_lit` is that same verdict per channel, written by
@@ -1499,10 +1499,10 @@ own; the wire is `net/wire.js` + `net/rows.js` and the picture is `net/view.js`.
 
   | radius | rows | the client constant behind it |
   | --- | --- | --- |
-  | 6 km | mech, APC, the range's bunkers | `Defs.ZERO_RANGE` 4 km - the centre cross and the impact marker solve *against these rows* - and `game.LASER_RANGE` 3.4 km |
+  | 6 km | mech, APC, the range's bunkers | `Defs.ZERO_RANGE` 4 km - the centre cross and the impact marker solve *against these rows* - and `game.LASER_RANGE` 4 km (the SACLOS lock's own reach) |
   | 6 km | smoke, canisters and puffs | `map.js sightBlocked` reads puffs out to the same 4 km |
   | 4 km | wrecks, shells | a hulk and a tracer are in the picture at the range a hull is |
-  | 3 km | guided rounds (rocket/SACLOS/top) | the dial and the receiver's gate are both `game.RWR_RANGE` 3 km and it reads *these* rows, so the alarm ceiling (2728 m) has to sit inside 3 km or the wire simply stops carrying the round |
+  | 4.5 km | guided rounds (rocket/SACLOS/top) | the guided arms reach 4 km (their `lock_range`) and the round has to be in the picture from the moment it is launched; the dial's face and the receiver's gate are the narrower `game.RWR_RANGE` 3 km, and the alarm ceiling (2728 m) sits inside that |
   | 3 km | infantry, civilians | they are 90 % of the field and invisible past a few hundred metres |
   | 2 km | corpses, anything else | |
   | always | the pilot's own hull, both command bases | see below |

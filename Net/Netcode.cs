@@ -381,17 +381,20 @@ public static class Netcode
     //                                            (`Defs.ZERO_RANGE`: the centre
     //                                            cross and the impact marker
     //                                            solve against these rows) and
-    //                                            the laser warning 3.4 km
+    //                                            the laser warning 4 km
     //         smoke, canisters and puffs         `map.js sightBlocked` reads
     //                                            puffs out to the same 4 km
+    //   4.5 km guided rounds (rocket/SACLOS/top) the receiver's own gate is
+    //                                            `RWR_RANGE` 3 km and it reads
+    //                                            *these* rows, so 3 km is the
+    //                                            floor; 4.5 km carries a launch
+    //                                            made at the top of the guided
+    //                                            arms' own reach (a 4 km lock,
+    //                                            and the round leaving from
+    //                                            behind the sight it was taken on)
     //   4 km  wrecks, shells                     a hulk and a tracer are still
     //                                            in the picture at the range a
     //                                            hull is
-    //   3 km  guided rounds (rocket/SACLOS/top)  the receiver's own gate is
-    //                                            `RWR_RANGE` 2 km and it reads
-    //                                            *these* rows, so 2 km is the
-    //                                            floor; 3 km keeps the launch
-    //                                            in sight
     //         infantry, civilians
     //   2 km  corpses, anything else
     //   always  the pilot's own hull, both command bases
@@ -407,7 +410,7 @@ public static class Netcode
     public const float TIER_HULL = 6000f;
     public const float TIER_WRECK = 4000f;
     public const float TIER_SHELL = 4000f;
-    public const float TIER_ROUND = 3000f;
+    public const float TIER_ROUND = 4500f;
     public const float TIER_INF = 3000f;
     public const float TIER_SMOKE = 6000f;
     public const float TIER_DEFAULT = 2000f;

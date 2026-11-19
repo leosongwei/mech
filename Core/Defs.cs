@@ -286,7 +286,8 @@ public sealed class WeaponDef
     public int range;               // m at which the round still carries its energy
     // m the *seeker* holds a lock to, for the kinds that need one (`@lock`).  A lock
     // weapon's `range` is the crew's launch decision, and a pilot's reach is not the
-    // AI's: the top attack is fired at 3 km and locked at 4.  0 = the same as `range`.
+    // AI's: the top attack is fired at 3 km and locked at 4, the beam rider fired at
+    // 3.4 and locked at 4.  0 = the same as `range`.
     public int lock_range;
     public int cost;                // $ for the hardware; -1 = not for sale
     public float ammo_cost;         // $ per round of a full load
@@ -498,7 +499,7 @@ public static partial class Defs
             life = 36.0f, wob = 12.0f, wob_f = 1.5f, maxdist = 4000.0f,
             ignite = 0.40f, mass = 45.0f, dia = 0.13f, cd0 = 0.60f, k_cl = 0.12f,
             cl_alpha = 15.0f, cl_max = 4.5f,
-            range = 3400, cost = 200, ammo_cost = 5.0f, @lock = 1, salvo = 0,
+            range = 3400, lock_range = 4000, cost = 200, ammo_cost = 5.0f, @lock = 1, salvo = 0,
             semi = 0, color = new[] { 0.35f, 1.0f, 0.55f }, cal = 152f,
             rcs = 0.02f, rack = RACK_SACLOS, desc = "Lock on, then ride the laser in",
         },
@@ -1418,8 +1419,8 @@ public static partial class Defs
     public const float RESPAWN_TIME = 8.0f;     // a mode's own rule (Mode.respawn_delay) may override it
     // Battle: the wait is the walk back to the front, so it is short on the enemy's
     // doorstep and long at home - interpolated on where the hull died.
-    public const float RESPAWN_AT_FRONT = 3.0f;  // killed at the enemy command base
-    public const float RESPAWN_AT_HOME = 40.0f;  // killed at your own command base
+    public const float RESPAWN_AT_FRONT = 1.5f;  // killed at the enemy command base
+    public const float RESPAWN_AT_HOME = 20.0f;  // killed at your own command base
     public const float BUILD_TIME = 5.0f;
 
     // optics / IR seeker
@@ -1460,9 +1461,9 @@ public static partial class Defs
     // is, and it is deliberately generous: the hull is 1.9 m across and the warning is
     // worth hearing before the round is.
     public const float LASER_SPHERE = 10.0f;    // m, the radius the receiver answers to
-    // m, how far a beam still counts: the SACLOS lock's own reach, which is the
-    // distance an enemy could be shooting a laser at this hull from at all
-    public const float LASER_RANGE = 3400f;
+    // m, how far a beam still counts: a designator locks a hull at 4 km
+    // (`WEAPONS[WID_SACLOS].lock_range`) and the receiver's own reach is this
+    public const float LASER_RANGE = 4000f;
     // Where a seeker looks at a hull - the deck it dives on, as a fraction of the type's
     // `height`.  It has to stay *inside* the hull's own hit spheres or a round that flies
     // the aim point perfectly still misses the body: 0.92 of a mech's 6.5 m is 5.98 m

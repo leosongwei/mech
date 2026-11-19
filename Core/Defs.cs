@@ -94,6 +94,9 @@ public static partial class Defs
     // the APC's own defence missile: the same round as the mech's SACLOS, fired
     // out of its turret one round every 5 s (see the entry in WEAPONS)
     public const int WID_APC_ATGM = 9;
+    // the S-8 pod's blast-fragmentation round: same airframe, motor and tubes as
+    // the shaped-charge one, a warhead for soft targets (see the entry in WEAPONS)
+    public const int WID_ROCKET_HE = 10;
 }
 
 // A launcher that carries its rounds in tubes is described once, here, and both
@@ -588,7 +591,8 @@ public static partial class Defs
         // machine that is supposed to kill it.  The `rack` is only here for `elev`: it
         // holds the tube at the 10 deg a soft launch needs.
         //
-        // Last in the list on purpose: `WEAPONS` is indexed by `wid`.
+        // Appended in `wid` order: `WEAPONS` is indexed by `wid`, so a new round goes
+        // on the end of the list and its constant on the end of the block above.
         new WeaponDef
         {
             wid = WID_APC_ATGM, key = "apc_atgm", name = "APC ATGM", kind = "saclos",
@@ -602,6 +606,51 @@ public static partial class Defs
             cost = -1, ammo_cost = 0.0f, @lock = 1, salvo = 0, semi = 0,
             color = new[] { 0.35f, 1.0f, 0.55f }, cal = 152f, rcs = 0.02f,
             rack = RACK_SACLOS, desc = "Beam riding, one round every five seconds",
+        },
+        // The S-8's high-explosive sibling: the same 80 mm airframe, the same 55 m/s
+        // launch charge, the same 560 m/s^2 motor and the same 5 x 8 nest of 40 tubes -
+        // a re-warheaded round, not a second weapon.  `kind` stays `rocket`, so it flies
+        // the one unguided law, is interceptable, and draws its tubes from
+        // `RACK_ROCKET`; nothing but the numbers below is its own.
+        //
+        // The warhead is blast-fragmentation: no shaped charge (AP 10, i.e. only the
+        // AD/5 graze through a 10-point plate), a bigger charge (ED 40 against the
+        // HEAT round's 35) and a *wider* pattern (ER 16 against 10).  ER is the whole
+        // of the trade: armour takes `ED - DE` (20 for a hull's 20 points of blast
+        // soak), which the pattern's width barely moves, while a man inside the ring
+        // takes it all - the radius a burst still kills a rifleman at is 11.6 m
+        // against the HEAT round's 6.9 m.
+        //
+        // The two warheads on `hit_damage` (an APC: 100 hp behind 10 / 20 of armour):
+        //
+        //            direct hit         2 m near miss
+        //   HEAT     40 -> 3 rounds     8.0
+        //   HE       24 -> 5 rounds     15.0
+        //
+        // so the pod trades its anti-armour role (three rounds was AD 25 through the
+        // plate plus the 15 the burst keeps off a 20-point DE, i.e. exactly 40 of a
+        // hull's 120) for the one thing that sweeps infantry and soft targets off a
+        // wide area.  The fuze is a contact one, like the HEAT round's: the S-8 is a
+        // dumb rocket, a man is killed by the blast he is standing in, and `prox`
+        // stays the 30 mm's own mechanism.
+        //
+        // What it changes about the base is the one number to know: DP 80 stops an
+        // 80 mm round either way, so the command base eats 20 a hit instead of 15 and
+        // costs **200 rockets instead of 267** (`docs/product/weapons.md`).
+        //
+        // The price is the HEAT pod's: the hardware is the same launcher and the
+        // explosive costs what the shaped charge costs, so `cost` 50 and `ammo_cost`
+        // 0.2 are copied on purpose - a pilot picks this by what he intends to shoot,
+        // never by the bill.
+        new WeaponDef
+        {
+            wid = WID_ROCKET_HE, key = "rocket_he", name = "HE ROCKET POD", kind = "rocket",
+            ap = 10f, ad = 20f, ed = 40f, er = 16.0f,
+            rpm = 600, mag = 40, reserve = 0, reload = 0.0f, vel = 55f, spread = 0.003f,
+            bias = 0.0429f, g = 9.81f, thrust = 560f, maxvel = 610f, life = 16.4f,
+            range = 1000, cost = 50, ammo_cost = 0.2f, @lock = 0, salvo = 1,
+            semi = 0, color = new[] { 1.0f, 0.78f, 0.32f }, cal = 80f, rcs = 0.005f,
+            rack = RACK_ROCKET, desc = "40 rounds, blast-fragmentation, sighted to 1 km",
         },
     };
 
@@ -759,9 +808,10 @@ public static partial class Defs
     public const float CORPSE_TIME = 5.0f;
     public const float WRECK_TIME = 10.0f;
 
-    // weapons a player may buy, in hotbar order
+    // weapons a player may buy, in hotbar order - the two rocket pods side by side,
+    // because they are the same launcher with two rounds
     public static readonly int[] BUYABLE =
-        { WID_AC30, WID_MG127, WID_ROCKET, WID_SACLOS, WID_TOPATTACK, WID_G105 };
+        { WID_AC30, WID_MG127, WID_ROCKET, WID_ROCKET_HE, WID_SACLOS, WID_TOPATTACK, WID_G105 };
 
     // what a mech leaves the lobby with: the loadout is not a menu choice - it is
     // bought back at the wrench (shop) like any other piece of equipment - and it is
@@ -774,12 +824,20 @@ public static partial class Defs
     // die roll instead: every mech hull fielded without an explicit loadout
     // (`World.spawn_unit`) draws one template off this table.  Weights are shares of
     // a single draw and have to add up to 1.
+    //
+    // The two rocket pods share the standard pair's 30 %: a crew draws the shaped
+    // charge twice as often as the blast round, because a crew fights hulls on the
+    // lanes and only the HEAT round takes one apart in three.  The guided arms carry
+    // 50 % between them (SACLOS 20 + top attack 15 + 105 mm 15), the share they had
+    // before the HE pod existed - the field's anti-armour capability is unchanged,
+    // only the rocket arm now has a second warhead.
     public static readonly (float share, int[] loadout)[] AI_LOADOUTS =
     {
-        (0.30f, new[] { WID_AC30, WID_ROCKET }),        // the standard pair
+        (0.20f, new[] { WID_AC30, WID_ROCKET }),        // the standard pair
+        (0.10f, new[] { WID_AC30, WID_ROCKET_HE }),     // the soft-target pod
         (0.10f, new[] { WID_AC30, WID_AC30 }),          // twin cannon: twice the rate, no rocket
-        (0.10f, new[] { WID_AC30, WID_SACLOS }),        // a beam rider in the right arm
-        (0.25f, new[] { WID_AC30, WID_TOPATTACK }),     // fire and forget, over the roof
+        (0.20f, new[] { WID_AC30, WID_SACLOS }),        // a beam rider in the right arm
+        (0.15f, new[] { WID_AC30, WID_TOPATTACK }),     // fire and forget, over the roof
         (0.15f, new[] { WID_AC30, WID_G105 }),          // 105 mm: one-round kills at 2.6 km
         (0.10f, new[] { WID_AC30, WID_MG127 }),         // cannon left, cheap gun right
     };

@@ -66,13 +66,6 @@ export async function boot(app) {
         app.message(`DEPLOYED AS ${msg.name}`, '#a9f0c0');
       }
     };
-    app.input.onPick = (idx, right) => {
-      // the digits only move the draft: CONFIRM is the one thing that spends
-      // money, and a number pressed with the panel shut picks nothing
-      if (!app.shopOpen) return;
-      const wid = app.buyable[idx];
-      if (wid !== undefined) app.shopDraft.arms[right ? 1 : 0] = wid;
-    };
     app.input.onShop = () => toggleShop(app);
     app.input.onShopConfirm = () => confirmShop(app);
     app.input.onShopCancel = () => closeShop(app);

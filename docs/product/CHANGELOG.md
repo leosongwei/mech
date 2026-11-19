@@ -11,6 +11,16 @@
 
 ---
 
+## 2026-11-19 · 换装面板的数字选武器路径删掉（1.37.1）
+
+- 面板里的武器**只靠鼠标点下拉列表**选。`Digit1`–`Digit6` 那条"按数字把武器放进草稿"
+  的键位路径（`bindings.js` 的 `pick` 动作、`Input.onPick`、`boot.js` 的接线）整条删除，
+  面板保留的键只有 `ENTER` 确认、`ESC` / `B` 关闭。这条路径在 HUD 上从来没有提示，
+  文档里却还写着 `1`–`6`，删掉之后代码与 `docs/product/screens.md` 的描述一致。
+- 涉及文件：`frontend/src/input/{bindings,index}.js`、`frontend/src/app/boot.js`。
+
+---
+
 ## 2026-11-19 · S-8 火箭巢多一个高爆弹头（HE），AI 配装表重排（1.37.0）
 
 - **新武器：高爆火箭巢**（`rocket_he`，"HE ROCKET POD"）。和破甲弹**同一个发射架**：

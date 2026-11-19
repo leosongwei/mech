@@ -36,18 +36,13 @@ export const PANEL = {
   settings: {
     Escape: { action: 'settings', prevent: true },
   },
-  // ENTER confirms the draft, ESC and B drop the panel, a digit picks the
-  // weapon for an arm (SHIFT for the right one)
+  // ENTER confirms the draft, ESC and B drop the panel.  A weapon is picked by
+  // clicking its entry in the panel's drop-down (`hud/panels/shop.js`), so the
+  // panel keeps only the keys that end the draft.
   shop: {
     Enter: { action: 'shopConfirm', prevent: true },
     Escape: { action: 'shopCancel', prevent: true },
     KeyB: { action: 'shopCancel', prevent: true },
-    Digit1: { action: 'pick', prevent: true },
-    Digit2: { action: 'pick', prevent: true },
-    Digit3: { action: 'pick', prevent: true },
-    Digit4: { action: 'pick', prevent: true },
-    Digit5: { action: 'pick', prevent: true },
-    Digit6: { action: 'pick', prevent: true },
   },
 };
 
@@ -80,9 +75,3 @@ export function lookup(code, panel) {
   return KEYS[code] || null;
 }
 
-// Digit1..Digit6 pick the weapon for an arm; the panel decides which arm
-// SHIFT is.  Returns the index the panel speaks in (0-based), -1 for anything
-// else.
-export function pickArm(code) {
-  return /^Digit[1-6]$/.test(code) ? parseInt(code.slice(5), 10) - 1 : -1;
-}

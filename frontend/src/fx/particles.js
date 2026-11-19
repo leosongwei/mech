@@ -103,17 +103,24 @@ export class Particles {
   }
 
   // a round hit the ground: dirt fountain + a little flash
+  //
+  // `radius` is the round's `ER`, i.e. the pattern itself, so the burst has to be
+  // as wide as the charge that made it: 10 m is the width every big round has
+  // drawn (the S-8's own, against the 30 mm's 8 and a beam rider's 6), and a
+  // wider pattern throws a wider ring of dirt and a wider flash.  The HE pod's
+  // 16 m charge is the first round in the game to want it.
   impact(x, y, z, radius, big, kind) {
+    const wide = Math.max(1, Math.min(2.5, (radius || 0) / 10));
     const n = big ? 12 : 5;
     for (let i = 0; i < n; i++) {
       const a = Math.random() * Math.PI * 2;
-      const sp = (0.4 + Math.random() * 1.6) * (big ? 3.5 : 1.6);
+      const sp = (0.4 + Math.random() * 1.6) * (big ? 3.5 : 1.6) * wide;
       this._add(
         x, y + 0.3, z,
         Math.cos(a) * sp, 1.5 + Math.random() * (big ? 7 : 3), Math.sin(a) * sp,
         0.55 + Math.random() * (big ? 1.1 : 0.6),
         (big ? 1.1 : 0.30) + Math.random() * (big ? 1.8 : 0.55),
-        (big ? 6 : 3.4) * (0.6 + Math.random() * 0.8),
+        (big ? 6 : 3.4) * (0.6 + Math.random() * 0.8) * wide,
         2.2, 5.5,
         Math.random() < 0.5 ? DUST : DUST_LIGHT,
         big ? 0.35 : 0.30,
@@ -140,8 +147,8 @@ export class Particles {
       x, y + 0.4, z,
       0, 0.4, 0,
       big ? 0.22 : 0.12,
-      (big ? 3.2 : 1.1) * Math.max(0.6, Math.min(2.5, radius)),
-      big ? 9 : 4,
+      (big ? 3.2 : 1.1) * Math.max(0.6, Math.min(2.5, radius)) * wide,
+      (big ? 9 : 4) * wide,
       0, 0,
       [1.0, 0.85, 0.45],
       0.7,

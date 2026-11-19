@@ -51,7 +51,15 @@ uniform float uFar;
 uniform float uUnlit;                // 1 = skip the lighting term (tracers)
 uniform float uFacade;               // 1 = paint storeys and windows on the walls
 uniform float uOutline;              // 0 off, 1 cylinder, 2 cone (overlay paint)
+uniform float uDither;               // 1 = the impact pass's noise mask
 out vec4 fragColor;
+
+// Interleaved gradient noise: a per-pixel value in [0,1) that reads as grain
+// rather than a lattice.  The impact pass throws away every fragment whose
+// alpha loses to it, so a body's transparency becomes the density of a speckle.
+float ign(vec2 p) {
+  return fract(52.9829189 * fract(0.06711056 * p.x + 0.00583715 * p.y));
+}
 
 // A plain cube read as a house: a darker plinth, a cornice under the roof and
 // a grid of windows, measured on the instance's own walls so every building
@@ -101,6 +109,18 @@ void main(){
   }
   float dist = distance(vWorld, uCamPos);
   ${fogAt('c', 'dist')}
-  fragColor = vec4(c, vColor.a);
+  // The impact pass's mask: a fragment keeps the whole pixel when its alpha
+  // beats the noise, and leaves the pixel to the layer behind it when it does
+  // not, so a fireball is a speckle whose density is its opacity.  The layers
+  // still stack - a pixel one body threw away is a pixel the next one fills -
+  // which is what keeps a cloud of thin puffs reading solid.  The threshold
+  // depends only on where the pixel is, so a held picture is a still one and a
+  // moving eye slides the world through the grain.
+  float alpha = vColor.a;
+  if (uDither > 0.5) {
+    if (alpha <= ign(gl_FragCoord.xy)) discard;
+    alpha = 1.0;
+  }
+  fragColor = vec4(c, alpha);
   ${logDepth()}
 }`;

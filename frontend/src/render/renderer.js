@@ -24,7 +24,7 @@ import { Overlay } from './overlay.js';
 import { drawFrame } from './passes.js';
 
 const MESH_UNIFORMS = ['uViewProj', 'uSun', 'uCamPos', 'uFogColor', 'uFogDensity', 'uFar',
-  'uUnlit', 'uFacade', 'uOutline'];
+  'uUnlit', 'uFacade', 'uOutline', 'uDither'];
 const INSTANCE_ATTRS = ['iM0', 'iM1', 'iM2', 'iM3', 'iColor'];
 
 export class Renderer {
@@ -45,6 +45,10 @@ export class Renderer {
     })();
     this.far = 32000;
     this.near = 1.0;
+    // 'quality' blends the impact effects, 'performance' draws them opaque with
+    // the shader's noise mask (`uDither`), which is the pass's own switch
+    this.quality = 'quality';
+    this._dither = false;
     this.stats = { draws: 0, instances: 0 };
     this.map = null;
     this._skipEmit = false;
@@ -222,6 +226,7 @@ export class Renderer {
     this.gpu.useProgram(this.mesh);
     gl.uniform1f(u.uUnlit, info.unlit ? 1 : 0);
     gl.uniform1f(u.uFacade, info.facade ? 1 : 0);
+    gl.uniform1f(u.uDither, this._dither ? 1 : 0);
     const first = this.meshFirst[mesh];
     const count = this.meshCount[mesh];
 
@@ -274,8 +279,12 @@ export class Renderer {
     this._flush(this.batches.opaque);
   }
 
-  flushBlended() {
+  flushBlended(dither) {
+    // `dither` is the effect pass's switch: drawn opaque, the shader throws away
+    // the fragments its noise beats, so the particles carry the depth buffer
+    this._dither = !!dither;
     this._flush(this.batches.blended);
+    this._dither = false;
   }
 
   _flush(set) {

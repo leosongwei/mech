@@ -2001,6 +2001,22 @@ g.net.send({ t: 'debug_god', on: true });                          // then confi
   committed). Adding an icon = an entry in `icons.json` + re-running that
   script; `drawIcon()` returns `false` while the face is loading, so callers
   keep a primitive fallback for the first frames.
+* **The impact particles have two ways of reaching the screen, and the setting picks
+  one** (`EFFECTS` in the settings panel, `mech.quality` in `localStorage`).
+  `passes.js`'s `particles` pass draws `R.flushBlended(dithered)` with
+  `{blend: true, depthWrite: false}` for `QUALITY` and `{blend: false,
+  depthWrite: false}` for `PERFORMANCE`; the `dithered` flag rides into
+  `renderer.submit` as the mesh program's `uDither`, where the fragment shader keeps
+  a pixel whole when its alpha beats `ign(gl_FragCoord.xy)` and throws the fragment
+  away when it does not (interleaved gradient noise: a per-pixel threshold, so the
+  grain is still while the picture is). A body's transparency becomes the density of
+  a speckle, and the pixels it throws away are pixels the layer behind fills. The
+  depth of a particle is written by neither mode on purpose: the layers keep the
+  order the pool emitted them, which makes the speckle an unbiased picture of the
+  blend - same brightness, same silhouette, one texture. `renderer.quality` is the
+  field the pass reads (`app/systems/settings.js::setQuality` writes it and the
+  storage). `discard` costs early-Z, and the pass is ROP-light either way, so on a
+  discrete card the setting is a look and not a frame rate.
 * `window.__game` (`game.js` instance) is exposed for automation: `g.input`,
   `g.net.send(...)`, `g.net.meta`, `g.net.entities`, `g.renderer`,
   `g.settingsOpen`, `g.audio.setVolume(0..1)`.

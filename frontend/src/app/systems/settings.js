@@ -1,12 +1,12 @@
-// The settings panel: the two volume sliders, the aim assist and its ring, and
-// the debug knobs.
+// The settings panel: the two volume sliders, the aim assist and its ring, the
+// effect quality and the debug knobs.
 //
 // The gear at the top right - pushed in from the corner to make room for the
 // warning circle - opens it.  It needs a free pointer, so it is clickable right
 // after ESC; like the rearm panel it owns the mouse while it is up, and the
 // panel state machine (`app/panels.js`) is what owns the pointer.
 
-import { ASSIST_KEY, RING_DEFAULT, RING_KEY, RING_MAX, RING_MIN } from '../../core/config.js';
+import { ASSIST_KEY, QUALITY_KEY, RING_DEFAULT, RING_KEY, RING_MAX, RING_MIN } from '../../core/config.js';
 import { clamp } from '../../core/math.js';
 import { load, save } from '../../core/storage.js';
 import { closePanel, openPanel } from '../panels.js';
@@ -21,6 +21,20 @@ export function savedAssist() {
 export function savedRing() {
   const v = parseFloat(load(RING_KEY, ''));
   return isFinite(v) ? clamp(v, RING_MIN, RING_MAX) : RING_DEFAULT;
+}
+
+// How the impact effects are drawn, as kept in storage: `quality` blends them
+// the way the game always has, `performance` writes them opaque with the
+// shader's noise mask (see `render/passes.js`).  The second one is for a machine
+// whose frame rate a fireball eats, so it is a setting and not a guess.
+export function savedQuality() {
+  return load(QUALITY_KEY, 'quality') === 'performance' ? 'performance' : 'quality';
+}
+
+export function setQuality(app, v) {
+  app.quality = v === 'performance' ? 'performance' : 'quality';
+  app.renderer.quality = app.quality;
+  save(QUALITY_KEY, app.quality);
 }
 
 export function toggleSettings(app) {
@@ -87,6 +101,11 @@ export function settingsClick(app, x, y) {
              () => app.audio.alarmVolume, (v) => app.audio.setAlarmVolume(v))) return;
   if (id === 'assist') {
     setAimAssist(app, !app.aimAssist);
+    return;
+  }
+  // the one switch that trades a look for frame time
+  if (id === 'quality') {
+    setQuality(app, app.quality === 'performance' ? 'quality' : 'performance');
     return;
   }
   // the ring's width: the bar absolute between its two ends, the buttons a half

@@ -70,13 +70,25 @@ const world = {
   },
 };
 
-// The blended sprites - dirt, sparks, fire, a missile's trail - after the opaque
-// bodies and before the overlay.  Alpha blends, and no depth writes: a puff of
-// dust must not hide the hull behind it.
+// The impact sprites - dirt, sparks, fire, a missile's trail - after the opaque
+// bodies and before the overlay.  `QUALITY` is the pass as it has always been:
+// alpha blends, no depth writes, so a puff of dust reads as a tint over the hull
+// behind it.
+//
+// `PERFORMANCE` draws the same instances opaque instead, each fragment kept or
+// thrown away against the shader's per-pixel noise (`uDither`): a body's
+// transparency becomes the density of a speckle, and the pixels it throws away
+// are pixels the layer behind fills.  Nothing is blended - no read-modify-write,
+// no per-sample cost - and the depth of a particle is written by nothing, which
+// is what keeps the speckle an unbiased picture of the blend: the layers keep
+// the order the pool emitted them in, exactly as the blended pass has them, so
+// the pile of fire is as bright as it was and only its texture changed.
 const particles = {
   name: 'particles',
   draw(R, cam) {
-    R.gpu.withState({ blend: true, depthWrite: false }, () => R.flushBlended());
+    const dithered = R.quality === 'performance';
+    R.gpu.withState({ blend: !dithered, depthWrite: false },
+      () => R.flushBlended(dithered));
   },
 };
 

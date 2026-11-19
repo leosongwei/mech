@@ -40,8 +40,10 @@ function boom(app, ev) {
   // loses the big-hit treatment the weapon's own `er` would have earned
   const big = !ev.small && (!!ev.big || (wd.er || 0) >= 5);
   // the flash and the kick are light and physics: immediate, the bang
-  // comes later
-  app.particles.impact(ev.x, ev.y, ev.z, ev.r || 1, big, wd.kind);
+  // comes later.  A round shot down had no warhead left to go off (`small`), so
+  // it breaks up as chips and dust whatever it was carrying
+  app.particles.impact(ev.x, ev.y, ev.z, ev.r || 0, big, wd.kind,
+                       ev.small ? 0 : (wd.ed || 0));
   // a destroyed hull is not a big round hit: it gets a fireball of its
   // own on top, and it is felt from further out
   if (ev.blast) app.particles.explosion(ev.x, ev.y, ev.z, ev.r || 15);

@@ -48,7 +48,7 @@ export function quote(cfg, meta, draft) {
   const prices = (cfg && cfg.rearm) || {};
   const refund = prices.sell_refund === undefined ? 0.5 : prices.sell_refund;
   const perHp = prices.repair_cost === undefined ? 1 : prices.repair_cost;
-  const smokeCost = prices.smoke_cost === undefined ? 10 : prices.smoke_cost;
+  const smokeCost = prices.smoke_cost === undefined ? 5 : prices.smoke_cost;
   const smokeFull = prices.smoke_charges === undefined ? 10 : prices.smoke_charges;
   // seconds at the wrench: a fit 2 s, a full load of rounds 4 s per arm,
   // a smoke rack 2 s, armour 2 s per 100 hp

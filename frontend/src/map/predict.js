@@ -5,6 +5,7 @@
 // field of `field.js`.
 
 import { obstacleAt, trunkHit } from './solid.js';
+import { rocketStep } from '../core/fcs.js';
 
 // Ballistic prediction for direct fire weapons (bullets + unguided rockets).
 export function predictImpact(map, wd, ox, oy, oz, dir, units, out, faction) {
@@ -27,7 +28,9 @@ export function predictImpact(map, wd, ox, oy, oz, dir, units, out, faction) {
   const maxT = wd.life;
   // the round now lives long enough to fly 10 km, so the candidate cut has to
   // follow the fuse too: a round that still has speed left can hit anything it
-  // can reach, not just what is inside its nominal `range`
+  // can reach, not just what is inside its nominal `range`.  `maxvel` is the fast
+  // end of the flight whether the round is thrusting or coasting, so drag only ever
+  // brings the real reach under this bound
   const reach = wd.life * Math.max(wd.vel, wd.maxvel || 0);
   const near = [];
   if (units) {
@@ -39,11 +42,10 @@ export function predictImpact(map, wd, ox, oy, oz, dir, units, out, faction) {
   }
   for (let t = 0; t < maxT; t += dt) {
     if (wd.kind === 'rocket') {
-      const s = Math.hypot(vx, vy, vz);
-      const ns = Math.min(wd.maxvel, s + wd.thrust * dt);
-      const k = ns / Math.max(s, 1e-6);
-      vx *= k; vy *= k; vz *= k;
-      vy -= wd.g * dt;
+      // the round's own airframe (`core/fcs.js`): the motor, then the drag off the
+      // speed it has left - the same step the zero was solved against, so the
+      // marker sits on the ground the round really lands on
+      [vx, vy, vz] = rocketStep(wd, vx, vy, vz, t, dt);
     } else {
       vy -= wd.g * dt;
     }

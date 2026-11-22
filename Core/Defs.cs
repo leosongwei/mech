@@ -439,12 +439,23 @@ public static partial class Defs
         // four, and the pod's 40 rounds would carry ten hulls instead of thirteen.
         // Only the direct hit moved: the burst, its 10 m, the infantry sweep and the
         // 267 rockets the command base costs are untouched.
+        //
+        // The round flies the airframe the two guided kinds fly, with nothing asked
+        // of it (`Flight.slide`): 80 mm and 11.3 kg of it, so `cd0` 0.3 costs 70 m/s^2
+        // at 610 m/s and the 560 m/s^2 motor needs 1.05 s to net that - burnout is
+        // the moment the round is at the `maxvel` clamp, exactly as the beam rider's
+        // is.  From there the speed decays with the drag: ~550 m/s and 6.6 m lower at
+        // 1 km than a constant-speed round would be, ~480 m/s and 20 m lower at 2 km.
+        // So `bias` 0.0493 rad is the pod's own mechanical zero - the sighting that
+        // puts that decaying round back on the sight line at 1 km, where the cannon
+        // shoots flat.
         new WeaponDef
         {
             wid = WID_ROCKET, key = "rocket", name = "UNGUIDED ROCKET POD", kind = "rocket",
             ap = 40f, ad = 25f, ed = 35f, er = 10.0f,
             rpm = 600, mag = 40, reserve = 0, reload = 0.0f, vel = 55f, spread = 0.003f,
-            bias = 0.0429f, g = 9.81f, thrust = 560f, maxvel = 610f, life = 16.4f,
+            bias = 0.0493f, g = 9.81f, thrust = 560f, maxvel = 610f, life = 16.4f,
+            burn = 1.05f, mass = 11.3f, dia = 0.080f, cd0 = 0.30f,
             range = 1000, cost = 50, ammo_cost = 0.2f, @lock = 0, salvo = 1,
             semi = 0, color = new[] { 1.0f, 0.45f, 0.15f }, cal = 80f, rcs = 0.005f,
             rack = RACK_ROCKET, desc = "40 rounds, hold to fire, sighted to 1 km",
@@ -554,12 +565,18 @@ public static partial class Defs
             cost = -1, ammo_cost = 0.05f, @lock = 0, salvo = 0, semi = 0,
             color = new[] { 1.0f, 0.9f, 0.5f }, cal = 5.56f, desc = "800 m rifle",
         },
+        // The rocket that has to be *aimed*: 85 mm and only 2.25 kg, so the same
+        // `cd0` 0.3 costs it 42 m/s^2 at its 300 m/s top speed and the 380 m/s^2
+        // booster has 0.8 s to spend.  A round that leaves at 50 m/s and coasts from
+        // 300 decays to 224 m/s and drops 10 m more by 800 m than a constant-speed
+        // one would - the launcher's own sight setting is what pays for it.
         new WeaponDef
         {
             wid = WID_RPG, key = "rpg", name = "RPG LAUNCHER", kind = "rocket",
             ap = 100f, ad = 40f, ed = 20f, er = 3.0f,
             rpm = 25, mag = 1, reserve = 900, reload = 6.5f, vel = 50f, spread = 0.008f,
             bias = 0.0f, g = 9.81f, thrust = 380f, maxvel = 300f, life = 33.3f, range = 800,
+            burn = 0.80f, mass = 2.25f, dia = 0.085f, cd0 = 0.30f,
             cost = -1, ammo_cost = 8.0f, @lock = 0, salvo = 0, semi = 0,
             color = new[] { 1.0f, 0.5f, 0.2f }, cal = 85f, rcs = 0.002f,
             desc = "800 m anti-tank rocket",
@@ -648,7 +665,8 @@ public static partial class Defs
             wid = WID_ROCKET_HE, key = "rocket_he", name = "HE ROCKET POD", kind = "rocket",
             ap = 10f, ad = 20f, ed = 40f, er = 16.0f,
             rpm = 600, mag = 40, reserve = 0, reload = 0.0f, vel = 55f, spread = 0.003f,
-            bias = 0.0429f, g = 9.81f, thrust = 560f, maxvel = 610f, life = 16.4f,
+            bias = 0.0493f, g = 9.81f, thrust = 560f, maxvel = 610f, life = 16.4f,
+            burn = 1.05f, mass = 11.3f, dia = 0.080f, cd0 = 0.30f,
             range = 1000, cost = 50, ammo_cost = 0.2f, @lock = 0, salvo = 1,
             semi = 0, color = new[] { 1.0f, 0.78f, 0.32f }, cal = 80f, rcs = 0.005f,
             rack = RACK_ROCKET, desc = "40 rounds, blast-fragmentation, sighted to 1 km",

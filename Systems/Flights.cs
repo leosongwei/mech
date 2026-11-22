@@ -239,12 +239,11 @@ public static class Flights
         }
     }
 
-    /// <summary>An unguided rocket: thrust along the velocity it already has, up
-    /// to `maxvel`, then gravity.  It never turns its nose, so it has no way to
-    /// point anywhere but where it is already going.</summary>
-    /// <summary>An unguided rocket: thrust along the velocity it already has, up
-    /// to `maxvel`, then gravity.  It never turns its nose, so it has no way to
-    /// point anywhere but where it is already going.</summary>
+    /// <summary>An unguided rocket: the same airframe the two guided kinds fly,
+    /// with nothing asked of it (`Flight.slide`).  It never turns its nose, so it
+    /// has no way to point anywhere but where it is already going; the motor pushes
+    /// along that line for `burn` seconds and the drag comes off it, so the round
+    /// slows once the motor is out instead of holding its top speed to the target.</summary>
     public static class Rocket
     {
         public static void run(World world, float dt)
@@ -258,13 +257,9 @@ public static class Flights
                     if (!_begin(r)) continue;
                     var wd = Defs.WEAPONS[r.wid];
                     var p0 = r.pos;
-                    var vel = r.vel;
-                    float vx = vel.x, vy = vel.y, vz = vel.z;
-                    var (sp, _) = _norm(new Vec3(vx, vy, vz));
-                    float speed = MathF.Min(wd.maxvel,
-                                            MathF.Sqrt(vx * vx + vy * vy + vz * vz)
-                                            + wd.thrust * dt);
-                    var v = new Vec3(sp.x * speed, sp.y * speed - wd.g * dt, sp.z * speed);
+                    // the age the round had when the last step produced this
+                    // velocity, i.e. `Expire` has already counted this tick
+                    var v = Flight.slide(r.vel, r.age - dt, wd, dt);
                     _move(world, r, p0, v, dt);
                 }
             }

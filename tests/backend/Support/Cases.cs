@@ -62,6 +62,13 @@ public static class Cases
                 hit_r = wd.GetProperty("hit_r").GetSingle(),
                 spread = wd.GetProperty("spread").GetSingle(),
                 range = wd.GetProperty("range").GetInt32(),
+                // an unguided rocket is flown by its airframe, so a row has to carry
+                // the airframe's own numbers for either host to fly it
+                burn = wd.TryGetProperty("burn", out var burn) ? burn.GetSingle() : 0f,
+                ignite = wd.TryGetProperty("ignite", out var ignite) ? ignite.GetSingle() : 0f,
+                mass = wd.TryGetProperty("mass", out var mass) ? mass.GetSingle() : 0f,
+                dia = wd.TryGetProperty("dia", out var dia) ? dia.GetSingle() : 0f,
+                cd0 = wd.TryGetProperty("cd0", out var cd0) ? cd0.GetSingle() : 0f,
             };
             c.shot = new FireControl.Shot(ReadVec3(shot.GetProperty("muzzle")),
                                           ReadVec3(shot.GetProperty("eye")), weapon,

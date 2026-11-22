@@ -11,6 +11,24 @@
 
 ---
 
+## 2026-11-21 · 无制导火箭有了空气阻力：熄火后越飞越慢（1.40.0）
+
+- **火箭弹和两种导弹共用一个气动外形**（`Flight.slide`）：80 mm、11.3 kg，`cd0` 0.3
+  加跨音速上升项。熄火（1.05 s、约 360 m）时正好 610 m/s，之后一路衰减：1 km 处
+  约 546 m/s、2 km 约 478 m/s。落点因此比原来低——1 km 低 6.6 m、3.2 km 低 60 m，
+  飞行时间 1 km 由 2.1 s 变 2.2 s、3.2 km 由 5.7 s 变 6.9 s。RPG 是同一副外形的
+  小一号：0.8 s 助推，800 m 处 224 m/s、比原来低 10 m。
+- **火控解的是这一发弹**：炮管的零位、机组的 `aim_elev`、客户端准星上的落点，全部
+  用同一副外形积分（`Flight.slide` / `rocketStep`），两端仍在 `tests/cases/fcs.json`
+  上逐行对齐（42 行零分歧）。
+- **火箭巢的机械上仰 2.46° → 2.83°**（`bias` 0.0429 → 0.0493）：还是"1 km 上穿过
+  瞄准线"，只是现在要补上衰减掉的那 6.6 m。
+- 涉到文件：`Core/{Flight,Defs,Ballistics}.cs`、`Systems/Flights.cs`、
+  `frontend/src/{core/fcs.js,map/predict.js}`、
+  `docs/product/{rules/weapons.md,systems/flight.md,systems/firecontrol.md}`。
+
+---
+
 ## 2026-11-19 · 平衡：死亡等待减半、SACLOS 锁距 4 km、激光告警与制导弹视距跟着放大（1.39.0）
 
 - **死亡等待减半，基数和惩罚项一起**：战斗模式的重生倒计时按"阵亡处到敌方指挥部

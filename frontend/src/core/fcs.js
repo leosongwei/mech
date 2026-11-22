@@ -22,22 +22,69 @@ const LEAD_ACCEL_MAX = 12;          // m/s^2, above the mech's 9.3 (measurement 
 const INNER = 4;                    // passes on the sight elevation
 const CONVERGE = 0.15;              // m, the elevation loop's stopping distance
 
+const RHO = 1.225;                  // kg/m^3, sea level (the server's `Flight.RHO`)
+const MACH = 340;                   // m/s, "0.9 M" in this model (`Flight.MACH`)
+const GRAVITY = 9.81;               // m/s^2, `Flight.GRAVITY`
+
+// One tick of an unguided rocket's airframe: thrust along the flight path for
+// `burn` seconds, drag off it from the speed it is doing, gravity always down.  The
+// round has no wing and no seeker, so its nose stays on the velocity and there is
+// no lift to spend - this is `Flight.slide` on the server, and the same polar the
+// two guided kinds pay (`cd0` plus the transonic rise).
+//
+// The airframe's reference area comes from the round's own calibre (`dia`), so a
+// rocket's drag is a property of the round and not a knob: 80 mm and 11.3 kg costs
+// 70 m/s^2 at 610 m/s, which is why the pod's 560 m/s^2 motor needs a second.
+export function rocketStep(wd, vx, vy, vz, age, dt) {
+  const speed = Math.hypot(vx, vy, vz);
+  const inx = speed > 1e-9 ? vx / speed : 1, iny = speed > 1e-9 ? vy / speed : 0;
+  const inz = speed > 1e-9 ? vz / speed : 0;
+  const q = 0.5 * RHO * speed * speed;
+  const r = (wd.dia || 0) / 2;
+  const s = Math.PI * r * r;
+  const over = Math.max(0, speed / MACH - 0.80);
+  // the round's own size, not a knob: `dia` sets the reference area, `mass` turns
+  // the force into the deceleration (`Flight._area`)
+  const drag = q * s * (wd.cd0 + 0.4 * over * over) / wd.mass;
+  const ignite = wd.ignite || 0;
+  // m/s^2 along the path: `thrust` is already an acceleration, `drag` a force
+  const push = age > ignite && age <= ignite + (wd.burn || 0) && speed < wd.maxvel
+    ? wd.thrust : 0;
+  let nx = vx + (push - drag) * inx * dt;
+  let ny = vy + (push - drag) * iny * dt - GRAVITY * dt;
+  let nz = vz + (push - drag) * inz * dt;
+  const nsp = Math.hypot(nx, ny, nz);
+  if (nsp > wd.maxvel) {                    // structural / motor limit
+    const k = wd.maxvel / nsp;
+    nx *= k; ny *= k; nz *= k;
+  }
+  return [nx, ny, nz];
+}
+
 // height and flight time of the round once it has covered `dist` metres of
-// horizontal travel: the same step, gravity and thrust curve the server runs
+// horizontal travel: the same step, gravity and airframe the server runs
 export function flightTo(wd, ox, oy, oz, yaw, pitch, dist) {
   const cp = Math.cos(pitch);
   let vx = cp * Math.cos(yaw) * wd.vel, vy = Math.sin(pitch) * wd.vel, vz = cp * Math.sin(yaw) * wd.vel;
   let x = ox, y = oy, z = oz;
   const dt = 1 / 30;
   const life = wd.life;
+  const rocket = wd.kind === 'rocket';
   let prevH = 0, prevY = y;
   for (let t = 0; t < life; t += dt) {
-    if (wd.thrust) {
+    if (rocket) {
+      // a rocket flies the airframe the round itself flies, drag and all: its arc
+      // decays after burnout, so a zero solved off a constant-speed round would
+      // put the first shot long
+      [vx, vy, vz] = rocketStep(wd, vx, vy, vz, t, dt);
+    } else if (wd.thrust) {
       const speed = Math.hypot(vx, vy, vz);
       const k = Math.min(wd.maxvel, speed + wd.thrust * dt) / Math.max(speed, 1e-6);
       vx *= k; vy *= k; vz *= k;
+      vy -= wd.g * dt;
+    } else {
+      vy -= wd.g * dt;
     }
-    vy -= wd.g * dt;
     x += vx * dt; y += vy * dt; z += vz * dt;
     const h = Math.hypot(x - ox, z - oz);
     if (h >= dist) {

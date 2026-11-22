@@ -31,26 +31,38 @@ public static class Ballistics
                                                 float dist)
     {
         var d = MathUtil.dir_from(yaw, pitch);
-        float vx = d.x * wd.vel, vy = d.y * wd.vel, vz = d.z * wd.vel;
+        var v = new Vec3(d.x * wd.vel, d.y * wd.vel, d.z * wd.vel);
         float x = origin.x, y = origin.y, z = origin.z;
         float g = wd.g;
         float thrust = wd.thrust;
         float maxvel = wd.maxvel;
         float life = wd.life;
+        // a rocket is flown by the airframe the round itself flies, drag and all
+        // (`Flight.slide`): its arc decays after burnout, so a zero solved off a
+        // constant-speed round would put the first shot long or short.  A guided
+        // round is predicted off its motor's flat curve - what it really flies is
+        // its guidance's business, and that needs a target
+        bool rocket = wd.kind == "rocket";
         float prev_h = 0f;
         float prev_y = y;
         float t = 0f;
         while (t < life)
         {
-            if (thrust > 0f)
+            if (rocket)
             {
-                float speed = MathF.Sqrt(vx * vx + vy * vy + vz * vz);
-                float k = MathF.Min(maxvel, speed + thrust * DT) / MathF.Max(speed, 1e-6f);
-                vx *= k;
-                vy *= k;
-                vz *= k;
+                v = Flight.slide(v, t, wd, DT);
             }
-            vy -= g * DT;
+            else
+            {
+                if (thrust > 0f)
+                {
+                    float speed = MathF.Sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+                    float k = MathF.Min(maxvel, speed + thrust * DT) / MathF.Max(speed, 1e-6f);
+                    v = new Vec3(v.x * k, v.y * k, v.z * k);
+                }
+                v = new Vec3(v.x, v.y - g * DT, v.z);
+            }
+            float vx = v.x, vy = v.y, vz = v.z;
             x += vx * DT;
             y += vy * DT;
             z += vz * DT;
@@ -92,8 +104,9 @@ public static class Ballistics
             if (disc < 0f) return null;
             return MathF.Atan2(v2 - MathF.Sqrt(disc), g * d);
         }
-        // thrusting rocket: no closed form, and the altitude at range is a steep
-        // function of the elevation, so walk it in with a secant instead of Newton
+        // a rocket: no closed form - the motor's push and the airframe's drag make
+        // the altitude at range a steep function of the elevation - so walk it in
+        // with a secant instead of Newton
         // `flight_at` gives an absolute height, so the walk compares it against the
         // target's absolute height: `h` is the drop below the muzzle and only serves
         // the closed form above.  Mixing the two put the round one muzzle height

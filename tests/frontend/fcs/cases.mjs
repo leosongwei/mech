@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-import { solve } from '../../../frontend/src/core/fcs.js';
+import { rocketStep, solve } from '../../../frontend/src/core/fcs.js';
 import { TOL } from '../support/tol.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -63,12 +63,18 @@ export function closest(c, sol) {
   let best = Infinity;
   const dt = 1 / 30;
   for (let t = 0; t < wd.life; t += dt) {
-    if (wd.thrust) {
-      const s = Math.hypot(vx, vy, vz);
-      const k = Math.min(wd.maxvel, s + wd.thrust * dt) / Math.max(s, 1e-6);
-      vx *= k; vy *= k; vz *= k;
+    if (wd.kind === 'rocket') {
+      // the round's own airframe, drag included: the solution has to put *that*
+      // round on the target
+      [vx, vy, vz] = rocketStep(wd, vx, vy, vz, t, dt);
+    } else {
+      if (wd.thrust) {
+        const s = Math.hypot(vx, vy, vz);
+        const k = Math.min(wd.maxvel, s + wd.thrust * dt) / Math.max(s, 1e-6);
+        vx *= k; vy *= k; vz *= k;
+      }
+      vy -= wd.g * dt;
     }
-    vy -= wd.g * dt;
     const nx = px + vx * dt, ny = py + vy * dt, nz = pz + vz * dt;
     const a = target_at(c, t), b = target_at(c, t + dt);
     // the tick's relative motion: the round's leg minus the target's

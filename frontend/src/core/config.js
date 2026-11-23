@@ -82,6 +82,7 @@ export const ARROW_RGB = [1.0, 0.29, 0.29];
 export const NAME_KEY = 'mech.name';        // the callsign, remembered across reloads
 export const ASSIST_KEY = 'mech.aimassist'; // the aiming rule, remembered too
 export const RING_KEY = 'mech.aimring';     // how wide the ring it snaps to is drawn
+export const QUALITY_KEY = 'mech.quality';  // how the impact effects are drawn
 export const RING_MIN = 2;
 export const RING_MAX = 8;
 export const RING_DEFAULT = 4;

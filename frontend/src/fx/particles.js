@@ -28,6 +28,7 @@ function makeSlot() {
     x: 0, y: 0, z: 0,
     vx: 0, vy: 0, vz: 0,
     life: 0,                    // s of life left; <= 0 is a free slot
+    fade: FADE,                 // s of it over which the body fades out
     size: 0, grow: 0, drag: 0, grav: 0,
     col: DUST, alpha: 0,
     mesh: MESH.SPHERE,
@@ -75,7 +76,8 @@ export class Particles {
 
   // The one writer of a slot.  Position, velocity, then the body's own numbers:
   // life, size, grow, drag, gravity, colour, alpha, and the primitive it is drawn
-  // as (a shard is the only thing that is not a dot).
+  // as (a shard is the only thing that is not a dot).  The fade window is derived
+  // from the life rather than passed (see `p.fade` below).
   _add(px, py, pz, vx, vy, vz, life, size, grow, drag, grav, col, alpha, mesh = MESH.SPHERE) {
     let slot;
     if (this.free > 0) {
@@ -91,6 +93,11 @@ export class Particles {
     const p = this.slots[slot];
     p.x = px; p.y = py; p.z = pz;
     p.vx = vx; p.vy = vy; p.vz = vz;
+    // how long the fade at the end of this body's life lasts: `FADE` is written
+    // for dust and smoke, which live for seconds, and a burst's flash lives for a
+    // fifth of one - it fades over its own life so it is born solid, which is the
+    // whole difference between a body of fire and a tint over the ground
+    p.fade = Math.min(FADE, Math.max(0.05, life));
     p.life = life; p.size = size; p.grow = grow;
     p.drag = drag; p.grav = grav;
     p.col = col; p.alpha = alpha; p.mesh = mesh;
@@ -102,56 +109,116 @@ export class Particles {
     if (this.head < 0) this.head = slot;
   }
 
-  // a round hit the ground: dirt fountain + a little flash
-  impact(x, y, z, radius, big, kind) {
+  // A round landing: dirt first, then whatever the warhead has to give.
+  //
+  // Three of its inputs decide the picture:
+  //
+  //   `radius`  the round's `ER`, i.e. the pattern itself.  10 m is the width every
+  //             big round has drawn (the S-8's, against the 30 mm's 8 and a beam
+  //             rider's 6), and a wider charge throws a wider ring of dirt and a
+  //             wider flash;
+  //   `ed`      whether the round carries a charge at all.  A slug - the 5.56 and
+  //             the 12.7 - goes into the ground as chips and a little dust, and
+  //             everything with `ED` bursts into fire;
+  //   `kind`    which charge.  A guided warhead (SACLOS, the top attack) is the
+  //             heaviest one on the field and keeps a cloud of fire after the
+  //             flash has gone.
+  //
+  // The flash is drawn solid - a body of fire rather than a tint over the ground
+  // behind it - which is what makes a 16 m charge read as bigger than a 10 m one.
+  impact(x, y, z, radius, big, kind, ed = 0) {
+    const wide = Math.max(1, Math.min(2.5, (radius || 0) / 10));
+    const charged = ed > 0;
+    const heavy = kind === 'saclos' || kind === 'top';
+    // the dirt the round throws, both ways
     const n = big ? 12 : 5;
     for (let i = 0; i < n; i++) {
       const a = Math.random() * Math.PI * 2;
-      const sp = (0.4 + Math.random() * 1.6) * (big ? 3.5 : 1.6);
+      const sp = (0.4 + Math.random() * 1.6) * (big ? 3.5 : 1.6) * wide;
       this._add(
         x, y + 0.3, z,
         Math.cos(a) * sp, 1.5 + Math.random() * (big ? 7 : 3), Math.sin(a) * sp,
         0.55 + Math.random() * (big ? 1.1 : 0.6),
         (big ? 1.1 : 0.30) + Math.random() * (big ? 1.8 : 0.55),
-        (big ? 6 : 3.4) * (0.6 + Math.random() * 0.8),
+        (big ? 6 : 3.4) * (0.6 + Math.random() * 0.8) * wide,
         2.2, 5.5,
         Math.random() < 0.5 ? DUST : DUST_LIGHT,
         big ? 0.35 : 0.30,
       );
     }
-    // sparks / fire
-    const sparks = big ? 10 : 3;
-    for (let i = 0; i < sparks; i++) {
-      const a = Math.random() * Math.PI * 2;
-      const sp = (big ? 8 : 4) * Math.random() + 2;
-      this._add(
-        x, y + 0.3, z,
-        Math.cos(a) * sp, 2 + Math.random() * (big ? 12 : 5), Math.sin(a) * sp,
-        0.18 + Math.random() * 0.3,
-        0.25 + Math.random() * 0.3,
-        -0.1,
-        0.6, 14,
-        Math.random() < 0.5 ? SPARK : FIRE,
-        0.95,
-      );
+    // a slug: chips of what it went into, and no fire
+    if (!charged) {
+      for (let i = 0; i < 6; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const sp = 2 + Math.random() * (big ? 6 : 4);
+        this._add(
+          x, y + 0.3, z,
+          Math.cos(a) * sp, 3 + Math.random() * (big ? 8 : 5), Math.sin(a) * sp,
+          0.5 + Math.random() * 0.9,
+          0.09 + Math.random() * 0.16,
+          -0.05,
+          0.2, 16,
+          Math.random() < 0.5 ? DUST : DUST_LIGHT,
+          1,
+          MESH.CONE,
+        );
+      }
     }
-    // brief muzzle-sized flash on the ground
+    // a charge: sparks and burning debris, more of them the heavier it is
+    if (charged) {
+      const sparks = big ? (heavy ? 14 : 10) : 3;
+      for (let i = 0; i < sparks; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const sp = ((big ? 8 : 4) * Math.random() + 2) * wide;
+        this._add(
+          x, y + 0.3, z,
+          Math.cos(a) * sp, 2 + Math.random() * (big ? 12 : 5), Math.sin(a) * sp,
+          0.18 + Math.random() * 0.3,
+          0.25 + Math.random() * 0.3,
+          -0.1,
+          0.6, 14,
+          Math.random() < 0.5 ? SPARK : FIRE,
+          0.95,
+        );
+      }
+    }
+    // a guided warhead: fire that goes on burning once the flash is out
+    if (heavy) {
+      for (let i = 0; i < 6; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const sp = (1.2 + Math.random() * 2.4) * wide;
+        this._add(
+          x + Math.cos(a) * wide, y + 1.2 + Math.random() * 2,
+          z + Math.sin(a) * wide,
+          Math.cos(a) * sp, 2 + Math.random() * 3, Math.sin(a) * sp,
+          0.9 + Math.random() * 1.2,
+          (1.0 + Math.random() * 1.4) * wide,
+          (1.6 + Math.random() * 1.6) * wide,
+          1.4, -1.5,
+          FIRE,
+          0.7,
+        );
+      }
+    }
+    // the flash: the charge going off, solid, at the width of the pattern
     this._add(
       x, y + 0.4, z,
       0, 0.4, 0,
       big ? 0.22 : 0.12,
-      (big ? 3.2 : 1.1) * Math.max(0.6, Math.min(2.5, radius)),
-      big ? 9 : 4,
+      (big ? 3.2 : 1.1) * Math.max(0.6, Math.min(2.5, radius)) * wide,
+      (big ? 9 : 4) * wide,
       0, 0,
-      [1.0, 0.85, 0.45],
-      0.7,
+      charged ? [1.0, 0.85, 0.45] : [0.93, 0.88, 0.75],
+      1,
     );
-    // smoke lingers on big hits
-    if (big) {
-      for (let i = 0; i < 6; i++) {
+    // smoke lingers on a big charge
+    if (charged && big) {
+      const puffs = heavy ? 8 : 6;
+      for (let i = 0; i < puffs; i++) {
         const a = Math.random() * Math.PI * 2;
         this._add(
-          x + Math.cos(a) * Math.random() * 3, y + 1.0, z + Math.sin(a) * Math.random() * 3,
+          x + Math.cos(a) * Math.random() * 3 * wide, y + 1.0,
+          z + Math.sin(a) * Math.random() * 3 * wide,
           Math.cos(a) * 0.8, 2.5 + Math.random() * 2, Math.sin(a) * 0.8,
           1.4 + Math.random() * 1.3,
           2.2 + Math.random() * 2.0,
@@ -164,8 +231,6 @@ export class Particles {
     }
   }
 
-  // A hull going up (defs.DEATH_BLAST): a fireball that is still there a
-  // second later, and a column of smoke that is still there five.  A round
   // impact puffs and is gone before the eye finds it, which is not what a
   // vehicle exploding looks like.
   explosion(x, y, z, radius) {
@@ -302,7 +367,7 @@ export class Particles {
     for (let i = 0; i < MAX_PARTICLES; i++) {
       const p = this.slots[i];
       if (p.life <= 0) continue;
-      const a = Math.max(0, Math.min(1, p.life / FADE)) * p.alpha;
+      const a = Math.max(0, Math.min(1, p.life / p.fade)) * p.alpha;
       if (a <= 0.01) continue;
       const c = p.col;
       if (p.mesh === MESH.CONE) {

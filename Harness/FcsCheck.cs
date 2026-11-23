@@ -375,6 +375,10 @@ public static class FcsCheck
                                        extra: new[] { AiTags.ENGAGE }, crew: true);
         int target = world.spawn_unit(Defs.ETYPE_APC, Defs.FACTION_BLUE, sx + range, sz, -1,
                                       crew: false);
+        // a hull of its own health would die of the clear phase and take the
+        // measurement with it: the row is about the screen, so what it hides is a
+        // brick (the damage landed is still read off it, and reported)
+        e.fv("hp")[target] = 1e6f;
         float hp0 = e.fv("hp")[target];
         // how long the crew went on believing, measured on the belief itself: the age
         // it had reached when it gave the hull up.  A crew reading the engine reads 0
@@ -631,13 +635,24 @@ public static class FcsCheck
         float best = float.PositiveInfinity;
         for (float t = 0f; t < wd.life; t += DT)
         {
-            if (wd.thrust > 0f)
+            if (wd.kind == "rocket")
             {
-                float sp = MathF.Sqrt(vx * vx + vy * vy + vz * vz);
-                float k = MathF.Min(wd.maxvel, sp + wd.thrust * DT) / MathF.Max(sp, 1e-6f);
-                vx *= k; vy *= k; vz *= k;
+                // the airframe the round is really flown by, drag included: this
+                // measures where the simulation puts it, not where a simpler model
+                // would
+                var nv = Flight.slide(new Vec3(vx, vy, vz), t, wd, DT);
+                vx = nv.x; vy = nv.y; vz = nv.z;
             }
-            vy -= wd.g * DT;
+            else
+            {
+                if (wd.thrust > 0f)
+                {
+                    float sp = MathF.Sqrt(vx * vx + vy * vy + vz * vz);
+                    float k = MathF.Min(wd.maxvel, sp + wd.thrust * DT) / MathF.Max(sp, 1e-6f);
+                    vx *= k; vy *= k; vz *= k;
+                }
+                vy -= wd.g * DT;
+            }
             var n = new Vec3(p.x + vx * DT, p.y + vy * DT, p.z + vz * DT);
             // the target's own leg over the same tick
             var a = new Vec3(x, world.terrain.height_at(x, z0 + speed * t) + aim_h, z0 + speed * t);

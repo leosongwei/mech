@@ -47,13 +47,23 @@ public static class FcsTests
         const float dt = Ballistics.DT;
         for (float t = 0f; t < wd.life; t += dt)
         {
-            if (wd.thrust > 0f)
+            if (wd.kind == "rocket")
             {
-                float sp = MathF.Sqrt(vx * vx + vy * vy + vz * vz);
-                float sc = MathF.Min(wd.maxvel, sp + wd.thrust * dt) / MathF.Max(sp, 1e-6f);
-                vx *= sc; vy *= sc; vz *= sc;
+                // the round's own airframe, which is the one thing this assertion is
+                // about: the solution has to put *that* round on the target
+                var nv = Flight.slide(new Vec3(vx, vy, vz), t, wd, dt);
+                vx = nv.x; vy = nv.y; vz = nv.z;
             }
-            vy -= wd.g * dt;
+            else
+            {
+                if (wd.thrust > 0f)
+                {
+                    float sp = MathF.Sqrt(vx * vx + vy * vy + vz * vz);
+                    float sc = MathF.Min(wd.maxvel, sp + wd.thrust * dt) / MathF.Max(sp, 1e-6f);
+                    vx *= sc; vy *= sc; vz *= sc;
+                }
+                vy -= wd.g * dt;
+            }
             var n = new Vec3(p.x + vx * dt, p.y + vy * dt, p.z + vz * dt);
             var a = TargetAt(k, t);
             var b = TargetAt(k, t + dt);

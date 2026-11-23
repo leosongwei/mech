@@ -39,6 +39,15 @@ public static class InterceptCheck
         ("topattack", Defs.WID_TOPATTACK, new[] { 900f, 1400f }),
     };
 
+    // `hits` fires an unguided arm at a parked APC, so it takes a round `run` has no
+    // use for: the HE pod is a warhead on the same 80 mm airframe, and the two have to
+    // be read side by side.  `run`'s table stays as it is - its 32 rounds are a figure
+    // the product notes quote.
+    private static readonly (string name, int wid, float[] dists)[] HITS_EXTRA =
+    {
+        ("rocket_he", Defs.WID_ROCKET_HE, new[] { 700f }),
+    };
+
     public static int run(string? only = null)
     {
         Console.WriteLine("weapon        dist   fired  shot down  post hits  post kills");
@@ -71,7 +80,7 @@ public static class InterceptCheck
     public static int hits()
     {
         Console.WriteLine("weapon        dist   fired   target hp  after");
-        foreach (var (name, wid, dists) in STANDARD)
+        foreach (var (name, wid, dists) in STANDARD.Concat(HITS_EXTRA))
         {
             foreach (var dist in dists)
             {

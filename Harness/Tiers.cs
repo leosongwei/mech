@@ -6,8 +6,9 @@
 // The scheme under test (radius from the pilot's own eye):
 //
 //   6 km  APC + mech
+//   4.5 km guided rounds (rocket / SACLOS / top attack)
 //   4 km  the wreck an explosion leaves (ETYPE_DEBRIS)
-//   3 km  guided rounds (rocket / SACLOS / top attack), infantry + civilians
+//   3 km  infantry + civilians
 //   2 km  shells, smoke, the command base, corpses, bunkers
 //
 // Nothing here changes the simulation: the same battle runs, the same rows are
@@ -27,7 +28,7 @@ public static class Tiers
     // ---- the tier table under test ----
     private const float R_VEH = 6000f;      // APC, mech
     private const float R_WRECK = 4000f;    // the hulk an explosion leaves
-    private const float R_ROUND = 3000f;    // guided rounds
+    private const float R_ROUND = 4500f;    // guided rounds
     private const float R_SHELL = 4000f;    // shells
     private const float R_SMOKE = 6000f;    // smoke, canisters and puffs (with the hulls)
     private const float R_INF = 3000f;      // infantry, civilians
@@ -52,9 +53,9 @@ public static class Tiers
         var pl = world.add_player("PILOT");
         var e = world.ecs;
         Console.WriteLine($"battle world: {world.towns.Count} towns, {world.lanes.Count} lanes, pilot {pl.name}");
-        Console.WriteLine("tiers: 6 km mech/APC + smoke | 4 km wreck + shells | 3 km guided + infantry | 2 km base, corpse, bunker");
-        Console.WriteLine("the client's own constants: fire control 4000 m (Defs.ZERO_RANGE), laser warning 3400 m");
-        Console.WriteLine("                            (game.LASER_RANGE), threat receiver 2000 m (game.RWR_RANGE)");
+        Console.WriteLine("tiers: 6 km mech/APC + smoke | 4.5 km guided | 4 km wreck + shells | 3 km infantry | 2 km base, corpse, bunker");
+        Console.WriteLine("the client's own constants: fire control 4000 m (Defs.ZERO_RANGE), laser warning 4000 m");
+        Console.WriteLine("                            (game.LASER_RANGE), threat receiver 3000 m (game.RWR_RANGE)");
         Console.WriteLine();
         Console.WriteLine("min |   raw   tier  saved | veh  inf wre  rnd  smk |  in/s out/s | blind dangl base |  fx/s 4km/s");
         Console.WriteLine("----+----------------------+-----------------------+-------------+------------------+---------------");
@@ -72,7 +73,7 @@ public static class Tiers
         var cSmk = new long[nb];
         var cIn = new long[nb];
         var cOut = new long[nb];
-        var cBlind = new long[nb];      // guided rounds in the 3-4.3 km band, i.e. off the wire
+        var cBlind = new long[nb];      // guided rounds off the wire while still inside 4.3 km
         var cDangl = new long[nb];      // kept rows whose `target` is not in the frame
         var cBase = new int[nb];        // frames carrying the enemy command base
         var cFx = new int[nb];
@@ -276,17 +277,17 @@ public static class Tiers
         Console.WriteLine("   what the tier table does not have a line for:");
         Console.WriteLine($"   - the client needs hulls out to its fire control, not 6 km: a row is used as a");
         Console.WriteLine($"     blocker by the centre cross / impact solve out to ZERO_RANGE 4000 m and by the");
-        Console.WriteLine($"     laser warning out to 3400 m, so 6 km is safe and 4 km would be too");
+        Console.WriteLine($"     laser warning out to 4000 m, so 6 km is safe and 4 km would be too");
         Console.WriteLine($"   - the enemy command base is in {100.0 * nbase / n:0}% of the frames "
                           + $"(\"everything else\" = 2 km drops it): 2 rows x 80 B x 15 Hz = 2.4 kB/s to always send");
         Console.WriteLine($"   - smoke: {smk / n:0.0} puff rows per frame on average, {maxSmk} at peak "
                           + $"(= {maxSmk * Netcode.SMOKE_STRIDE * 15 / 1024:0.0} kB/s while a screen is up);");
         Console.WriteLine($"     map.js's sightBlocked() reads puffs out to the 4 km the fire control reaches, so the");
         Console.WriteLine($"     6 km tier covers it with 2 km to spare (and a puff is 32 B, so the spare is cheap)");
-        Console.WriteLine($"   - guided rounds off the wire in the 3.0-4.3 km band: {blind / n:0.00} per frame, "
+        Console.WriteLine($"   - guided rounds off the wire while inside 4.3 km: {blind / n:0.00} per frame, "
                           + $"{blind / secs:0.00}/s");
-        Console.WriteLine($"     (top attack locks at 4000 m and glides 4.3 km; the receiver's own gate is 2 km,");
-        Console.WriteLine($"      so no warning is lost - what is lost is the sight of the round for its first km)");
+        Console.WriteLine($"     (a top attack locks at 4000 m and glides 4.3 km, so the 4.5 km tier carries every");
+        Console.WriteLine($"      guided round that can exist; the receiver's own gate is 3 km and reads these rows)");
         Console.WriteLine($"   - explosions are not rows at all: 0 blast entities exist.  A boom rides the fx");
         Console.WriteLine($"     channel ({fx / secs:0.0} events/s to this ear, {fx4 / secs:0.0} of them inside 4 km),");
         Console.WriteLine($"     which today is filtered by *sound* level (cannon 7.2 km, a death blast 17 km) -");

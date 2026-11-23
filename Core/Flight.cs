@@ -1,9 +1,9 @@
-// Aerodynamics and guidance for a winged round: one airframe, two guidance laws
-// (the top attack and the beam rider).
+// Aerodynamics and guidance for a round in flight: one airframe, three laws (the
+// top attack, the beam rider, and the unguided rocket that asks for nothing).
 //
-// A guided round used to be a point moving at a constant speed along a
-// hand-drawn path (`_steer` toward a way point at a fixed turn rate): no mass, no
-// angle of attack, no energy.  This module flies it instead.  Every tick it turns
+// A round used to be a point moving at a constant speed along a hand-drawn path
+// (`_steer` toward a way point at a fixed turn rate): no mass, no angle of
+// attack, no energy.  This module flies it instead.  Every tick it turns
 // a guidance demand into a lift coefficient, and the lift coefficient into drag,
 // and integrates thrust along the nose, lift square to the velocity, drag against
 // it and gravity.  A round climbs because the motor pushes it, glides because
@@ -16,12 +16,15 @@
 //
 //     v = Flight.step(p, v, age, trav, tgt_pos, tgt_vel, wd, dt)    the arc law
 //     v = Flight.direct(p, v, age, aim, aim_vel, wd, dt)            the beam law
+//     v = Flight.slide(v, age, wd, dt)                       the unguided law
 //
-// Both return the new *velocity* and nothing else; the caller advances the
+// All three return the new *velocity* and nothing else; the caller advances the
 // position by it (`p1 = p0 + v * dt`), exactly as `Systems/Flights.cs` does.
-// Only the demand differs - what the round *wants* to do this tick - and both
-// demands are clipped by the same lift ceiling, so a slow round of either kind
-// stops answering.
+// Only the demand differs - what the round *wants* to do this tick - and the two
+// guided demands are clipped by the same lift ceiling, so a slow round of either
+// kind stops answering.  An unguided rocket asks for nothing at all: it is the
+// same airframe, its nose stays on the flight path, and the motor and the drag
+// are the whole of it.
 //
 // The arc law is three phases and one aim:
 //
@@ -139,7 +142,7 @@ public static class Flight
     }
 
     // ------------------------------------------------------------------
-    // the two guidance laws
+    // the three laws
     // ------------------------------------------------------------------
 
     /// <summary>Fly the top attack for one tick: the ARC law.  Returns the new
@@ -191,6 +194,27 @@ public static class Flight
         var (a_dir, a_want) = _direct_demand(p, v, origin, aim, wd);
         return _airframe(v, age, wd, dt, a_dir, a_want);
     }
+
+    /// <summary>Fly an unguided rocket for one tick: the same airframe with nothing
+    /// asked of it, which is the whole difference between a rocket and a missile.
+    ///
+    /// A rocket has no seeker, no beam and no wing: there is no point to fly to and
+    /// no lift to spend, so its nose stays on the flight path, thrust goes along it
+    /// for `burn` seconds and drag comes off it from the speed it is doing - profile
+    /// drag plus the transonic rise, from the same polar the two guided kinds pay.
+    /// Past burnout the speed *decays*: 610 m/s at the end of the pod's motor is
+    /// ~550 m/s at 1 km, and the round is 6.6 m lower there than a constant-speed
+    /// one would be, which is what the fire control is solved against.
+    ///
+    /// The round's own size is `dia`, its weight `mass`, and `maxvel` stays what it
+    /// is for the guided kinds - the structure's ceiling, not the motor's.
+    ///
+    /// `age` is the seconds the round has been in the air, so the motor's window is
+    /// `ignite` .. `ignite + burn`; `Ballistics.flight_at` calls this same function
+    /// for the fire control's integrator, which is what keeps the barrel's angle and
+    /// the round's arc the same line.</summary>
+    public static Vec3 slide(Vec3 v, float age, WeaponDef wd, float dt)
+        => _airframe(v, age, wd, dt, Vec3.zero, 0f);
 
     // ------------------------------------------------------------------
     // the two demands: what the guidance wants, square to the flight path
@@ -311,7 +335,7 @@ public static class Flight
     // the airframe: a demand in, a new velocity out
     // ------------------------------------------------------------------
 
-    /// <summary>One tick of the airframe both laws share: the demand becomes a
+    /// <summary>One tick of the airframe all three laws share: the demand becomes a
     /// lift coefficient, the coefficient an angle of attack and an induced drag,
     /// and thrust along the nose, lift square to the velocity, drag against it and
     /// gravity are integrated.</summary>

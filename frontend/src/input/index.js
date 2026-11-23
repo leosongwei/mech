@@ -8,7 +8,7 @@
 // the cross hang off.
 
 import { ZOOM_LEVELS } from '../core/config.js';
-import { KEYS, lookup, pickArm } from './bindings.js';
+import { KEYS, lookup } from './bindings.js';
 import { Pointer, ZERO_STEPS } from './pointer.js';
 import { Sight } from './sight.js';
 
@@ -31,7 +31,6 @@ export class Input {
     this.uiOpen = false;              // set by the app: panel owns the mouse
     this.uiKind = null;               // 'shop' or 'settings': what that panel is
 
-    this.onPick = null;               // Digit1-6 while the rearm panel is up
     this.onShop = null;               // B: open / close the rearm panel
     this.onShopConfirm = null;        // ENTER while it is open
     this.onShopCancel = null;         // ESC / B while it is open
@@ -127,12 +126,6 @@ export class Input {
         if (!this.onShop) return false;
         this.onShop();
         return true;
-      case 'pick': {
-        const arm = pickArm(e.code);
-        if (arm < 0 || !this.onPick) return false;
-        this.onPick(arm, e.shiftKey);
-        return true;
-      }
       case 'help':
         if (this.onToggleHelp) this.onToggleHelp();
         return false;

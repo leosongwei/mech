@@ -40,7 +40,7 @@ export function shop(ctx, s, w, h, ui) {
   const money = meta.money || 0;
   const mouse = ui.mouse;
   const perHp = cfg.repair_cost === undefined ? 1 : cfg.repair_cost;
-  const smokeCost = cfg.smoke_cost === undefined ? 10 : cfg.smoke_cost;
+  const smokeCost = cfg.smoke_cost === undefined ? 5 : cfg.smoke_cost;
   const smokeFull = cfg.smoke_charges === undefined ? 10 : cfg.smoke_charges;
   const fs = Math.max(11, Math.min(16, ph * 0.026));
 

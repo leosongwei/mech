@@ -94,6 +94,9 @@ public static partial class Defs
     // the APC's own defence missile: the same round as the mech's SACLOS, fired
     // out of its turret one round every 5 s (see the entry in WEAPONS)
     public const int WID_APC_ATGM = 9;
+    // the S-8 pod's blast-fragmentation round: same airframe, motor and tubes as
+    // the shaped-charge one, a warhead for soft targets (see the entry in WEAPONS)
+    public const int WID_ROCKET_HE = 10;
 }
 
 // A launcher that carries its rounds in tubes is described once, here, and both
@@ -283,7 +286,8 @@ public sealed class WeaponDef
     public int range;               // m at which the round still carries its energy
     // m the *seeker* holds a lock to, for the kinds that need one (`@lock`).  A lock
     // weapon's `range` is the crew's launch decision, and a pilot's reach is not the
-    // AI's: the top attack is fired at 3 km and locked at 4.  0 = the same as `range`.
+    // AI's: the top attack is fired at 3 km and locked at 4, the beam rider fired at
+    // 3.4 and locked at 4.  0 = the same as `range`.
     public int lock_range;
     public int cost;                // $ for the hardware; -1 = not for sale
     public float ammo_cost;         // $ per round of a full load
@@ -435,12 +439,23 @@ public static partial class Defs
         // four, and the pod's 40 rounds would carry ten hulls instead of thirteen.
         // Only the direct hit moved: the burst, its 10 m, the infantry sweep and the
         // 267 rockets the command base costs are untouched.
+        //
+        // The round flies the airframe the two guided kinds fly, with nothing asked
+        // of it (`Flight.slide`): 80 mm and 11.3 kg of it, so `cd0` 0.3 costs 70 m/s^2
+        // at 610 m/s and the 560 m/s^2 motor needs 1.05 s to net that - burnout is
+        // the moment the round is at the `maxvel` clamp, exactly as the beam rider's
+        // is.  From there the speed decays with the drag: ~550 m/s and 6.6 m lower at
+        // 1 km than a constant-speed round would be, ~480 m/s and 20 m lower at 2 km.
+        // So `bias` 0.0493 rad is the pod's own mechanical zero - the sighting that
+        // puts that decaying round back on the sight line at 1 km, where the cannon
+        // shoots flat.
         new WeaponDef
         {
             wid = WID_ROCKET, key = "rocket", name = "UNGUIDED ROCKET POD", kind = "rocket",
             ap = 40f, ad = 25f, ed = 35f, er = 10.0f,
             rpm = 600, mag = 40, reserve = 0, reload = 0.0f, vel = 55f, spread = 0.003f,
-            bias = 0.0429f, g = 9.81f, thrust = 560f, maxvel = 610f, life = 16.4f,
+            bias = 0.0493f, g = 9.81f, thrust = 560f, maxvel = 610f, life = 16.4f,
+            burn = 1.05f, mass = 11.3f, dia = 0.080f, cd0 = 0.30f,
             range = 1000, cost = 50, ammo_cost = 0.2f, @lock = 0, salvo = 1,
             semi = 0, color = new[] { 1.0f, 0.45f, 0.15f }, cal = 80f, rcs = 0.005f,
             rack = RACK_ROCKET, desc = "40 rounds, hold to fire, sighted to 1 km",
@@ -495,7 +510,7 @@ public static partial class Defs
             life = 36.0f, wob = 12.0f, wob_f = 1.5f, maxdist = 4000.0f,
             ignite = 0.40f, mass = 45.0f, dia = 0.13f, cd0 = 0.60f, k_cl = 0.12f,
             cl_alpha = 15.0f, cl_max = 4.5f,
-            range = 3400, cost = 200, ammo_cost = 5.0f, @lock = 1, salvo = 0,
+            range = 3400, lock_range = 4000, cost = 200, ammo_cost = 5.0f, @lock = 1, salvo = 0,
             semi = 0, color = new[] { 0.35f, 1.0f, 0.55f }, cal = 152f,
             rcs = 0.02f, rack = RACK_SACLOS, desc = "Lock on, then ride the laser in",
         },
@@ -550,12 +565,18 @@ public static partial class Defs
             cost = -1, ammo_cost = 0.05f, @lock = 0, salvo = 0, semi = 0,
             color = new[] { 1.0f, 0.9f, 0.5f }, cal = 5.56f, desc = "800 m rifle",
         },
+        // The rocket that has to be *aimed*: 85 mm and only 2.25 kg, so the same
+        // `cd0` 0.3 costs it 42 m/s^2 at its 300 m/s top speed and the 380 m/s^2
+        // booster has 0.8 s to spend.  A round that leaves at 50 m/s and coasts from
+        // 300 decays to 224 m/s and drops 10 m more by 800 m than a constant-speed
+        // one would - the launcher's own sight setting is what pays for it.
         new WeaponDef
         {
             wid = WID_RPG, key = "rpg", name = "RPG LAUNCHER", kind = "rocket",
             ap = 100f, ad = 40f, ed = 20f, er = 3.0f,
             rpm = 25, mag = 1, reserve = 900, reload = 6.5f, vel = 50f, spread = 0.008f,
             bias = 0.0f, g = 9.81f, thrust = 380f, maxvel = 300f, life = 33.3f, range = 800,
+            burn = 0.80f, mass = 2.25f, dia = 0.085f, cd0 = 0.30f,
             cost = -1, ammo_cost = 8.0f, @lock = 0, salvo = 0, semi = 0,
             color = new[] { 1.0f, 0.5f, 0.2f }, cal = 85f, rcs = 0.002f,
             desc = "800 m anti-tank rocket",
@@ -588,7 +609,8 @@ public static partial class Defs
         // machine that is supposed to kill it.  The `rack` is only here for `elev`: it
         // holds the tube at the 10 deg a soft launch needs.
         //
-        // Last in the list on purpose: `WEAPONS` is indexed by `wid`.
+        // Appended in `wid` order: `WEAPONS` is indexed by `wid`, so a new round goes
+        // on the end of the list and its constant on the end of the block above.
         new WeaponDef
         {
             wid = WID_APC_ATGM, key = "apc_atgm", name = "APC ATGM", kind = "saclos",
@@ -602,6 +624,52 @@ public static partial class Defs
             cost = -1, ammo_cost = 0.0f, @lock = 1, salvo = 0, semi = 0,
             color = new[] { 0.35f, 1.0f, 0.55f }, cal = 152f, rcs = 0.02f,
             rack = RACK_SACLOS, desc = "Beam riding, one round every five seconds",
+        },
+        // The S-8's high-explosive sibling: the same 80 mm airframe, the same 55 m/s
+        // launch charge, the same 560 m/s^2 motor and the same 5 x 8 nest of 40 tubes -
+        // a re-warheaded round, not a second weapon.  `kind` stays `rocket`, so it flies
+        // the one unguided law, is interceptable, and draws its tubes from
+        // `RACK_ROCKET`; nothing but the numbers below is its own.
+        //
+        // The warhead is blast-fragmentation: no shaped charge (AP 10, i.e. only the
+        // AD/5 graze through a 10-point plate), a bigger charge (ED 40 against the
+        // HEAT round's 35) and a *wider* pattern (ER 16 against 10).  ER is the whole
+        // of the trade: armour takes `ED - DE` (20 for a hull's 20 points of blast
+        // soak), which the pattern's width barely moves, while a man inside the ring
+        // takes it all - the radius a burst still kills a rifleman at is 11.6 m
+        // against the HEAT round's 6.9 m.
+        //
+        // The two warheads on `hit_damage` (an APC: 100 hp behind 10 / 20 of armour):
+        //
+        //            direct hit         2 m near miss
+        //   HEAT     40 -> 3 rounds     8.0
+        //   HE       24 -> 5 rounds     15.0
+        //
+        // so the pod trades its anti-armour role (three rounds was AD 25 through the
+        // plate plus the 15 the burst keeps off a 20-point DE, i.e. exactly 40 of a
+        // hull's 120) for the one thing that sweeps infantry and soft targets off a
+        // wide area.  The fuze is a contact one, like the HEAT round's: the S-8 is a
+        // dumb rocket, a man is killed by the blast he is standing in, and `prox`
+        // stays the 30 mm's own mechanism.
+        //
+        // What it changes about the base is the one number to know: DP 80 stops an
+        // 80 mm round either way, so the command base eats 20 a hit instead of 15 and
+        // costs **200 rockets instead of 267** (`docs/product/weapons.md`).
+        //
+        // The price is the HEAT pod's: the hardware is the same launcher and the
+        // explosive costs what the shaped charge costs, so `cost` 50 and `ammo_cost`
+        // 0.2 are copied on purpose - a pilot picks this by what he intends to shoot,
+        // never by the bill.
+        new WeaponDef
+        {
+            wid = WID_ROCKET_HE, key = "rocket_he", name = "HE ROCKET POD", kind = "rocket",
+            ap = 10f, ad = 20f, ed = 40f, er = 16.0f,
+            rpm = 600, mag = 40, reserve = 0, reload = 0.0f, vel = 55f, spread = 0.003f,
+            bias = 0.0493f, g = 9.81f, thrust = 560f, maxvel = 610f, life = 16.4f,
+            burn = 1.05f, mass = 11.3f, dia = 0.080f, cd0 = 0.30f,
+            range = 1000, cost = 50, ammo_cost = 0.2f, @lock = 0, salvo = 1,
+            semi = 0, color = new[] { 1.0f, 0.78f, 0.32f }, cal = 80f, rcs = 0.005f,
+            rack = RACK_ROCKET, desc = "40 rounds, blast-fragmentation, sighted to 1 km",
         },
     };
 
@@ -759,9 +827,10 @@ public static partial class Defs
     public const float CORPSE_TIME = 5.0f;
     public const float WRECK_TIME = 10.0f;
 
-    // weapons a player may buy, in hotbar order
+    // weapons a player may buy, in hotbar order - the two rocket pods side by side,
+    // because they are the same launcher with two rounds
     public static readonly int[] BUYABLE =
-        { WID_AC30, WID_MG127, WID_ROCKET, WID_SACLOS, WID_TOPATTACK, WID_G105 };
+        { WID_AC30, WID_MG127, WID_ROCKET, WID_ROCKET_HE, WID_SACLOS, WID_TOPATTACK, WID_G105 };
 
     // what a mech leaves the lobby with: the loadout is not a menu choice - it is
     // bought back at the wrench (shop) like any other piece of equipment - and it is
@@ -774,12 +843,20 @@ public static partial class Defs
     // die roll instead: every mech hull fielded without an explicit loadout
     // (`World.spawn_unit`) draws one template off this table.  Weights are shares of
     // a single draw and have to add up to 1.
+    //
+    // The two rocket pods share the standard pair's 30 %: a crew draws the shaped
+    // charge twice as often as the blast round, because a crew fights hulls on the
+    // lanes and only the HEAT round takes one apart in three.  The guided arms carry
+    // 50 % between them (SACLOS 20 + top attack 15 + 105 mm 15), the share they had
+    // before the HE pod existed - the field's anti-armour capability is unchanged,
+    // only the rocket arm now has a second warhead.
     public static readonly (float share, int[] loadout)[] AI_LOADOUTS =
     {
-        (0.30f, new[] { WID_AC30, WID_ROCKET }),        // the standard pair
+        (0.20f, new[] { WID_AC30, WID_ROCKET }),        // the standard pair
+        (0.10f, new[] { WID_AC30, WID_ROCKET_HE }),     // the soft-target pod
         (0.10f, new[] { WID_AC30, WID_AC30 }),          // twin cannon: twice the rate, no rocket
-        (0.10f, new[] { WID_AC30, WID_SACLOS }),        // a beam rider in the right arm
-        (0.25f, new[] { WID_AC30, WID_TOPATTACK }),     // fire and forget, over the roof
+        (0.20f, new[] { WID_AC30, WID_SACLOS }),        // a beam rider in the right arm
+        (0.15f, new[] { WID_AC30, WID_TOPATTACK }),     // fire and forget, over the roof
         (0.15f, new[] { WID_AC30, WID_G105 }),          // 105 mm: one-round kills at 2.6 km
         (0.10f, new[] { WID_AC30, WID_MG127 }),         // cannon left, cheap gun right
     };
@@ -1360,8 +1437,8 @@ public static partial class Defs
     public const float RESPAWN_TIME = 8.0f;     // a mode's own rule (Mode.respawn_delay) may override it
     // Battle: the wait is the walk back to the front, so it is short on the enemy's
     // doorstep and long at home - interpolated on where the hull died.
-    public const float RESPAWN_AT_FRONT = 3.0f;  // killed at the enemy command base
-    public const float RESPAWN_AT_HOME = 40.0f;  // killed at your own command base
+    public const float RESPAWN_AT_FRONT = 1.5f;  // killed at the enemy command base
+    public const float RESPAWN_AT_HOME = 20.0f;  // killed at your own command base
     public const float BUILD_TIME = 5.0f;
 
     // optics / IR seeker
@@ -1402,9 +1479,9 @@ public static partial class Defs
     // is, and it is deliberately generous: the hull is 1.9 m across and the warning is
     // worth hearing before the round is.
     public const float LASER_SPHERE = 10.0f;    // m, the radius the receiver answers to
-    // m, how far a beam still counts: the SACLOS lock's own reach, which is the
-    // distance an enemy could be shooting a laser at this hull from at all
-    public const float LASER_RANGE = 3400f;
+    // m, how far a beam still counts: a designator locks a hull at 4 km
+    // (`WEAPONS[WID_SACLOS].lock_range`) and the receiver's own reach is this
+    public const float LASER_RANGE = 4000f;
     // Where a seeker looks at a hull - the deck it dives on, as a fraction of the type's
     // `height`.  It has to stay *inside* the hull's own hit spheres or a round that flies
     // the aim point perfectly still misses the body: 0.92 of a mech's 6.5 m is 5.98 m

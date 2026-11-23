@@ -107,6 +107,7 @@ function textState(app, faction) {
     shopQuick: shopOpen ? shopBill(app, m, quickDraft()) : null,
     assistOn: app.aimAssist,
     ringScale: app.assistRing,
+    quality: app.quality,
     zoom: app.zoom,
     zoomIdx: app.zoomIdx,
     zeroRange: app.zeroRange,

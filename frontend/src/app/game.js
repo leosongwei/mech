@@ -20,7 +20,7 @@ import { frame } from './frame.js';
 import { hudClick, onUiClick } from './panels.js';
 import { hudstate } from './hudstate.js';
 import { buy, closeShop, confirmShop, shopClick, shopCfg, toggleShop } from './systems/shop.js';
-import { savedAssist, savedRing, closeSettings, settingsClick, toggleAssist, toggleSettings } from './systems/settings.js';
+import { savedAssist, savedQuality, savedRing, closeSettings, settingsClick, toggleAssist, toggleSettings } from './systems/settings.js';
 import { Aim } from './systems/aim.js';
 import { camera } from './systems/camera.js';
 import { Lead } from './systems/lead.js';
@@ -42,7 +42,9 @@ export class Game {
     this.net = new Net((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
     this.input = new Input(this.glCanvas);
     this.audio = new GameAudio();
+    this.quality = savedQuality();  // impact effects: blended, or opaque dithered
     this.renderer = new Renderer(this.glCanvas);
+    this.renderer.quality = this.quality;
     this.hud = new HUD(this.hudCanvas);
     this.particles = new Particles();
     this.flashes = new Map();       // muzzle flash per hull, `{t, arm}`

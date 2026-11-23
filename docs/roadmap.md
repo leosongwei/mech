@@ -33,7 +33,7 @@
 * 调整准星吸附的挤压逻辑 - done
 * 准星吸附开启后，有时一侧准星会消失，缩放后缓解 - done
 * AI代码ECS化 —— `Systems/AI/` + 意图层 `Systems/Movement/`，计划与实测见 - done
-  [plans/AI_plan.md](plans/AI_plan.md)
+  [product/systems/ai.md](product/systems/ai.md)
 * ECS - done
 * 目前音效衰减太少，需要调试 - done
   * 耳机听感不太好

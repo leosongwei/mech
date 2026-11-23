@@ -24,6 +24,7 @@ export function settings(ctx, s, w, h, ui) {
   const vol = s.volume === undefined ? 1 : s.volume;
   const alarm = s.alarmVolume === undefined ? 1 : s.alarmVolume;
   const assist = !!s.assistOn;
+  const perf = s.quality === 'performance';
   const god = !!(s.meta && s.meta.god);
   const pw = Math.min(SETTINGS.w_max, w * SETTINGS.w_frac);
   const fs = Math.max(11, Math.min(15, pw * 0.03));
@@ -35,6 +36,7 @@ export function settings(ctx, s, w, h, ui) {
   let contentH = fs * 2.6 + fs * 1.5 + rowH * 2 + fs * 1.4 * 2 + closeH;
   contentH += fs * 1.5 + rowH + fs * 1.4;
   if (assist) contentH += rowH + fs * 1.4;
+  contentH += fs * 1.5 + rowH + fs * 1.4;
   if (dbg) contentH += fs * 1.5 + rowH + fs * 1.4;
   const ph = Math.min(h * 0.92, contentH + pad * 2);
   const px = (w - pw) / 2;
@@ -132,6 +134,20 @@ export function settings(ctx, s, w, h, ui) {
     slider('ring', `RING ${s.ringScale.toFixed(1)}x`, (s.ringScale - 2) / 6,
       'rgba(124,224,160,0.45)', RING_ENDS);
   }
+
+  // ---- video: how the impacts are drawn.  `QUALITY` is the blended fireball
+  // the game has always drawn; `PERFORMANCE` draws the same particles opaque,
+  // as a dither, for a machine whose frame rate the bursts eat
+  ctx.textAlign = 'left';
+  font(ctx, fs * 0.85, true);
+  ctx.fillStyle = 'rgba(180,210,195,0.75)';
+  ctx.fillText('VIDEO', cx, y + fs * 0.45);
+  y += fs * 1.5;
+  btnAt('quality', cx, y, cw, rowH,
+    [perf ? 'EFFECTS: PERFORMANCE' : 'EFFECTS: QUALITY',
+      perf ? 'bursts are an opaque dither, cheapest' : 'bursts are blended, smoothest'],
+    { active: perf });
+  y += rowH + fs * 1.4;
 
   // ---- debug: only when the server says the messages are accepted
   if (dbg) {

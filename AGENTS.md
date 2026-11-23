@@ -1,325 +1,266 @@
 # AGENTS.md
 
-Working notes for coding agents touching **MECH**, a browser-based mech shooter:
-a C# (.NET 10) archetype-ECS server, a WebGL2 client, a 16 km tile map, three
-lanes, RED vs BLUE, a 30 Hz clock. Player-facing rules live in `docs/product/`,
-engineering manuals in `docs/dev/`. This file is the contract: principles, the
-development flow, and who lives where.
+本文件是参与 **MECH** 开发的编码智能体的工作笔记。MECH 是一款浏览器端机甲射击游戏：
+C#（.NET 10）原型（archetype）ECS 服务器、WebGL2 客户端、16 km 见方的 tile 地图、
+三条兵线、RED 对抗 BLUE、30 Hz 时钟。面向玩家的规则位于 `docs/product/`，
+工程手册位于 `docs/dev/`。本文件是开发契约：原则、开发流程、各模块的职责归属。
 
-## 1. Documents, and the order of a change
+## 1. 文档分层与一次改动的顺序
 
-Four layers, one job each:
+四个层次，各司其职：
 
-| layer | where | answers | a defect looks like |
+| 层次 | 位置 | 回答的问题 | 缺陷表现 |
 | --- | --- | --- | --- |
-| working notes | `AGENTS.md` (this file) | how code must be written, how to build/run/verify, which module owns what | a player-visible number, or a mechanic explained in prose |
-| product docs | `docs/product/` | rules, numbers, screens, judgements | one page serving two readers |
-| engineering manual | `docs/dev/` | how to build, run, measure; client conventions | read only while developing |
-| plans | `docs/plans/` | why it was designed this way | edited after the work landed |
+| 工作笔记 | `AGENTS.md`（本文件） | 代码应如何编写，如何构建/运行/验证，各模块的职责归属 | 出现玩家可见数值，或以文字叙述具体机制 |
+| 产品文档 | `docs/product/` | 规则、数值、界面、判定 | 一页同时服务两类读者 |
+| 工程手册 | `docs/dev/` | 如何构建、运行、度量；客户端约定 | 内容超出"仅开发期阅读"的范围 |
+| 计划 | `docs/plans/` | 当初为何如此设计 | 工作落地后仍被编辑 |
 
-**Before changing anything, read `docs/product/`** (index: `docs/product/README.md`)
-and check the change fits the documented rules.
+**改动任何内容之前，先阅读 `docs/product/`**（索引：`docs/product/README.md`），
+确认改动符合已成文的规则。
 
-The order of a product-facing change, all in one commit:
+一次面向产品的改动，按以下顺序完成，全部纳入同一个提交：
 
-1. the code;
-2. the product page the fact belongs to (`rules/`, `systems/`, `hud/`, `modes/`);
-3. a dated entry at the top of `docs/product/CHANGELOG.md` - eight lines or fewer,
-   the difference a player sees plus the pages touched;
-4. the version in `MechServer.csproj`: a feature moves the second number (the
-   third back to 0), a change a player cannot see moves the third. `frontend/package.json`'s
-   `version` is a private manifest and is never read.
+1. 代码；
+2. 该事实所属的产品页面（`rules/`、`systems/`、`hud/`、`modes/`）；
+3. 在 `docs/product/CHANGELOG.md` 顶部添加带日期的条目——八行以内，
+   写明玩家可见的差异及涉及的页面；
+4. `MechServer.csproj` 中的版本号：新功能递增第二位（第三位归 0），
+   玩家不可见的改动递增第三位。`frontend/package.json` 的 `version`
+   是私有清单字段，任何流程均不读取。
 
-Rules that keep the four layers honest:
+维持四层文档诚实的规则：
 
-- **One fact, one home.** A number, a formula or a judgement lives on the page
-  that owns it; every other page carries a link. `docs/product/README.md` holds
-  the ownership table ("改哪里").
-- **New mechanics go to `docs/product/`.** A functional paragraph added to this
-  file is a review failure; the principles below are the only things that belong
-  here.
-- **Internal refactors register nothing** - no page, no CHANGELOG line - and a
-  change to a document or a comment alone bumps no version.
-- **Code is English, documentation is Chinese.** Source, comments, commit
-  messages, log lines and every string a player reads are English. Everything
-  under `docs/` is Chinese, quoting UI strings and identifiers verbatim. The rule
-  is about the language of a file, never its name: this file stays English
-  because it is the agent's notes, not a document.
-- **No negations in comments or documents.** Describe what the code is and what
-  it does. A rule that must hold is stated positively; a thing that does not
-  exist is not worth a sentence.
-- **Units are metres and seconds.** The map is 16 km square and the tick is
-  1/30 s.
-- **Minimal, scoped edits.** Tuning values live in `Core/Defs.cs` and at the top
-  of the mode systems, never inline in a code path. A bug fix does not carry a
-  cleanup of the surrounding code.
+- **一个事实，一个归属。** 数值、公式或判定只写在拥有它的页面上，
+  其余页面一律放链接。归属表（"改哪里"）位于 `docs/product/README.md`。
+- **新机制写入 `docs/product/`。** 在本文件中添加功能性段落即评审失败；
+  本文件只容纳下文的原则。
+- **内部重构不做任何登记**——不建页面、不写 CHANGELOG 条目；仅改动文档
+  或注释亦不递增版本号。
+- **代码使用英文，文档使用中文。** 源码、注释、提交信息、日志行以及玩家
+  读到的所有字符串均为英文。`docs/` 下的一切均为中文，UI 字符串与标识符
+  按原文引用。该规则约束的是文件内容的语言，与文件名无关；本文件作为
+  智能体工作笔记，同样使用中文。
+- **注释与文档使用肯定式表述。** 描述代码是什么、做什么。必须成立的规则
+  以正面陈述给出；不存在的事物不值得占用一句篇幅。
+- **单位为米与秒。** 地图为 16 km 见方，tick 为 1/30 s。
+- **最小编辑，范围收敛。** 调参数值统一放在 `Core/Defs.cs` 与各模式系统的
+  顶部，禁止内联在代码路径中。缺陷修复只包含修复本身，附带对周边代码的
+  清理即超出范围。
 
-## 2. Development flow
+## 2. 开发流程
 
-### Build
+### 构建
 
 ```bash
-cd frontend && npm run build     # -> assets/  (deps check + syntax check + webpack)
-./dotnet.sh build                # the server; must be clean, zero warnings
-./dev.sh build                   # the client build with the shared npm cache
+cd frontend && npm run build     # -> assets/（依赖检查 + 语法检查 + webpack）
+./dotnet.sh build                # 服务器；必须干净构建，零警告
+./dev.sh build                   # 使用共享 npm 缓存的客户端构建
 ```
 
-Always build the server through `./dotnet.sh`: it points the CLI home, the NuGet
-cache, `XDG_RUNTIME_DIR` and `TMPDIR` at `.dotnet_tmp/` (gitignored), because a
-bare `dotnet build` writes into `$HOME` and dies on a read-only sandbox.
-`Nullable` is on: a warning is a defect.
+服务器一律通过 `./dotnet.sh` 构建：该脚本将 CLI home、NuGet 缓存、
+`XDG_RUNTIME_DIR` 与 `TMPDIR` 全部指向 `.dotnet_tmp/`（已 gitignore），
+因为裸 `dotnet build` 会写入 `$HOME`，在只读沙箱中直接失败。
+`Nullable` 已开启：警告即缺陷。
 
-A frontend change needs only a rebuild - the server reads `assets/` per request,
-so no restart. A backend change needs a restart (`./dev.sh stop && ./dev.sh start`).
+前端改动只需重新构建——服务器按请求读取 `assets/`，因此无需重启。
+后端改动需要重启（`./dev.sh stop && ./dev.sh start`）。
 
-### Run
+### 运行
 
 ```bash
-./dev.sh dev      # build the client, then start the server (first run)
-./dev.sh start    # start the server in session "mech" (byobu, or plain tmux)
-./dev.sh attach   # attach (detach: F6 / Ctrl-a d)
-./dev.sh stop     # kill the battle and range sessions
+./dev.sh dev      # 构建客户端后启动服务器（首次运行）
+./dev.sh start    # 在会话 "mech" 中启动服务器（byobu 或纯 tmux）
+./dev.sh attach   # 接入会话（脱离：F6 / Ctrl-a d）
+./dev.sh stop     # 终止 battle 与 range 两个会话
 ./dev.sh status
-./dev.sh range    # the weapon-range server in session "mech-range"
+./dev.sh range    # 在会话 "mech-range" 中启动武器靶场服务器
 tail -f /tmp/mech-server.log
 ```
 
-<http://127.0.0.1:8010/> is the battle server, <http://127.0.0.1:8011/> the
-range. The lobby picks the callsign and the side before `DEPLOY`.
+<http://127.0.0.1:8010/> 为战斗服务器，<http://127.0.0.1:8011/> 为靶场。
+玩家在大厅中选定呼号与阵营后点击 `DEPLOY`。
 
-**Never start the server with `nohup ... &`** or any other detached background
-job: the tool call hangs on the open pipe and the process dies with the shell
-that spawned it. Start it in the tmux session and read the world through
-`./dev.sh status`, `curl` and the log.
+**禁止以 `nohup ... &` 或任何其他脱离式后台任务启动服务器**：工具调用会
+阻塞在未关闭的管道上，且进程随派生它的 shell 一同退出。服务器必须在
+tmux 会话中启动，通过 `./dev.sh status`、`curl` 与日志观察世界状态。
 
-In a sandboxed agent shell `/tmp` is a fresh per-session directory, so tmux
-cannot create its socket until it exists:
+沙箱化的智能体 shell 中，`/tmp` 是每会话独立的全新目录，tmux 的 socket
+目录存在之前无法创建 socket：
 
 ```bash
 mkdir -p /tmp/tmux-$(id -u) && chmod 700 /tmp/tmux-$(id -u)
 ```
 
-### Verify
+### 验证
 
-The headless harness is `Harness/`, driven by `./dotnet.sh run -- --check ...`.
-It runs a real `World` in-process - no socket, no wall clock - so a check is a
-number, not a session. `MECH_SEED` makes a single-threaded run repeatable; read
-the number for its magnitude (did this make things worse), never as a baseline to
-diff. Every check ends with `ecs.validate()`.
+无头验证框架位于 `Harness/`，通过 `./dotnet.sh run -- --check ...` 驱动。
+它在进程内运行真实的 `World`——无 socket、无墙钟——因此一项检查产出的
+是数值，而是一次会话。`MECH_SEED` 使单线程运行可复现；读数只用于判断
+量级（本次改动是否使情况恶化），禁止将其作为基线做差分。每项检查以
+`ecs.validate()` 收尾。
 
-| command | asks |
+| 命令 | 检验内容 |
 | --- | --- |
-| `--check battle --minutes 12` | a whole scripted battle: the census, the cost per tick |
-| `--check range --minutes 2` | the range world with a pilot firing |
-| `--check hit` | every weapon against a parked APC |
-| `--check intercept` | every missile against the defence post |
-| `--check beam` | a beam rider: hits, cover, a cut laser |
-| `--check fcs` | crew versus pilot on the same scenarios, plus chassis/pull/smoke/arsenal |
-| `--check drive` | the mech's thrust model against its own algebra |
-| `--check terrain` | facet slopes, lane drivability, sample cost |
-| `--check nav` | the navmesh: region, profiles, a long plan, the lanes |
-| `--check stuck` | does a battle keep moving, and is anything trapped |
-| `--check diag --minutes 2` | what a few AI hulls are doing |
-| `--check net --minutes 30 --from 8` | one pilot's wire, per minute |
-| `--check tiers --minutes 14 --from 8` | what alternative snapshot tiers would cost |
-| `MECH_PERF=1 --check battle` | the same battle without the event scan, per-minute cost |
+| `--check battle --minutes 12` | 一整场脚本化战斗：实体普查、每 tick 开销 |
+| `--check range --minutes 2` | 靶场世界，含一名开火中的玩家 |
+| `--check hit` | 全部武器对一辆停放的 APC |
+| `--check intercept` | 全部导弹对防御哨站 |
+| `--check beam` | 驾束弹：命中、掩体、被切断的激光 |
+| `--check fcs` | AI 乘员与玩家在相同场景下的对照，另含 chassis/pull/smoke/arsenal 场景 |
+| `--check drive` | 机甲推力模型与其自身代数解的对照 |
+| `--check terrain` | 面片坡度、兵线可通行性、采样开销 |
+| `--check nav` | 导航网格：区域、剖面、长距离规划、兵线 |
+| `--check stuck` | 战斗是否持续推进、是否有实体受困 |
+| `--check diag --minutes 2` | 若干 AI 机体的行为诊断 |
+| `--check net --minutes 30 --from 8` | 一名玩家的线路流量，按分钟统计 |
+| `--check tiers --minutes 14 --from 8` | 备选快照档位的开销 |
+| `MECH_PERF=1 --check battle` | 同一场战斗，去除事件扫描，按分钟统计开销 |
 
-Commands, the acceptance shape and the current readings: `docs/dev/checks.md`.
-Unit tests are `./run_tests.sh [cs|js|compare] [--filter NAME]` - no server, no
-socket; `tests/cases/fcs.json` and `height.json` are contracts both hosts answer.
+命令、验收形态与当前读数：`docs/dev/checks.md`。
+单元测试为 `./run_tests.sh [cs|js|compare] [--filter NAME]`——无服务器、
+无 socket；`tests/cases/fcs.json` 与 `height.json` 是双端共同应答的契约。
 
-**Measure a mechanism on the range, not on a battle.** A battle is two dozen AI
-crews firing, dying and driving through the same world, so a level, a node count
-or a hit read there is mostly a measurement of where the pilot happened to be.
-The range's fixtures never fire; `./dev.sh range` plus console messages is the
-bench, and a battle is where the change is *seen* after the number is right.
+**机制的度量在靶场进行，而非战斗。** 一场战斗是二十余个 AI 乘员在同一
+世界中开火、阵亡、行驶，因此在战斗中读到的某个水平值、节点数或命中数，
+主要度量的是玩家恰好所处的位置。靶场的固定靶标从不开火；`./dev.sh range`
+加控制台消息即是试验台，数值正确之后，战斗是改动被*看见*的地方。
 
-### Logging
+### 日志
 
-`MECH_LOG_LEVEL` sets verbosity (`INFO` by default, `DEBUG` on request).
-`MECH_DEBUG` is a different thing: the websocket gate for the development
-messages and for the DEBUG block of the settings menu (`dev.sh` always sets it).
-A line that fires per round, per hit, per lock or per tick is DEBUG; INFO is for
-the once-a-session event.
+`MECH_LOG_LEVEL` 设定日志详细程度（默认 `INFO`，按需 `DEBUG`）。
+`MECH_DEBUG` 是另一回事：它是开发消息及设置菜单 DEBUG 区块的 websocket
+门控（`dev.sh` 始终设置它）。按每发弹体、每次命中、每次锁定或每 tick
+触发的日志行属于 DEBUG；INFO 留给每会话一次的事件。
 
-### In a browser
+### 浏览器内
 
-`window.__game` is the console door (`g.net.*`, `g.input`, `g.renderer`,
-`g.audio`, `g.map.*`, `g.freeCam`). Pointer lock is rejected in headless
-automation - set `g.input.*` directly instead of synthesising mouse moves.
-Recipes: `docs/dev/browser.md`.
+`window.__game` 是控制台入口（`g.net.*`、`g.input`、`g.renderer`、
+`g.audio`、`g.map.*`、`g.freeCam`）。无头自动化中 pointer lock 会被拒绝——
+直接设置 `g.input.*`，取代合成鼠标移动。操作配方：`docs/dev/browser.md`。
 
-## 3. Module map
+## 3. 模块地图
 
 ```
-dev.sh  dotnet.sh  run_tests.sh  MechServer.csproj (the <Version>)  Program.cs (--check)
-Ecs/        Ecs.cs (archetype storage)      Components.cs (every component)
-Core/       Defs.cs (types, weapons, constants)   World.cs (players, tick, spawning)
-            Terrain.cs (heightfield, roads, walls, towns)   Nav.cs  Grid.cs  Rng.cs
+dev.sh  dotnet.sh  run_tests.sh  MechServer.csproj（<Version>）  Program.cs（--check）
+Ecs/        Ecs.cs（原型存储）      Components.cs（全部组件）
+Core/       Defs.cs（类型、武器、常量）   World.cs（玩家、tick、生成）
+            Terrain.cs（高度场、道路、墙体、城镇）   Nav.cs  Grid.cs  Rng.cs
             FireControl.cs  Flight.cs  Seeker.cs  Ballistics.cs   Combat.cs  Shop.cs
             SphereTable.cs  Profiler.cs  MathUtil.cs
-Net/        Netcode.cs (frames, snapshots, meta)   Server.cs (websocket + loop)
-            KillStream.cs (the kill feed on its own wire)
-Systems/    one file per system, `run(world, dt)`
+Net/        Netcode.cs（帧、快照、meta）   Server.cs（websocket + 主循环）
+            KillStream.cs（独立线路上的击杀播报）
+Systems/    每系统一个文件，`run(world, dt)`
   Rearm PlayerInput Gunnery Locking Smoke Weapons Unstick
   Movement/{Foot,Vehicle,Mech/{Steer,Thrust,Slope,Drag,Ground},Support/{Drive,Integrate}}
   Sweep Beams Flights FirstHit Impact Blasts Mortality Economy Debris Sight Smoke
   AI/{Sense,Threats,Intercept,Engage*,Wander}  AI/Strategies/{Front,Raid}
   AI/Support/{Tags,Crew,Policy,Engage,ThreatTable,Pipeline}  AI/Nav/{NavMesh,NavWalk,NavRegion,NavQuery,Paths}
-  Support/KillFeed.cs          # the line a pilot reads - who killed whom, with what, from how far
+  Support/KillFeed.cs          # 玩家读到的一行——谁以何种武器从多远击杀了谁
 Modes/      Mode.cs  Modes.cs  Battle/  Range/
 Harness/    Check BeamCheck InterceptCheck FcsCheck NetCheck Tiers StuckCheck DriveCheck
             TerrainCheck NavCheck
-tests/      cases/*.json  frontend/ (node:test)  backend/ (console runner)  compare.mjs
-frontend/   src/{core,net,map,audio,render,scene,hud,fx,input,app}  (four layers, one direction)
-assets/     the compiled client (gitignored)
+tests/      cases/*.json  frontend/（node:test）  backend/（控制台运行器）  compare.mjs
+frontend/   src/{core,net,map,audio,render,scene,hud,fx,input,app}（四层，单向依赖）
+assets/     编译后的客户端（已 gitignore）
 tools/      gun_report.py  saclos_motor.py  smoke_lock_test.js
 ```
 
-The server's tick, in `Core/World.cs`:
+服务器的 tick，位于 `Core/World.cs`：
 
 ```
-rearm, player_input,            # a bought job counts down; input becomes intent
-mode pre-systems                # battle: the AI crews
-gunnery, locking, smoke, weapons,   # the machines slew after the intent, then shoot
-unstick, movement,                  # a trapped hull is moved clear, then every driver
-sweep.spheres, beams, expire,       # the tick's hit spheres, the lasers, the batteries
-flight_ballistic/rocket/saclos/top, # one system per kind of round
-first_hit_ground/structures/units/fuse,   # what each leg ran into (a record only)
-impact,                             # the one reader of that record; ends the round
-blasts, mortality, economy, debris, # the damage chain, in that order
-mode post-systems               # battle: waves
+rearm, player_input,            # 购买的作业倒计时；输入转化为意图
+mode pre-systems                # battle：AI 乘员
+gunnery, locking, smoke, weapons,   # 机器随意图转动，随后开火
+unstick, movement,                  # 受困机体先被移离，随后各驾驶员驱动
+sweep.spheres, beams, expire,       # 本 tick 的命中球、激光、电池到期
+flight_ballistic/rocket/saclos/top, # 每种弹体一个飞行系统
+first_hit_ground/structures/units/fuse,   # 各弹道段遇到的对象（仅记录）
+impact,                             # 该记录的唯一读者；在此终结弹体
+blasts, mortality, economy, debris, # 伤害链，按此顺序
+mode post-systems               # battle：波次
 ```
 
-The client is four layers with one direction, checked by
-`frontend/scripts/depgraph.mjs`: `core -> net/map/audio -> render/scene/hud/fx/input -> app`.
-`render/passes.js` is the draw order, `app/frame.js`'s `STAGES` the frame order.
-Conventions and the traps behind them: `docs/dev/client.md`.
+客户端为四层单向依赖，由 `frontend/scripts/depgraph.mjs` 检查：
+`core -> net/map/audio -> render/scene/hud/fx/input -> app`。
+`render/passes.js` 定义绘制顺序，`app/frame.js` 的 `STAGES` 定义帧内顺序。
+约定及其背后的陷阱：`docs/dev/client.md`。
 
-### State ownership
+### 状态归属
 
-| state | written by | read as |
+| 状态 | 写入者 | 读取语义 |
 | --- | --- | --- |
-| `pos`, `vel` | the driver of the chassis (`Movement/`), the flight system of a round, the smoke canister | the world's one truth; every collision, seeker and snapshot reads it |
-| `vel_cmd` | `player_input` (a pilot's stick) or a driver's `nav_* -> vel_cmd` step | the machine's intent; the gap to `vel` *is* the machine |
-| `nav_*` | an AI crew (route, point, speed) | the driver's input, the one thing a crew may write about motion |
-| `sight_yaw`/`sight_pitch` | `player_input`, the crews' `Engage`, a mode | where the eye looks; answers instantly |
-| `yaw`, `pitch` | `Gunnery` | the laid gun; the hull and the arms slew after the sight |
-| `hp` | `Combat.apply` (and `Shop`'s repair) | any system, but as of its own stage of the tick |
-| `first_hit_record` | the flight systems (re-arm) and each collision system (`if t < first_hit_t`) | `Impact` only |
-| `ai_tgt` | `AI/Sense` | a crew's belief; every crew gun aims at it, never at `pos` |
-| snapshot, meta | `Netcode` | the client, which interpolates and never simulates |
+| `pos`、`vel` | 底盘的驾驶员（`Movement/`）、弹体的飞行系统、烟雾罐 | 世界的唯一真值；所有碰撞、导引头与快照均读取它 |
+| `vel_cmd` | `player_input`（玩家的操纵杆）或驾驶员的 `nav_* -> vel_cmd` 步骤 | 机器的意图；它与 `vel` 的差值*即*机器本身的响应 |
+| `nav_*` | AI 乘员（路线、路点、速度） | 驾驶员的输入；乘员对运动唯一可写的东西 |
+| `sight_yaw`/`sight_pitch` | `player_input`、乘员的 `Engage`、模式 | 眼睛看向何处；即时响应 |
+| `yaw`、`pitch` | `Gunnery` | 已瞄准的火炮；车体与炮臂随视线转动 |
+| `hp` | `Combat.apply`（及 `Shop` 的维修） | 任何系统均可读，但以其所在 tick 阶段为准 |
+| `first_hit_record` | 各飞行系统（重新置位）与各碰撞系统（`if t < first_hit_t`） | 仅 `Impact` 读取 |
+| `ai_tgt` | `AI/Sense` | 乘员的信念目标；乘员火炮一律瞄准它，而非 `pos` |
+| snapshot、meta | `Netcode` | 客户端；客户端只做插值，从不做模拟 |
 
-## 4. Principles
+## 4. 原则
 
-**P1. The component set is an entity's type, and it never changes.** An entity is
-created by one `ECS.create(comps)` call and its archetype is fixed for life; a
-state transition is a *different* entity (a canister becomes the puff it bursts
-into). `etype` is per-type data and is read only for that. Details:
-`docs/dev/ecs.md`.
+每条原则只保留断言本身；具体机制、数值与实现细节由"详见"指向的页面
+及第 5 节功能索引承载。
 
-**P2. One `pos`, one `vel`, on every mover.** `vel` is what the entity is
-actually doing: `pos` is advanced by it, every collision is solved against it, a
-seeker leads on it. The order a hull was given lives in its own `vel_cmd`. A
-scripted mover or a teleport writes both and zeroes `vel`. `World.spawn_unit`
-throws if a mover was built without them. Details:
-`docs/product/systems/movement.md`.
+**P1. 组件集合即实体的类型，且终生不变。** 详见 `docs/dev/ecs.md`。
 
-**P3. Identity is a component, never a type switch.** What an entity *is* comes
-from the marker tags its type declares: `unit`, `combat`, `lockable`, `moves`,
-`person`, `invulnerable`, `interceptable`. Systems query the tag they can handle,
-so an entity that is not a hull is invisible to combat code with no exclusion
-list. Details: `docs/dev/ecs.md`.
+**P2. 每个运动体只有一份 `pos`、一份 `vel`。** 详见 `docs/product/systems/movement.md`。
 
-**P4. Write systems against buffers, not through `View`.** `groups()` hands out
-an archetype with its buffers hoisted; `slot(eid)` is the per-entity door;
-`locate(ids)` resolves a flat list once. A `View` is for a scattered read of one
-component and answers a registered default. Pick on the shape of the loop.
-Details: `docs/dev/ecs.md`.
+**P3. 身份是组件，而非类型分支。** 详见 `docs/dev/ecs.md`。
 
-**P5. The order a system visits entities in is not part of the simulation.**
-`world.rng` is one stream per thread, so no draw can depend on which entity drew
-first, and queries return archetype blocks. Verification is therefore by
-magnitude and by the tick's invariants, never by diffing two runs. Details:
-`docs/dev/checks.md`.
+**P4. 系统面向 buffer 编写，而非经由 `View`。** 详见 `docs/dev/ecs.md`。
 
-**P6. The pipeline is semantics; the rest is cost.** The shared stages, the
-mode's pre- and post-systems and the round's own seven stages are the
-simulation's meaning. Within a group, order buys a faster compare and nothing
-else. Details: `docs/dev/pipeline.md`.
+**P5. 系统遍历实体的顺序不属于模拟的一部分。** 详见 `docs/dev/checks.md`。
 
-**P7. There is one line of sight.** Terrain, tree canopies and smoke all hide
-through `Sight.clear` / `Sight.why`, and every eye goes through it: a crew's
-lookout, the player's IR lock, a missile's seeker, the pre-aim box. A tree hides
-for good, a puff for its five seconds - nothing else differs between them.
-Details: `docs/product/systems/sight.md`.
+**P6. 流水线即语义，其余只是开销。** 详见 `docs/dev/pipeline.md`。
 
-**P8. Damage is two halves, and it is not a system.** `Combat.apply` is the only
-writer of `hp` and it decides nothing: no death, no destruction, in the heat of
-a hit. A round that lands takes both halves, a unit merely near a burst takes the
-blast. Details: `docs/product/rules/damage.md`.
+**P7. 视线只有一条。** 详见 `docs/product/systems/sight.md`。
 
-**P9. A round's ending is one record and one judge.** Each collision system
-offers its own answer through `first_hit_record`; `Impact` is the one reader and
-the only thing that ends a round. A round that runs out of battery writes a
-contact at t=0, which is the whole of "it dies where it stands". Details:
-`docs/product/rules/damage.md`.
+**P8. 伤害分为两段，且本身并非系统。** 详见 `docs/product/rules/damage.md`。
 
-**P10. A round's kind is a tag.** One kind of round is one tag plus one flight
-system, never another branch in shared code; each shape a leg can meet gets its
-own collision query at its own granularity. Details:
-`docs/product/systems/flight.md`.
+**P9. 弹体的终结只有一份记录、一个裁决者。** 详见 `docs/product/rules/damage.md`。
 
-**P11. AI is intent, movement is the machine.** A crew says where and how fast
-(`nav_*`) and where it is looking; the driver of the chassis owns `vel_cmd`,
-`vel`, `pos`, `leg_yaw` and the wheeled state. Corner speed, the acceptance
-radius and the obstacle fan are the machine's. A crew's guns fire at its belief
-(`ai_tgt`), which `AI/Sense` refreshes through the one line of sight. Details:
-`docs/product/systems/ai.md`.
+**P10. 弹体的种类是一个 tag。** 详见 `docs/product/systems/flight.md`。
 
-**P12. One fire-control law, two settings, both hosts.** The law is a pure
-function of a shot and a track; the pilot's zero is his dial and a crew's is the
-range it is engaging. The client solves the same function and is compared against
-the server by a shared case table. The client interpolates what the wire carries
-and simulates nothing. Details: `docs/product/systems/firecontrol.md`.
+**P11. AI 表达意图，运动属于机器。** 详见 `docs/product/systems/ai.md`。
 
-**P13. Documents follow the change.** One fact has one home; only a
-player-visible difference is a product change; a plan is frozen once it lands.
-Details: `docs/product/README.md`.
+**P12. 火控定律唯一，两种装定，双端一致。** 详见 `docs/product/systems/firecontrol.md`。
 
-**P14. Small edits, bench before battle.** A mechanism is proven on its own bench
-and the battle is where it is accepted. A tuning number is one constant in one
-table, and the page that owns it moves with it. Details:
-`docs/dev/checks.md`.
+**P13. 文档随改动更新。** 详见 `docs/product/README.md`。
 
-## 5. Feature index
+**P14. 小编辑，先靶场后战斗。** 详见 `docs/dev/checks.md`。
 
-| to learn about | read |
+## 5. 功能索引
+
+| 主题 | 阅读 |
 | --- | --- |
-| how a match starts, runs, ends | `docs/product/flow.md` |
-| keys, zoom, zeroing, aim assist | `docs/product/controls.md` |
-| a HUD element, a colour, a message line | `docs/product/hud/` |
-| unit stats, modules, hit spheres, radar | `docs/product/rules/units.md` |
-| weapon numbers, racks, ammunition | `docs/product/rules/weapons.md` |
-| penetration, blast, fuses, death, interception | `docs/product/rules/damage.md` |
-| prices, income, rearm time | `docs/product/rules/economy.md` |
-| terrain, roads, trees, towns, lanes, the map's mirror | `docs/product/rules/map.md` |
-| spawning, the three-step town pick, respawn waits | `docs/product/rules/spawn.md` |
-| waves, reinforcements, raiders, capture, victory | `docs/product/modes/battle.md` |
-| the range and its fixtures | `docs/product/modes/range.md` |
-| aiming, launchers, the master arm, the trigger gate | `docs/product/systems/firecontrol.md` |
-| ballistics, aerodynamics, guidance, motors, batteries | `docs/product/systems/flight.md` |
-| locks, channels, memory, re-acquisition, belief points | `docs/product/systems/seekers.md` |
-| the warning receiver | `docs/product/systems/rwr.md` |
-| the mech's five laws, the bicycle model, slopes, unsticking | `docs/product/systems/movement.md` |
-| crews: sensing, engaging, missile defence, raider planning, nav | `docs/product/systems/ai.md` |
-| what hides what: terrain, canopies, smoke, the laser sphere | `docs/product/systems/sight.md` |
-| sound: distance, the far bed, the limiter, voice budget | `docs/product/systems/audio.md` |
-| frames, row widths, tiers, the clock, congestion, RTT, minimap | `docs/product/systems/net.md` |
-| console messages and automation | `docs/product/interfaces/debug.md` |
-| the kill feed's own wire | `docs/product/interfaces/kills_sse.md` |
-| storage, the three doors, invariants | `docs/dev/ecs.md` |
-| what runs when, and why there | `docs/dev/pipeline.md` |
-| render passes, local frames, icons, quality | `docs/dev/client.md` |
-| how to build, run and measure | `docs/dev/checks.md` |
-| driving the game from a browser | `docs/dev/browser.md` |
+| 一局比赛如何开始、进行、结束 | `docs/product/flow.md` |
+| 按键、缩放、归零、瞄准辅助 | `docs/product/controls.md` |
+| HUD 元素、颜色、消息行 | `docs/product/hud/` |
+| 单位属性、模块、命中球、雷达 | `docs/product/rules/units.md` |
+| 武器数值、弹架、弹药 | `docs/product/rules/weapons.md` |
+| 穿透、爆炸、引信、死亡、拦截 | `docs/product/rules/damage.md` |
+| 价格、收入、补给时间 | `docs/product/rules/economy.md` |
+| 地形、道路、树木、城镇、兵线、地图镜像 | `docs/product/rules/map.md` |
+| 出生、三步选镇、重生等待 | `docs/product/rules/spawn.md` |
+| 波次、增援、突袭队、占领、胜利 | `docs/product/modes/battle.md` |
+| 靶场及其固定靶标 | `docs/product/modes/range.md` |
+| 瞄准、发射器、总保险、扳机门控 | `docs/product/systems/firecontrol.md` |
+| 弹道、气动、制导、发动机、电池 | `docs/product/systems/flight.md` |
+| 锁定、通道、记忆、重新捕获、信念点 | `docs/product/systems/seekers.md` |
+| 告警接收机 | `docs/product/systems/rwr.md` |
+| 机甲五定律、自行车模型、坡度、脱困 | `docs/product/systems/movement.md` |
+| 乘员：感知、交战、导弹防御、突袭规划、导航 | `docs/product/systems/ai.md` |
+| 遮蔽关系：地形、树冠、烟雾、激光球 | `docs/product/systems/sight.md` |
+| 声音：距离、远场底噪、限制器、声道预算 | `docs/product/systems/audio.md` |
+| 帧、行宽、档位、时钟、拥塞、RTT、小地图 | `docs/product/systems/net.md` |
+| 控制台消息与自动化 | `docs/product/interfaces/debug.md` |
+| 击杀播报的独立线路 | `docs/product/interfaces/kills_sse.md` |
+| 存储、三个入口、不变量 | `docs/dev/ecs.md` |
+| 何时运行什么，为何在该处 | `docs/dev/pipeline.md` |
+| 渲染 pass、局部坐标系、图标、画质 | `docs/dev/client.md` |
+| 如何构建、运行与度量 | `docs/dev/checks.md` |
+| 从浏览器驱动游戏 | `docs/dev/browser.md` |

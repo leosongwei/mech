@@ -6,6 +6,10 @@ lanes, two factions and physically flown projectiles.
 
 ```
 dev.sh                 # start / attach / stop the server (byobu / tmux)
+Dockerfile.backend     # .NET 10 server image (port 8010)
+Dockerfile.frontend    # nginx + webpack client image (port 8080)
+deploy/k8s/            # kustomize manifests: battle and range, split images
+.github/workflows/     # build & push both images to GHCR
 dotnet.sh              # build / run helper (dotnet's own state in .dotnet_tmp/)
 MechServer.csproj      # the server; <Version> is the product version
 Program.cs             # entry point: --host / --port / --range / --check
@@ -112,6 +116,84 @@ Then open <http://127.0.0.1:8010/>.  The lobby lets you pick a callsign, a side
 
 A destroyed command base ends the round; the match resets automatically 40 s
 later on the same map.
+
+## Container
+
+The deployment is split into two images:
+
+- **`mech-backend`** — the .NET 10 SDK publishes the ASP.NET Core server from
+  `MechServer.csproj` and the runtime image runs it on `8010` as a non-root
+  user. It ships no client files; the game endpoint is `/ws`.
+- **`mech-frontend`** — Node 22 builds the client with the existing webpack
+  flow, then the result is copied into `nginx-unprivileged`. Nginx serves the
+  static files on `8080`, proxies `/ws` to the backend, and exposes `/healthz`
+  for probes.
+
+```bash
+docker network create mech
+
+docker build -f Dockerfile.backend  -t mech-backend .
+docker build -f Dockerfile.frontend -t mech-frontend .
+
+# battle: backend is internal, the browser talks to nginx only
+docker run -d --name mech-backend --network mech mech-backend
+docker run -d --name mech-web --network mech -p 8080:8080 \
+  -e BACKEND_HOST=mech-backend -e BACKEND_PORT=8010 mech-frontend
+
+# range (4 km test map)
+docker run -d --name mech-range-backend --network mech \
+  -e MECH_RANGE=1 mech-backend
+docker run -d --name mech-range-web --network mech -p 8081:8080 \
+  -e BACKEND_HOST=mech-range-backend -e BACKEND_PORT=8010 mech-frontend
+```
+
+Then open <http://127.0.0.1:8080/>. `MECH_DEBUG` is off in the image; turn the
+console helpers on deliberately with `-e MECH_DEBUG=1` on the backend.
+`MECH_LOG_LEVEL=DEBUG` enables the per-weapon log lines. There is no persistent
+state, so a restart is a fresh battle. Do not run more than one backend
+replica: the world is a single in-process object, and every extra process is a
+separate battle. The frontend is stateless.
+
+## Kubernetes
+
+`deploy/k8s/` contains kustomize manifests for both modes, each split into a
+backend and a frontend:
+
+| mode | frontend (ClusterIP) | backend (ClusterIP) |
+| --- | --- | --- |
+| battle | `mech-battle-frontend:8080` | `mech-battle-backend:8010` |
+| range | `mech-range-frontend:8080` | `mech-range-backend:8010` |
+
+The frontend nginx proxies `/ws` to the matching backend Service. Backends run
+one replica with `Recreate` and TCP startup/readiness/liveness probes; frontends
+are stateless and probe `/healthz`. All four pods run non-root with a read-only
+root filesystem and a `/tmp` emptyDir.
+
+```bash
+kubectl apply -k deploy/k8s
+kubectl -n mech get pods,svc
+kubectl -n mech port-forward svc/mech-battle-frontend 8080:8080
+kubectl -n mech port-forward svc/mech-range-frontend 8080:8080
+```
+
+The Services are ClusterIP only: expose the frontend Service through your own
+reverse proxy or gateway (it must pass WebSocket Upgrade and long-lived
+connections), or use `port-forward` for local play. `deploy/k8s/configmap.yaml`
+holds the backend's `MECH_DEBUG` and `MECH_LOG_LEVEL`; set `MECH_DEBUG=1` there
+only for a test deployment.
+
+`.github/workflows/container.yml` builds and pushes
+`ghcr.io/leosongwei/mech-backend` and `ghcr.io/leosongwei/mech-frontend` to GHCR
+on `main` and `v*` tags (pull requests build without pushing). The manifests use
+`:latest`, so restart the Deployments after a new push:
+
+```bash
+kubectl -n mech rollout restart deploy/mech-battle-backend deploy/mech-battle-frontend
+kubectl -n mech rollout restart deploy/mech-range-backend deploy/mech-range-frontend
+```
+
+If the GHCR packages are private, add an `imagePullSecrets` entry to the
+Deployments.
 
 ## Controls
 

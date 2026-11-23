@@ -11,8 +11,11 @@
     "check:syntax": "node --experimental-vm-modules scripts/syntax.mjs"
   },
   "devDependencies": {
+    "html-webpack-plugin": "^5.6.0",
     "webpack": "^5.90.0",
-    "webpack-cli": "^5.1.4",
-    "html-webpack-plugin": "^5.6.0"
+    "webpack-cli": "^5.1.4"
+  },
+  "dependencies": {
+    "three": "^0.187.0"
   }
 }

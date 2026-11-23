@@ -1,23 +1,22 @@
 // The asphalt: a ribbon mesh laid on the ground along the road bits, so a leg
 // can run diagonally across the tile grid instead of stepping tile by tile.
-// Drawn straight after the near ground, in the ground's own state.
 
-import { GLSL, HEAD, SUN_DIFFUSE, groundLight, fogAt, logDepth } from './chunks.js';
+import { HEAD, SUN_DIFFUSE, groundLight, fogAt, logDepth } from './chunks.js';
 
-export const ROAD_VS = `${GLSL}
-in vec3 aPos;
-in vec3 aCol;
+export const ROAD_VS = `${HEAD}
+in vec3 position;
+in vec3 color;
 uniform mat4 uViewProj;
 uniform vec3 uCam;
 out vec3 vCol;
 out float vViewZ;
 out float vDist;
 void main(){
-  vec4 clip = uViewProj * vec4(aPos, 1.0);
+  vec4 clip = uViewProj * vec4(position, 1.0);
   gl_Position = clip;
-  vCol = aCol;
+  vCol = color;
   vViewZ = clip.w;
-  vDist = distance(aPos, uCam);
+  vDist = distance(position, uCam);
 }`;
 
 export const ROAD_FS = `${HEAD}

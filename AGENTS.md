@@ -182,9 +182,9 @@ mode post-systems               # battle：波次
 ```
 
 客户端为四层单向依赖，由 `frontend/scripts/depgraph.mjs` 检查：
-`core -> net/map/audio -> render/scene/hud/fx/input -> app`。
-`render/passes.js` 定义绘制顺序，`app/frame.js` 的 `STAGES` 定义帧内顺序。
-约定及其背后的陷阱：`docs/dev/client.md`。
+`core -> net/map/audio/render/input -> scene/hud/fx -> app`。
+`render/index.js` 的 `ORDER` 定义绘制顺序（three 场景图里的六层），
+`app/frame.js` 的 `STAGES` 定义帧内顺序。约定及其背后的陷阱：`docs/dev/client.md`。
 
 ### 状态归属
 

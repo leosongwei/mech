@@ -1,13 +1,13 @@
-// The sky: one full-screen triangle behind everything, shaded from the inverse
+// A full-screen triangle behind everything, shaded from the inverse
 // view-projection so the gradient is a direction in world space and the sun sits
 // where the light on the ground says it does.
 
-import { GLSL, HEAD } from './chunks.js';
+import { HEAD } from './chunks.js';
 
-export const SKY_VS = `${GLSL}
-in vec2 aPos;
+export const SKY_VS = `${HEAD}
+in vec3 position;
 out vec2 vPos;
-void main(){ vPos = aPos; gl_Position = vec4(aPos, 1.0, 1.0); }`;
+void main(){ vPos = position.xy; gl_Position = vec4(position.xy, 1.0, 1.0); }`;
 
 export const SKY_FS = `${HEAD}
 in vec2 vPos;

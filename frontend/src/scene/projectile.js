@@ -6,7 +6,7 @@
 // rocket would keep its nose and its flame in the air where a level one has
 // them and the pieces would come apart.
 
-import { MESH } from '../render/mesh-table.js';
+import { PRIM } from '../render/primitives.js';
 import { FORWARD, at } from './helpers.js';
 
 export function projectile(b, p, ctx) {
@@ -27,7 +27,7 @@ export function projectile(b, p, ctx) {
     const cal = (wd && wd.cal) || 12.7;
     const len = Math.min(16, speed * 0.014);
     const wid = Math.max(0.08, cal * 0.011);
-    at(b, MESH.PYRAMID, fake, yaw, FORWARD + pitch + Math.PI, 0, 0, 0, wid, len, wid, col);
+    at(b, PRIM.PYRAMID, fake, yaw, FORWARD + pitch + Math.PI, 0, 0, 0, wid, len, wid, col);
   } else {
     // Every piece sits `d` metres along the round's own flight path, not along
     // its ground track: `at` only lays an offset out in the yaw plane, so a
@@ -41,8 +41,8 @@ export function projectile(b, p, ctx) {
     // large enough to read at 2 km, which is what a tracer's shape is for.
     const size = (wd && wd.body) || [0.32, 3.2];
     const bd = size[0], bl = size[1];
-    put(MESH.CYL, bl * -0.19, bd, bl, bd, [0.78, 0.78, 0.8]);
-    put(MESH.CONE, bl * 0.44, bd, bl * 0.34, bd, col);
-    put(MESH.SPHERE, bl * -0.75, bd * 3.1, bd * 3.1, bd * 3.1, [1.0, 0.72, 0.25]);
+    put(PRIM.CYL, bl * -0.19, bd, bl, bd, [0.78, 0.78, 0.8]);
+    put(PRIM.CONE, bl * 0.44, bd, bl * 0.34, bd, col);
+    put(PRIM.SPHERE, bl * -0.75, bd * 3.1, bd * 3.1, bd * 3.1, [1.0, 0.72, 0.25]);
   }
 }

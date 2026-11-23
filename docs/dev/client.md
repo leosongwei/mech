@@ -10,9 +10,16 @@
 ## 1. 构建与 `assets/`
 
 ```bash
-cd frontend && npm install && npm run build     # -> ../assets/
-./dev.sh build                                  # 同上，共用 npm cache
+./npm.sh install                # 依赖 -> frontend/node_modules
+./npm.sh run build              # -> assets/（三步，见下）
+./dev.sh build                  # 两者连跑
 ```
+
+* npm 一律经 `./npm.sh`：缓存、日志、`TMPDIR` 与 HOME 都指向 `frontend/.npm/`
+  （已 gitignore），参数原样交给 npm，所以 `./npm.sh run check:deps` 就是
+  `npm run check:deps`。一次构建在仓库外不留任何东西。
+* 同一个脚本把构建放进 bwrap：整个文件系统只读，只有本仓库可写。调用方已经提供了
+  这层保护时（外层 bwrap，或 `$HOME` 只读的沙箱）不套第二层；`MECH_NO_BWRAP=1` 跳过。
 
 * `npm run build` 是三步：`node scripts/depgraph.mjs`（层规则，见 §2）→
   `node --experimental-vm-modules scripts/syntax.mjs`（把 `src` 里每个文件当模块解析一遍，

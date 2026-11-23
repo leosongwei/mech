@@ -3,8 +3,10 @@
 __pycache__/
 *.py[cod]
 
-# node
+# node: dependencies and npm's own state (cache / logs / tmp / HOME - see
+# npm.sh, which keeps every bit of it inside frontend/)
 node_modules/
+frontend/.npm/
 
 # compiled client (npm run build output, served from /static and gitignored)
 assets/

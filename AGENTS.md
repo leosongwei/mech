@@ -53,15 +53,23 @@ C#（.NET 10）原型（archetype）ECS 服务器、WebGL2 客户端、16 km 见
 ### 构建
 
 ```bash
-cd frontend && npm run build     # -> assets/（依赖检查 + 语法检查 + webpack）
+./npm.sh install                 # 依赖 -> frontend/node_modules
+./npm.sh run build               # -> assets/（依赖检查 + 语法检查 + webpack）
 ./dotnet.sh build                # 服务器；必须干净构建，零警告
-./dev.sh build                   # 使用共享 npm 缓存的客户端构建
+./dev.sh build                   # 上面两条 npm 命令的快捷方式
 ```
 
 服务器一律通过 `./dotnet.sh` 构建：该脚本将 CLI home、NuGet 缓存、
 `XDG_RUNTIME_DIR` 与 `TMPDIR` 全部指向 `.dotnet_tmp/`（已 gitignore），
 因为裸 `dotnet build` 会写入 `$HOME`，在只读沙箱中直接失败。
 `Nullable` 已开启：警告即缺陷。
+
+客户端一律通过 `./npm.sh` 跑 npm：该脚本把缓存、日志、`TMPDIR` 与 HOME 全部指向
+`frontend/.npm/`（已 gitignore），因此一次构建在仓库外不留任何东西；参数原样交给
+npm（`./npm.sh run check:deps` 等）。它同时把构建放进 bwrap：整个文件系统只读、
+只有本仓库可写，安装脚本碰不到别处。调用方已经提供这层保护时（外层 bwrap，或
+`$HOME` 只读的沙箱）不再套第二层——判据是 `$HOME` 的可写性与 `MECH_BWRAP=1` 标记；
+`MECH_NO_BWRAP=1` 跳过这一层。
 
 前端改动只需重新构建——服务器按请求读取 `assets/`，因此无需重启。
 后端改动需要重启（`./dev.sh stop && ./dev.sh start`）。

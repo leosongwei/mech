@@ -22,7 +22,7 @@
 ### 1.2 客户端
 
 ```bash
-cd frontend && npm install && npm run build     # -> ../assets/
+./npm.sh install && ./npm.sh run build          # -> assets/
 ./dev.sh build                                   # 同上，外加共享 npm cache
 ```
 

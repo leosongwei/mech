@@ -1,7 +1,7 @@
 // The primitives, and what each one is.
 //
-// Everything drawn in the world is one of eleven unit-sized shapes: a hull is a
-// box, a wheel a sphere, a barrel a cylinder, a boulder a rock. A primitive is
+// Everything drawn in the world is one of twelve unit-sized shapes: a hull is a
+// box, a wheel a cylinder on its side, a barrel a cylinder, a boulder a rock. A primitive is
 // a three geometry plus the two facts the body program needs to know before it
 // can shade one - whether it paints house walls, whether it is lit at all - and
 // the capacity its instance buffer is allocated at.
@@ -244,6 +244,24 @@ function nose(k) {
   return m.build();
 }
 
+// The boat bow: a unit block whose front face is a smaller centred rectangle
+// (ky/kz of the rear cross-section), so roof, belly and cheeks all slope in as
+// trapezoids and the nose keeps a vertical plate. Head-on it is a frustum,
+// from the side a trapezoid - the JAGUAR's bow, not a wedge to a line.
+// Local +X is forward.
+function prow(ky, kz) {
+  const m = new Mesh();
+  const rear = [[-0.5, -0.5, -0.5], [-0.5, -0.5, 0.5], [-0.5, 0.5, 0.5], [-0.5, 0.5, -0.5]];
+  const front = rear.map(([, y, z]) => [0.5, y * ky, z * kz]);
+  m.face(rear);
+  m.face(front.slice().reverse());
+  for (let i = 0; i < 4; i++) {
+    const j = (i + 1) % 4;
+    m.face([rear[j], rear[i], front[i], front[j]]);
+  }
+  return m.build();
+}
+
 // A six-sided tube along Y, open at +Y and plugged dark at the far end: forty
 // rocket cells cost six walls each instead of a ten-sided cylinder, and the
 // hexagons read as a launcher face instead of a grid of dots.
@@ -296,13 +314,14 @@ export const PRIM = {
   WEDGE: 8,
   NOSE: 9,
   HEX: 10,
+  PROW: 11,
 };
 
 export const PRIMS = [
   primitive(box(), 40000),                                        // hulls, parts, rubble
-  primitive(sphere(12, 8), 24000),                                // wheels, joints, dots
+  primitive(sphere(12, 8), 24000),                                // joints, dots, flashes
   primitive(cone(10), 24000),                                     // muzzles, canopies
-  primitive(cylinder(10), 24000),                                 // barrels, tubes
+  primitive(cylinder(10), 24000),                                 // barrels, tubes, wheels
   primitive(rock(), 8000),                                        // boulders
   primitive(pyramid(), 32000, { unlit: true }),                   // tracers
   primitive(sphere(24, 16), 64),                                  // the close-up puff
@@ -310,6 +329,7 @@ export const PRIMS = [
   primitive(taper(0.42, 1.0), 2000),                              // a mech's leg pedestal
   primitive(nose(0.34), 600),                                     // a cockpit
   primitive(hexTube(), 6000),                                     // one cell of a launcher rack
+  primitive(prow(0.45, 0.52), 600),                               // a boat bow
 ];
 
 // The blended set - impact sprites, sparks, a missile's trail - is one flat cap

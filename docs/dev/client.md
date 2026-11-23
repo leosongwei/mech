@@ -143,7 +143,7 @@ pitch 已经在手上时用 `FORWARD + p`。`b.put(PRIM.BOX, p, yaw, pitch, sx, 
 具体的方程——对数深度、雾、平面着色的地面、抖动过的粒子——用 stock 材质反而要把它们重建
 一遍。three 负责的是管道：上下文、program 缓存、attribute 绑定、状态切换、draw call。
 
-* `render/primitives.js` 把十一个基本体建成 `BufferGeometry`，并带上每个基本体的两个事实
+* `render/primitives.js` 把十二个基本体建成 `BufferGeometry`，并带上每个基本体的两个事实
   （`facade` 画窗户、`unlit` 不参与光照）与它的 `cap`。基本体有一份顶点缓冲，
   同一个基本体的每一层（不透明 / 混合）只多一条实例缓冲。
 * `render/instances.js` 的 `Layer` 是一条实例缓冲：每条实例 20 个 float（16 矩阵 + 4 颜色），

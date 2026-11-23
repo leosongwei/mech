@@ -205,35 +205,27 @@ mode post-systems               # battle：波次
 每条原则只保留断言本身；具体机制、数值与实现细节由"详见"指向的页面
 及第 5 节功能索引承载。
 
-**P1. 组件集合即实体的类型，且终生不变。** 详见 `docs/dev/ecs.md`。
+* **组件集合即实体的类型，且终生不变。** 详见 `docs/dev/ecs.md`。
 
-**P2. 每个运动体只有一份 `pos`、一份 `vel`。** 详见 `docs/product/systems/movement.md`。
+* **每个运动体只有一份 `pos`、一份 `vel`。** 详见 `docs/product/systems/movement.md`。
 
-**P3. 身份是组件，而非类型分支。** 详见 `docs/dev/ecs.md`。
+* **ECS的基本设计原则是用组件表明身份，路由到不同系统上，而非在单系统中写类型分支。** 详见 `docs/dev/ecs.md`。
 
-**P4. 系统面向 buffer 编写，而非经由 `View`。** 详见 `docs/dev/ecs.md`。
+* **系统面向 buffer 编写，而非经由 `View`。** 详见 `docs/dev/ecs.md`。
 
-**P5. 系统遍历实体的顺序不属于模拟的一部分。** 详见 `docs/dev/checks.md`。
+* **模拟尽量不要依赖于遍历顺序** 详见 `docs/dev/checks.md`。
 
-**P6. 流水线即语义，其余只是开销。** 详见 `docs/dev/pipeline.md`。
+* **流水线即语义，其余只是开销。** 详见 `docs/dev/pipeline.md`。
 
-**P7. 视线只有一条。** 详见 `docs/product/systems/sight.md`。
+* **分离控制层（AI、玩家输入）、操作层、模拟层** 详见 `docs/product/systems/ai.md`。
 
-**P8. 伤害分为两段，且本身并非系统。** 详见 `docs/product/rules/damage.md`。
+* **火控定律唯一，双端一致。** 详见 `docs/product/systems/firecontrol.md`。
 
-**P9. 弹体的终结只有一份记录、一个裁决者。** 详见 `docs/product/rules/damage.md`。
+* **文档随改动更新。** 详见 `docs/product/README.md`。
 
-**P10. 弹体的种类是一个 tag。** 详见 `docs/product/systems/flight.md`。
+* **小编辑，先靶场后战斗。** 详见 `docs/dev/checks.md`。
 
-**P11. AI 表达意图，运动属于机器。** 详见 `docs/product/systems/ai.md`。
-
-**P12. 火控定律唯一，两种装定，双端一致。** 详见 `docs/product/systems/firecontrol.md`。
-
-**P13. 文档随改动更新。** 详见 `docs/product/README.md`。
-
-**P14. 小编辑，先靶场后战斗。** 详见 `docs/dev/checks.md`。
-
-**P15. 文档的文风上保持信息完整，禁止伪口语化、设问、凭空否定等非书面表述**
+* **文档的文风上保持信息完整，禁止伪口语化、设问、凭空否定等非书面表述**
 
 ## 5. 功能索引
 

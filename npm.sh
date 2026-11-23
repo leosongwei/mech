@@ -25,6 +25,12 @@
 # Arguments go to npm unchanged, so `./npm.sh run build` is `npm run build` in
 # `frontend/` with all of the above applied.
 set -euo pipefail
+# Every command this script runs is echoed to stderr (`set -x`, prefix `+ `).
+# Only this script's own lines are traced: `exec npm` replaces the shell, so
+# npm's output and the trace never mix, and the bwrap invocation - flags and
+# all - is there to read in the log when a build looks like it ran unwrapped.
+PS4='+ '
+set -x
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 self="$root/$(basename "${BASH_SOURCE[0]}")"
 state="$root/frontend/.npm"

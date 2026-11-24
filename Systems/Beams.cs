@@ -175,8 +175,8 @@ public static class Beams
                 // the beam leads hard enough, a screen, or a body in between all put
                 // the beam off it, and the receiver stays quiet while the channel walks
                 // on a guess
-                lit.set(eid, ch, visible && _body_hit(world, eye, _dir(eye, point), tid, eid, hulls)
-                                    ? (byte)1 : (byte)0);
+                lit.set(eid, ch, visible && body_hit(world, eye, _dir(eye, point), tid, eid, hulls,
+                                                     out _) ? (byte)1 : (byte)0);
             }
         }
     }
@@ -332,11 +332,26 @@ public static class Beams
         return t >= 0f && t <= max_t;
     }
 
+    /// <summary>m along the ray `o + s * d` at which it first meets the sphere `(c, r)`,
+    /// or -1 when it misses or the sphere is past `max_t`; a ray that starts inside
+    /// answers 0.  The one geometric question every laser asks, exposed so a caller can
+    /// ask it of a body before paying for the whole of `body_hit` - which is what makes
+    /// asking every designator about one hull affordable every tick
+    /// (`Systems/AI/Suppress.cs`).</summary>
+    public static float ray_sphere(Vec3 o, Vec3 d, Vec3 c, float r, float max_t) =>
+        _ray(o, d, c, r, max_t, out float t) ? t : -1f;
+
     /// <summary>Does this ray touch the hull `tid`'s body - and nothing before it.  A
     /// machine in the way is a body too, so it stops the light: the closest hit along
-    /// the ray is the one that decides.</summary>
-    private static bool _body_hit(World world, Vec3 eye, Vec3 dir, int tid, int from,
-                                  int[] hulls, out Vec3 landed)
+    /// the ray is the one that decides.  `landed` is where the light stopped.
+    ///
+    /// Public because the receiving end is asked two ways: `painting` asks it of every
+    /// hull for each designator, which is what a warning receiver needs; the AI asks it
+    /// of one hull for each designator, which is one ray per pair and the reason its
+    /// question is affordable every tick (`Systems/AI/Suppress.cs`).  Terrain, trees
+    /// and smoke are the caller's half of the test (`Sight.clear`).</summary>
+    public static bool body_hit(World world, Vec3 eye, Vec3 dir, int tid, int from,
+                                int[] hulls, out Vec3 landed)
     {
         landed = Vec3.zero;
         if (dir.x == 0f && dir.y == 0f && dir.z == 0f) return false;
@@ -352,10 +367,6 @@ public static class Beams
         landed = new Vec3(eye.x + dir.x * t, eye.y + dir.y * t, eye.z + dir.z * t);
         return true;
     }
-
-    private static bool _body_hit(World world, Vec3 eye, Vec3 dir, int tid, int from,
-                                  int[] hulls) =>
-        _body_hit(world, eye, dir, tid, from, hulls, out _);
 
     /// <summary>Every enemy machine with a laser on the hull `tid` right now - the one
     /// question a warning receiver asks.  The lasers are all of them: the four channels
@@ -381,7 +392,7 @@ public static class Beams
             if (!on)
             {
                 var (eye, sy, sp) = Weapons.aim_of(world, did);
-                on = _body_hit(world, eye, MathUtil.dir_from(sy, sp), tid, did, hulls,
+                on = body_hit(world, eye, MathUtil.dir_from(sy, sp), tid, did, hulls,
                                out var landed)
                      && Sight.clear(world, eye, landed, Sight.LOS_STEP);
             }

@@ -5,10 +5,18 @@
 // on the crew: `Systems/AI/Watch.cs` reads `flinch` a tick later and does the
 // looking, this file only answers "was something close, and from which bearing".
 //
-// Two sources, because a hull notices two kinds of near miss:
+// Three sources, because a hull notices three kinds of thing:
 //
 //   * **a round that went past** - a rocket that missed, a burst that straddled;
-//   * **a burst that went off** - a rocket that landed, a shell that hit the ground.
+//   * **a burst that went off** - a rocket that landed, a shell that hit the ground;
+//   * **a laser held on the hull** - a designator already aiming at *this* machine,
+//     which is not a near miss at all (`Systems/Beams.cs`).
+//
+// All three end in the same two floats (`flinch`), so a crew reacts to a beam being
+// held on it through the mechanism it already has; what the third one adds is a clock
+// (`paint`) and the rule for when that clock counts (`PAINT_ARM`): a sight sweeping
+// past is under a hull for milliseconds, so only a line that is *kept* there is read
+// as intent.
 //
 // The test for the first one is a *swept* distance, not a point: a 1 km/s round
 // moves 33 m in a tick, so a 30 m sphere tested at the tick boundaries is stepped
@@ -25,10 +33,10 @@
 // is therefore seen one tick early in its leg rather than not at all, and a burst
 // is seen in the tick it went off.
 //
-// The debounce is in the flush, not in the event: a crew gets one bearing per tick
-// (the nearest thing that came close), and a bearing it is already looking at is
-// only renewed.  Without that, a burst of 30 mm walking across a hull would swing
-// its head ten times a second.
+// The debounce for a near miss is in the flush, not in the event: a crew gets one
+// bearing per tick (the nearest thing that came close), and a bearing it is already
+// looking at is only renewed.  Without that, a burst of 30 mm walking across a hull
+// would swing its head ten times a second.
 
 namespace Mech.Server.Systems.AI;
 
@@ -52,6 +60,29 @@ public sealed class WhizColumns : Flights.RoundColumns
     }
 }
 
+/// <summary>The crews that carry a laser warning receiver, and the one column that is
+/// theirs: seconds the current beam has been on the hull.  A man has no such
+/// instrument, so a foot crew is not in this archetype at all and cannot be painted -
+/// the component set is the type (`Core/World.cs` adds it).</summary>
+public sealed class PaintColumns : CrewColumns
+{
+    public float[] paint = null!;
+
+    private static readonly string[] paint_names =
+        Components.Cat(Components.Cat(names, "paint"), AiTags.CREW);
+    public static readonly string[] OnPaint = paint_names;
+
+    public PaintColumns(Group g) : base(g) { }
+
+    public override string[] Names => paint_names;
+
+    protected override void bind(Group g)
+    {
+        base.bind(g);
+        paint = g.f("paint");
+    }
+}
+
 public static class Suppress
 {
     /// <summary>m; how close a round's leg has to pass to count as a near miss.</summary>
@@ -69,6 +100,18 @@ public static class Suppress
 
     /// <summary>rad; how far the new bearing has to differ inside `GAP`.</summary>
     public const float ARC = 25f * MathF.PI / 180f;
+
+    /// <summary>s: how long a laser has to stay on the hull before it is read as an
+    /// attack rather than as a sight sweeping past.  The debounce is the geometry - the
+    /// head turns at `Watch.RATE`, 150 deg/s, which at 3 km crosses 7.8 km/s of ground,
+    /// so a 10 m body (`Defs.LASER_SPHERE`) is under a moving beam for 2.5 ms.  A line
+    /// still on the hull half a second later was put there and kept there.</summary>
+    public const float PAINT_ARM = 0.5f;
+
+    /// <summary>s of alarm a beam that has been read as an attack buys: how long the
+    /// aperture stays on the machine painting this crew.  Longer than `MEM` because
+    /// what it announces is a round already on its way.</summary>
+    public const float PAINT_MEM = 3.0f;
 
     public static void run(World world, float dt)
     {
@@ -163,6 +206,9 @@ public static class Suppress
             foreach (var r in c)
             {
                 int who = idx[c.ids[r.index]];
+                // the alarm runs out here and only here: this file is the one writer
+                // of `flinch`, so the clock that sets it is the clock that ages it
+                r.flinch_t = MathF.Max(0f, r.flinch_t - dt);
                 if (who < 0 || best[who] == float.MaxValue) continue;
                 // still hot and already looking that way: renew the alarm, do not
                 // move the head (a burst is one event until a second shooter speaks)
@@ -170,6 +216,87 @@ public static class Suppress
                 bool same = MathF.Abs(MathUtil.wrap_pi(byaw[who] - r.flinch_yaw)) < ARC;
                 if (!(hot && same)) r.flinch_yaw = byaw[who];
                 r.flinch_t = MEM;
+            }
+        }
+
+        // ---- 5. the laser that is on the hull --------------------------------
+        //
+        // A beam that reaches this hull is somebody aiming at *this* machine, and the
+        // round that follows rides the same light - so it is read here, after the near
+        // misses, and it overwrites them: three sources, one buffer, and the one that
+        // is pointed at this crew speaks last.
+        //
+        // Both of a designator's lasers are asked, and they are the same test the
+        // warning receiver gets (`Beams.painting`): the four channels it steers (their
+        // verdict already in `beam_lit`) and the one down its sight, which burns
+        // whether it holds anything or not.  Not `painting` itself, though: that asks
+        // every designator about every hull (O(crews x designers x hulls)), while a
+        // crew only has to be asked about each designator - the same rays, one hull.
+        var crews = e.groups(PaintColumns.OnPaint);
+        if (crews.Count == 0) return;
+
+        var deid = new List<int>();
+        var deye = new List<Vec3>();
+        var ddir = new List<Vec3>();
+        var dfac = new List<byte>();
+        foreach (int did in e.query("beam_tgt"))
+        {
+            var (eye, sy, sp) = Weapons.aim_of(world, did);
+            deid.Add(did);
+            deye.Add(eye);
+            ddir.Add(MathUtil.dir_from(sy, sp));
+            dfac.Add(e.uv("faction")[did]);
+        }
+        var btgt = e.iv("beam_tgt");
+        var lit = e.uv("beam_lit");
+        int[]? hulls = null;                // only a beam already on a body needs them
+
+        foreach (var g in crews)
+        {
+            var c = new PaintColumns(g);
+            foreach (var r in c)
+            {
+                int eid = r.eid;
+                var centre = new Vec3(r.pos.x,
+                                      r.pos.y + Defs.UNIT_DEFS[r.etype].height * 0.5f,
+                                      r.pos.z);
+                bool on = false;
+                float beam_yaw = 0f;
+                for (int d = 0; d < deid.Count && !on; d++)
+                {
+                    if (dfac[d] == r.faction) continue;
+                    int did = deid[d];
+                    // the channels first: the computer steers them, so `Beams` has
+                    // already answered "is it on this hull" and the answer is a byte
+                    bool beam = false;
+                    for (int ch = 0; ch < Defs.BEAM_CHANNELS && !beam; ch++)
+                        beam = btgt.get(did, ch) == eid && lit.get(did, ch) != 0;
+                    if (!beam)
+                    {
+                        // then the sight, which is the laser nobody has to lock.  The
+                        // bare ray first: only a beam that lands on this body is worth
+                        // the hull-by-hull test of what stands in front of it
+                        if (Beams.ray_sphere(deye[d], ddir[d], centre, Defs.LASER_SPHERE,
+                                             Defs.LASER_RANGE) < 0f) continue;
+                        hulls ??= e.query("lockable");
+                        beam = Beams.body_hit(world, deye[d], ddir[d], eid, did, hulls,
+                                              out var landed)
+                               && Sight.clear(world, deye[d], landed, Sight.LOS_STEP);
+                    }
+                    if (!beam) continue;
+                    on = true;
+                    beam_yaw = MathF.Atan2(deye[d].z - centre.z, deye[d].x - centre.x);
+                }
+
+                // one tick without the beam is a break: the clock is continuous
+                // coverage.  It saturates, because past `PAINT_ARM` the figure has
+                // said everything it has to say
+                ref float paint = ref c.paint[r.index];
+                paint = on ? MathF.Min(paint + dt, PAINT_ARM) : 0f;
+                if (!on || paint < PAINT_ARM) continue;
+
+                r.flinch_t = PAINT_MEM;
+                r.flinch_yaw = beam_yaw;
             }
         }
     }

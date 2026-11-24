@@ -5,15 +5,15 @@
 > 以及它走不通时怎么要一条新路。
 > **数值出处**：`Systems/AI/` 的 `Sense.cs`（`ACQUIRE` / `SIGHT_CASTS`）、`Watch.cs`
 > （`RATE` / `CONE` / `HOLD` / `STEP` / `PATTERN`）、`Suppress.cs`（`WHIZ` / `HEAR` / `MEM` /
-> `GAP` / `ARC`）、`Support/ThreatScore.cs`（`W` / `HALF_AT` / `SWITCH`）、`Intercept.cs`
-> （`RANGE` / `CPA_HIT` / `CPA_MEM`）、`Support/Crew.cs`（`MEMORY` / `ACCEL_TAU` /
-> `ACCEL_STALE` / `fused_arm`）、`Support/Engage.cs`（`PITCH_TOL` / `MASTER_HANDOFF`）、
-> `Strategies/Front.cs`、`Strategies/Raid.cs`（`RAID_*` / `GRADIENT_*` / `STUCK_*` /
-> `FORCE_WEIGHT` / `FieldNav.STEEP_SHARE`）、`Nav/Paths.cs`（`NODES_PER_TICK` / `RETRY` /
-> `MAX_DETOUR`）、`Nav/NavMesh.cs`（`NavProfile` / `NavWalk.STEP` / `NavRegion.SNAP`），与
-> `Core/Defs.cs` 的 `AI_LAUNCH_GAP` / `AI_MASTER_ARM` / `BEAM_CONE` / `ai_range` / `sight` /
-> `radar_strength`
-> **核对**：1.42.0 / 2026-11-24
+> `GAP` / `ARC` / `PAINT_ARM` / `PAINT_MEM`）、`Support/ThreatScore.cs`（`W` / `HALF_AT` /
+> `SWITCH`）、`Intercept.cs`（`RANGE` / `CPA_HIT` / `CPA_MEM`）、`Support/Crew.cs`（`MEMORY` /
+> `ACCEL_TAU` / `ACCEL_STALE` / `fused_arm`）、`Support/Engage.cs`（`PITCH_TOL` /
+> `MASTER_HANDOFF`）、`Strategies/Front.cs`、`Strategies/Raid.cs`（`RAID_*` / `GRADIENT_*` /
+> `STUCK_*` / `FORCE_WEIGHT` / `FieldNav.STEEP_SHARE`）、`Nav/Paths.cs`（`NODES_PER_TICK` /
+> `RETRY` / `MAX_DETOUR`）、`Nav/NavMesh.cs`（`NavProfile` / `NavWalk.STEP` / `NavRegion.SNAP`），与
+> `Core/Defs.cs` 的 `AI_LAUNCH_GAP` / `AI_MASTER_ARM` / `BEAM_CONE` / `LASER_SPHERE` /
+> `ai_range` / `sight` / `radar_strength`
+> **核对**：1.43.0 / 2026-11-24
 
 ## 1. 规则
 
@@ -91,9 +91,16 @@
   回头（本节第三条）。
 * **被打**：附近有弹飞掠（弹道段离机体中心 30 m 内）或爆炸（80 m 内）时，孔径转向**弹药来向
   的地平线方位**并进入交战状态。防抖：0.5 s 窗口内同方向的一串弹只续时、不转向，换方向要差
-  25 度以上——一串机关炮是一次事件，不是十次。
-* 被打**不会**打断手上的目标：一颗子弹从侧后飞过不会让机组放弃它正在打的那一辆。要它转移
-  火力，靠的是威胁度（§1.5），不是枪声。
+  25 度以上——一串机关炮是一次事件，不是十次。余温 `MEM` 1.5 s，之后警报归零。
+* **被激光照着**：敌方设计ator 的激光在机体上**连续**照满 `PAINT_ARM` 0.5 s，机组就把它读成
+  "有人正在把这台车做成导弹目标"：孔径转向那台设计者并进入交战状态，余温 `PAINT_MEM` 3 s。
+  判定用的是告警接收机那一条规则（[rwr.md](rwr.md) §1.7）：四路锁定与瞄准线都算，挡它的东西
+  与挡视线的同一套。断续的照射不算——断一拍就重新计时；而且 150 °/s 的孔径在 3 km 上每秒横扫
+  7.8 km，10 m 的机体 2.5 ms 就过去了，能连着照半秒的只有刻意压住的线。这条警报**压过**上面
+  那两声（同一个 tick 内最后写入）：激光是有人蓄意引导，流弹不是。告警接收机是机器上的仪表，
+  所以只有机甲与装甲车有机组反应，步兵没有。
+* 被打与**被照着**都不会打断手上的目标：一颗子弹从侧后飞过不会让机组放弃它正在打的那一辆。要
+  它转移火力，靠的是威胁度（§1.5），不是枪声。
 
 ### 1.5 威胁度：先打值钱的
 
@@ -234,6 +241,7 @@ W: 机甲 1.0 · 装甲车 0.5 · 火箭兵 0.25 · 步兵 0.1 · 敌方指挥�
 | `Watch.PATTERN` | 右 90° / 正前 / 左 90° / 正前 | 相对行驶方向，一个循环 12 s，背后不扫 |
 | `Suppress.WHIZ` / `HEAR` | 30 m / 80 m | 弹道离机体多近算飞掠 / 爆心多近算听见 |
 | `Suppress.MEM` / `GAP` / `ARC` | 1.5 s / 0.5 s / 25° | 被打的余温 / 防抖窗口 / 窗口内换向的方位差 |
+| `Suppress.PAINT_ARM` / `PAINT_MEM` | 0.5 s / 3 s | 激光连续照多久算攻击意图 / 认定后孔径留在那台设计者上的秒数 |
 | `ThreatScore.W` | 机甲 1.0 · 装甲车 0.5 · 火箭兵 0.25 · 步兵 0.1 · 指挥部 1.0 | 平台基准权重 |
 | `ThreatScore.HALF_AT` | 0.7 | 归一化距离在这个比例上时分数减半 |
 | `ThreatScore.SWITCH` | 1.25 | 换目标所需的分数优势 |
@@ -409,13 +417,16 @@ ADVANCE 走完路线、且已在 `TOWN_STOP` 之内 → ASSAULT（停车；占�
 * **导航层自己在干活**：`--check nav`（1.39.0）——三台机组 APC 各 240 s、各走约 6.4 km，低
   于 10 % 极速的时间只有 **1.4 s**；全场绕行请求 1494 条、**1494 条都拿到路线**（机甲 71、
   装甲车 46，其余是步兵）。
-* **孔径自己**：`--check gaze`（1.42.0，seed 7 的靶场）——正前方 1500 m 的目标在**一次扫描**
+* **孔径自己**：`--check gaze`（1.43.0，seed 7 的靶场）——正前方 1500 m 的目标在**一次扫描**
   （0.03 s，首 tick 就已对准）里被找到；正后方 900 m 的目标在 20 s 里**从未被找到**，孔径在
   −90°..+90° 之间扫；90 度转向量到 **0.60 s**（150 °/s 的代数解，误差 ≤ 2 tick）；一发从 −x
   掠过的弹让孔径在 **1.30 s** 内转到来向（180 度）；同一方向连打 12 发只产生 **0 次**额外转向。
-* **一次战斗还打不打得起来**（孔径会不会把机组弄瞎）：`--check battle --minutes 12`——528 次
-  击杀 / 25386 发（约 48 发一杀），与 1.40.0 的 536 / 28742 同量级；2.85 ms/tick（含线路），
-  场上 535 个单位。
+* **激光告警自己**：同一命令——正后方 900 m 的设计ator 把激光压在机体上，**0.50 s** 后被认定
+  （要求 0.50 s），孔径 **0.67 s** 内转到光斑方位并进入交战；同一条激光以 0.40 s 照、0.20 s
+  断的节奏来回两次（峰值 0.40 s）则**一次警报也没有**，孔径照常搜寻。
+* **一次战斗还打不打得起来**（孔径会不会把机组弄瞎）：`--check battle --minutes 12`——517 次
+  击杀 / 26316 发（约 51 发一杀），与 1.42.0 的 528 / 25386 同量级；3.03 ms/tick（含线路），
+  场上 585 个单位。
 * **战略层**：128 m 节点网格（1.5 万节点）建成 11.8 ms，5 个节点因墙关闭、**0 个因坡关闭**，
   25 座镇全部从红方基地可达；横穿 12.7 km 的 A\* 给出 1.02 倍直线的路线，约 1.4 M 次展开，
   折算 46 tick（1.53 s）的切片预算。感知的代价约 0.2 ms/tick（复现方式见

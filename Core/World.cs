@@ -289,6 +289,9 @@ public sealed class World
             if (arms) comps.Add("mech_ai");
             else if (d.tags.Contains("person")) comps.Add("foot_ai");
             comps.AddRange(Components.CREW_FCS_COMPS);
+            // a laser warning receiver is an instrument on a machine's roof: a man
+            // has none, so his crew never carries the clock it feeds
+            if (!d.tags.Contains("person")) comps.Add("paint");
         }
         if (extra != null) comps.AddRange(extra);
         int eid = e.create(comps);

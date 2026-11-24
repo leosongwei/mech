@@ -1,12 +1,15 @@
 // The aperture: what a crew can find, and how fast the looking turns.
 //
-// Five rows, one each for the facts the model is made of (`docs/plans/AI_sight_plan.md`):
+// Eight rows, one each for the facts the model is made of (`docs/plans/AI_sight_plan.md`):
 //
 //   front     a target in the window is acquired in one scan, not in a sweep
 //   behind    a target outside the pattern is never acquired, however long it waits
 //   slew      the head turns at 150 deg/s - 90 deg is 0.6 s, not one tick
 //   flinch    a round that goes past turns the head to the bearing it came from
 //   burst     ten rounds from one bearing turn it once, not ten times
+//   paint     a laser *held* on the hull is an attack: the head turns to the machine
+//             painting it
+//   sweep     a laser that crosses the hull and moves on is not: nothing turns
 //   score     the threat table, against the worked example in the plan
 //
 // The scenarios are built the way `FcsCheck` builds its own: a range world, one
@@ -162,6 +165,83 @@ public static class GazeCheck
             Clean(world, crew, -1);
         }
 
+        // ---- paint: a beam held on the hull is somebody aiming at it --------
+        {
+            int crew = Crew(world, sx, sz);
+            Hold(world, crew, -1);
+            world.update(DT);
+            int painter = Painter(world, sx, sz, crew);
+            // not one tick of the sight on the hull: the alarm has to wait out
+            // `PAINT_ARM`, which is what tells a held line from a sweeping one
+            float t = 0f;
+            while (t < 2f && e.fv("flinch")[crew] <= 0f)
+            {
+                Lay(world, painter, crew);
+                world.update(DT);
+                t += DT;
+            }
+            float arm = t;
+            float bearing = e.fv("flinch").get(crew, 1);
+            // ...and the aperture is `Watch`'s: the alarm is its input, not a second
+            // mechanism, so the head has to arrive at the beam's bearing on its own
+            float turn = 0f;
+            while (turn < 3f && MathF.Abs(MathUtil.wrap_pi(bearing - e.fv("gaze_yaw")[crew])) > 0.05f)
+            {
+                Lay(world, painter, crew);
+                world.update(DT);
+                turn += DT;
+            }
+            float got = e.fv("gaze_yaw")[crew];
+            bool aimed = MathF.Abs(MathUtil.wrap_pi(bearing - got)) <= 0.05f;
+            bool engaged = e.uv("ai_gaze")[crew] == AiGaze.ENGAGE;
+            bool in_time = arm >= Suppress.PAINT_ARM - DT && arm <= Suppress.PAINT_ARM + 3f * DT;
+            Console.WriteLine($"paint     beam held on the hull: alarm after {arm:0.00} s"
+                              + $" ({Suppress.PAINT_ARM:0.00} demanded), beam at {bearing:0.00} rad,"
+                              + $" head on it after {turn:0.00} s, "
+                              + $"{(engaged ? "ENGAGE" : "SEARCH")}  "
+                              + $"{(aimed && engaged && in_time ? "ok" : "GAP")}");
+            if (!(aimed && engaged && in_time)) bad++;
+            Clean(world, crew, -1);
+        }
+
+        // ---- sweep: a beam that crosses the hull is not an attack -----------
+        {
+            int crew = Crew(world, sx, sz);
+            Hold(world, crew, -1);
+            world.update(DT);
+            int painter = Painter(world, sx, sz, crew);
+            // 12 ticks on the hull (0.40 s), 6 off (0.20 s), twice.  Either pass is
+            // shorter than `PAINT_ARM` and the clock goes back to zero between them,
+            // so a sight crossing the crew never becomes intent - which is the
+            // difference between a sweep and a designator holding a line
+            float peak = 0f;
+            bool rang = false, engaged = false;
+            for (int k = 0; k < 2; k++)
+            {
+                for (int i = 0; i < 12; i++)
+                {
+                    Lay(world, painter, crew);
+                    world.update(DT);
+                    peak = MathF.Max(peak, e.fv("paint")[crew]);
+                }
+                for (int i = 0; i < 6; i++)
+                {
+                    Lay(world, painter, crew);
+                    e.fv("sight_yaw")[painter] += 20f * MathF.PI / 180f;   // off the hull
+                    world.update(DT);
+                    if (e.fv("flinch")[crew] > 0f) rang = true;
+                    if (e.uv("ai_gaze")[crew] == AiGaze.ENGAGE) engaged = true;
+                }
+            }
+            bool ok = !rang && !engaged && peak < Suppress.PAINT_ARM;
+            Console.WriteLine($"sweep     0.40 s on / 0.20 s off, twice: peak paint {peak:0.00} s of"
+                              + $" {Suppress.PAINT_ARM:0.00}, "
+                              + $"{(rang ? "ALARM" : "no alarm")}, "
+                              + $"{(engaged ? "ENGAGE" : "search")}  {(ok ? "ok" : "GAP")}");
+            if (!ok) bad++;
+            Clean(world, crew, -1);
+        }
+
         // ---- score: the worked example in the plan --------------------------
         {
             // a mech crew's own `sight` is 3500 m
@@ -177,11 +257,11 @@ public static class GazeCheck
         }
 
         Console.WriteLine(bad == 0
-            ? "gaze: the aperture finds what it faces, turns at 150 deg/s, and one burst is one turn"
+            ? "gaze: the aperture finds what it faces, turns at 150 deg/s, one burst is one turn, "
+              + "and a beam is an attack only while it is held"
             : $"gaze: {bad} gap(s) - a crew that finds what it is not looking at, or a head that does not turn");
         return bad == 0 ? 0 : 1;
     }
-
     /// <summary>One crew on the range, aimed down +x with its aperture on its nose.
     /// Aimed once: the sweep is `Watch`'s from the next tick on, and a harness that
     /// re-aimed every tick would be measuring its own hand instead of the model.</summary>
@@ -223,6 +303,34 @@ public static class GazeCheck
                           new Vec3(900f, 0f, 0f), 2f, -1);
     }
 
+    /// <summary>A machine that paints the crew, dead astern - outside the search
+    /// pattern (`behind` above), so the crew never *sees* it and everything the paint
+    /// rows measure came down the beam.  A mech: the type carries the laser whether or
+    /// not a launcher is fitted, and the sight is the one line that always burns.
+    /// </summary>
+    private static int Painter(World world, float x, float z, int crew)
+    {
+        int eid = world.spawn_unit(Defs.ETYPE_MECH, Defs.FACTION_BLUE, x - 900f, z,
+                                   -1, crew: false);
+        Lay(world, eid, crew);
+        return eid;
+    }
+
+    /// <summary>Lay a designator's sight on the crew's body, from the eye it looks out
+    /// of - the same rule `BeamCheck` drives the receiver with.  Re-laid every tick,
+    /// because a mech's eye rides the hull and `Gunnery` turns that hull after it.
+    /// </summary>
+    private static void Lay(World world, int painter, int crew)
+    {
+        var e = world.ecs;
+        var (eye, _, _) = Weapons.aim_of(world, painter);
+        var p = e.fv("pos").get3(crew);
+        float dy = p.y + Defs.UNIT_DEFS[e.uv("etype")[crew]].height * 0.5f - eye.y;
+        float dx = p.x - eye.x, dz = p.z - eye.z;
+        e.fv("sight_yaw")[painter] = MathF.Atan2(dz, dx);
+        e.fv("sight_pitch")[painter] = MathF.Atan2(dy, MathF.Sqrt(dx * dx + dz * dz));
+    }
+
     private static void Clean(World world, params int[] keep)
     {
         var e = world.ecs;
@@ -235,12 +343,14 @@ public static class GazeCheck
         foreach (int id in world.projectiles()) e.destroy(id);
     }
 
-    /// <summary>Open, flat ground with 1.6 km of clear line down +x - the most the
-    /// range's 4 km map can give, and more than a row needs.</summary>
+    /// <summary>Open, flat ground with 1.6 km of clear line down +x *and* down -x - the
+    /// most the range's 4 km map can give, and more than a row needs.  Both directions
+    /// because the rows put things on both sides of the crew: a target dead ahead, and
+    /// a machine painting it from astern.</summary>
     private static (float x, float z) Spot(World world)
     {
         var t = world.terrain;
-        for (float x = 700f; x < t.w * Terrain.TILE - 1700f; x += 200f)
+        for (float x = 1700f; x < t.w * Terrain.TILE - 1700f; x += 200f)
         {
             for (float z = 700f; z < t.d * Terrain.TILE - 700f; z += 200f)
             {
@@ -248,11 +358,14 @@ public static class GazeCheck
                 bool open = true;
                 for (float d = 0f; d <= 1600f && open; d += 100f)
                 {
-                    float px = x + d;
-                    if (t.blocked(px, z)) { open = false; break; }
-                    if (MathF.Abs(t.height_at(px, z) - h) > 6f) { open = false; break; }
-                    if (!t.los(new Vec3(x, h + Defs.MECH_EYE, z),
-                               new Vec3(px, t.height_at(px, z) + 1.4f, z), 12f)) open = false;
+                    for (int s = -1; s <= 1 && open; s += 2)
+                    {
+                        float px = x + d * s;
+                        if (t.blocked(px, z)) { open = false; break; }
+                        if (MathF.Abs(t.height_at(px, z) - h) > 6f) { open = false; break; }
+                        if (!t.los(new Vec3(x, h + Defs.MECH_EYE, z),
+                                   new Vec3(px, t.height_at(px, z) + 1.4f, z), 12f)) open = false;
+                    }
                 }
                 if (open) return (x, z);
             }

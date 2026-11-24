@@ -186,6 +186,11 @@ public static class Components
         // from] (`Systems/AI/Suppress.cs`).  A crew looks at the noise, and only a
         // fresh bearing turns it again - a burst is one event, not ten.
         ecs.register("flinch", Kind.F, 2, 0.0);
+        // s; how long one enemy laser has been on this hull without a break: the
+        // warning receiver's own clock, and the debounce that separates a sight
+        // sweeping past from a sight held on it (`Systems/AI/Suppress.cs`).  It is
+        // the machine's instrument, so a man does not carry it.
+        ecs.register("paint", Kind.F, 1, 0.0);
 
         // ---- raid (battle mode) -----------------------------------------
         // A raider is a *mission*, not a type: the hulls are ordinary mechs that

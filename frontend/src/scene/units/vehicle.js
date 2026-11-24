@@ -7,7 +7,7 @@
 // under the hull's ground track.
 
 import { PRIM } from '../../render/primitives.js';
-import { FORWARD, at } from '../helpers.js';
+import { FORWARD, at, postAt } from '../helpers.js';
 import { METAL, METAL_D, METAL_L, GLASS, HULK, SOOT, facColor, dim } from '../palette.js';
 
 // A wheel: a cylinder laid on its side, axle along the hull's right axis.
@@ -54,6 +54,13 @@ export function apc(b, e, ctx) {
   at(b, PRIM.BOX, e, tYaw, 0, 0.55, 2.98, 0.31, 0.06, 0.2, 0.3, GLASS);
   at(b, PRIM.CYL, e, tYaw, FORWARD + e.pitch, 0, 2.45 + 1.4 * sp, 0.8 + 1.4 * cp,
     0.2, 2.8, 0.2, [0.12, 0.12, 0.13]);
+  // The crew's aperture, on the turret roof and gimballed on its own bearing: the
+  // post turns with the turret, the head with `gaze` (`Systems/AI/Watch.cs`).  A
+  // carrier whose whisker is off you has not seen you, whatever its gun is doing.
+  const gaze = e.gaze === undefined ? tYaw : e.gaze;
+  at(b, PRIM.CYL, e, tYaw, 0, -0.55, 2.92, 0.72, 0.18, 0.28, 0.18, METAL_D);
+  postAt(b, PRIM.BOX, e, tYaw, gaze, -0.55, 3.14, 0.72, 0, 0.38, 0.22, 0.26, METAL_L);
+  postAt(b, PRIM.BOX, e, tYaw, gaze, -0.55, 3.14, 0.72, 0.21, 0.05, 0.14, 0.18, GLASS);
   const af = ctx.flashes && ctx.flashes.get(e.id);
   if (af) {
     at(b, PRIM.SPHERE, e, tYaw, e.pitch, 0, 2.45 + 3.0 * sp, 0.8 + 3.0 * cp,

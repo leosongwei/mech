@@ -5,7 +5,7 @@
 > 接起来、场景的局部坐标与放置约定，以及构建、图标、质量档这类"只影响画面"的常驻约定。
 > **代码**：`frontend/src/`（`core/`、`render/`、`app/`、`scene/`）、`frontend/scripts/`、
 > `frontend/webpack.config.js`
-> **核对**：1.40.0 / 2026-11-23
+> **核对**：1.42.0 / 2026-11-24
 
 ## 1. 构建与 `assets/`
 
@@ -133,6 +133,13 @@ pitch 已经在手上时用 `FORWARD + p`。`b.put(PRIM.BOX, p, yaw, pitch, sx, 
   出发的偏移（`right` / `up` / `fwd`，含俯仰）跟着 `syaw` / `spitch` 转——塔是绕柱子转，
   而绕着车公转就错了：把视角的角传给 `at` 画出来，头和柱子能差出一米半。`meshPitch`
   留空时网格的俯仰就取 `spitch`。
+* **`postAt(b, mesh, e, hullYaw, faceYaw, ox, oy, oz, fx, …)`**：一根柱子上的另一具头。
+  柱子的位置按 `hullYaw`（车身或炮塔）算，头自己的朝向按 `faceYaw` 算，`fx` 再让它沿**自己
+  的**朝向往前挪一点——观瞄头前面的那块玻璃就在那儿。机组的**孔径**（`e.gaze`）画在这条路
+  上：它与炮口是两根轴（[../product/systems/ai.md](../product/systems/ai.md) §1.4），所以
+  炮塔转到别处时它自己扫，这是玩家判断"对面看没看见我"的唯一读法。机甲在头顶柱子旁 0.86 m
+  处（`scene/units/mech.js`），装甲车在炮塔顶上（`scene/units/vehicle.js`）；步兵不画，因为
+  人体模型上没有可转的部件，而步兵行也不上线这个字段。
 * `SIGHT_Y`（5.05，与 `defs.MECH_EYE` 同一个数）是塔的光轴高度，座舱眼正坐在那里，
   所以自己的观瞄头不进绘制列表（`scene/units/mech.js` 的 `own`），别人的都画。
 

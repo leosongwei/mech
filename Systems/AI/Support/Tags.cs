@@ -52,3 +52,14 @@ public static class AiState
     public const byte WITHDRAW = 7;
     public const byte RESUPPLY = 8;
 }
+
+/// <summary>What the *aperture* is doing (`ai_gaze`), which is a different
+/// question from what the machine is doing (`AiState`) and has its own clock: the
+/// gun's memory lasts `Crew.MEMORY` (2 s), the attention lasts `Watch.HOLD` (8 s),
+/// and a hull on a lane can be advancing while it is looking at something it cannot
+/// reach.  `Systems/AI/Watch.cs` is the only writer.</summary>
+public static class AiGaze
+{
+    public const byte SEARCH = 0;   // nothing in the window: sweep the sectors
+    public const byte ENGAGE = 1;   // a target, or fire, has the aperture's attention
+}

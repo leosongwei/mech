@@ -18,6 +18,14 @@
 // restricted target list in its type (`targets`: a rifleman picks fights with other
 // infantry and leaves armour alone - 15 hp in the open is not a threat to a tank).
 //
+// Two things narrow that box down.  The *window*: a candidate has to sit inside the
+// aperture the crew is looking through (`Watch.CONE`, 40 deg about `gaze_yaw`), so a
+// crew finds what it is facing and nothing else - that is `Systems/AI/Watch.cs`'s
+// half of the model and it gates *finding*, never *tracking*, so a hull already in
+// hand stays in hand for as long as the guns remember it.  The *order*: candidates
+// are ranked by `ThreatScore` and not by distance, and the hull in hand keeps it
+// unless a newcomer is worth `ThreatScore.SWITCH` times more.
+//
 // Acquisition is *observation*: the crew writes `target` and nothing else.  What to
 // do about it is the mission policy's (`Systems/AI/Strategies/`), and pointing the
 // gun at it is the platform's (`Engage*`).
@@ -113,8 +121,13 @@ public static class Sense
                 if (r.timer <= 0f)
                 {
                     r.timer = ACQUIRE * world.rng.uniform(0.75f, 1.35f);
-                    int found = _acquire(world, r.faction, combat_fac, r.eye, own);
-                    if (found >= 0 && found != r.target)
+                    int found = _acquire(world, r.faction, combat_fac, r.eye, own, r.gaze,
+                                         out float worth);
+                    // the hull in hand keeps it unless the new one is clearly worth
+                    // more (`ThreatScore.SWITCH`): without the margin two hulls of
+                    // equal score would trade the crew back and forth every scan
+                    if (found >= 0 && found != r.target &&
+                        worth > _worth(r, own) * ThreatScore.SWITCH)
                     {
                         var tpos = e.fv("pos").get3(found);
                         var tvel = e.fv("vel").get3(found);
@@ -144,14 +157,18 @@ public static class Sense
         return Sight.clear(world, r.eye, new Vec3(tpos.x, tpos.y + td.height * 0.6f, tpos.z));
     }
 
-    /// <summary>Nearest hostile hull with line of sight, or -1.
+    /// <summary>The hostile hull worth working most, or -1.
     ///
     /// No position is gathered here - the grid carries its own copy, in the same
     /// order as its ids.  The distance is the one `_sees` measures: eye to the
     /// hull's geometric centre, so the scan radius and the engagement radius answer
-    /// the same question.</summary>
-    private static int _acquire(World world, int fac, sbyte[] combat_fac, Vec3 eye, UnitDef d)
+    /// the same question.  The order is `ThreatScore` and not distance: the hull
+    /// that can hurt the crew most is the one it works first, and the six
+    /// line-of-sight casts go to the six best of them rather than the six closest.</summary>
+    private static int _acquire(World world, int fac, sbyte[] combat_fac, Vec3 eye, UnitDef d,
+                                float gaze, out float score)
     {
+        score = -1f;
         var grid = world.grid;
         var (ci, cj) = grid.cell_of(eye.x, eye.z);
         var (ids, p) = grid.box(ci, cj, (int)(d.sight * grid.inv) + 1);
@@ -167,15 +184,21 @@ public static class Sense
             if (cf < 0 || cf == fac) continue;
             if (want != null && Array.IndexOf(want, (int)etype[id]) < 0) continue;
             float dx = p[k * 3] - eye.x;
-            float dy = p[k * 3 + 1] + Defs.UNIT_DEFS[etype[id]].height * 0.5f - eye.y;
             float dz = p[k * 3 + 2] - eye.z;
+            // the window: only what the crew is actually looking at can be found
+            // (`Systems/AI/Watch.cs`).  The bearing is horizontal - the aperture is
+            // a bearing, and every target in the game is on the ground
+            if (MathF.Abs(MathUtil.wrap_pi(MathF.Atan2(dz, dx) - gaze)) > Watch.CONE) continue;
+            float dy = p[k * 3 + 1] + Defs.UNIT_DEFS[etype[id]].height * 0.5f - eye.y;
             float ds = MathF.Sqrt(dx * dx + dy * dy + dz * dz);
             if (!(ds <= d.sight)) continue;
+            float worth = ThreatScore.of(etype[id], ds, d.sight);
+            if (worth <= 0f) continue;               // not worth working at all
             cand[n].id = id;
             cand[n].x = p[k * 3];
             cand[n].y = p[k * 3 + 1];
             cand[n].z = p[k * 3 + 2];
-            cand[n].ds = ds;
+            cand[n].worth = worth;
             n += 1;
         }
         if (n == 0) return -1;
@@ -184,19 +207,35 @@ public static class Sense
         for (int k = 0; k < take; k++)
         {
             var tp = cand[k];
-            if (Sight.clear(world, eye, new Vec3(tp.x, tp.y + 1.5f, tp.z))) return tp.id;
+            if (Sight.clear(world, eye, new Vec3(tp.x, tp.y + 1.5f, tp.z)))
+            {
+                score = tp.worth;
+                return tp.id;
+            }
         }
         return -1;
     }
 
-    /// <summary>One candidate: the grid's own copy of the position, ordered by
-    /// plan-view distance.</summary>
+    /// <summary>What the hull in hand is worth, on the candidate scale: 0 when the
+    /// crew holds nothing.  Measured on the belief, because that is what the crew
+    /// has - a target it has lost sight of is ranked where it thinks it is.</summary>
+    private static float _worth(CrewRow r, UnitDef own)
+    {
+        if (!r.has_belief) return 0f;
+        var tpos = r.belief_pos;
+        float dx = tpos.x - r.eye.x, dz = tpos.z - r.eye.z;
+        float dy = tpos.y + Defs.UNIT_DEFS[r.belief_type].height * 0.5f - r.eye.y;
+        return ThreatScore.of(r.belief_type, MathF.Sqrt(dx * dx + dy * dy + dz * dz), own.sight);
+    }
+
+    /// <summary>One candidate: the grid's own copy of the position, ordered by what
+    /// it is worth (`ThreatScore`).</summary>
     private struct Cand : IComparable<Cand>
     {
         public int id;
         public float x, y, z;
-        public float ds;
+        public float worth;
 
-        public int CompareTo(Cand other) => ds.CompareTo(other.ds);
+        public int CompareTo(Cand other) => other.worth.CompareTo(worth);
     }
 }

@@ -14,6 +14,7 @@
 // inherit the magazines of the mech whose id he took.
 
 import { TICK_HZ } from '../core/config.js';
+import { TAU } from '../core/math.js';
 
 // the measured acceleration's two constants: how long a pull is remembered (a
 // hull that stopped pulling reads as stopping in a quarter second, which is the
@@ -27,7 +28,7 @@ const SIZE = { u8: 1, u16: 2, f32: 4 };
 export const CLASSES = [
   {
     name: 'mech',               // everything: hull, arms, magazines, the sight head
-    bytes: 74,
+    bytes: 76,
     fields: [
       ['id', 'u16'], ['etype', 'u8'], ['faction', 'u8'],
       ['owner', 'u8'], ['flags', 'u8'], ['target', 'u16'],
@@ -37,17 +38,19 @@ export const CLASSES = [
       ['hp', 'u16'], ['arm_hp', 'u16', 2],      // left arm, then right
       ['ammo', 'u16', 2], ['mag', 'u16', 2], ['weapon', 'u16', 2],
       ['syaw', 'f32'], ['spitch', 'f32'],
+      ['gaze', 'u16'],                        // where the crew's aperture points
     ],
   },
   {
     name: 'apc',                // turret and velocity, no arms and no sight head
-    bytes: 46,
+    bytes: 48,
     fields: [
       ['id', 'u16'], ['etype', 'u8'], ['faction', 'u8'],
       ['owner', 'u8'], ['flags', 'u8'], ['target', 'u16'],
       ['pos', 'f32', 3], ['yaw', 'f32'],
       ['pitch', 'f32'], ['turret', 'f32'],
       ['vel', 'f32', 3], ['hp', 'u16'],
+      ['gaze', 'u16'],                        // where the crew's aperture points
     ],
   },
   {
@@ -121,6 +124,11 @@ const PUT = {
   // where the crew is looking: `yaw` / `pitch` are the laid gun
   syaw: (e, dv, o) => { e.syaw = dv.getFloat32(o, true); },
   spitch: (e, dv, o) => { e.spitch = dv.getFloat32(o, true); },
+  // ...and the aperture, which on an AI crew is a different bearing from the gun's
+  // (`Systems/AI/Watch.cs`).  Two bytes over the full turn is `Netcode._angle`:
+  // 0.0055 deg, far finer than anything reads it.  Eased like `yaw`, because a
+  // 150 deg/s sweep sampled at 15 Hz is a 10 deg step per snapshot
+  gaze: (e, dv, o) => { e.tgaze = (dv.getUint16(o, true) / 65536) * TAU - Math.PI; },
 };
 
 // What a field reads as on a row of a class that does not carry it.
@@ -138,6 +146,7 @@ const CLEAR = {
   mag: (e) => { e.mag[0] = 0; e.mag[1] = 0; },
   weapon: (e) => { e.weapon[0] = 0; e.weapon[1] = 0; },
   syaw: (e) => { e.syaw = 0; },
+  gaze: (e) => { e.tgaze = 0; },
   spitch: (e) => { e.spitch = 0; },
 };
 
@@ -167,6 +176,7 @@ for (const c of CLASSES) {
 // class may write, and the two-slot arrays a mech or an APC fills.
 export function newEntity(id) {
   return { id, x: 0, y: 0, z: 0, yaw: 0, pitch: 0, turret: 0, leg: 0, syaw: 0, spitch: 0,
+    gaze: 0, tgaze: 0,
     vx: 0, vy: 0, vz: 0, hp: [0, 0, 0, 0], ammo: [0, 0], mag: [0, 0], weapon: [0, 0] };
 }
 

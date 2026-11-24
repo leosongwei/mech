@@ -158,6 +158,7 @@ export class View {
       e.leg += wrapPi(e.tleg - e.leg) * alpha;
       e.syaw += wrapPi(e.tsyaw - e.syaw) * alpha;
       e.spitch += (e.tspitch - e.spitch) * alpha;
+      e.gaze += wrapPi(e.tgaze - e.gaze) * alpha;
     }
   }
 }

@@ -8,7 +8,7 @@
 // three and draws the joint between them.
 
 import { PRIM } from '../../render/primitives.js';
-import { FORWARD, SIGHT_Z, at, headAt } from '../helpers.js';
+import { FORWARD, SIGHT_Z, at, headAt, postAt } from '../helpers.js';
 import { METAL, METAL_D, METAL_L, GLASS, SOOT, facColor } from '../palette.js';
 import { armModel } from '../arms.js';
 
@@ -113,6 +113,15 @@ export function mech(b, e, ctx) {
       headAt(b, PRIM.CYL, e, yaw, syaw, spitch, -0.20, dy, 0.285,
         0.16, 0.10, 0.16, GLASS, bore);
     }
+    // The aperture: a second, smaller head on a post of its own beside the
+    // gunner's sight, and the only piece on the machine that turns on `gaze`.  A
+    // crew's eyes and its gun are two bearings (`Systems/AI/Watch.cs`), so this is
+    // what an opponent reads: a machine whose whisker is not on you has not seen
+    // you, however its gun happens to be pointed.
+    const gaze = e.gaze === undefined ? syaw : e.gaze;
+    at(b, PRIM.CYL, e, yaw, 0, 0.86, 4.28, 0.62, 0.20, 0.34, 0.20, METAL_D);
+    postAt(b, PRIM.BOX, e, yaw, gaze, 0.86, 4.56, 0.62, 0, 0.42, 0.26, 0.30, METAL_L);
+    postAt(b, PRIM.BOX, e, yaw, gaze, 0.86, 4.56, 0.62, 0.23, 0.06, 0.16, 0.22, GLASS);
   }
 
   // High, close-in weapon stations; module indices remain 2 / 3.

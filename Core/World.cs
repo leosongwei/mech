@@ -232,6 +232,10 @@ public sealed class World
         // system ever destroys an entity while walking its own list
         systems.AddRange(new Action<World, float>[]
         {
+            // what came too close to a crew, between the two halves it reads: the
+            // legs the flights above published, and the bursts `Blasts` is about to
+            // judge and destroy (`Systems/AI/Suppress.cs`)
+            Systems.AI.Suppress.run,
             Systems.Blasts.run, Systems.Mortality.run, Systems.Economy.run, Systems.Debris.run,
         });
         systems.AddRange(mode_mod.post_systems());
@@ -302,6 +306,13 @@ public sealed class World
         // swing its hull round to nothing on its first tick
         e.fv("sight_yaw")[eid] = yaw;
         e.fv("sight_pitch")[eid] = 0f;
+        // a crew's aperture starts looking the way the machine faces, so its first
+        // search sector is one turn away and not a swing out of nowhere
+        if (crew)
+        {
+            e.fv("gaze_yaw")[eid] = yaw;
+            e.fv("gaze_cmd")[eid] = yaw;
+        }
         e.uv("etype")[eid] = (byte)etype;
         e.uv("faction")[eid] = (byte)faction;
         e.iv("owner")[eid] = owner;

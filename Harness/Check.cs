@@ -37,6 +37,28 @@ public static class Check
         if (tick is 30 or 200 or 420 or 700) pl.smoke_q = true;
     }
 
+    /// <summary>Point a crew's aperture, its turret and its gun down +x.
+    ///
+    /// Every scenario in `Harness/` puts its target due east of its shooter, and a
+    /// crew finds only what it is looking at (`Systems/AI/Watch.cs`, `Watch.CONE`):
+    /// a setup that does not do the looking measures acquisition over twelve seconds
+    /// instead of the fire control it is here for.  The angles are set together
+    /// because they are four different questions - where the machine faces, where
+    /// its turret points, where its gun is laid, where its eyes are.
+    /// </summary>
+    internal static void aim_east(World world, int eid)
+    {
+        var e = world.ecs;
+        e.fv("yaw")[eid] = 0f;
+        e.fv("leg_yaw")[eid] = 0f;
+        e.fv("turret_yaw")[eid] = 0f;
+        e.fv("sight_yaw")[eid] = 0f;
+        e.fv("sight_pitch")[eid] = 0f;
+        if (!e.has(eid, "gaze_yaw")) return;      // a pilot's hull has no aperture
+        e.fv("gaze_yaw")[eid] = 0f;
+        e.fv("gaze_cmd")[eid] = 0f;
+    }
+
     /// <summary>Run a scripted battle as fast as the CPU allows.</summary>
     public static int battle(int minutes, int players, int seed = 11, bool perf = false)
     {

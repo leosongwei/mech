@@ -171,6 +171,22 @@ public static class Components
         // here from the velocity the ECS already holds.
         ecs.register("ai_tacc", Kind.F, 6, 0.0);
 
+        // ---- what a crew is looking at -----------------------------------
+        // Two lines, not one: the gun is laid by the fire control (`sight_yaw`,
+        // `turret_yaw`, `yaw` - `Systems/AI/Support/Engage.cs`), while the aperture
+        // that *finds* things is its own head on its own axis (`Systems/AI/Watch.cs`).
+        // The split is what lets a machine sweep its sight around a lane at 150 deg/s
+        // without dragging the hull or the turret with it, and it is why a searching
+        // crew holds its gun still.  A pilot has none of this: his eyes are his mouse.
+        ecs.register("gaze_yaw", Kind.F);                // where the aperture points now
+        ecs.register("gaze_cmd", Kind.F);                // ...and where it was told to
+        ecs.register("ai_gaze", Kind.U8);                // Systems/AI/Support/Tags.cs::AiGaze
+        ecs.register("gaze_t", Kind.F, 2, 0.0);          // [hold left, search clock]
+        // The rounds that came too close: [seconds of alarm left, bearing it came
+        // from] (`Systems/AI/Suppress.cs`).  A crew looks at the noise, and only a
+        // fresh bearing turns it again - a burst is one event, not ten.
+        ecs.register("flinch", Kind.F, 2, 0.0);
+
         // ---- raid (battle mode) -----------------------------------------
         // A raider is a *mission*, not a type: the hulls are ordinary mechs that
         // carry the `raider` tag, which is what takes them out of the lane AI's
@@ -339,11 +355,15 @@ public static class Components
     public static readonly string[] BEAM_ROUND_COMPS = { "beam_ch" };
 
     /// <summary>What a crew owns on top of its hull: the fire control's answer per
-    /// arm, the target's measured pull, and what it believes about that target.  A
-    /// pilot's machine has none of the three - his zero is the dial he set, his lead
-    /// is solved on his own screen, and the target he sees is the one the wire drew
-    /// him.</summary>
-    public static readonly string[] CREW_FCS_COMPS = { "aim_elev", "ai_tacc", "ai_tgt" };
+    /// arm, the target's measured pull, what it believes about that target, and what
+    /// its aperture is doing.  A pilot's machine has none of it - his zero is the
+    /// dial he set, his lead is solved on his own screen, the target he sees is the
+    /// one the wire drew him, and his eyes are his mouse.</summary>
+    public static readonly string[] CREW_FCS_COMPS =
+    {
+        "aim_elev", "ai_tacc", "ai_tgt",
+        "gaze_yaw", "gaze_cmd", "ai_gaze", "gaze_t", "flinch",
+    };
 
     /// <summary>a wreck is scenery: it has a place and no velocity.</summary>
     public static readonly string[] DEBRIS_COMPS = {

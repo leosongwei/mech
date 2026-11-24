@@ -56,8 +56,8 @@ public static class Netcode
     // storage, where an infantryman paid for a mech's arms, magazines and
     // sight, 56 of his 80 bytes empty.
     public const int ROWS = 5;                 // mech, vehicle, base, structure, soft
-    public const int ROW_MECH = 74;
-    public const int ROW_VEHICLE = 46;
+    public const int ROW_MECH = 76;
+    public const int ROW_VEHICLE = 48;
     public const int ROW_BASE = 30;
     public const int ROW_STRUCT = 25;
     public const int ROW_SOFT = 20;
@@ -330,6 +330,12 @@ public static class Netcode
         v <= 0f ? (ushort)0 : v >= 65535f ? (ushort)65535 : (ushort)v;
     private static ushort _u16(int v) =>
         v <= 0 ? (ushort)0 : v >= 65535 ? (ushort)65535 : (ushort)v;
+
+    /// <summary>A bearing as two bytes over the full turn, 0.0055 deg of it: the
+    /// resolution a turret is read at, against the 12 bits a metre-scale float would
+    /// spend on 4.3e-7 rad nobody can see.  `-pi..pi` maps to `0..65535`.</summary>
+    public static ushort _angle(float rad) =>
+        (ushort)((int)(((MathUtil.wrap_pi(rad) + MathF.PI) / MathUtil.TAU) * 65536f) & 0xFFFF);
 
     // A component a wreck, a corpse or a round need not own: these answer the
     // registered default instead of throwing on the archetype that lacks it.
@@ -631,6 +637,12 @@ public static class Netcode
             // where the crew is looking; `yaw` / `pitch` above are the laid gun
             _wf(s, off + 66, _f(a, r, "sight_yaw"));
             _wf(s, off + 70, _f(a, r, "sight_pitch"));
+            // where the crew's *aperture* points, which for a mech crew is a
+            // different bearing from the gun's head above (`Systems/AI/Watch.cs`).
+            // A hull with no crew has no aperture: its eyes are its gun, so the
+            // gun's line is written and no client has to ask which it is looking at
+            _w16(s, off + 74, _angle(a.has("gaze_yaw") ? _f(a, r, "gaze_yaw")
+                                                      : _f(a, r, "sight_yaw")));
             off += ROW_MECH;
         }
 
@@ -658,6 +670,8 @@ public static class Netcode
             _wf(s, off + 36, _f(a, r, "vel", 1));
             _wf(s, off + 40, _f(a, r, "vel", 2));
             _w16(s, off + 44, _u16(_f(a, r, "hp")));
+            _w16(s, off + 46, _angle(a.has("gaze_yaw") ? _f(a, r, "gaze_yaw")
+                                                       : _f(a, r, "turret_yaw")));
             off += ROW_VEHICLE;
         }
 

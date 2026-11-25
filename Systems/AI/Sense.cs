@@ -39,9 +39,19 @@ public sealed class SenseColumns : CrewColumns
     private static readonly string[] sense_names = Components.Cat(names, AiTags.ENGAGE);
     public static readonly string[] OnSense = sense_names;
 
+    /// <summary>The sighting wheel, where the machine has one: a man leaves no bearing
+    /// behind (`Components.ALARM_COMPS`).</summary>
+    public float[]? tgt;
+
     public SenseColumns(Group g) : base(g) { }
 
     public override string[] Names => sense_names;
+
+    protected override void bind(Group g)
+    {
+        base.bind(g);
+        tgt = g.has("tgt") ? g.f("tgt") : null;
+    }
 }
 
 public static class Sense
@@ -97,6 +107,7 @@ public static class Sense
                             var tvel = e.fv("vel").get3(tid);
                             r.believe(tpos, tvel, e.uv("etype")[tid]);
                             c.measure_accel(r.index, tid, tvel, dt);
+                            _sight(c, r, tpos, e.uv("etype")[tid], own);
                         }
                         else
                         {
@@ -134,10 +145,26 @@ public static class Sense
                         r.target_mem = found;
                         r.believe(tpos, tvel, e.uv("etype")[found]);
                         c.measure_accel(r.index, found, tvel, dt);
+                        _sight(c, r, tpos, e.uv("etype")[found], own);
                     }
                 }
             }
         }
+    }
+
+    /// <summary>Leave the bearing behind: a hull that was really seen puts its
+    /// direction on the sighting wheel, weighted by how much it is worth, so that a
+    /// crew whose belief runs out goes back to look there instead of sweeping blind
+    /// (`Systems/AI/Watch.cs` branch 2, `Wheel.tgt`).  A man has no wheel and leaves
+    /// nothing.</summary>
+    private static void _sight(SenseColumns c, CrewRow r, Vec3 tpos, int type, UnitDef own)
+    {
+        if (c.tgt is null) return;
+        float dx = tpos.x - r.eye.x, dz = tpos.z - r.eye.z;
+        float dy = tpos.y + Defs.UNIT_DEFS[type].height * 0.5f - r.eye.y;
+        float ds = MathF.Sqrt(dx * dx + dy * dy + dz * dz);
+        Wheel.mark(c.tgt, r.index, Wheel.slot_of(MathF.Atan2(dz, dx)), Wheel.TGT_LIFE,
+                   Wheel.TGT_W * ThreatScore.of(type, ds, own.sight));
     }
 
     /// <summary>Does this crew have the hull in hand: inside its engagement range and

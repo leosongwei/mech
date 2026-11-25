@@ -351,15 +351,23 @@ public static class Beams
     /// question is affordable every tick (`Systems/AI/Suppress.cs`).  Terrain, trees
     /// and smoke are the caller's half of the test (`Sight.clear`).</summary>
     public static bool body_hit(World world, Vec3 eye, Vec3 dir, int tid, int from,
-                                int[] hulls, out Vec3 landed)
+                                int[] hulls, out Vec3 landed) =>
+        body_hit(world, eye, dir, tid, from, hulls, hulls.Length, out landed);
+
+    /// <summary>...and the form a reused buffer needs: only the first `count` ids are
+    /// hulls, because a caller that keeps its id list between ticks keeps the stale
+    /// tail too (`Systems/AI/Suppress.cs`).</summary>
+    public static bool body_hit(World world, Vec3 eye, Vec3 dir, int tid, int from,
+                                int[] hulls, int count, out Vec3 landed)
     {
         landed = Vec3.zero;
         if (dir.x == 0f && dir.y == 0f && dir.z == 0f) return false;
         hull_sphere(world, tid, out var centre, out float r);
         if (!_ray(eye, dir, centre, r, Defs.LASER_RANGE, out float t)) return false;
         // the machine firing is skipped: its eye sits inside its own body
-        foreach (int other in hulls)
+        for (int k = 0; k < count; k++)
         {
+            int other = hulls[k];
             if (other == tid || other == from) continue;
             hull_sphere(world, other, out var oc, out float orad);
             if (_ray(eye, dir, oc, orad, t, out _)) return false;

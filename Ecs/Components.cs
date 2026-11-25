@@ -181,16 +181,14 @@ public static class Components
         ecs.register("gaze_yaw", Kind.F);                // where the aperture points now
         ecs.register("gaze_cmd", Kind.F);                // ...and where it was told to
         ecs.register("ai_gaze", Kind.U8);                // Systems/AI/Support/Tags.cs::AiGaze
-        ecs.register("gaze_t", Kind.F, 2, 0.0);          // [hold left, search clock]
-        // The rounds that came too close: [seconds of alarm left, bearing it came
-        // from] (`Systems/AI/Suppress.cs`).  A crew looks at the noise, and only a
-        // fresh bearing turns it again - a burst is one event, not ten.
-        ecs.register("flinch", Kind.F, 2, 0.0);
-        // s; how long one enemy laser has been on this hull without a break: the
-        // warning receiver's own clock, and the debounce that separates a sight
-        // sweeping past from a sight held on it (`Systems/AI/Suppress.cs`).  It is
-        // the machine's instrument, so a man does not carry it.
-        ecs.register("paint", Kind.F, 1, 0.0);
+        // The alarm wheels (`Systems/AI/Support/Wheel.cs`): one number pair per
+        // 20-degree slot.  `eye` is the sweep's own freshness and every crew owns it;
+        // the three tables that record what is *worth* looking at are instruments on a
+        // machine (`Components.ALARM_COMPS`) - a man carries no warning receiver.
+        ecs.register("eye", Kind.F, Systems.AI.Wheel.SLOTS, 0.0);        // s since looked at
+        ecs.register("alarm", Kind.F, Systems.AI.Wheel.SLOTS * 2, 0.0);  // [left s, weight]
+        ecs.register("laser", Kind.F, Systems.AI.Wheel.SLOTS * 2, 0.0);  // [charge s, left s]
+        ecs.register("tgt", Kind.F, Systems.AI.Wheel.SLOTS * 2, 0.0);    // [left s, weight]
 
         // ---- raid (battle mode) -----------------------------------------
         // A raider is a *mission*, not a type: the hulls are ordinary mechs that
@@ -367,8 +365,14 @@ public static class Components
     public static readonly string[] CREW_FCS_COMPS =
     {
         "aim_elev", "ai_tacc", "ai_tgt",
-        "gaze_yaw", "gaze_cmd", "ai_gaze", "gaze_t", "flinch",
+        "gaze_yaw", "gaze_cmd", "ai_gaze", "eye",
     };
+
+    /// <summary>The wheels a machine's crew has and a man does not: a near miss, a
+    /// laser held on the hull and a hull that was really seen are all reported by an
+    /// instrument on the roof (`Systems/AI/Support/Wheel.cs`).  `eye` is not here:
+    /// a rifleman sweeps too, he just has nowhere to write what hit him.</summary>
+    public static readonly string[] ALARM_COMPS = { "alarm", "laser", "tgt" };
 
     /// <summary>a wreck is scenery: it has a place and no velocity.</summary>
     public static readonly string[] DEBRIS_COMPS = {

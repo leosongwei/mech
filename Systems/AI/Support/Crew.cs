@@ -29,10 +29,12 @@ public class CrewColumns : Columns<CrewRow>
     public int[] mag = null!, target = null!, threat = null!, nav_route = null!;
     public byte[] etype = null!, faction = null!, weapon = null!, trigger = null!;
     public byte[] state = null!, cover = null!, goal = null!, lane = null!;
-    // the aperture, and what has been thrown at this crew lately: where it looks,
-    // where it was told to look, which of the two notional states it is in, its two
-    // clocks, and [seconds of alarm left, bearing the fire came from]
-    public float[] gaze = null!, gaze_cmd = null!, gaze_t = null!, flinch = null!;
+    // the aperture: where it looks, where it was told to look, which of the five
+    // `AiGaze` words says why, and the sweep's own freshness (`Wheel.eye`).  What has
+    // been thrown at this crew lately is a wheel of its own
+    // (`Systems/AI/Support/Wheel.cs`), bound by the systems that own one because a
+    // man carries no warning receiver.
+    public float[] gaze = null!, gaze_cmd = null!, eye = null!;
     public byte[] gaze_state = null!;
 
     internal static readonly string[] names =
@@ -42,7 +44,7 @@ public class CrewColumns : Columns<CrewRow>
         "nav_x", "nav_z", "nav_speed", "nav_route",
         "mag", "target", "ai_threat",
         "etype", "faction", "weapon", "trigger", "ai_state", "ai_cover", "ai_goal", "lane",
-        "gaze_yaw", "gaze_cmd", "ai_gaze", "gaze_t", "flinch",
+        "gaze_yaw", "gaze_cmd", "ai_gaze", "eye",
     };
 
     /// <summary>Every crew, whatever platform or mission.</summary>
@@ -68,7 +70,7 @@ public class CrewColumns : Columns<CrewRow>
         trigger = g.u8("trigger"); state = g.u8("ai_state"); cover = g.u8("ai_cover");
         goal = g.u8("ai_goal"); lane = g.u8("lane");
         gaze = g.f("gaze_yaw"); gaze_cmd = g.f("gaze_cmd"); gaze_state = g.u8("ai_gaze");
-        gaze_t = g.f("gaze_t"); flinch = g.f("flinch");
+        eye = g.f("eye");
     }
 
     public override CrewRow row(int i) => new CrewRow(this, i);
@@ -220,14 +222,6 @@ public readonly struct CrewRow : IRow<CrewColumns>
         set => _c.gaze_cmd[i] = value;
     }
     public ref byte gaze_state => ref _c.gaze_state[i];
-    /// <summary>s; the seconds of ENGAGE left since the hull was last really seen.</summary>
-    public ref float hold => ref _c.gaze_t[i * 2];
-    /// <summary>s; how long the aperture has been in the search pattern.</summary>
-    public ref float search_clock => ref _c.gaze_t[i * 2 + 1];
-    /// <summary>s; how much of the alarm over the last near miss is left.</summary>
-    public ref float flinch_t => ref _c.flinch[i * 2];
-    /// <summary>rad; the bearing that fire came from.</summary>
-    public ref float flinch_yaw => ref _c.flinch[i * 2 + 1];
 
     // ---- what the crew believes about the hull it is working ----------------
     //

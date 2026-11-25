@@ -158,6 +158,21 @@ public sealed class Grid
     /// own order.</summary>
     public (int[] ids, float[] pos) box(int ci, int cj, int r)
     {
+        int[] ids = Array.Empty<int>();
+        float[] pos_out = Array.Empty<float>();
+        int n = box_into(ci, cj, r, ref ids, ref pos_out);
+        if (n == 0) return (Array.Empty<int>(), Array.Empty<float>());
+        if (ids.Length != n) Array.Resize(ref ids, n);
+        if (pos_out.Length != n * 3) Array.Resize(ref pos_out, n * 3);
+        return (ids, pos_out);
+    }
+
+    /// <summary>`box`, written into caller buffers: a system that asks this of every
+    /// round in the air cannot afford two arrays per round per tick, so the buffers
+    /// are grown and reused (`Systems/AI/Suppress.cs`).  Returns the count; `ids`
+    /// and `pos` are only valid up to it, and may be longer.</summary>
+    public int box_into(int ci, int cj, int r, ref int[] ids, ref float[] pos_buf)
+    {
         int x0 = Math.Max(ci - r, 0);
         int x1 = Math.Min(ci + r, cw - 1);
         int j0 = Math.Max(cj - r, 0);
@@ -169,9 +184,9 @@ public sealed class Grid
                 int c = j * cw + i;
                 total += start[c + 1] - start[c];
             }
-        if (total == 0) return (Array.Empty<int>(), Array.Empty<float>());
-        var ids = new int[total];
-        var p = new float[total * 3];
+        if (total == 0) return 0;
+        if (ids.Length < total) ids = new int[Math.Max(total, ids.Length * 2)];
+        if (pos_buf.Length < total * 3) pos_buf = new float[Math.Max(total * 3, pos_buf.Length * 2)];
         int w = 0;
         for (int j = j0; j <= j1; j++)
             for (int i = x0; i <= x1; i++)
@@ -179,9 +194,9 @@ public sealed class Grid
                 int c = j * cw + i;
                 int s = start[c], cnt = start[c + 1] - s;
                 Array.Copy(items, s, ids, w, cnt);
-                Array.Copy(pos, s * 3, p, w * 3, cnt * 3);
+                Array.Copy(pos, s * 3, pos_buf, w * 3, cnt * 3);
                 w += cnt;
             }
-        return (ids, p);
+        return total;
     }
 }

@@ -53,13 +53,17 @@ public static class AiState
     public const byte RESUPPLY = 8;
 }
 
-/// <summary>What the *aperture* is doing (`ai_gaze`), which is a different
-/// question from what the machine is doing (`AiState`) and has its own clock: the
-/// gun's memory lasts `Crew.MEMORY` (2 s), the attention lasts `Watch.HOLD` (8 s),
-/// and a hull on a lane can be advancing while it is looking at something it cannot
-/// reach.  `Systems/AI/Watch.cs` is the only writer.</summary>
+/// <summary>Why the aperture is where it is (`ai_gaze`): one word per branch of
+/// `Watch.run`, so this byte is the read-out of the decision that produced the
+/// bearing (`docs/plans/AI_alarm_wheel.md` §4).  It is a diagnostic - nothing reads
+/// it to decide anything and it is not on the wire - and the values are ordered so
+/// that the default, 0, is the sweep: that is what a crew is doing before anything
+/// has happened to it.  `Systems/AI/Watch.cs` is the only writer.</summary>
 public static class AiGaze
 {
-    public const byte SEARCH = 0;   // nothing in the window: sweep the sectors
-    public const byte ENGAGE = 1;   // a target, or fire, has the aperture's attention
+    public const byte SWEEP = 0;        // nothing worth looking at: the stalest slot in front
+    public const byte TARGET = 1;       // a belief: the head is on the hull it is fighting
+    public const byte ALARM = 2;        // a slot scored highest and the head was sent to it
+    public const byte ALARM_TURN = 3;   // ...and the head is still on its way there
+    public const byte ALARM_STAY = 4;   // a slot scored, but the head keeps its bearing
 }

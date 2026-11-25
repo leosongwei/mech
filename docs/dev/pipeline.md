@@ -47,7 +47,7 @@ battle 的块是 `Systems.AI.Pipeline.battle()`，一个扁平列表，顺序写
 ```
 Threats  本 tick 的制导弹丸，全场只算一次     → ai_threat
 Intercept 谁有弹冲着自己来                    → ai_cover / ai_threat
-Watch.run 注意力用上一 tick 的信念决定看哪儿    → ai_gaze / gaze_t / gaze_cmd
+Watch.run 注意力用上一 tick 的信念决定看哪儿    → ai_gaze / gaze_cmd，并读四张方位轮盘
 Watch.turn 孔径按 150 °/s 转过去               → gaze_yaw
 Sense     每机组一次瞭望，只在这个窗口里找      → ai_tgt（信念）与 target
 Front     车道的状态机                        → nav_route / nav_speed
@@ -125,9 +125,9 @@ Impact.run
 * 弹与其落地的那次爆炸**在自己所在的系统里**写 `hp`（`Combat` 是个库，不是系统）。
 * `Suppress` 夹在 `Impact` 与 `Blasts` 之间，因为它是**唯一**同时需要这两边的东西：本 tick 的
   弹道段（`proj_prev → pos`，`Impact` 之后就被销毁了）与本 tick 的爆（`Blasts` 之后就被判掉
-  并销毁了）。它写的是机组的 `flinch`，AI 块下一 tick 才读——一个 tick 的延迟，换来"最响的
-  东西不会被点采样跳过去"。同一个系统也读本 tick 的 `beam_lit`（`Beams` 在它之前跑），激光
-  那条来源因此与近失弹一样是一次 tick 的延迟。
+  并销毁了）。它写的是机组的方位轮盘（`alarm` 与 `laser` 两张表），AI 块下一 tick 才读——一个
+  tick 的延迟，换来"最响的东西不会被点采样跳过去"。同一个系统也读本 tick 的 `beam_lit`
+  （`Beams` 在它之前跑），激光那条来源因此与近失弹一样是一次 tick 的延迟。
 * `Blasts.run` 晚一个阶段判爆：它读上一段留下的爆，也包括上一 tick 的死亡留下的爆。
   所以链式爆炸天然隔一 tick，炸不到已经变成残骸的那个壳子。
 * `Mortality.run` 是**唯一的判官**：一次问所有单位 `hp <= 0`，然后走类型自己的死亡配方

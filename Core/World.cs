@@ -101,6 +101,9 @@ public sealed class World
     // tick, built by `Threats.run` and read by the alarm and the intercept aim
     public Systems.AI.ThreatTable? threats;
     public int _threat_tick = -1;
+    // the alarm pass's reused tables (`Systems/AI/Suppress.cs`): one set per world, so
+    // a tick allocates nothing once they have grown
+    public Systems.AI.SuppressScratch? suppress;
     public int[] lane_routes = Array.Empty<int>();
     public List<List<(float x, float z)>> lanes;
     public List<List<(float x, float z)>> lanes_rev;
@@ -289,9 +292,10 @@ public sealed class World
             if (arms) comps.Add("mech_ai");
             else if (d.tags.Contains("person")) comps.Add("foot_ai");
             comps.AddRange(Components.CREW_FCS_COMPS);
-            // a laser warning receiver is an instrument on a machine's roof: a man
-            // has none, so his crew never carries the clock it feeds
-            if (!d.tags.Contains("person")) comps.Add("paint");
+            // a warning receiver is an instrument on a machine's roof: a man has none,
+            // so his crew carries no wheel for a near miss, a laser or a sighting
+            // (`Systems/AI/Support/Wheel.cs`, `Components.ALARM_COMPS`)
+            if (!d.tags.Contains("person")) comps.AddRange(Components.ALARM_COMPS);
         }
         if (extra != null) comps.AddRange(extra);
         int eid = e.create(comps);

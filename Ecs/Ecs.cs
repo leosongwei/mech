@@ -664,6 +664,33 @@ public sealed class ECS
         return outIds;
     }
 
+    /// <summary>Ids of the entities owning all of `names`, copied into `buf` (grown
+    /// when it has to be) so a pass that asks this every tick allocates nothing.
+    /// Returns the count; the buffer may be longer than it.  `Components` are never
+    /// removed from an entity, so a caller may also keep the ids and re-check
+    /// `is_alive` between ticks instead of asking again.
+    /// </summary>
+    public int query_into(string[] names, ref int[] buf)
+    {
+        int total = 0;
+        for (int k = 0; k < archetypes.Count; k++)
+        {
+            var a = archetypes[k];
+            if (a.n > 0 && owns(a, names)) total += a.n;
+        }
+        if (total == 0) return 0;
+        if (buf.Length < total) buf = new int[Math.Max(total, buf.Length * 2)];
+        int w = 0;
+        for (int k = 0; k < archetypes.Count; k++)
+        {
+            var a = archetypes[k];
+            if (a.n == 0 || !owns(a, names)) continue;
+            Array.Copy(a.ids, 0, buf, w, a.n);
+            w += a.n;
+        }
+        return total;
+    }
+
     private static bool owns(Archetype a, string[] names)
     {
         foreach (var name in names) if (!a.keyset.Contains(name)) return false;

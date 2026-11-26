@@ -92,6 +92,12 @@ public static class Engage
         if (aim.dist > own.ai_range) return aim;
 
         var track = new FireControl.Track(tpos, tvel, tacc, tdef.height * 0.5f);
+        // A hull the crew knows only from the faction datalink is a point on a map:
+        // nobody in this turret has a line to it, so a bullet, an unguided rocket or a
+        // beam rider has nothing to fly down.  The top-attack missile dives on the
+        // shared point from above and is the one arm that is a shot at it
+        // (`Defs.fires_on_link`).
+        bool shared_only = r.source == VisibilitySource.Datalink;
         // each arm answers for itself; which of the two owns the sight is decided
         // after the loop, because it depends on more than the solutions
         bool[] has = new bool[2];
@@ -102,6 +108,7 @@ public static class Engage
             int wid = c.weapon[i * 2 + arm];
             if (wid == Defs.WID_NONE) continue;
             var wd = Defs.WEAPONS[wid];
+            if (shared_only && !Defs.fires_on_link(wd)) continue;
             if (aim.dist > wd.range) continue;
             if (c.arm_hp is not null && c.arm_hp[i * 2 + arm] <= 0f) continue;  // shot off
             var sol = FireControl.solve(ShotOf(world, c, i, arm, wd, eye, track), track);

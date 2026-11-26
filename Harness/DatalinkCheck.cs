@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using Mech.Server.Systems;
+using Mech.Server.Systems.AI;
 
 namespace Mech.Server.Harness;
 
@@ -113,6 +114,7 @@ public static class DatalinkCheck
         bool missile_bit = pr >= 0 && (missileFrame[pr + 5] & 1) != 0;
         Line("missile", $"observed {missile_link}, wire bit {missile_bit}", missile_link && missile_bit, ref bad);
         Guidance(ref bad);
+        Fire(ref bad);
 
         e.validate();
         return bad == 0 ? 0 : 1;
@@ -189,6 +191,96 @@ public static class DatalinkCheck
                           + $"link {Datalink.known(world, Defs.FACTION_RED, target)}, round {top}",
              top, ref bad);
         e.validate();
+    }
+
+    /// <summary>The guns and a shared contact: a crew that can see a hull shoots it with
+    /// every arm; a crew that knows it only from the faction datalink sends the
+    /// top-attack missile and holds the rest; a crew with no such round never takes the
+    /// contact at all.</summary>
+    private static void Fire(ref int bad)
+    {
+        var seen = Shoot(Defs.WID_MG127, screened: false);
+        var gun = Shoot(Defs.WID_MG127, screened: true);
+        var rocket = Shoot(Defs.WID_ROCKET, screened: true);
+        var saclos = Shoot(Defs.WID_SACLOS, screened: true);
+        Line("link-fire", $"direct: gun {seen.arm}, top {seen.top}; datalink (acquired"
+                          + $" {gun.acquired}/{rocket.acquired}/{saclos.acquired}): gun"
+                          + $" {gun.arm}, rocket {rocket.arm}, saclos {saclos.arm},"
+                          + $" top {gun.top}",
+             seen.src == VisibilitySource.Direct && seen.arm && seen.top
+             && gun.src == VisibilitySource.Datalink && gun.acquired && saclos.acquired
+             && !gun.arm && !rocket.arm && !saclos.arm && gun.top, ref bad);
+
+        // ...and a crew that carries no round for a shared contact has no reason to take
+        // one: `Sense` leaves it out of the scan and out of the wheel, so the hull stays
+        // unpicked and the guns stay silent
+        var blind = Shoot(Defs.WID_MG127, screened: true, other: Defs.WID_NONE);
+        Line("link-pick", $"contact live {blind.src}, gun-only crew: acquired"
+                          + $" {blind.acquired}, gun {blind.arm}",
+             blind.src == VisibilitySource.Datalink && !blind.acquired && !blind.arm, ref bad);
+    }
+
+    /// <summary>A red crew on a hostile APC 700 m east with `wid` on one arm and `other`
+    /// on the other - and, for the screened case, a smoke puff on that crew's line of
+    /// sight with a second red mech looking round it, which is what makes the contact
+    /// the datalink's rather than the crew's.  Returns what the crew did with the hull in
+    /// four seconds: which source it knew it by, whether it took it at all, and whether a
+    /// round of each arm left the launcher.</summary>
+    private static (VisibilitySource src, bool acquired, bool arm, bool top) Shoot(
+        int wid, bool screened, int other = Defs.WID_TOPATTACK)
+    {
+        var world = new World(7, "range");
+        world.systems.Remove(Modes.Range.Targets.run);
+        world.systems.Remove(Modes.Range.Interceptor.run);
+        var e = world.ecs;
+        Clean(world);
+        var (sx, sz) = world.terrain.bases[Defs.FACTION_RED];
+        int crew = world.spawn_unit(Defs.ETYPE_MECH, Defs.FACTION_RED, sx, sz,
+                                    weapons: new[] { wid, other },
+                                    extra: new[] { AiTags.ENGAGE }, crew: true);
+        Check.aim_east(world, crew);
+        int target = world.spawn_unit(Defs.ETYPE_APC, Defs.FACTION_BLUE, sx + 700f, sz,
+                                      weapons: new[] { Defs.WID_NONE, Defs.WID_NONE },
+                                      crew: false);
+        var tp = e.fv("pos").get3(target);
+        var body = new Vec3(tp.x, tp.y + Defs.UNIT_DEFS[Defs.ETYPE_APC].height * 0.6f, tp.z);
+        int observer = -1, puff = -1;
+        if (screened)
+        {
+            observer = world.spawn_unit(Defs.ETYPE_MECH, Defs.FACTION_RED, tp.x, tp.z + 100f,
+                                        weapons: new[] { Defs.WID_NONE, Defs.WID_NONE },
+                                        crew: false);
+            var eye = Weapons.aim_of(world, crew).Item1;
+            var mid = new Vec3((eye.x + body.x) * 0.5f, (eye.y + body.y) * 0.5f,
+                               (eye.z + body.z) * 0.5f);
+            puff = e.create(Components.PUFF_COMPS);
+            e.fv("pos").set3(puff, mid);
+            e.fv("smoke_r").set3(puff, Defs.SMOKE_FLAT[0], Defs.SMOKE_FLAT[0], Defs.SMOKE_FLAT[0]);
+            e.fv("smoke_s")[puff] = 1f;
+        }
+        bool arm = false, top = false, acquired = false;
+        var src = VisibilitySource.None;
+        for (int t = 0; t < (int)(4f / DT); t++)
+        {
+            // the row measures which arms open up, not what they do on arrival: a hull
+            // that has been killed by the arm this row is watching is the end of it
+            if (!e.is_alive(target) || e.uv("etype")[target] != Defs.ETYPE_APC) break;
+            // the screen stays up for the whole row, and the observer keeps looking
+            // round it, so the contact is current every tick
+            if (puff >= 0) e.fv("smoke_t")[puff] = Defs.SMOKE_LIFE;
+            if (observer >= 0) Aim(world, observer, target);
+            world.update(DT);
+            if (e.iv("target")[crew] == target) acquired = true;
+            var now = Visibility.source(world, crew, target, body);
+            if (now != VisibilitySource.None) src = now;
+            foreach (int id in world.projectiles())
+            {
+                int round = e.uv("proj_wid")[id];
+                if (round == wid) arm = true;
+                if (round == Defs.WID_TOPATTACK) top = true;
+            }
+        }
+        return (src, acquired, arm, top);
     }
 
     private static void Aim(World world, int eid, int target)

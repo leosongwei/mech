@@ -63,7 +63,10 @@ public static class Sense
     /// <summary>Seed the sighting wheel with current datalink contacts that this crew
     /// cannot see directly.  `Datalink.run` has rebuilt `link_seen` for this tick, so a
     /// clear bit is already stale; the wheel receives a bearing and a weak weight, never
-    /// an id.  `Watch` consumes it before `Sense` scans the aperture it turned.</summary>
+    /// an id.  `Watch` consumes it before `Sense` scans the aperture it turned.
+    ///
+    /// Only a crew that can act on a contact without a sight line has a reason to look
+    /// that way: no top-attack arm, no bearing on the wheel (`Crew.fires_on_link`).</summary>
     public static void link_wheel(World world)
     {
         var e = world.ecs;
@@ -76,7 +79,7 @@ public static class Sense
             var c = new SenseColumns(g);
             foreach (var r in c)
             {
-                if (c.tgt is null || r.timer > 0f) continue;
+                if (c.tgt is null || r.timer > 0f || !Crew.fires_on_link(r)) continue;
                 var own = Defs.UNIT_DEFS[r.etype];
                 var want = own.targets;
                 float range = Math.Min(own.sight, Datalink.RANGE);
@@ -131,6 +134,10 @@ public static class Sense
                 var own = Defs.UNIT_DEFS[r.etype];
                 r.timer -= dt;
                 int tid = r.target;
+                // What this crew can do with a point it has no sight line to: with no
+                // top-attack arm on the hull, a datalink contact is not a target at all
+                // - not one to take, and not one to keep (`Crew.fires_on_link`).
+                bool link_ok = Crew.fires_on_link(r);
 
                 // ---- 1. the hull it is working: one look, every tick -----------
                 if (tid >= 0)
@@ -148,11 +155,14 @@ public static class Sense
                     {
                         var tpos = e.fv("pos").get3(tid);
                         var seen = _sees(world, r, tid, tpos, Defs.UNIT_DEFS[e.uv("etype")[tid]], own);
+                        if (seen == VisibilitySource.Datalink && !link_ok)
+                            seen = VisibilitySource.None;
                         if (seen != VisibilitySource.None)
                         {
                             // known: the belief is the truth, and the pull is measured
                             var tvel = e.fv("vel").get3(tid);
                             r.believe(tpos, tvel, e.uv("etype")[tid]);
+                            r.source = seen;
                             c.measure_accel(r.index, tid, tvel, dt);
                             _sight(c, r, tpos, e.uv("etype")[tid], own, seen);
                         }
@@ -179,7 +189,7 @@ public static class Sense
                 if (r.timer <= 0f)
                 {
                     r.timer = ACQUIRE * world.rng.uniform(0.75f, 1.35f);
-                    int found = _acquire(world, r, combat_fac, own, out float worth,
+                    int found = _acquire(world, r, combat_fac, own, link_ok, out float worth,
                                          out VisibilitySource source);
                     // the hull in hand keeps it unless the new one is clearly worth
                     // more (`ThreatScore.SWITCH`): without the margin two hulls of
@@ -191,6 +201,7 @@ public static class Sense
                         var tvel = e.fv("vel").get3(found);
                         r.target_mem = found;
                         r.believe(tpos, tvel, e.uv("etype")[found]);
+                        r.source = source;
                         c.measure_accel(r.index, found, tvel, dt);
                         _sight(c, r, tpos, e.uv("etype")[found], own, source);
                     }
@@ -244,9 +255,12 @@ public static class Sense
     /// hull's geometric centre, so the scan radius and the engagement radius answer
     /// the same question.  The order is `ThreatScore` and not distance: the hull
     /// that can hurt the crew most is the one it works first, and the six
-    /// visibility casts go to the six best of them rather than the six closest.</summary>
+    /// visibility casts go to the six best of them rather than the six closest.
+    ///
+    /// A datalink contact is only a candidate at all for a crew that carries a round
+    /// for it (`link`: `Crew.fires_on_link`); the others want something they can see.</summary>
     private static int _acquire(World world, CrewRow r, sbyte[] combat_fac, UnitDef d,
-                                out float score, out VisibilitySource source)
+                                bool link, out float score, out VisibilitySource source)
     {
         score = -1f;
         source = VisibilitySource.None;
@@ -293,6 +307,7 @@ public static class Sense
             var visible = Visibility.source(world, r.eid, tp.id,
                                             new Vec3(tp.x, tp.y + 1.5f, tp.z));
             if (visible == VisibilitySource.None) continue;
+            if (visible == VisibilitySource.Datalink && !link) continue;
             float worth = tp.worth;
             if (visible == VisibilitySource.Datalink) worth *= DATALINK_THREAT;
             // equal evidence goes to the hull the crew can see directly

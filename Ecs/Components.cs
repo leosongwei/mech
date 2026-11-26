@@ -168,6 +168,11 @@ public static class Components
         // `age` is the seconds since it was actually seen and `etype == 0` means
         // "nothing", so one component carries the whole memory.
         ecs.register("ai_tgt", Kind.F, 8, 0.0);
+        // How that belief was last refreshed (`Visibility`): 0 nothing, 1 the crew's
+        // own line of sight, 2 the faction datalink.  A hull known only from the
+        // datalink is a point on a map, so `Engage.ground_aim` sends the one arm that
+        // is a shot at a point and holds the ones that need a sight line.
+        ecs.register("ai_src", Kind.U8);
         // the pull the crew has measured on its target, and the state that
         // measurement needs: [ax, az, prev vx, prev vz, age, target id].  The same
         // quantity the client gets off two velocity samples (`net.js`), measured
@@ -364,13 +369,13 @@ public static class Components
     public static readonly string[] BEAM_ROUND_COMPS = { "beam_ch" };
 
     /// <summary>What a crew owns on top of its hull: the fire control's answer per
-    /// arm, the target's measured pull, what it believes about that target, and what
-    /// its aperture is doing.  A pilot's machine has none of it - his zero is the
-    /// dial he set, his lead is solved on his own screen, the target he sees is the
-    /// one the wire drew him, and his eyes are his mouse.</summary>
+    /// arm, the target's measured pull, what it believes about that target, where that
+    /// belief came from, and what its aperture is doing.  A pilot's machine has none of
+    /// it - his zero is the dial he set, his lead is solved on his own screen, the
+    /// target he sees is the one the wire drew him, and his eyes are his mouse.</summary>
     public static readonly string[] CREW_FCS_COMPS =
     {
-        "aim_elev", "ai_tacc", "ai_tgt",
+        "aim_elev", "ai_tacc", "ai_tgt", "ai_src",
         "gaze_yaw", "gaze_cmd", "ai_gaze", "eye",
     };
 

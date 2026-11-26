@@ -711,6 +711,13 @@ public static partial class Defs
     /// <summary>May this weapon's rounds be locked, fused and shot down?</summary>
     public static bool is_interceptable(int wid) => Array.IndexOf(INTERCEPT_KINDS, WEAPONS[wid].kind) >= 0;
 
+    /// <summary>Is this weapon a shot at a hull the crew knows only from the faction
+    /// datalink?  The top-attack missile is: it dives on the shared point from above
+    /// and finds the hull with its own seeker.  A bullet, an unguided rocket and a beam
+    /// rider all need a sight line from this hull, which is exactly what the crew does
+    /// not have (`Systems/AI/Support/Engage.cs`).</summary>
+    public static bool fires_on_link(in WeaponDef wd) => wd.kind == "top";
+
     /// <summary>m a seeker can lock a hull with this weapon at: its own
     /// `lock_range`, or `range` when it sets none.</summary>
     public static int lock_range(WeaponDef wd) => wd.lock_range > 0 ? wd.lock_range : wd.range;

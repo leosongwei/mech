@@ -23,6 +23,8 @@ public class CrewColumns : Columns<CrewRow>
     // measured on the target: [ax, az, prev vx, prev vz, age, target id], and what
     // the crew believes about that target: [x, y, z, vx, vy, vz, age, etype]
     public float[] aim_elev = null!, tacc = null!, belief = null!;
+    // how that belief was last refreshed (`Visibility`, `Systems/Visibility.cs`)
+    public byte[] src = null!;
     /// <summary>Bound where the platform owns arms; null for a man or a carrier.</summary>
     public float[]? arm_hp;
     public float[] nav_x = null!, nav_z = null!, nav_speed = null!;
@@ -44,7 +46,7 @@ public class CrewColumns : Columns<CrewRow>
         "nav_x", "nav_z", "nav_speed", "nav_route",
         "mag", "target", "ai_threat",
         "etype", "faction", "weapon", "trigger", "ai_state", "ai_cover", "ai_goal", "lane",
-        "gaze_yaw", "gaze_cmd", "ai_gaze", "eye",
+        "gaze_yaw", "gaze_cmd", "ai_gaze", "eye", "ai_src",
     };
 
     /// <summary>Every crew, whatever platform or mission.</summary>
@@ -71,6 +73,7 @@ public class CrewColumns : Columns<CrewRow>
         goal = g.u8("ai_goal"); lane = g.u8("lane");
         gaze = g.f("gaze_yaw"); gaze_cmd = g.f("gaze_cmd"); gaze_state = g.u8("ai_gaze");
         eye = g.f("eye");
+        src = g.u8("ai_src");
     }
 
     public override CrewRow row(int i) => new CrewRow(this, i);
@@ -154,6 +157,9 @@ public readonly struct CrewRow : IRow<CrewColumns>
     /// <summary>Left arm (0) or right (1).</summary>
     public int weapon_at(int arm) => _c.weapon[i * 2 + arm];
     public int mag_at(int arm) => _c.mag[i * 2 + arm];
+    /// <summary>1 where the platform owns no arms of its own (a man, a carrier): the
+    /// arm is not a thing that can be shot off.</summary>
+    public float arm_hp_at(int arm) => _c.arm_hp is null ? 1f : _c.arm_hp[i * 2 + arm];
 
     public float hp
     {
@@ -238,6 +244,14 @@ public readonly struct CrewRow : IRow<CrewColumns>
     /// <summary>The hull's type when it was seen; 0 = the crew knows of nothing.</summary>
     public int belief_type => (int)_c.belief[i * 8 + 7];
     public bool has_belief => _c.belief[i * 8 + 7] > 0.5f;
+    /// <summary>How that belief was last refreshed (`VisibilitySource`): the crew's
+    /// own sight, or a contact the faction datalink gave it.  It outlives the refresh
+    /// - a belief walking on its own carries the source it was cut from.</summary>
+    public VisibilitySource source
+    {
+        get => (VisibilitySource)_c.src[i];
+        set => _c.src[i] = (byte)value;
+    }
 
     /// <summary>Seen it: the belief is the truth, as of now.</summary>
     public void believe(Vec3 p, Vec3 v, int etype)
@@ -264,6 +278,7 @@ public readonly struct CrewRow : IRow<CrewColumns>
     {
         int b = i * 8;
         for (int k = 0; k < 8; k++) _c.belief[b + k] = 0f;
+        _c.src[i] = 0;
     }
 
     /// <summary>The eye the crew looks through: a mech's panoramic sight on its
@@ -301,5 +316,26 @@ public static class Crew
             return arm;
         }
         return -1;
+    }
+
+    /// <summary>Does this crew hold a hull it knows only from the faction datalink -
+    /// a point it has no sight line to: an arm that carries the top-attack missile and
+    /// is still on the hull.  Ammunition is not asked: the equipment decides what the
+    /// crew looks for, and the magazine decides only what can leave it.
+    ///
+    /// A crew without one never picks a datalink contact up (`Systems/AI/Sense.cs`):
+    /// its guns want something they can see, and an aperture turned at a hull it has
+    /// no shot at is an aperture not sweeping.  Its belief is the same rule - a
+    /// datalink refresh of a hull in hand does not count.</summary>
+    public static bool fires_on_link(CrewRow r)
+    {
+        for (int arm = 0; arm < 2; arm++)
+        {
+            int wid = r.weapon_at(arm);
+            if (wid == 0 || !Defs.fires_on_link(Defs.WEAPONS[wid])) continue;
+            if (r.arm_hp_at(arm) <= 0f) continue;        // shot off
+            return true;
+        }
+        return false;
     }
 }

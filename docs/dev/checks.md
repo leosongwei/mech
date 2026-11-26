@@ -92,7 +92,7 @@
 | `beam` | 驾束弹全链路：命中、烟幕、激光被切断、锥角、通道、涂照、信念、幽灵、弹道 | 每行 `hits` / `miss m`，末行 `profile` 的速度-距离 |
 | `fcs` | 同一批场景下 AI 车组与飞行员各打一遍（`FireControl` 的集成半边） | `crew` 与 `pilot` 两列的脱靶量差 |
 | `gaze` | 机组的观瞄孔径：正前方/正后方的发现、150 °/s 的转速、近失弹的来向、两向交替、激光照住的认定与断续照射、目击记忆、威胁度算例 | 每行的秒数与方位，末行判词 |
-| `datalink` | 车辆观察的红蓝独立、多人并集、丢视野失效、快照 / contacts 过滤、友军共享、导弹来源位、SACLOS / 攻顶链路锁定 | `observe` 至 `link-top` 各行 `ok` |
+| `datalink` | 车辆观察的红蓝独立、多人并集、丢视野失效、快照 / contacts 过滤、友军共享、导弹来源位、SACLOS / 攻顶链路锁定、机组对数据链目标只用攻顶弹、无攻顶弹的机组不选它 | `observe` 至 `link-pick` 各行 `ok` |
 | `diag --minutes N` | 每 300 tick 打印 6 台 combat unit 的一行状态 | 车队在做什么：`target`、`state`、`mag`、`mem`、`pull` |
 | `net --minutes 20 --from 8` | 一个脚本飞行员的下载量，按分钟 | 每分钟 kB/s、末尾 `mean` 与分项占比 |
 | `tiers --minutes 14 --from 8` | 同一场战斗里兴趣球分层（6/4.5/4/3/2 km）省了什么 | `snapshot X kB/s -> Y kB/s (Z%)` |

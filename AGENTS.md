@@ -206,6 +206,7 @@ mode post-systems               # battle：波次
 | `hp` | `Combat.apply`（及 `Shop` 的维修） | 任何系统均可读，但以其所在 tick 阶段为准 |
 | `first_hit_record` | 各飞行系统（重新置位）与各碰撞系统（`if t < first_hit_t`） | 仅 `Impact` 读取 |
 | `ai_tgt` | `AI/Sense` | 乘员的信念目标；乘员火炮一律瞄准它，而非 `pos` |
+| `ai_src` | `AI/Sense` | 该信念由谁刷成真身（本方视线或数据链）；决定哪条臂可以开火 |
 | snapshot、meta | `Netcode` | 客户端；客户端只做插值，从不做模拟 |
 
 ## 4. 原则

@@ -335,7 +335,7 @@ public static class GazeCheck
         // ---- datalink-wheel: smoke hides a hull outside the window, a friendly
         // observer keeps the contact live, and the weak bearing turns the head ----
         {
-            int crew = Crew(world, sx, sz);
+            int crew = Crew(world, sx, sz, link: true);
             Clean(world, crew);
             float bearing = MathF.PI, distance = 1500f;
             var (target, _, _) = LinkTarget(world, crew, bearing, distance);
@@ -376,7 +376,7 @@ public static class GazeCheck
         // ---- datalink-direct: a direct hull in the same bearing replaces a held
         // datalink belief, and its stronger evidence owns their shared wheel slot -
         {
-            int crew = Crew(world, sx, sz);
+            int crew = Crew(world, sx, sz, link: true);
             Clean(world, crew);
             float bearing = 5f * MathF.PI / 180f, direct_bearing = 15f * MathF.PI / 180f;
             float distance = 1500f;
@@ -418,7 +418,7 @@ public static class GazeCheck
         // ---- datalink-memory: the current bit clears with its last observer; the
         // belief walks for Crew.MEMORY instead of receiving a hidden TTL refresh ----
         {
-            int crew = Crew(world, sx, sz);
+            int crew = Crew(world, sx, sz, link: true);
             Clean(world, crew);
             var (target, observer, _) = LinkTarget(world, crew, 0f, 1500f);
             float t = 0f;
@@ -521,13 +521,19 @@ public static class GazeCheck
         e.fv("vel_cmd").set3(crew, 0f, 0f, 0f);
     }
 
-    private static int Crew(World world, float x, float z)
+    private static int Crew(World world, float x, float z, bool link = false)
     {
         // unarmed on purpose: these rows are about looking, and a designator this crew
         // started shooting at is a beam that keeps getting interrupted
         int eid = world.spawn_unit(Defs.ETYPE_MECH, Defs.FACTION_RED, x, z, -1,
-                                   weapons: new[] { Defs.WID_NONE, Defs.WID_NONE },
+                                   weapons: link
+                                       ? new[] { Defs.WID_NONE, Defs.WID_TOPATTACK }
+                                       : new[] { Defs.WID_NONE, Defs.WID_NONE },
                                    extra: new[] { AiTags.ENGAGE }, crew: true);
+        // ...and the datalink rows need a launcher on the hull with an empty magazine:
+        // the missile is what makes a crew pick a shared contact up at all
+        // (`Crew.fires_on_link`), and without rounds it still fires nothing
+        if (link) world.ecs.iv("mag").set(eid, 1, 0);
         Check.aim_east(world, eid);
         return eid;
     }

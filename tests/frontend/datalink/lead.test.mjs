@@ -121,7 +121,7 @@ test('a tiny far target keeps its box without a view-occupancy threshold', () =>
   assert.ok(app.leads[0].hw >= 6 && app.leads[0].hh >= 5);
 });
 
-test('all targets keep boxes while pre-aim solutions remain limited to four', () => {
+test('every enemy target keeps its box and its pre-aim solutions', () => {
   const entities = [vehicle(40, 1, 100), vehicle(41, 1, 200), vehicle(42, 1, 300),
     vehicle(43, 1, 400), vehicle(44, 1, 500), vehicle(45, 1, 600)];
   const { app, own } = testApp(entities);
@@ -131,7 +131,5 @@ test('all targets keep boxes while pre-aim solutions remain limited to four', ()
 
   lead.update(own);
   assert.equal(lead.world.length, 6);
-  assert.deepEqual(lead.world.filter((t) => t.marks.length > 0).map((t) => t.id),
-    [40, 41, 42, 43]);
-  assert.ok(lead.world.slice(4).every((t) => t.marks.length === 0));
+  assert.deepEqual(lead.world.map((t) => t.marks.length), [2, 2, 2, 2, 2, 2]);
 });

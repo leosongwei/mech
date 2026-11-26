@@ -14,7 +14,6 @@ export const TICK_HZ = 30;                  // the server's clock (`Netcode.TARG
 export const SNAP_HZ = 15;                  // snapshots a second (`Netcode.SNAP_EVERY` = 2 ticks)
 export const BASE_FOV = 1.05;               // 1x vertical field of view, radians
 export const AIM_LINE = 60000;              // metres, "infinity" for an unzeroed reticle
-export const LEAD_TARGETS = 4;              // pre-aim solutions only; target boxes are uncapped
 export const ZOOM_LEVELS = [1, 4, 10, 20];  // the sight's steps, and the ground's LOD index
 export const RWR_RANGE = 3000;              // m, the threat dial's face and the receiver's
                                             // display ceiling: the snapshot's guided tier

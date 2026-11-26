@@ -2,10 +2,14 @@ using Mech.Server.Systems;
 
 namespace Mech.Server.Systems;
 
-/// <summary>The shared optical picture: one current observation bit and one last-seen
-/// tick per faction.  Datalink is the only writer; consumers use `Visibility`.</summary>
+/// <summary>The shared optical picture: vehicles report hostile armour and guided rounds
+/// inside a 4 km, 80-degree forward cone.  One current bit and one last-seen tick are kept
+/// per faction; Datalink is the only writer and consumers use `Visibility`.</summary>
 public static class Datalink
 {
+    public const float RANGE = 4000f;
+    public const float CONE = Defs.BEAM_CONE;
+
     public static void run(World world, float dt)
     {
         var e = world.ecs;
@@ -32,10 +36,12 @@ public static class Datalink
         {
             if (!e.is_alive(observer)) continue;
             int mine = faction[observer];
-            var def = Defs.UNIT_DEFS[e.uv("etype")[observer]];
+            float yaw = e.has(observer, "gaze_yaw") ? e.fv("gaze_yaw")[observer]
+                          : e.has(observer, "vehicle") ? e.fv("turret_yaw")[observer]
+                                                       : e.fv("sight_yaw")[observer];
             var (eye, _, _) = Weapons.aim_of(world, observer);
             var (ci, cj) = world.grid.cell_of(eye.x, eye.z);
-            int n = world.grid.box_into(ci, cj, (int)(def.sight * world.grid.inv) + 1,
+            int n = world.grid.box_into(ci, cj, (int)(RANGE * world.grid.inv) + 1,
                                         ref ids, ref points);
             for (int k = 0; k < n; k++)
             {
@@ -44,7 +50,8 @@ public static class Datalink
                     || !e.is_alive(target) || link.get(target, mine) != 0) continue;
                 var p = new Vec3(points[k * 3], points[k * 3 + 1], points[k * 3 + 2]);
                 float dx = p.x - eye.x, dy = p.y - eye.y, dz = p.z - eye.z;
-                if (dx * dx + dy * dy + dz * dz > def.sight * def.sight) continue;
+                if (dx * dx + dy * dy + dz * dz > RANGE * RANGE) continue;
+                if (!in_cone(yaw, dx, dz)) continue;
                 var td = Defs.UNIT_DEFS[e.uv("etype")[target]];
                 var at = new Vec3(p.x, p.y + td.height * 0.5f, p.z);
                 if (!Sight.clear(world, eye, at)) continue;
@@ -58,7 +65,9 @@ public static class Datalink
         {
             if (!e.is_alive(observer)) continue;
             int mine = faction[observer];
-            var def = Defs.UNIT_DEFS[e.uv("etype")[observer]];
+            float yaw = e.has(observer, "gaze_yaw") ? e.fv("gaze_yaw")[observer]
+                          : e.has(observer, "vehicle") ? e.fv("turret_yaw")[observer]
+                                                       : e.fv("sight_yaw")[observer];
             var (eye, _, _) = Weapons.aim_of(world, observer);
             foreach (int pid in projectiles)
             {
@@ -68,11 +77,15 @@ public static class Datalink
                 if (world.linked_missiles[mine].Contains(pid)) continue;
                 var p = pos.get3(pid);
                 float dx = p.x - eye.x, dy = p.y - eye.y, dz = p.z - eye.z;
-                if (dx * dx + dy * dy + dz * dz > def.sight * def.sight) continue;
+                if (dx * dx + dy * dy + dz * dz > RANGE * RANGE) continue;
+                if (!in_cone(yaw, dx, dz)) continue;
                 if (Sight.clear(world, eye, p)) world.linked_missiles[mine].Add(pid);
             }
         }
     }
+
+    private static bool in_cone(float yaw, float dx, float dz) =>
+        MathF.Abs(MathUtil.wrap_pi(MathF.Atan2(dz, dx) - yaw)) <= CONE;
 
     public static bool known(World world, int faction, int target) =>
         world.ecs.has(target, "link_seen") && world.ecs.uv("link_seen").get(target, faction) != 0;

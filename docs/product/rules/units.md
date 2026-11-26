@@ -2,8 +2,8 @@
 
 > **读者**：调参 / 维护者
 > **一句话**：战场上有哪些单位、它们各有多少血和多大个、怎么被看见和锁定、各自的赏金，以及 AI 机甲的装备是怎么抽出来的。
-> **数值出处**：`Core/Defs.cs` 的 `UNIT_DEFS` / `MECH_HITSPHERES` / `AI_LOADOUTS` / `radar_strength` / `radar_k` / `CORPSE_TIME` / `WRECK_TIME`，命中球半径经 `Core/MathUtil.cs` 的 `max_radius` 汇总；数据链标签与观察半径同属 `UNIT_DEFS`
-> **核对**：1.45.0 / 2026-11-25
+> **数值出处**：`Core/Defs.cs` 的 `UNIT_DEFS` / `MECH_HITSPHERES` / `AI_LOADOUTS` / `radar_strength` / `radar_k` / `CORPSE_TIME` / `WRECK_TIME`，命中球半径经 `Core/MathUtil.cs` 的 `max_radius` 汇总；数据链观察半径与锥角归 `Systems/Datalink.cs`
+> **核对**：1.45.1 / 2026-11-26
 
 ## 1. 规则
 
@@ -25,8 +25,8 @@
 伤害怎么算、近炸怎么触发、导弹为什么也能被打下来，都在
 [damage.md](damage.md)；锁定与通道在 [../systems/seekers.md](../systems/seekers.md)。
 
-MECH 与 APC 带 `datalink`，包括玩家、AI 与脚本傀儡；它们的 `sight` 同时是数据链的全向
-光学观察半径。步兵不带这个标签，不观察也不上报。观察对象、并集与当 tick 失效规则只在
+MECH 与 APC 带 `datalink`，包括玩家、AI 与脚本傀儡；它们在 4 km、前方 ±40° 锥内进行
+光学观察。步兵不带这个标签，不观察也不上报。观察对象、并集与当 tick 失效规则只在
 [../systems/sight.md](../systems/sight.md) §1.7 定义。
 
 每个单位有两个防御值：**DP 抗穿**（对抗弹药的 AP/AD）与 **DE 抗爆**（对抗 ED）。
@@ -51,9 +51,9 @@ MECH 与 APC 带 `datalink`，包括玩家、AI 与脚本傀儡；它们的 `sig
 | BUNKER 碉堡（仅靶场） | 9 | 不可摧毁 | 1000 | 1000 | 0 | 6.0 | 9.0 | — | — | — | — |
 
 * **AI 交战距离（`ai_range`）与 AI 视野（`sight`）是同一个数**：视野决定它去找多远的
-  敌人，交战距离决定它承认哪个目标能打，两者相等就是"看得见就打得着"。MECH / APC 的
-  这个半径还供全向数据链观察使用，与机组是否需要 `ai_crew` 无关。每条手臂真正扣扳机的
-  距离还要再取小：`min(交战距离, 这条臂武器的射程)`（射程见 [weapons.md](weapons.md)）。
+  敌人，交战距离决定它承认哪个目标能打，两者相等就是"看得见就打得着"。数据链观察另有
+  4 km 上限，不使用这个半径。每条手臂真正扣扳机的距离还要再取小：
+  `min(交战距离, 这条臂武器的射程)`（射程见 [weapons.md](weapons.md)）。
 * 指挥部不移动、不能被锁定，是本局的胜负对象；它只有一颗命中球，半径 8.5 m。
 * 平民属紫方，只在城镇里游荡，不提供赏金。
 * **破袭机甲（raider）就是表里的机甲**：参数一字不改，出发时多挂一个 `raider` 任务

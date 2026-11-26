@@ -4,6 +4,7 @@
 状态:已实施（2026-11-25，1.45.0）
 范围:车辆观察状态、阵营级数据链、快照与小地图过滤、AI 目击轮盘、玩家锁定、SACLOS 轨迹、目标框 UI。
 版本:玩家可见的新功能 → **1.45.0**，并添加 `docs/product/CHANGELOG.md` 条目。
+修订:**1.45.1**（2026-11-26）将观察改为 4 km、±40° 前锥，并为 AI 轮盘加 4 km 上限；目标框取消视野占比门槛。
 前因:[AI_alarm_wheel.md](AI_alarm_wheel.md)（1.44.0 的轮盘）与
 [AI_sight_plan.md](AI_sight_plan.md)（机组视线）。
 
@@ -55,9 +56,9 @@
 * 被观察目标：敌对 MECH、APC，以及 SACLOS / 攻顶制导弹。制导弹的观察只用于 HUD 来源标记，
   不进入地面目标选择。
 * 步兵、平民、残骸、指挥部、碉堡：不观察，也不作为数据链接触上报。
-* 观察半径使用观察者 `UnitDef.sight`；先做距离门，再调用 `Sight.clear`。
-* 车辆观察是全向光学观察，不受 AI 的 `gaze_yaw` 窗口限制。AI 的观瞄窗口仍约束“发现”，
-  数据链轮盘负责把孔径转向值得检查的方向。
+* 观察半径统一为 4 km；先做距离与 ±40° 前锥门，再调用 `Sight.clear`。
+* 玩家机体看 `sight_yaw`，AI 机组看 `gaze_yaw`，APC 看 `turret_yaw`，脚本傀儡看
+  `sight_yaw`。观察独立于屏幕实际 FOV 与倍率；AI 轮盘检查另有 4 km 硬上限。
 * 友军车辆的位置直接由同阵营快照 / 小地图提供，不需要先被另一台车观察到。
 
 ### 1.2 有效性与失效
@@ -267,7 +268,7 @@ visible = 在 BEAM_CONE 内 && Visibility.source(...) != None
   `TARGET_LINK` 为绿色虚线圈。RWR 告警盘仍保持原规则。
 * 数据链目标也参与敌方弹道预瞄；友军目标不生成预判点、不进入 `Lead.layout`、不产生
   `aimSnap`。不改变实际伤害友军的规则。
-* 目标框与预瞄的距离 / 数量规则保持现有 25 m–4 km、最近 4 台；本次不借数据链扩大显示范围。
+* 目标框不设数量上限；预瞄圈仍只为最近 4 个敌方目标生成。距离保持 25 m–4 km。
 
 ### 3.4 绘制
 
@@ -410,6 +411,10 @@ visible = 在 BEAM_CONE 内 && Visibility.source(...) != None
   `beam_lit` 单独保留为物理照射量，不参与制导。
 * **AI 轮盘按扫描钟更新。** `Sense.link_wheel` 只在机组 `ACQUIRE` 扫描到点时遍历附近网格盒，
   避免每 tick 对全场接触做一次机组笛卡尔积；轮盘 8 s 余温覆盖这个更新间隔。
+* **观察从全向改为 80° 前锥。** 最终实现统一使用 4 km 距离与 ±40° 水平锥：玩家看
+  `sight_yaw`，AI 看 `gaze_yaw`，APC 看 `turret_yaw`，脚本傀儡看 `sight_yaw`；不受屏幕 FOV
+  与倍率影响。AI 轮盘检查另受 4 km 硬上限约束。
+* **目标框不设数量上限。** 低倍率不再因屏幕候选多而丢框；最近 4 台的限制只保留给敌方预瞄圈。
 * **友军目标也区分直接 / 数据链线型。** 友军位置始终共享，因此直接可见为蓝色实线，仅共享可见
   为蓝色虚线；两者都没有预瞄。
 * **普通世界快照保留步兵。** “步兵不上数据链”落实为不观察、不上报、contacts 不发送；没有把
@@ -420,15 +425,15 @@ visible = 在 BEAM_CONE 内 && Visibility.source(...) != None
 | 检查 | 结果 |
 | --- | --- |
 | `./dotnet.sh build --no-restore` | 0 警告、0 错误 |
-| `./run_tests.sh` | 前端 56 项通过；双端 42 cases，0 differ |
-| `--check datalink` | `observe` 至 `link-top` 9 行全部 `ok`，`ecs.validate()` 通过 |
+| `./run_tests.sh` | 前端 58 项通过；双端 42 cases，0 differ |
+| `--check datalink` | `observe` 至 `link-top` 10 行全部 `ok`，`ecs.validate()` 通过 |
 | `--check gaze` | 17 行全部 `ok`，含 `link-wheel` / `link-direct` / `link-memory` |
 | `--check beam` / `fcs` / `intercept` / `hit` | 全部通过 |
-| `--check battle --minutes 12`（seed 11） | `ecs.validate() ok`；7.35 ms/tick incl. wire，658 实体 |
+| `--check battle --minutes 12`（seed 11） | `ecs.validate() ok`；7.17 ms/tick incl. wire，653 实体 |
 | `--check net --minutes 10 --from 4` | `ecs.validate() ok`；10 min simulated in 110.1 s |
 | `--check tiers --minutes 6 --from 2` | `ecs.validate() ok`；snapshot 119.0 → 26.1 kB/s |
 | `--check stuck --minutes 12` / `range --minutes 2` | 全部通过；stuck 判词无受困机组 |
-| WebBridge 靶场 | v1.45.0；友军蓝框无预瞄、敌军绿框有预瞄；烟幕后双方变虚线；敌军导弹圈分类正确；contacts 步兵为 0 |
+| WebBridge 靶场 | v1.45.1；友军蓝框无预瞄、敌军绿框有预瞄；烟幕后双方变虚线；20× 下 17° 偏轴目标仍上报，57° 锥外目标不出现；低倍率 9 个目标框全显示，同一中心目标在高倍率仍显示；contacts 步兵为 0 |
 
 性能按量级读，不把不同实体规模的战斗读数当逐 tick 基线。截图保存在
 `/tmp/mech-datalink-range.png` 与 `/tmp/mech-datalink-smoke.png`。

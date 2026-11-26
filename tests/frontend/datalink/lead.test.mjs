@@ -40,14 +40,14 @@ test('target layer works without ballistic arms and direct sight wins over link'
   assert.ok(app.leads.every((t) => t.marks.length === 0));
 });
 
-test('vehicle target boxes keep the 25 m - 4 km and nearest-four rules', () => {
+test('vehicle target boxes keep the 25 m - 4 km range without a count cap', () => {
   const entities = [vehicle(10, 1, 100), vehicle(11, 1, 200), vehicle(12, 1, 300),
     vehicle(13, 1, 400), vehicle(14, 1, 500), vehicle(15, 1, 600),
     vehicle(16, 1, 24), vehicle(17, 1, 4001)];
   const { app, own } = testApp(entities);
   const lead = new Lead(app);
   lead.update(own);
-  assert.deepEqual(lead.world.map((t) => t.id), [10, 11, 12, 13]);
+  assert.deepEqual(lead.world.map((t) => t.id), [10, 11, 12, 13, 14, 15]);
 });
 
 test('only enemy targets receive ballistic marks and datalink targets participate', () => {
@@ -85,4 +85,34 @@ test('friendly vehicles and missiles use dashed outlines when only linked', () =
     [201, 'missile', 0, 'datalink'],
   ]);
   assert.ok(lead.world.every((t) => t.marks.length === 0));
+});
+
+test('a tiny far target keeps its box without a view-occupancy threshold', () => {
+  const far = vehicle(30, 1, 3900, { link: true });
+  const { app, own } = testApp([far]);
+  app.map.w = app.map.h = 100;
+  app.map.tiles = new Uint8Array(10000);
+  app.map.walls = new Uint8Array(10000);
+  const lead = new Lead(app);
+
+  lead.update(own);
+  assert.deepEqual(lead.world.map((t) => [t.id, t.source]), [[30, 'direct']]);
+  lead.screen(own);
+  assert.equal(app.leads.length, 1);
+  assert.ok(app.leads[0].hw >= 6 && app.leads[0].hh >= 5);
+});
+
+test('all targets keep boxes while pre-aim solutions remain limited to four', () => {
+  const entities = [vehicle(40, 1, 100), vehicle(41, 1, 200), vehicle(42, 1, 300),
+    vehicle(43, 1, 400), vehicle(44, 1, 500), vehicle(45, 1, 600)];
+  const { app, own } = testApp(entities);
+  own.weapon = [1, 1];
+  app.defs.weapons[1] = { kind: 'bullet', vel: 500, g: 9.81, life: 10 };
+  const lead = new Lead(app);
+
+  lead.update(own);
+  assert.equal(lead.world.length, 6);
+  assert.deepEqual(lead.world.filter((t) => t.marks.length > 0).map((t) => t.id),
+    [40, 41, 42, 43]);
+  assert.ok(lead.world.slice(4).every((t) => t.marks.length === 0));
 });

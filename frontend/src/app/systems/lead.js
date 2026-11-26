@@ -31,10 +31,11 @@ export class Lead {
     this.pairDir = new Map();   // per target: the line its two rings lie on
   }
 
-  // Target records are built before looking at the arms.  Vehicles keep the
-  // existing 25 m - 4 km and nearest-four rule; guided rounds keep the snapshot
-  // tier.  Direct sight wins over a datalink bit; friendly rows carry the shared
-  // position bit and use the same solid/dashed source rule.
+  // Target records are built before looking at the arms.  Every known vehicle in
+  // the 25 m - 4 km range gets a box; only the nearest four hostile records get
+  // pre-aim solutions.  Guided rounds keep the snapshot tier.  Direct sight wins
+  // over a datalink bit; friendly rows carry the shared position bit and use the
+  // same solid/dashed source rule.
   update(own) {
     const { app } = this;
     if (app.net.seq === this.seq) return;
@@ -60,7 +61,7 @@ export class Lead {
     cand.sort((a, b) => a.d - b.d);
 
     const targets = [];
-    for (const c of cand.slice(0, LEAD_TARGETS)) {
+    for (const c of cand) {
       const e = c.e;
       const friendly = e.faction === own.faction;
       const blocked = sightBlocked(app.map,
@@ -115,8 +116,11 @@ export class Lead {
     const aimEye = app.aim.sightEye(own, pose);
     for (const a of arms) a.m = app.aim.muzzle(own, a.arm, pose);
 
+    let aimed = 0;
     for (const t of targets) {
       if (t.faction === own.faction) continue;
+      if (aimed >= LEAD_TARGETS) continue;
+      aimed += 1;
       for (const a of arms) {
         let p;
         if (t.kind === 'missile') {

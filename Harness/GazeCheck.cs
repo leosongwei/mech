@@ -620,7 +620,7 @@ public static class GazeCheck
                                         tp.x - cz * 100f, tp.z + cx * 100f, -1,
                                         weapons: new[] { Defs.WID_NONE, Defs.WID_NONE },
                                         crew: false);
-        Check.aim_east(world, observer);
+        Lay(world, observer, target);
         var (eye, _, _) = Weapons.aim_of(world, crew);
         var at = Body(world, target);
         var mid = new Vec3((eye.x + at.x) * 0.5f, (eye.y + at.y) * 0.5f,

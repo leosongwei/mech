@@ -4,7 +4,7 @@
 > **一句话**：服务端怎么建、单元测试证什么、各项 `--check` 分别量什么、在靶场上怎么量一个
 > 机制——一页可操作的手册，读数都标着版本与命令。
 > **代码**：`Program.cs`、`Harness/`、`tests/`、`run_tests.sh`、`dev.sh`、`dotnet.sh`
-> **核对**：1.45.0 / 2026-11-25
+> **核对**：1.45.1 / 2026-11-26
 
 ## 1. 构建与重启
 
@@ -151,11 +151,11 @@
 打成 `TARGET`、导弹会往场景里加弹）；`Crew()` 出来的机组**不武装**，否则它会打掉正后方的
 设计ator、光束随之中断。
 
-**`datalink`** —— 数据链的定点验收：`observe` 验证红蓝独立与步兵不挂载；`union-loss` 用真实
-烟幕与第二台观察车验证并集和当 tick 失效；`filter` / `restore` 验证未知敌方装甲不进快照与
-contacts、恢复后能力位正确；`friendly` 验证友军位置共享；`missile` 验证制导弹来源位；
-`link-lock` / `link-saclos` / `link-top` 验证隔烟获取、SACLOS 轨迹刷新与物理照射分离、攻顶
-链路种子。每行都必须为 `ok`，结尾执行 `ecs.validate()`。
+**`datalink`** —— 数据链的定点验收：`observe` 验证红蓝独立与步兵不挂载；`cone-range` 验证
+80° 前锥与 4 km 上限；`union-loss` 用真实烟幕与第二台观察车验证并集和当 tick 失效；
+`filter` / `restore` 验证未知敌方装甲不进快照与 contacts、恢复后能力位正确；`friendly` 验证
+友军位置共享；`missile` 验证制导弹来源位；`link-lock` / `link-saclos` / `link-top` 验证隔烟获取、
+SACLOS 轨迹刷新与物理照射分离、攻顶链路种子。每行都必须为 `ok`，结尾执行 `ecs.validate()`。
 
 **`diag`** —— 没有判词，只有观测。`target=-1`、`state=0`、`pull=0.0` 一起出现就是"这台车组既没
 目标也没在动"，是查 AI 的第一站（`--check stuck` 查的是它的必然结果）。

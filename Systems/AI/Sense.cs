@@ -79,8 +79,9 @@ public static class Sense
                 if (c.tgt is null || r.timer > 0f) continue;
                 var own = Defs.UNIT_DEFS[r.etype];
                 var want = own.targets;
+                float range = Math.Min(own.sight, Datalink.RANGE);
                 var (ci, cj) = world.grid.cell_of(r.eye.x, r.eye.z);
-                int n = world.grid.box_into(ci, cj, (int)(own.sight * world.grid.inv) + 1,
+                int n = world.grid.box_into(ci, cj, (int)(range * world.grid.inv) + 1,
                                             ref ids, ref points);
                 for (int k = 0; k < n; k++)
                 {
@@ -94,7 +95,7 @@ public static class Sense
                     float dx = tpos.x - r.eye.x, dy = tpos.y + td.height * 0.5f - r.eye.y;
                     float dz = tpos.z - r.eye.z;
                     float ds = MathF.Sqrt(dx * dx + dy * dy + dz * dz);
-                    if (!(ds <= own.sight)) continue;
+                    if (!(ds <= range)) continue;
                     float worth = ThreatScore.of(type, ds, own.sight);
                     if (worth <= 0f) continue;
                     var at = new Vec3(tpos.x, tpos.y + td.height * 0.6f, tpos.z);

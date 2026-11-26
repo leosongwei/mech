@@ -24,6 +24,7 @@ public static class DatalinkCheck
         int bad = 0;
         Console.WriteLine("datalink: shared vehicle observation and faction-filtered snapshots");
 
+        Aim(world, observer, target);
         world.update(DT);
         bool independent = Datalink.known(world, Defs.FACTION_RED, target)
                             && !Datalink.known(world, Defs.FACTION_BLUE, target);
@@ -35,9 +36,25 @@ public static class DatalinkCheck
                          + $"infantry component {e.has(foot, "link_seen")}",
              independent && vehicles_only && stamped, ref bad);
 
+        e.fv("sight_yaw")[observer] = MathF.PI;
+        world.update(DT);
+        bool outside = !Datalink.known(world, Defs.FACTION_RED, target);
+        Aim(world, observer, target);
+        int far = world.spawn_unit(Defs.ETYPE_APC, Defs.FACTION_BLUE, sx + 4100f, sz,
+                                   weapons: new[] { Defs.WID_NONE, Defs.WID_NONE }, crew: false);
+        world.update(DT);
+        bool beyond = !Datalink.known(world, Defs.FACTION_RED, far);
+        e.fv("pos").set3(far, sx + 3900f, e.fv("pos").get3(far).y, sz);
+        world.update(DT);
+        bool within = Datalink.known(world, Defs.FACTION_RED, target);
+        e.destroy(far);
+        Line("cone-range", $"outside 80 deg {outside}, beyond 4 km {beyond}, inside {within}",
+             outside && beyond && within, ref bad);
+
         var tp = e.fv("pos").get3(target);
         int second = world.spawn_unit(Defs.ETYPE_APC, Defs.FACTION_RED, tp.x + 100f, tp.z,
                                       weapons: new[] { Defs.WID_NONE, Defs.WID_NONE }, crew: false);
+        Aim(world, second, target);
         var eye = Weapons.aim_of(world, observer).Item1;
         var body = new Vec3(tp.x, tp.y + Defs.UNIT_DEFS[Defs.ETYPE_APC].height * 0.5f, tp.z);
         var mid = new Vec3((eye.x + body.x) * 0.5f, (eye.y + body.y) * 0.5f,
@@ -124,10 +141,14 @@ public static class DatalinkCheck
         e.fv("smoke_t")[puff] = Defs.SMOKE_LIFE;
         e.fv("smoke_s")[puff] = 1f;
         Aim(world, pl.mech, target);
+        pl.in_yaw = e.fv("sight_yaw")[pl.mech];
+        pl.in_pitch = e.fv("sight_pitch")[pl.mech];
         world.update(DT);
         bool blind = pl.lock_target < 0;
-        world.spawn_unit(Defs.ETYPE_APC, Defs.FACTION_RED, tp.x + 100f, tp.z,
-                         weapons: new[] { Defs.WID_NONE, Defs.WID_NONE }, crew: false);
+        int link_observer = world.spawn_unit(Defs.ETYPE_APC, Defs.FACTION_RED, tp.x + 100f, tp.z,
+                                             weapons: new[] { Defs.WID_NONE, Defs.WID_NONE }, crew: false);
+        Aim(world, link_observer, target);
+        pl.zoom = 20f;                  // detection uses the 80-degree sight cone, not the optic FOV
         world.update(DT);
 
         var hull = e.arch_of(pl.mech)!;
@@ -146,6 +167,7 @@ public static class DatalinkCheck
         }
         Line("link-lock", $"blind {blind}, lock {pl.lock_target}/{target}, "
                            + $"link {Datalink.known(world, Defs.FACTION_RED, target)}, "
+                           + $"observer yaw {e.fv("sight_yaw")[link_observer]:0.00}, "
                            + $"source {Visibility.source(world, pl.mech, target, body)}",
              blind && pl.lock_target == target
              && Visibility.source(world, pl.mech, target, body) == VisibilitySource.Datalink, ref bad);
@@ -176,10 +198,18 @@ public static class DatalinkCheck
         var eye = Weapons.aim_of(world, eid).Item1;
         float dy = p.y + Defs.UNIT_DEFS[e.uv("etype")[target]].height * 0.5f - eye.y;
         float dx = p.x - eye.x, dz = p.z - eye.z;
-        var yaw = e.row_f(eid, "sight_yaw", out int r1);
-        var pitch = e.row_f(eid, "sight_pitch", out int r2);
-        yaw[r1] = MathF.Atan2(dz, dx);
-        pitch[r2] = MathF.Atan2(dy, MathF.Sqrt(dx * dx + dz * dz));
+        float yaw = MathF.Atan2(dz, dx);
+        float pitch = MathF.Atan2(dy, MathF.Sqrt(dx * dx + dz * dz));
+        if (e.uv("etype")[eid] == Defs.ETYPE_APC)
+        {
+            e.fv("turret_yaw")[eid] = yaw;
+            e.fv("pitch")[eid] = pitch;
+        }
+        else
+        {
+            e.fv("sight_yaw")[eid] = yaw;
+            e.fv("sight_pitch")[eid] = pitch;
+        }
     }
 
     private static int FindUnit(byte[] buf, int id)

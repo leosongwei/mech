@@ -2,8 +2,8 @@
 
 > **读者**：机制维护者
 > **一句话**：`Sight.clear` 回答一条物理视线有没有被挡住；车辆数据链在它之上增加同阵营共享的当前光学接触，但不改变激光、弹体通路或导引头的物理判定。
-> **数值出处**：`Systems/Sight.cs`（`LOS_STEP` / `clear` / `why`）、`Systems/Datalink.cs`、`Systems/Visibility.cs`、`Core/Defs.cs` 的 `UnitDef.sight`、`Core/Terrain.cs`（`los` / `_march` / `_canopies` / `_trunk_hit`）、`Systems/Smoke.cs`（`blocks`）、`Systems/Beams.cs`（`painting` / `_body_hit`）、`Core/Defs.cs`（`SMOKE_FLAT` / `LASER_SPHERE` / `LASER_RANGE` / `BEAM_*`）；客户端镜像在 `frontend/src/map/sight.js`
-> **核对**：1.45.0 / 2026-11-25
+> **数值出处**：`Systems/Sight.cs`（`LOS_STEP` / `clear` / `why`）、`Systems/Datalink.cs`（`RANGE` / `CONE`）、`Systems/Visibility.cs`、`Core/Terrain.cs`（`los` / `_march` / `_canopies` / `_trunk_hit`）、`Systems/Smoke.cs`（`blocks`）、`Systems/Beams.cs`（`painting` / `_body_hit`）、`Core/Defs.cs`（`SMOKE_FLAT` / `LASER_SPHERE` / `LASER_RANGE` / `BEAM_*`）；客户端镜像在 `frontend/src/map/sight.js`
+> **核对**：1.45.1 / 2026-11-26
 
 ## 1. 规则
 
@@ -83,15 +83,16 @@
 | 驾束弹接收激光 | 只问发射机到弹体的物理视线（一道山脊就切得断），见 [flight.md](flight.md) |
 | `beam_lit` 与激光告警 | 只问激光到目标车体的物理通路，见 [rwr.md](rwr.md) |
 | 攻顶弹出膛后的重捕 | 只问弹体出发的物理视线，见 [seekers.md](seekers.md) |
-| 车辆数据链观察者 | 先用自己的 `UnitDef.sight` 限距，再调用 `Sight.clear` |
+| 车辆数据链观察者 | 4 km 内、机身前方 ±40° 锥内，再调用 `Sight.clear` |
 
 **弹道预测走的是另一套。** 客户端算落点与提前量用的是弹丸自己的规则：挡它的是地面、
 屋顶和树干。两套规则各有各的函数，唯一的约定是两端一份不差（见 [firecontrol.md](firecontrol.md)）。
 
 ### 1.7 数据链：当前观察的并集
 
-* 存活 MECH 与 APC 都是**全向光学观察者**，玩家机体、AI 机体与脚本傀儡一视同仁；观察
-  半径是该单位的 `UnitDef.sight`，不受 AI 观瞄窗口限制。
+* 存活 MECH 与 APC 都是车辆光学观察者，观察半径统一为 **4 km**，方向为机身前方
+  **±40°（共 80°）** 的水平锥。玩家机体看 `sight_yaw`，AI 机组看 `gaze_yaw`，APC 看
+  `turret_yaw`，脚本傀儡看 `sight_yaw`；探测不依赖屏幕实际 FOV 或瞄准倍率。
 * 观察对象是敌对 MECH、APC，以及 SACLOS 与攻顶制导弹。步兵不观察、也不上报；平民、
   残骸、指挥部与碉堡不进入车辆数据链。
 * 每个 tick 先清空 `link_seen`，再由本 tick 的观察者重建。任意同阵营观察者仍能直接观察，
@@ -108,6 +109,8 @@
 | 常数 | 值 | 含义 |
 | --- | --- | --- |
 | `LOS_STEP` | 8 m | 视线每步的采样间距（半格）；地形与建筑按它走，树冠与树干按它求交 |
+| `Datalink.RANGE` | 4000 m | 车辆光学观察与 AI 数据链检查的最大距离 |
+| `Datalink.CONE` | ±40° | 车辆观察的水平前锥，总宽 80° |
 | 树高 | 10–18 m | 每棵树自己的抽样值，决定冠幅与树干高 |
 | 树干 | `r` 0.35–0.6 m，`h` ≈ 全树 40 % | 车体与弹丸的实体 |
 | 阔叶冠 | 球，半径 ≈ 全树 40 % ×(0.85–1.15)，中心在半高处 | 遮挡体 |

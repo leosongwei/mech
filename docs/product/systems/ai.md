@@ -15,7 +15,7 @@
 > `Core/Defs.cs` 的 `AI_LAUNCH_GAP` / `AI_MASTER_ARM` / `BEAM_CONE` / `LASER_SPHERE` /
 > `ai_range` / `sight` / `radar_strength`；共享观察在 `Systems/Datalink.cs`，统一知识可见性在
 > `Systems/Visibility.cs`
-> **核对**：1.45.0 / 2026-11-25
+> **核对**：1.45.1 / 2026-11-26
 
 ## 1. 规则
 
@@ -73,7 +73,8 @@
 * 同方向直接证据仍按 `Wheel.mark` 的强证据规则占住格子。候选同分时直接目标优先；没有
   更高威胁目标时，机组仍会转向并攻击链路目标。
 * 数据链不扩大 AI 的 `sight` / `ai_range`、类型白名单或观瞄窗口，也不改变
-  `ThreatScore.SWITCH`。观察与失效规则归 [sight.md](sight.md) §1.7。
+  `ThreatScore.SWITCH`；`Sense.link_wheel` 的网格盒另有 **4 km** 硬上限。观察与失效规则归
+  [sight.md](sight.md) §1.7。
 
 ### 1.4 视线：看哪儿，与打哪儿是两根轴
 

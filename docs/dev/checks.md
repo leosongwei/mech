@@ -1,10 +1,10 @@
 # 验证：构建、测试与量测
 
 > **读者**：维护者（跑验证的人）
-> **一句话**：服务端怎么建、单元测试证什么、13 个 `--check` 各自量什么、在靶场上怎么量一个
+> **一句话**：服务端怎么建、单元测试证什么、各项 `--check` 分别量什么、在靶场上怎么量一个
 > 机制——一页可操作的手册，读数都标着版本与命令。
 > **代码**：`Program.cs`、`Harness/`、`tests/`、`run_tests.sh`、`dev.sh`、`dotnet.sh`
-> **核对**：1.39.0 / 2026-11-20
+> **核对**：1.45.1 / 2026-11-26
 
 ## 1. 构建与重启
 
@@ -22,7 +22,7 @@
 ### 1.2 客户端
 
 ```bash
-cd frontend && npm install && npm run build     # -> ../assets/
+./npm.sh install && ./npm.sh run build          # -> assets/
 ./dev.sh build                                   # 同上，外加共享 npm cache
 ```
 
@@ -91,6 +91,8 @@ cd frontend && npm install && npm run build     # -> ../assets/
 | `intercept` | 每种导弹、每档距离 4 发，打在靶场的导弹防御哨位上 | `shot down` 列（32 发里几发被 30 mm 打下来） |
 | `beam` | 驾束弹全链路：命中、烟幕、激光被切断、锥角、通道、涂照、信念、幽灵、弹道 | 每行 `hits` / `miss m`，末行 `profile` 的速度-距离 |
 | `fcs` | 同一批场景下 AI 车组与飞行员各打一遍（`FireControl` 的集成半边） | `crew` 与 `pilot` 两列的脱靶量差 |
+| `gaze` | 机组的观瞄孔径：正前方/正后方的发现、150 °/s 的转速、近失弹的来向、两向交替、激光照住的认定与断续照射、目击记忆、威胁度算例 | 每行的秒数与方位，末行判词 |
+| `datalink` | 车辆观察的红蓝独立、多人并集、丢视野失效、快照 / contacts 过滤、友军共享、导弹来源位、SACLOS / 攻顶链路锁定 | `observe` 至 `link-top` 各行 `ok` |
 | `diag --minutes N` | 每 300 tick 打印 6 台 combat unit 的一行状态 | 车队在做什么：`target`、`state`、`mag`、`mem`、`pull` |
 | `net --minutes 20 --from 8` | 一个脚本飞行员的下载量，按分钟 | 每分钟 kB/s、末尾 `mean` 与分项占比 |
 | `tiers --minutes 14 --from 8` | 同一场战斗里兴趣球分层（6/4.5/4/3/2 km）省了什么 | `snapshot X kB/s -> Y kB/s (Z%)` |
@@ -102,11 +104,13 @@ cd frontend && npm install && npm run build     # -> ../assets/
 ### 3.1 逐条读法
 
 **`battle`** —— 通行性体检：一整场跑完不抛异常、`ecs.validate()` 过、census 按分钟长起来、
-钱不会发散、"杀了多少除以打了多少发"落在合理区间。1.40.0 这一跑：`2.48 ms/tick incl. wire`，
-其中 0.059 ms 是 15 Hz 的线上开销；12 min 用 53.6 s CPU（403 ticks/s）；
-`death=536` 对 `shot=28742`，约 54 发一个杀。同一 seed 上 1.39.0 读到 1.69 ms/tick、385 个单位，
-这一跑长到 514 个——战斗进程本来就不逐 tick 重合，**这一栏按量级读，别当基线 diff**。
-`--players N` 换 bot 数，`--minutes` 换时长。
+钱不会发散、"杀了多少除以打了多少发"落在合理区间。1.44.0 这一跑（seed 11）：`2.6 ms/tick incl. wire`，
+其中 0.053 ms 是 15 Hz 的线上开销；12 min 用约 57 s CPU；场上 470 个单位；
+`death=610` 对 `shot=24857`，约 41 发一个杀。1.43.0 同一 seed 是 `3.79 ms/tick`、501 / 31255
+（约 62 发一杀）——**告警轮盘把空放降了下来**：每个方向各自续命之后，机组不再对着"最后一发
+来向"反复转炮，命中率上去、每 tick 也便宜了近三分之一。1.40.0 是 `2.48 ms/tick`、514 个单位、
+536 / 28742（54 发一杀），1.39.0 读到 1.69 ms/tick、385 个单位——战斗进程本来就不逐 tick 重合，
+**这一栏按量级读，别当基线 diff**。`--players N` 换 bot 数，`--minutes` 换时长。
 
 **`MECH_PERF=1 battle`** —— 同一场，只关事件扫描，改成每分钟印一次：`min 4: 1.37`、`min 8: 2.49`、
 `min 12: 2.38 ms/tick`（1.39.0）。战场成熟后曲线是平的，这是"这个 tick 有多贵"的唯一读法。
@@ -134,6 +138,24 @@ cd frontend && npm install && npm run build     # -> ../assets/
 个人差得最远的地方）。末尾四块是走廊里放不下的：`chassis`（APC、步兵、RPG 各自的炮口）、
 `arsenal`（7 套 AI 装备模板各自左右臂的发射数——主臂必须开火、副臂必须填满装填空档）、
 `pull`（2.40 测成 2.40）、`smoke`（烟前 4 发、记忆点 3 发、烟后 0 发）。
+
+**`gaze`** —— 原有十四行加三行数据链：`front`（正前方 1500 m 在一次扫描里被找到）、`behind`
+（正后方 900 m 在 20 s 里从未被找到，孔径只扫 −90°..+90°）、`slew`（90 度 = 0.60 s）、
+`bullet`（近失弹在分格表里留下 0.47 s 的格，孔径 1.13 s 后转到该格）、`burst`（同方向 12 发
+只换 0 次格）、`two-way`（+z 与 −z 交替来袭：两格都到过，44 % 的时间在转场）、`mark`
+（一串弹不推开已记下的弹，一束激光会推开）、`laser`、`laser-off`、`laser-cross`、`sighting`、
+`target-first`、`foot`、`score`；`link-wheel` 验证烟后低权重方位使孔径转向并取得目标，
+`link-direct` 验证同方向直接目标优先，`link-memory` 验证链路失效后回记忆并遗忘。
+**改 `Watch`、`Suppress` 或数据链权重先跑这一条**。这条检查把
+`Modes.Range.Targets.run` 与 `Modes.Range.Interceptor.run` 从系统表里摘掉（靶标会把机组
+打成 `TARGET`、导弹会往场景里加弹）；`Crew()` 出来的机组**不武装**，否则它会打掉正后方的
+设计ator、光束随之中断。
+
+**`datalink`** —— 数据链的定点验收：`observe` 验证红蓝独立与步兵不挂载；`cone-range` 验证
+80° 前锥与 4 km 上限；`union-loss` 用真实烟幕与第二台观察车验证并集和当 tick 失效；
+`filter` / `restore` 验证未知敌方装甲不进快照与 contacts、恢复后能力位正确；`friendly` 验证
+友军位置共享；`missile` 验证制导弹来源位；`link-lock` / `link-saclos` / `link-top` 验证隔烟获取、
+SACLOS 轨迹刷新与物理照射分离、攻顶链路种子。每行都必须为 `ok`，结尾执行 `ecs.validate()`。
 
 **`diag`** —— 没有判词，只有观测。`target=-1`、`state=0`、`pull=0.0` 一起出现就是"这台车组既没
 目标也没在动"，是查 AI 的第一站（`--check stuck` 查的是它的必然结果）。

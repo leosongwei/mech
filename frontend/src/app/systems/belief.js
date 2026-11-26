@@ -2,11 +2,12 @@
 //
 // The pilot tracks five hulls at most - the four laser channels his designator
 // holds and the candidate his cross has named - and every marker the HUD puts on
-// them sits on this point.  While his own sight has the hull the point *is* the
-// hull, refreshed every frame; the moment that line is cut - smoke, a crest, a
-// stand of trees, a house - it walks at the velocity and the pull last measured
-// on the hull, which is the same walk `Systems/Beams.cs` flies a channel on and
-// the same shape a top-attack round's `tgt_mem` has.
+// them sits on this point.  While direct sight or datalink has the hull the point
+// *is* the hull, refreshed every frame; when both sources are lost - smoke, a
+// crest, a stand of trees, a house, or a row outside the tier - it walks at the
+// velocity and pull last measured on the hull, which is the same walk
+// `Systems/Beams.cs` flies a channel on and the same shape a top-attack round's
+// `tgt_mem` has.
 //
 // The mark is the whole point of it: a diamond read straight off the snapshot's
 // own row would be the hull itself, through the screen hiding it, and would tell
@@ -60,15 +61,18 @@ export class Beliefs {
     const units = app.defs.units || {};
     for (const id of tracked) {
       const e = app.net.entities.get(id);
-      if (!e) { this.map.delete(id); continue; }
-      // the hull's own centre: the point every other part of the game aims at
-      const cx = e.x;
-      const cy = e.y + ((units[e.type] || {}).height || 3) * 0.5;
-      const cz = e.z;
-      // one door for "can the pilot see it": the same line of sight the pre-aim
-      // box and the seeker go through (terrain, buildings, canopies, smoke)
-      const seen = !sightBlocked(app.map, eye[0], eye[1], eye[2], cx, cy, cz, puffs);
       let b = this.map.get(id);
+      // A datalink target can leave the tiered entity table while the server
+      // still tracks it.  Keep the existing belief and walk it; only a server
+      // release removes the entry.
+      if (!e && !b) continue;
+      const cx = e ? e.x : 0;
+      const cy = e ? e.y + ((units[e.type] || {}).height || 3) * 0.5 : 0;
+      const cz = e ? e.z : 0;
+      // Direct sight and datalink are equivalent knowledge sources here.  The
+      // physical line still controls lasers and missile seekers elsewhere.
+      const seen = !!e && (!sightBlocked(app.map,
+        eye[0], eye[1], eye[2], cx, cy, cz, puffs) || e.link);
       if (!b) {
         b = { x: cx, y: cy, z: cz, vx: 0, vy: 0, vz: 0, ax: 0, az: 0, blind: 0, seen };
         this.map.set(id, b);

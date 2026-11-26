@@ -29,6 +29,13 @@ public class CrewColumns : Columns<CrewRow>
     public int[] mag = null!, target = null!, threat = null!, nav_route = null!;
     public byte[] etype = null!, faction = null!, weapon = null!, trigger = null!;
     public byte[] state = null!, cover = null!, goal = null!, lane = null!;
+    // the aperture: where it looks, where it was told to look, which of the five
+    // `AiGaze` words says why, and the sweep's own freshness (`Wheel.eye`).  What has
+    // been thrown at this crew lately is a wheel of its own
+    // (`Systems/AI/Support/Wheel.cs`), bound by the systems that own one because a
+    // man carries no warning receiver.
+    public float[] gaze = null!, gaze_cmd = null!, eye = null!;
+    public byte[] gaze_state = null!;
 
     internal static readonly string[] names =
     {
@@ -37,6 +44,7 @@ public class CrewColumns : Columns<CrewRow>
         "nav_x", "nav_z", "nav_speed", "nav_route",
         "mag", "target", "ai_threat",
         "etype", "faction", "weapon", "trigger", "ai_state", "ai_cover", "ai_goal", "lane",
+        "gaze_yaw", "gaze_cmd", "ai_gaze", "eye",
     };
 
     /// <summary>Every crew, whatever platform or mission.</summary>
@@ -61,6 +69,8 @@ public class CrewColumns : Columns<CrewRow>
         etype = g.u8("etype"); faction = g.u8("faction"); weapon = g.u8("weapon");
         trigger = g.u8("trigger"); state = g.u8("ai_state"); cover = g.u8("ai_cover");
         goal = g.u8("ai_goal"); lane = g.u8("lane");
+        gaze = g.f("gaze_yaw"); gaze_cmd = g.f("gaze_cmd"); gaze_state = g.u8("ai_gaze");
+        eye = g.f("eye");
     }
 
     public override CrewRow row(int i) => new CrewRow(this, i);
@@ -192,6 +202,26 @@ public readonly struct CrewRow : IRow<CrewColumns>
         get => _c.trigger[i];
         set => _c.trigger[i] = value;
     }
+
+    // ---- the aperture: where the crew is *looking* ---------------------------
+    //
+    // A second axis beside the gun's.  `Watch.turn` is the only writer of `gaze`
+    // and `Watch.run` the only writer of `gaze_cmd` and `gaze_state`
+    // (`Systems/AI/Watch.cs`); `Systems/AI/Sense.cs` reads the first as the window
+    // a candidate has to sit in.  The fire control (`sight_*`, `turret_yaw`, `yaw`)
+    // is untouched by all of it.
+
+    public float gaze
+    {
+        get => _c.gaze[i];
+        set => _c.gaze[i] = value;
+    }
+    public float gaze_cmd
+    {
+        get => _c.gaze_cmd[i];
+        set => _c.gaze_cmd[i] = value;
+    }
+    public ref byte gaze_state => ref _c.gaze_state[i];
 
     // ---- what the crew believes about the hull it is working ----------------
     //

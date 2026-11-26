@@ -16,7 +16,7 @@ import { HitList } from './canvas.js';
 import { project } from '../render/camera.js';
 
 import { aimCross, centreCross, crosshairs, lock } from './reticle.js';
-import { friendlyMissiles, leads } from './leads.js';
+import { leads } from './leads.js';
 import { dial } from './dial.js';
 import { bakeMap, minimap } from './minimap.js';
 import { messages } from './messages.js';
@@ -112,7 +112,6 @@ export class HUD {
 
     // what the pilot is being told to shoot, and with what
     if (s.own) {
-      friendlyMissiles(ctx, s);
       leads(ctx, s);
       aimCross(ctx, s);
       centreCross(ctx, s, w, h);

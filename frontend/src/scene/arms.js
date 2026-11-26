@@ -11,7 +11,7 @@
 // pure function of its inputs, and the gatling's spin is the one piece of the
 // draw that has state at all.
 
-import { MESH } from '../render/mesh-table.js';
+import { PRIM } from '../render/primitives.js';
 import { FORWARD, at } from './helpers.js';
 import { METAL, METAL_D, METAL_L, DEAD, facColor } from './palette.js';
 
@@ -73,14 +73,14 @@ export function rack(put, p, spec, colour, flash) {
   // a box scales on X = along the bore, Y = up, Z = across (`box_h` is the
   // height and `box_w` the width - a five-across / eight-high nest is taller
   // than it is wide, and the other way round it would cut its own tubes off)
-  put(MESH.BOX, p, spec.centre, spec.box_len, spec.box_h, spec.box_w, colour);
+  put(PRIM.BOX, p, spec.centre, spec.box_len, spec.box_h, spec.box_w, colour);
   for (let row = 0; row < spec.rows; row++) {
     for (let col = 0; col < spec.cols; col++) {
       // the cells still loaded are drawn as bores; spent ones go dark, which is
       // the only way the rack itself can show it is running out
       const idx = row * spec.cols + col;
       const spent = flash && idx < flash.spent;
-      put(MESH.HEX, FORWARD + p, spec.centre, r, spec.length, r,
+      put(PRIM.HEX, FORWARD + p, spec.centre, r, spec.length, r,
         spent ? SPENT_TUBE : TUBE_COL,
         (col - (spec.cols - 1) / 2) * spec.pitch,
         (row - (spec.rows - 1) / 2) * spec.pitch);
@@ -155,10 +155,10 @@ export function armModel(b, e, arm, wdefs, flashes, now, shoulderY, lateral, lai
     // the same box for every arm, only the 105 mm's is bigger - and it is big
     // enough to fill the arm on its own, so the shoulder ball is left out
     // there (a 0.66 m ball out of a 0.40 m box would be a ball, not a breech)
-    put(MESH.BOX, p, heavy ? GUN105_BOX : 0.25,
+    put(PRIM.BOX, p, heavy ? GUN105_BOX : 0.25,
       heavy ? GUN105_L : 1.65, heavy ? GUN105_H : 0.70, heavy ? GUN105_W : 0.62, col);
   }
-  if (!heavy && !racked) put(MESH.SPHERE, 0, 0, 0.66, 0.66, 0.66, alive ? METAL_L : DEAD);
+  if (!heavy && !racked) put(PRIM.SPHERE, 0, 0, 0.66, 0.66, 0.66, alive ? METAL_L : DEAD);
   if (kind === 'bullet' && wd.gatling) {
     // The 12.7 mm is a rotary gun: six barrels on a ring round the bore, each
     // half the 30 mm's bore and 60 % of its length, turning while it feeds.
@@ -179,36 +179,36 @@ export function armModel(b, e, arm, wdefs, flashes, now, shoulderY, lateral, lai
     if (SPIN.size > 256) SPIN.clear();
     for (let i = 0; i < 6; i++) {
       const th = sp.a + i * (Math.PI / 3);
-      put(MESH.CYL, FORWARD + p, 0.90 + GAT_LEN * 0.5, GAT_BORE, GAT_LEN, GAT_BORE,
+      put(PRIM.CYL, FORWARD + p, 0.90 + GAT_LEN * 0.5, GAT_BORE, GAT_LEN, GAT_BORE,
         [0.12, 0.13, 0.14], GAT_RING * Math.sin(th), GAT_RING * Math.cos(th));
     }
     // the axle they turn on, a housing plate at the back and the bearing ring
     // near the muzzle that the barrels pass through - the ring is what reads
     // the cluster as a rotary gun rather than a bundle of tubes
-    put(MESH.CYL, FORWARD + p, 0.90 + GAT_LEN * 0.45, 0.05, GAT_LEN * 0.9, 0.05, METAL_D);
-    put(MESH.CYL, FORWARD + p, 0.90 + 0.10, GAT_HOOP, 0.10, GAT_HOOP, [0.1, 0.1, 0.11]);
-    put(MESH.CYL, FORWARD + p, GAT_MUZZLE - GAT_COLLAR, GAT_HOOP, 0.16, GAT_HOOP, METAL_D);
+    put(PRIM.CYL, FORWARD + p, 0.90 + GAT_LEN * 0.45, 0.05, GAT_LEN * 0.9, 0.05, METAL_D);
+    put(PRIM.CYL, FORWARD + p, 0.90 + 0.10, GAT_HOOP, 0.10, GAT_HOOP, [0.1, 0.1, 0.11]);
+    put(PRIM.CYL, FORWARD + p, GAT_MUZZLE - GAT_COLLAR, GAT_HOOP, 0.16, GAT_HOOP, METAL_D);
   } else if (heavy) {
     // 5 m of barrel out of the box, the 30 mm's tube scaled up: a heavy
     // smoothbore with a thermal sleeve over the middle of it and a muzzle
     // collar at the end (the round leaves at `GUN105_MUZZLE`).
-    put(MESH.CYL, FORWARD + p, GUN105_FACE + GUN105_LEN * 0.5, GUN105_BORE, GUN105_LEN,
+    put(PRIM.CYL, FORWARD + p, GUN105_FACE + GUN105_LEN * 0.5, GUN105_BORE, GUN105_LEN,
       GUN105_BORE, [0.12, 0.13, 0.14]);
-    put(MESH.CYL, FORWARD + p, GUN105_FACE + GUN105_LEN * 0.38, GUN105_BORE * 1.25,
+    put(PRIM.CYL, FORWARD + p, GUN105_FACE + GUN105_LEN * 0.38, GUN105_BORE * 1.25,
       GUN105_LEN * 0.62, GUN105_BORE * 1.25, METAL_D);
-    put(MESH.CYL, FORWARD + p, GUN105_MUZZLE - 0.11, GUN105_BORE * 1.3, 0.22,
+    put(PRIM.CYL, FORWARD + p, GUN105_MUZZLE - 0.11, GUN105_BORE * 1.3, 0.22,
       GUN105_BORE * 1.3, [0.1, 0.1, 0.11]);
   } else if (kind === 'bullet') {
     const len = 3.2;
-    put(MESH.CYL, FORWARD + p, 0.90 + len * 0.5, 0.17, len, 0.17, [0.12, 0.13, 0.14]);
-    put(MESH.CYL, FORWARD + p, 0.90 + len + 0.18, 0.28, 0.42, 0.28, [0.1, 0.1, 0.11]);
+    put(PRIM.CYL, FORWARD + p, 0.90 + len * 0.5, 0.17, len, 0.17, [0.12, 0.13, 0.14]);
+    put(PRIM.CYL, FORWARD + p, 0.90 + len + 0.18, 0.28, 0.42, 0.28, [0.1, 0.1, 0.11]);
   } else if (wd.rack) {
     // Any launcher that carries its rounds in tubes: the rocket nest (5 x 8,
     // forty rounds) and the top-attack rack (2 x 2, four) are the same model
     // with different numbers in their `rack`.
     rack(put, p, wd.rack, alive ? fac : DEAD, tubeOf(wd, e, arm));
   } else {
-    put(MESH.CYL, FORWARD + p, 1.35, 0.18, 0.90, 0.18, [0.12, 0.12, 0.13]);
+    put(PRIM.CYL, FORWARD + p, 1.35, 0.18, 0.90, 0.18, [0.12, 0.12, 0.13]);
   }
   if (alive && fl && fl.arm === arm) {
     // the gatling's flash comes out of the barrel that has just turned up to
@@ -226,8 +226,8 @@ export function armModel(b, e, arm, wdefs, flashes, now, shoulderY, lateral, lai
         : kind === 'bullet' ? 4.35
           : wd.rack ? wd.rack.mouth - 0.05 : 2.15;
     const s = gat ? 0.42 : heavy ? 1.0 : 0.75;
-    put(MESH.SPHERE, p, tip, s, s, s, [1.0, 0.72, 0.22], right, up);
-    put(MESH.CONE, FORWARD + p, tip + (gat ? 0.55 : 0.85), s * 0.77,
+    put(PRIM.SPHERE, p, tip, s, s, s, [1.0, 0.72, 0.22], right, up);
+    put(PRIM.CONE, FORWARD + p, tip + (gat ? 0.55 : 0.85), s * 0.77,
       gat ? 0.9 : 1.4, s * 0.77, [1.0, 0.88, 0.45], right, up);
   }
 }

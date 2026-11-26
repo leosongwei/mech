@@ -257,6 +257,7 @@ public static class FcsCheck
         int punch = PunchArm(arms);
         int shooter = world.spawn_unit(Defs.ETYPE_MECH, Defs.FACTION_RED, sx, sz, -1,
                                        weapons: arms, extra: new[] { AiTags.ENGAGE }, crew: true);
+        Check.aim_east(world, shooter);
         int target = world.spawn_unit(Defs.ETYPE_APC, Defs.FACTION_BLUE, sx + range, sz, -1,
                                       crew: false);
         int[] rounds = new int[2];
@@ -325,6 +326,7 @@ public static class FcsCheck
         int shooter = world.spawn_unit(Defs.ETYPE_MECH, Defs.FACTION_RED, sx, sz, -1,
                                        weapons: new[] { Defs.WID_AC30, Defs.WID_NONE },
                                        extra: new[] { AiTags.ENGAGE }, crew: true);
+        Check.aim_east(world, shooter);
         int target = world.spawn_unit(Defs.ETYPE_APC, Defs.FACTION_BLUE, sx + range, sz, -1,
                                       crew: false);
         float t = 0f;
@@ -373,6 +375,7 @@ public static class FcsCheck
         int shooter = world.spawn_unit(Defs.ETYPE_MECH, Defs.FACTION_RED, sx, sz, -1,
                                        weapons: new[] { Defs.WID_AC30, Defs.WID_NONE },
                                        extra: new[] { AiTags.ENGAGE }, crew: true);
+        Check.aim_east(world, shooter);
         int target = world.spawn_unit(Defs.ETYPE_APC, Defs.FACTION_BLUE, sx + range, sz, -1,
                                       crew: false);
         // a hull of its own health would die of the clear phase and take the
@@ -455,6 +458,7 @@ public static class FcsCheck
         int shooter = world.spawn_unit(s.Shooter, Defs.FACTION_RED, sx, sz, -1,
                                        weapons: s.Arms, extra: new[] { AiTags.ENGAGE },
                                        crew: true);
+        Check.aim_east(world, shooter);
         int target = world.spawn_unit(s.Target, Defs.FACTION_BLUE, sx + s.Range, sz, -1,
                                       crew: false);
         float hp0 = e.fv("hp")[target];
@@ -519,6 +523,7 @@ public static class FcsCheck
                                        weapons: arms,
                                        extra: pilot ? null : new[] { AiTags.ENGAGE },
                                        crew: !pilot);
+        if (!pilot) Check.aim_east(world, shooter);
         // the target: a hull that is *driven* by this harness, so its path is known
         int target = world.spawn_unit(s.Target, Defs.FACTION_BLUE, sx + s.Range, sz, -1,
                                       crew: false);

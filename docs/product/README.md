@@ -4,7 +4,7 @@
 > **一句话**：玩家能看到的一切——规则、数值、界面、判定——的中文说明。
 > **数值出处**：`Core/Defs.cs`（`WEAPONS` / `UNIT_DEFS` / 各常量）与各模式系统；
 > 界面文案以 `frontend/src/` 为准。代码是唯一事实来源，本目录是它的中文镜像。
-> **核对**：1.39.0 / 2026-11-20
+> **核对**：1.45.1 / 2026-11-26
 
 ## 1. 一句话产品
 
@@ -60,13 +60,13 @@
 | --- | --- |
 | [systems/firecontrol.md](systems/firecontrol.md) | 调零、发射几何、每臂各算、主臂、双端同解 |
 | [systems/flight.md](systems/flight.md) | 弹道、气动、制导律、电机、电池 |
-| [systems/seekers.md](systems/seekers.md) | 锁定、通道、记忆、重捕、信念点 |
+| [systems/seekers.md](systems/seekers.md) | 锁定、通道、数据链刷新、记忆、物理重捕、信念点 |
 | [systems/rwr.md](systems/rwr.md) | 告警器：盘面、五层判据、推导、实测、实现、取舍 |
 | [systems/movement.md](systems/movement.md) | 机甲五定律、APC 自行车模型、爬坡、脱困 |
-| [systems/ai.md](systems/ai.md) | 机组、感知、接战、导弹防御、raider 规划、导航 |
-| [systems/sight.md](systems/sight.md) | 一条视线：地形、树冠、烟幕、激光判定球 |
+| [systems/ai.md](systems/ai.md) | 机组、感知、数据链目标、接战、导弹防御、raider 规划、导航 |
+| [systems/sight.md](systems/sight.md) | 物理视线、车辆光学观察与数据链：地形、树冠、烟幕、激光判定球 |
 | [systems/audio.md](systems/audio.md) | 声音场、衰减、远场、总线、限幅、声部预算 |
-| [systems/net.md](systems/net.md) | 帧格式、行宽、分层、时钟、拥塞、RTT、小地图 |
+| [systems/net.md](systems/net.md) | 帧格式、行宽、数据链过滤、分层、时钟、拥塞、RTT、小地图 |
 
 **接口**
 

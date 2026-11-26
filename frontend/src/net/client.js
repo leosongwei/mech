@@ -55,6 +55,9 @@ export class Client {
           const msg = JSON.parse(ev.data);
           if (msg.t === 'init') {
             this.init = msg;
+            // Older servers omit the declaration; their high flag bits stay
+            // ordinary direct-only rows.
+            this.view.datalink = msg.datalink === 1;
             this.ready = true;
             resolve(msg);
           } else if (msg.t === 'meta') {

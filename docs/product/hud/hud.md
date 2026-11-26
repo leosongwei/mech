@@ -4,9 +4,9 @@
 > **一句话**：座舱里每一块信息在屏幕的哪里、多大、怎么读。
 > **数值出处**：`frontend/src/hud/layout.js`（全部像素与位移）、`frontend/src/hud/`
 > 的 `status.js` / `dial.js` / `minimap.js` / `gear.js`、`frontend/src/core/config.js`
-> 的 `RWR_RANGE` / `MONEY_POP_S` / `RWR_ARROWS`、`frontend/src/scene/palette.js`
-> 的 `FACTION_COLORS`
-> **核对**：1.39.0 / 2026-11-20
+> 的 `RWR_RANGE` / `MONEY_POP_S` / `RWR_ARROWS`、`frontend/src/hud/leads.js`、
+> `frontend/src/scene/palette.js` 的 `FACTION_COLORS`
+> **核对**：1.45.0 / 2026-11-25
 
 ## 1. 屏幕分区
 
@@ -47,11 +47,14 @@ ENEMY BASE   ▇▇▇▇░░░░░░
 * 210 × 210，左上角内 16 px；底图是整张 16 km 地图的缩略（草地 / 道路 / 建筑 /
   树林 / 密林 / 岩石），边框一条半透明绿线。
 * 城镇是小方块，颜色是持有方（中立紫），占领进度画成白色圆弧。
-* 单位是方块点，颜色=阵营，机甲的点更大，指挥部是白色大方块，平民不画。
+* 单位是方块点，颜色=阵营，机甲的点更大，指挥部是白色大方块；contacts 不画步兵、平民
+  与尸体。
 * 自己是一个绿点，加一条白短线指向**观瞄**方向——车头可能还落后一点，短线画的
   是玩家正在看的方向。
-* 小地图画**全场**，不受 3D 视距限制；它走的是另一条通道，见
-  [systems/net.md](../systems/net.md)。
+* 小地图不受 3D tier 限制，但按阵营过滤：友军位置始终显示，敌方装甲只在当前同阵营
+  数据链有效时显示。它走独立通道，格式与缓存见 [systems/net.md](../systems/net.md)。
+* 屏幕上的车辆目标框与敌我制导弹圈不属于小地图；颜色、实虚线与友军无预瞄规则见
+  [aim.md](aim.md) §4、§9。
 
 ## 4. 左侧：资金与战绩
 
@@ -187,7 +190,8 @@ ENEMY BASE   ▇▇▇▇░░░░░░
 | HUD 主文本 | `#cfe6d6` |
 | 提示 / 警告黄 | `#ffe08a` |
 | 资金 | `#a9f0c0` |
-| 预瞄框与我方导弹圈 | `#f2f6f4` |
+| 友军目标框与制导弹圈 | `rgb(30,30,255)` |
+| 敌军目标框与制导弹圈 | `rgb(30,255,30)` |
 | 超距读数与告警记号 | `#ff4a4a` |
 | 血条 绿 / 黄 / 红 | `#5ad07a` / `#e6c249` / `#e0503c` |
 | 告警圈闪烁的纯红 | `rgb(255,0,0)` |

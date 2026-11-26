@@ -53,15 +53,23 @@ C#（.NET 10）原型（archetype）ECS 服务器、WebGL2 客户端、16 km 见
 ### 构建
 
 ```bash
-cd frontend && npm run build     # -> assets/（依赖检查 + 语法检查 + webpack）
+./npm.sh install                 # 依赖 -> frontend/node_modules
+./npm.sh run build               # -> assets/（依赖检查 + 语法检查 + webpack）
 ./dotnet.sh build                # 服务器；必须干净构建，零警告
-./dev.sh build                   # 使用共享 npm 缓存的客户端构建
+./dev.sh build                   # 上面两条 npm 命令的快捷方式
 ```
 
 服务器一律通过 `./dotnet.sh` 构建：该脚本将 CLI home、NuGet 缓存、
 `XDG_RUNTIME_DIR` 与 `TMPDIR` 全部指向 `.dotnet_tmp/`（已 gitignore），
 因为裸 `dotnet build` 会写入 `$HOME`，在只读沙箱中直接失败。
 `Nullable` 已开启：警告即缺陷。
+
+客户端一律通过 `./npm.sh` 跑 npm：该脚本把缓存、日志、`TMPDIR` 与 HOME 全部指向
+`frontend/.npm/`（已 gitignore），因此一次构建在仓库外不留任何东西；参数原样交给
+npm（`./npm.sh run check:deps` 等）。它同时把构建放进 bwrap：整个文件系统只读、
+只有本仓库可写，安装脚本碰不到别处。调用方已经提供这层保护时（外层 bwrap，或
+`$HOME` 只读的沙箱）不再套第二层——判据是 `$HOME` 的可写性与 `MECH_BWRAP=1` 标记；
+`MECH_NO_BWRAP=1` 跳过这一层。
 
 前端改动只需重新构建——服务器按请求读取 `assets/`，因此无需重启。
 后端改动需要重启（`./dev.sh stop && ./dev.sh start`）。
@@ -182,9 +190,9 @@ mode post-systems               # battle：波次
 ```
 
 客户端为四层单向依赖，由 `frontend/scripts/depgraph.mjs` 检查：
-`core -> net/map/audio -> render/scene/hud/fx/input -> app`。
-`render/passes.js` 定义绘制顺序，`app/frame.js` 的 `STAGES` 定义帧内顺序。
-约定及其背后的陷阱：`docs/dev/client.md`。
+`core -> net/map/audio/render/input -> scene/hud/fx -> app`。
+`render/index.js` 的 `ORDER` 定义绘制顺序（three 场景图里的六层），
+`app/frame.js` 的 `STAGES` 定义帧内顺序。约定及其背后的陷阱：`docs/dev/client.md`。
 
 ### 状态归属
 
@@ -205,35 +213,27 @@ mode post-systems               # battle：波次
 每条原则只保留断言本身；具体机制、数值与实现细节由"详见"指向的页面
 及第 5 节功能索引承载。
 
-**P1. 组件集合即实体的类型，且终生不变。** 详见 `docs/dev/ecs.md`。
+* **组件集合即实体的类型，且终生不变。** 详见 `docs/dev/ecs.md`。
 
-**P2. 每个运动体只有一份 `pos`、一份 `vel`。** 详见 `docs/product/systems/movement.md`。
+* **每个运动体只有一份 `pos`、一份 `vel`。** 详见 `docs/product/systems/movement.md`。
 
-**P3. 身份是组件，而非类型分支。** 详见 `docs/dev/ecs.md`。
+* **ECS的基本设计原则是用组件表明身份，路由到不同系统上，而非在单系统中写类型分支。** 详见 `docs/dev/ecs.md`。
 
-**P4. 系统面向 buffer 编写，而非经由 `View`。** 详见 `docs/dev/ecs.md`。
+* **系统面向 buffer 编写，而非经由 `View`。** 详见 `docs/dev/ecs.md`。
 
-**P5. 系统遍历实体的顺序不属于模拟的一部分。** 详见 `docs/dev/checks.md`。
+* **模拟尽量不要依赖于遍历顺序** 详见 `docs/dev/checks.md`。
 
-**P6. 流水线即语义，其余只是开销。** 详见 `docs/dev/pipeline.md`。
+* **流水线即语义，其余只是开销。** 详见 `docs/dev/pipeline.md`。
 
-**P7. 视线只有一条。** 详见 `docs/product/systems/sight.md`。
+* **分离控制层（AI、玩家输入）、操作层、模拟层** 详见 `docs/product/systems/ai.md`。
 
-**P8. 伤害分为两段，且本身并非系统。** 详见 `docs/product/rules/damage.md`。
+* **火控定律唯一，双端一致。** 详见 `docs/product/systems/firecontrol.md`。
 
-**P9. 弹体的终结只有一份记录、一个裁决者。** 详见 `docs/product/rules/damage.md`。
+* **文档随改动更新。** 详见 `docs/product/README.md`。
 
-**P10. 弹体的种类是一个 tag。** 详见 `docs/product/systems/flight.md`。
+* **小编辑，先靶场后战斗。** 详见 `docs/dev/checks.md`。
 
-**P11. AI 表达意图，运动属于机器。** 详见 `docs/product/systems/ai.md`。
-
-**P12. 火控定律唯一，两种装定，双端一致。** 详见 `docs/product/systems/firecontrol.md`。
-
-**P13. 文档随改动更新。** 详见 `docs/product/README.md`。
-
-**P14. 小编辑，先靶场后战斗。** 详见 `docs/dev/checks.md`。
-
-**P15. 文档的文风上保持信息完整，禁止伪口语化、设问、凭空否定等非书面表述**
+* **文档的文风上保持信息完整，禁止伪口语化、设问、凭空否定等非书面表述**
 
 ## 5. 功能索引
 

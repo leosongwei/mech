@@ -185,7 +185,7 @@ public static class Weapons
                         target = tid;
                     }
                 }
-                fire(world, eid, arm, wid, wd, target);
+                if (!fire(world, eid, arm, wid, wd, target)) continue;
                 // the round's own archetype may have grown inside `fire`, so the
                 // buffers are read back off the hull's archetype rather than off a
                 // reference taken before the shot
@@ -278,8 +278,9 @@ public static class Weapons
     ///
     /// The random draws are, per round of a salvo: one `gauss` for the yaw, one
     /// `gauss` for the pitch, then one `random()` for the round's own seed - in
-    /// that order, because the battle is a replay of this sequence.</summary>
-    public static void fire(World world, int eid, int arm, int wid, WeaponDef wd, int target = -1)
+    /// that order, because the battle is a replay of this sequence.
+    /// Returns false when a seeker has neither a visible track nor a usable shooter belief.</summary>
+    public static bool fire(World world, int eid, int arm, int wid, WeaponDef wd, int target = -1)
     {
         var e = world.ecs;
         var (yaw, pitch) = bore_of(world, eid);
@@ -316,24 +317,20 @@ public static class Weapons
                 zero = Ballistics.zero_at(origin, yaw, pitch, wd, Defs.ZERO_DEFAULT);
         }
 
-        // a beam rider is handed the laser channel it will ride: the one already
-        // laid on its target, or a fresh one (`Systems/Beams.cs`).  The rounds of
-        // one salvo share it - the beam is a line, and the code in it says which
-        // round is on which line
-        int beam = wd.kind == "saclos" ? Beams.lay(world, eid, target) : -1;
-
-        // a seeker leaves the tube on what its *shooter* knows, not on where the hull
-        // happens to be: a lock weapon fired through a screen flies the belief the
-        // machine was working on, which is the walked point when its sight has lost
-        // the hull.  A pilot's belief comes up with his input (`in.lb` ->
-        // `Player.belief_*`); a crew's is the one its own lookout maintains
-        // (`ai_tgt`, `Systems/AI/Sense.cs`).  Only that hull's belief is used, only
-        // while it is fresh, and only inside the weapon's own reach - a round nobody
-        // handed a belief starts on the hull itself (`World.spawn_round`)
+        // A seeker leaves on the shooter's best available belief: direct observation,
+        // then the shared datalink track, then the existing memory estimate.  The
+        // round owns the same `tgt_mem / tgt_vel` seed in all three cases.
         Vec3? mem = null, memv = null;
+        bool usable = true;
         if (kind == 3 && target >= 0)
         {
-            if (world.players.TryGetValue(e.iv("owner")[eid], out var shp))
+            var roof = Seeker.roof(world, target);
+            if (Visibility.source(world, eid, target, roof) != VisibilitySource.None)
+            {
+                mem = roof;
+                memv = e.fv("vel").get3(target);
+            }
+            else if (world.players.TryGetValue(e.iv("owner")[eid], out var shp))
             {
                 if (shp.belief_id == target && world.tick - shp.belief_tick <= 15
                     && MathUtil.dist(shp.belief_pos, origin) <= Defs.lock_range(wd) * 1.5f)
@@ -341,6 +338,7 @@ public static class Weapons
                     mem = shp.belief_pos;
                     memv = shp.belief_vel;
                 }
+                else usable = false;
             }
             else if (e.has(eid, "ai_tgt") && (int)e.fv("ai_tgt").get(eid, 7) != 0
                      && e.fv("ai_tgt").get(eid, 6) <= AI.Crew.MEMORY)
@@ -353,7 +351,15 @@ public static class Weapons
                 mem = new Vec3(b.get(eid, 0), b.get(eid, 1) + Defs.AIM_ROOF * bh, b.get(eid, 2));
                 memv = new Vec3(b.get(eid, 3), b.get(eid, 4), b.get(eid, 5));
             }
+            else usable = false;
         }
+        if (!usable) return false;
+
+        // A beam rider is handed the laser channel it will ride: the one already
+        // laid on its target, or a fresh one (`Systems/Beams.cs`).  The rounds of
+        // one salvo share it - the beam is a line, and the code in it says which
+        // round is on which line.
+        int beam = wd.kind == "saclos" ? Beams.lay(world, eid, target) : -1;
 
         for (int k = 0; k < n; k++)
         {
@@ -372,5 +378,6 @@ public static class Weapons
         }
         world.emit("shot", ("x", origin.x), ("y", origin.y), ("z", origin.z),
                    ("wid", wid), ("eid", eid), ("arm", arm));
+        return true;
     }
 }

@@ -15,12 +15,22 @@ namespace Mech.Server.Systems.AI;
 public static class Pipeline
 {
     /// <summary>Everything but the missions: the rounds in the air, the alarm, and
-    /// what a crew can see.</summary>
+    /// what a crew can see.
+    ///
+    /// The two `Watch` entries sit in front of `Sense` on purpose: the attention is
+    /// decided from the belief `Sense` wrote last tick (`belief_age == 0` still means
+    /// "seen", because only `Sense` walks the age on), the head is turned here, and
+    /// the window `Sense` looks through this tick is the one that came out.  The
+    /// datalink bearings are written before `Watch` so shared contacts can steer it.
+    /// </summary>
     private static void sense(List<Action<World, float>> into)
     {
         into.Add(Threats.run);      // this tick's guided rounds, once for everybody
         into.Add(Intercept.run);    // who has one coming for it: ai_cover / ai_threat
-        into.Add(Sense.run);        // ai_timer: look for a target
+        into.Add((world, _) => Sense.link_wheel(world)); // current datalink-only bearings
+        into.Add(Watch.run);        // ai_gaze: where the aperture wants to point
+        into.Add(Watch.turn);       // ...and turning it there at 150 deg/s
+        into.Add(Sense.run);        // ai_timer: look for a target, through that window
     }
 
     /// <summary>The guns, one platform each: the only writer of that platform's

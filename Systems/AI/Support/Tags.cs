@@ -52,3 +52,18 @@ public static class AiState
     public const byte WITHDRAW = 7;
     public const byte RESUPPLY = 8;
 }
+
+/// <summary>Why the aperture is where it is (`ai_gaze`): one word per branch of
+/// `Watch.run`, so this byte is the read-out of the decision that produced the
+/// bearing (`docs/plans/AI_alarm_wheel.md` §4).  It is a diagnostic - nothing reads
+/// it to decide anything and it is not on the wire - and the values are ordered so
+/// that the default, 0, is the sweep: that is what a crew is doing before anything
+/// has happened to it.  `Systems/AI/Watch.cs` is the only writer.</summary>
+public static class AiGaze
+{
+    public const byte SWEEP = 0;        // nothing worth looking at: the stalest slot in front
+    public const byte TARGET = 1;       // a belief: the head is on the hull it is fighting
+    public const byte ALARM = 2;        // a slot scored highest and the head was sent to it
+    public const byte ALARM_TURN = 3;   // ...and the head is still on its way there
+    public const byte ALARM_STAY = 4;   // a slot scored, but the head keeps its bearing
+}

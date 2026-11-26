@@ -13,7 +13,7 @@ import { HUD } from '../hud/index.js';
 import { Input } from '../input/index.js';
 import { Net } from '../net/index.js';
 import { Particles } from '../fx/particles.js';
-import { Renderer } from '../render/renderer.js';
+import { Renderer } from '../render/index.js';
 import { KILL_LIFE_S, MONEY_POP_S, MSG_LIFE_S } from '../core/config.js';
 import { boot, start } from './boot.js';
 import { frame } from './frame.js';
@@ -62,7 +62,7 @@ export class Game {
     this.fps = 60;
     this.lastHpSum = -1;
     this.crosshairs = [null, null];
-    this.leads = [];                // pre-aim boxes, projected for this frame
+    this.leads = [];                // target boxes and pre-aim rings, projected
     this.helpOpen = false;
     this.started = false;
     this.ready = false;

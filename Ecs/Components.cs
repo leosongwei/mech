@@ -63,6 +63,9 @@ public static class Components
         // (`Components.BEAM_COMPS`), which is what a machine that can steer a round
         // has and a machine that cannot has nothing of
         ecs.register("designator", Kind.U8);
+        ecs.register("datalink", Kind.U8);               // a vehicle that observes and shares armour contacts
+        ecs.register("link_seen", Kind.U8, 2, 0);        // current direct observation, by faction
+        ecs.register("link_seen_tick", Kind.I, 2, -1);   // last direct observation tick, by faction
         ecs.register("person", Kind.U8);                // a man on foot: a prox fuse goes off on him
         ecs.register("invulnerable", Kind.U8);          // rounds stop, damage does nothing
         // what it is *called*: an index into `World.names`, 0 for a hull with no
@@ -170,6 +173,25 @@ public static class Components
         // quantity the client gets off two velocity samples (`net.js`), measured
         // here from the velocity the ECS already holds.
         ecs.register("ai_tacc", Kind.F, 6, 0.0);
+
+        // ---- what a crew is looking at -----------------------------------
+        // Two lines, not one: the gun is laid by the fire control (`sight_yaw`,
+        // `turret_yaw`, `yaw` - `Systems/AI/Support/Engage.cs`), while the aperture
+        // that *finds* things is its own head on its own axis (`Systems/AI/Watch.cs`).
+        // The split is what lets a machine sweep its sight around a lane at 150 deg/s
+        // without dragging the hull or the turret with it, and it is why a searching
+        // crew holds its gun still.  A pilot has none of this: his eyes are his mouse.
+        ecs.register("gaze_yaw", Kind.F);                // where the aperture points now
+        ecs.register("gaze_cmd", Kind.F);                // ...and where it was told to
+        ecs.register("ai_gaze", Kind.U8);                // Systems/AI/Support/Tags.cs::AiGaze
+        // The alarm wheels (`Systems/AI/Support/Wheel.cs`): one number pair per
+        // 20-degree slot.  `eye` is the sweep's own freshness and every crew owns it;
+        // the three tables that record what is *worth* looking at are instruments on a
+        // machine (`Components.ALARM_COMPS`) - a man carries no warning receiver.
+        ecs.register("eye", Kind.F, Systems.AI.Wheel.SLOTS, 0.0);        // s since looked at
+        ecs.register("alarm", Kind.F, Systems.AI.Wheel.SLOTS * 2, 0.0);  // [left s, weight]
+        ecs.register("laser", Kind.F, Systems.AI.Wheel.SLOTS * 2, 0.0);  // [charge s, left s]
+        ecs.register("tgt", Kind.F, Systems.AI.Wheel.SLOTS * 2, 0.0);    // [left s, weight]
 
         // ---- raid (battle mode) -----------------------------------------
         // A raider is a *mission*, not a type: the hulls are ordinary mechs that
@@ -334,16 +356,29 @@ public static class Components
         "beam_vel", "beam_acc", "beam_pv", "beam_ok", "beam_lit",
     };
 
+    /// <summary>Current and last direct observation by each faction, owned by vehicles.</summary>
+    public static readonly string[] DATALINK_COMPS = { "link_seen", "link_seen_tick" };
+
     /// <summary>...and the one byte a beam rider needs to know which line of the
     /// laser it is riding (`Systems/Flights.cs::Saclos`).</summary>
     public static readonly string[] BEAM_ROUND_COMPS = { "beam_ch" };
 
     /// <summary>What a crew owns on top of its hull: the fire control's answer per
-    /// arm, the target's measured pull, and what it believes about that target.  A
-    /// pilot's machine has none of the three - his zero is the dial he set, his lead
-    /// is solved on his own screen, and the target he sees is the one the wire drew
-    /// him.</summary>
-    public static readonly string[] CREW_FCS_COMPS = { "aim_elev", "ai_tacc", "ai_tgt" };
+    /// arm, the target's measured pull, what it believes about that target, and what
+    /// its aperture is doing.  A pilot's machine has none of it - his zero is the
+    /// dial he set, his lead is solved on his own screen, the target he sees is the
+    /// one the wire drew him, and his eyes are his mouse.</summary>
+    public static readonly string[] CREW_FCS_COMPS =
+    {
+        "aim_elev", "ai_tacc", "ai_tgt",
+        "gaze_yaw", "gaze_cmd", "ai_gaze", "eye",
+    };
+
+    /// <summary>The wheels a machine's crew has and a man does not: a near miss, a
+    /// laser held on the hull and a hull that was really seen are all reported by an
+    /// instrument on the roof (`Systems/AI/Support/Wheel.cs`).  `eye` is not here:
+    /// a rifleman sweeps too, he just has nowhere to write what hit him.</summary>
+    public static readonly string[] ALARM_COMPS = { "alarm", "laser", "tgt" };
 
     /// <summary>a wreck is scenery: it has a place and no velocity.</summary>
     public static readonly string[] DEBRIS_COMPS = {

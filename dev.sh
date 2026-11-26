@@ -6,7 +6,7 @@
 #   ./dev.sh attach    attach to that session (detach with F6 / Ctrl-a d)
 #   ./dev.sh stop      kill the session
 #   ./dev.sh status    list sessions
-#   ./dev.sh build     build the web client into assets/
+#   ./dev.sh build     build the web client into assets/ (through npm.sh)
 #   ./dev.sh dev       build once, then start the server
 #   ./dev.sh range     start a weapon range server on :8011 (4 km test map)
 #
@@ -103,7 +103,9 @@ cmd_status() {
 # server serves at `/`.  The build runs the layout check and the syntax check
 # first (both fail loudly), then webpack.
 cmd_build() {
-  ( cd "$ROOT/frontend" && npm install --cache /tmp/npmcache --no-audit --no-fund && npm run build )
+  # `npm.sh` owns npm's state (frontend/.npm) and the sandbox the build runs in
+  "$ROOT/npm.sh" install
+  "$ROOT/npm.sh" run build
   echo "client built from frontend/ into assets/"
 }
 

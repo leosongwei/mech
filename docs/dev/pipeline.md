@@ -4,8 +4,9 @@
 > **一句话**：`World.update` 里系统按什么顺序跑、每一段为什么排在那里——顺序本身就是语义，
 > 新系统插错位置是一个安静的行为改动。
 > **代码**：`Core/World.cs`（`_build_pipeline` / `update`）、`Net/Server.cs`（`game_loop`）、
-> `Modes/Mode.cs`、`Systems/AI/Support/Pipeline.cs`、`Systems/Sweep.cs`、`Systems/Impact.cs`
-> **核对**：1.39.0 / 2026-11-20
+> `Modes/Mode.cs`、`Systems/AI/Support/Pipeline.cs`、`Systems/Datalink.cs`、
+> `Systems/Visibility.cs`、`Systems/Sweep.cs`、`Systems/Impact.cs`
+> **核对**：1.45.0 / 2026-11-25
 
 玩家看得见的那部分（一 tick 的价值、命中怎么判）不在这里：索引见
 [../product/README.md](../product/README.md)。
@@ -28,12 +29,13 @@ public void update(float dt) {
 
 跑完之后 tick 循环做广播，并把 `world.tick` 交给网络层；`broadcast` 不在 `World` 里。
 
-## 2. shared 段：`rearm` → `player_input`
+## 2. shared 段：`rearm` → `player_input` → `datalink`
 
 | 系统 | 为什么在前 |
 | --- | --- |
 | `Rearm.run` | 换装工时先走一秒，`work_remaining_time` 归零的那一刻**本 tick** 就装上 |
 | `PlayerInput.run` | 飞行员的意图写进组件（`sight_yaw`/`sight_pitch`、`vel_cmd`、`trigger`），后面所有人读它 |
+| `Datalink.run` | 玩家输入已落位；用 tick 起始网格重建车辆观察并集，AI 与快照同 tick 消费 |
 
 `player_input` 在工时未归零时把移动与两个扳机位清零，所以"换装"是一次真的停火——它必须在
 `weapons` 之前，否则本 tick 已经打出去了。
@@ -47,13 +49,22 @@ battle 的块是 `Systems.AI.Pipeline.battle()`，一个扁平列表，顺序写
 ```
 Threats  本 tick 的制导弹丸，全场只算一次     → ai_threat
 Intercept 谁有弹冲着自己来                    → ai_cover / ai_threat
-Sense     每机组一次瞭望                      → ai_tgt（信念）
+Sense.link_wheel 扫描钟到点的机组写数据链方位    → tgt（低权重，不存目标 ID）
+Watch.run 注意力用上一 tick 的信念决定看哪儿    → ai_gaze / gaze_cmd，并读四张方位轮盘
+Watch.turn 孔径按 150 °/s 转过去               → gaze_yaw
+Sense     每机组一次瞭望，只在这个窗口里找      → ai_tgt（信念）与 target
 Front     车道的状态机                        → nav_route / nav_speed
 Raid      破袭队的规划与任务                   → ai_state / 路线
 Paths     跑不动了：面片导航网要一条绕行         → 在已有航点前插入 detour
 Engage{Mech,Vehicle,Foot}  炮：那台底盘唯一的扳机写者
 Wander    平民
 ```
+
+`Watch` 排在 `Sense` 之前是刻意的，两边都靠这一点：`Watch.run` 读到的 `belief_age == 0`
+意思是"上一 tick 看见了"（只有 `Sense` 会把年龄往前推），于是它不需要任何容差；孔径在本
+tick 转完，`Sense` 随后的扫描用的就是刚转到的方位。**火控与炮座一行没动**：`Engage*` 仍
+然写 `sight_yaw` / `turret_yaw` / `yaw`，`gunnery` 仍然让车体与炮臂追它们——孔径是第四根角，
+不参与那条链（[../product/systems/ai.md](../product/systems/ai.md) §1.4）。
 
 range 的块是 `Targets` + `Interceptor` + `Pipeline.range()`（同样的顺序，没有 Raid）；
 一个只打导弹的模式跑 `Pipeline.defence()`（只有 `sense` + `EngageMech`/`EngageVehicle`）。
@@ -115,6 +126,11 @@ Impact.run
 这一段顺序是**load bearing**，也是唯一一处"顺序错了会算错数"的地方：
 
 * 弹与其落地的那次爆炸**在自己所在的系统里**写 `hp`（`Combat` 是个库，不是系统）。
+* `Suppress` 夹在 `Impact` 与 `Blasts` 之间，因为它是**唯一**同时需要这两边的东西：本 tick 的
+  弹道段（`proj_prev → pos`，`Impact` 之后就被销毁了）与本 tick 的爆（`Blasts` 之后就被判掉
+  并销毁了）。它写的是机组的方位轮盘（`alarm` 与 `laser` 两张表），AI 块下一 tick 才读——一个
+  tick 的延迟，换来"最响的东西不会被点采样跳过去"。同一个系统也读本 tick 的 `beam_lit`
+  （`Beams` 在它之前跑），激光那条来源因此与近失弹一样是一次 tick 的延迟。
 * `Blasts.run` 晚一个阶段判爆：它读上一段留下的爆，也包括上一 tick 的死亡留下的爆。
   所以链式爆炸天然隔一 tick，炸不到已经变成残骸的那个壳子。
 * `Mortality.run` 是**唯一的判官**：一次问所有单位 `hp <= 0`，然后走类型自己的死亡配方

@@ -4,8 +4,8 @@
 > **一句话**：archetype ECS 怎么存、怎么读写才不慢，以及四条不许破的不变式（组件集定死、
 > 身份是组件、一个 `pos` 一个 `vel`、访问顺序不属于仿真）。
 > **代码**：`Ecs/Ecs.cs`、`Ecs/Components.cs`、`Core/World.cs`（工厂）、`Core/Grid.cs`、
-> `Core/Rng.cs`、`Modes/Mode.cs`、`Modes/Modes.cs`
-> **核对**：1.39.0 / 2026-11-20
+> `Core/Rng.cs`、`Modes/Mode.cs`、`Modes/Modes.cs`、`Systems/Datalink.cs`
+> **核对**：1.45.0 / 2026-11-25
 
 玩家能看见的规则与数值不在这里：单位、武器、伤害、移动、视线各有一页（见 §12）。
 
@@ -54,8 +54,9 @@ archetype（`_by_key`）。没有 `add_component` / `remove_component`，也故�
   有导引头的再加 `SEEKER_COMPS`。
 * 实体的组件集由**工厂**拼出来，一个 `create` 定死：
   * `World.spawn_unit`：`UNIT_COMPS`（平民 `CIV_COMPS`）＋类型自己的 `tags`（`unit`/`combat`/`moves`/
-    `person`…）＋`arms` 的 `ARM_COMPS`＋`designator` 的 `BEAM_COMPS`；`crew: true` 再加 `ai_crew`、
-    平台 tag（`mech_ai`/`foot_ai`）与 `CREW_FCS_COMPS`，任务自己的 tag 走 `extra`。
+    `person`…）＋`arms` 的 `ARM_COMPS`＋`designator` 的 `BEAM_COMPS`＋`datalink` 的
+    `DATALINK_COMPS`；`crew: true` 再加 `ai_crew`、平台 tag（`mech_ai`/`foot_ai`）与
+    `CREW_FCS_COMPS`，任务自己的 tag 走 `extra`。
   * `World.spawn_round`：池子按 `Defs.is_interceptable(wid)` 选，种类 tag 来自 `Defs.KIND_TAGS`，
     导引头记忆只给有导引头的种类。
 * 允许 archetype 数量增长（一个组件集一个新 archetype），代价是 `_gen` 自增让所有 `View` 缓存重建。
@@ -76,6 +77,7 @@ Defs.UNIT_DEFS[Defs.ETYPE_MECH].tags   // unit, combat, lockable, moves, designa
 | `ecs.query("unit")` → `world.units()` | 弹会停、伤害会落、能被选为目标的壳子 |
 | `ecs.query("combat")` → `world.combat_units()` | AI 可以打、据点可以占的 |
 | `ecs.query("lockable")` | 红外导引头能锁的 |
+| `ecs.query("datalink")` | 能观察并共享装甲接触的车辆；`link_seen` / `link_seen_tick` 按红蓝槽位读取 |
 | `ecs.query("moves")` → `world.movable()` | 有底盘、有驱动的 |
 | `ecs.query("person")` | 人的近炸引信只看这个 tag |
 | `ecs.query("proj_kind")` → `world.projectiles()` | 四种弹 archetype 的并集 |

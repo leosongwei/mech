@@ -28,6 +28,20 @@ export function at(b, mesh, e, yaw, pitch, ox, oy, oz, sx, sy, sz, col, alpha) {
     col[0], col[1], col[2], alpha === undefined ? 1 : alpha);
 }
 
+// A piece on a post of its own: the post's place comes from one yaw (the hull's, or
+// a turret's), the piece's facing from another.  That is the aperture of an AI crew -
+// a sensor head that sweeps `gaze` while the gun's head stands still
+// (`Systems/AI/Watch.cs`) - and the one thing on the machine that says whether it
+// has seen you.  `fx` walks the piece forward along its *own* facing, which is where
+// a lens goes on the front of a head.
+export function postAt(b, mesh, e, hullYaw, faceYaw, ox, oy, oz, fx, sx, sy, sz, col) {
+  const ch = Math.cos(hullYaw), sh = Math.sin(hullYaw);
+  const cf = Math.cos(faceYaw), sf = Math.sin(faceYaw);
+  const x = e.x + (-sh) * ox + ch * oz + cf * fx;
+  const z = e.z + ch * ox + sh * oz + sf * fx;
+  b.put(mesh, x, e.y + oy, z, faceYaw, 0, sx, sy, sz, col[0], col[1], col[2], 1);
+}
+
 // A piece of the sight head.  `at` turns the *offset* with the same yaw it
 // turns the mesh with, which is right for anything bolted to a hull - and
 // wrong for the head, whose pivot is fixed to the hull while the head turns on

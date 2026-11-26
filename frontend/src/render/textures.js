@@ -1,45 +1,54 @@
 // The two textures the ground is drawn from: the heightfield (R32F, metres) and
-// the tile map (R8UI, `TILE_*`).  Both are looked up by integer texel - the
-// vertex shader fetches heights, the fragment shader fetches one tile id - so
-// they are nearest-filtered and clamped to the edge.
+// the tile map (R8UI, `TILE_*`). Both are read by integer texel - the vertex
+// shader fetches heights, the fragment shader fetches one tile id - so they are
+// nearest-filtered, clamped to the edge, and never flipped.
 //
 // They are rebuilt from the bitmap rather than painted, which is why `setMap()`
-// called a second time has to let go of the previous pair: the old renderer
-// created a new texture every time and left the old one to the driver.
+// called a second time has to let go of the previous pair.
 
-export class Textures {
-  constructor(gpu) {
-    this.gpu = gpu;
+import {
+  DataTexture, RedFormat, RedIntegerFormat, FloatType, UnsignedByteType,
+  NearestFilter, ClampToEdgeWrapping,
+} from 'three';
+
+function dataTexture(data, map, format, type) {
+  const t = new DataTexture(data, map.w, map.h, format, type);
+  t.magFilter = NearestFilter;
+  t.minFilter = NearestFilter;
+  t.wrapS = ClampToEdgeWrapping;
+  t.wrapT = ClampToEdgeWrapping;
+  t.generateMipmaps = false;
+  // texel (i, j) is `data[j * w + i]`, the same indexing the server uses
+  t.flipY = false;
+  t.unpackAlignment = 1;
+  t.needsUpdate = true;
+  return t;
+}
+
+export class GroundTextures {
+  constructor() {
     this.height = null;
     this.tiles = null;
   }
 
-  // a fresh map (or the same map loaded again): drop what we had and upload
+  // a fresh map: drop what we had and upload the new pair
   build(map) {
-    const gl = this.gpu.gl;
     this.dispose();
-    this.height = this.gpu.texture({
-      w: map.w, h: map.h, internal: gl.R32F, format: gl.RED, type: gl.FLOAT, data: map.heights,
-    });
-    this.tiles = this.gpu.texture({
-      w: map.w, h: map.h, internal: gl.R8UI, format: gl.RED_INTEGER, type: gl.UNSIGNED_BYTE,
-      data: map.tiles,
-    });
+    this.height = dataTexture(map.heights, map, RedFormat, FloatType);
+    this.tiles = dataTexture(map.tiles, map, RedIntegerFormat, UnsignedByteType);
   }
 
-  // `repaintTiles`: the debug tree planter rewrote `map.tiles`, so the tile
-  // bitmap is re-uploaded in place.  Heights, roads and walls are untouched.
+  // `repaintTiles`: the debug tree planter rewrote `map.tiles` in place, so the
+  // tile bitmap is re-uploaded and the heights are untouched.
   uploadTiles(map) {
-    const gl = this.gpu.gl;
-    this.gpu.texImage(this.tiles, {
-      w: map.w, h: map.h, internal: gl.R8UI, format: gl.RED_INTEGER, type: gl.UNSIGNED_BYTE,
-      data: map.tiles,
-    });
+    if (!this.tiles) return;
+    this.tiles.image = { data: map.tiles, width: map.w, height: map.h };
+    this.tiles.needsUpdate = true;
   }
 
   dispose() {
-    this.gpu.release(this.height);
-    this.gpu.release(this.tiles);
+    if (this.height) this.height.dispose();
+    if (this.tiles) this.tiles.dispose();
     this.height = null;
     this.tiles = null;
   }

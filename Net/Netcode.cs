@@ -56,8 +56,8 @@ public static class Netcode
     // storage, where an infantryman paid for a mech's arms, magazines and
     // sight, 56 of his 80 bytes empty.
     public const int ROWS = 5;                 // mech, vehicle, base, structure, soft
-    public const int ROW_MECH = 74;
-    public const int ROW_VEHICLE = 46;
+    public const int ROW_MECH = 76;
+    public const int ROW_VEHICLE = 48;
     public const int ROW_BASE = 30;
     public const int ROW_STRUCT = 25;
     public const int ROW_SOFT = 20;
@@ -192,6 +192,7 @@ public static class Netcode
                 ["repair_s"] = Defs.REARM_REPAIR_PER_100HP_S,
             },
             ["debug"] = Environment.GetEnvironmentVariable("MECH_DEBUG") == "1",
+            ["datalink"] = 1,
             ["mode"] = world.mode,
             // the radar equation's constants (`Defs.radar_k`): the client solves
             // the very same `d^2 <= K * v_closing` for the RWR
@@ -331,6 +332,12 @@ public static class Netcode
     private static ushort _u16(int v) =>
         v <= 0 ? (ushort)0 : v >= 65535 ? (ushort)65535 : (ushort)v;
 
+    /// <summary>A bearing as two bytes over the full turn, 0.0055 deg of it: the
+    /// resolution a turret is read at, against the 12 bits a metre-scale float would
+    /// spend on 4.3e-7 rad nobody can see.  `-pi..pi` maps to `0..65535`.</summary>
+    public static ushort _angle(float rad) =>
+        (ushort)((int)(((MathUtil.wrap_pi(rad) + MathF.PI) / MathUtil.TAU) * 65536f) & 0xFFFF);
+
     // A component a wreck, a corpse or a round need not own: these answer the
     // registered default instead of throwing on the archetype that lacks it.
     private static float _f(Archetype a, int row, string name, int c = 0) =>
@@ -349,7 +356,7 @@ public static class Netcode
 
     /// <summary>bit0/1 the triggers, bit2/3 a reload in progress, bit4-5 what a
     /// wreck used to be (0 infantry, 1 apc, 2 mech).</summary>
-    private static byte flags_of(Archetype a, int row)
+    private static byte flags_of(Archetype a, int row, bool link = false)
     {
         byte trig = _b(a, row, "trigger");
         byte flags = (byte)(trig & 1);
@@ -357,6 +364,7 @@ public static class Netcode
         if (_f(a, row, "reload_t", 0) > 0f) flags |= 1 << 2;
         if (_f(a, row, "reload_t", 1) > 0f) flags |= 1 << 3;
         flags |= (byte)((_b(a, row, "wreck_kind") & 3) << 4);
+        if (link) flags |= 1 << 6;
         return flags;
     }
 
@@ -422,6 +430,7 @@ public static class Netcode
     public sealed class SnapshotView
     {
         public float x, z;
+        public int faction = -1;
         public int mech = -1;
         // the clock block's per-pilot fields, filled by `Client` before a frame
         // is built: the ack to echo back, and this pilot's loss last second
@@ -434,6 +443,7 @@ public static class Netcode
 
         public void at(World world, Player pl)
         {
+            faction = pl.faction;
             mech = world.ecs.is_alive(pl.mech) ? pl.mech : -1;
             if (mech >= 0)
             {
@@ -499,15 +509,17 @@ public static class Netcode
         return dx * dx + dz * dz <= r * r;
     }
 
-    /// <summary>The minimap's own channel: **every** unit on the field as one
-    /// point - x and z in `CONTACT_QUANT`-metre units, faction, etype - 6 bytes
-    /// a row.  The snapshot is a tier sphere around one eye, so the strategic
-    /// picture cannot come from it; this block is the same for every pilot, so
-    /// `Server.broadcast` builds it once and hands the same bytes to each
-    /// frame.  A 210 px map of 16 km resolves ~76 m per pixel, so 3.75 Hz is
-    /// smooth: the block would cost 36 kB/s at the snapshot's own 15 Hz.
-    /// Quantising to 4 m keeps a row at 6 B and nobody can see a quarter pixel.</summary>
-    public static byte[] contacts_bytes(World world)
+    private static bool shared_unit(World world, int faction, Archetype a, int row, int eid)
+    {
+        if (faction < 0 || !a.has("datalink")) return true;
+        int mine = a.get_u8("faction", row);
+        return mine == faction || Systems.Datalink.known(world, faction, eid);
+    }
+
+    /// <summary>The minimap's faction-filtered contact list.  Armour is shared only
+    /// while a vehicle of the receiving faction observes it; people never travel on
+    /// the datalink.  `faction < 0` is the unfiltered harness baseline.</summary>
+    public static byte[] contacts_bytes(World world, int faction = -1)
     {
         var e = world.ecs;
         int[] uids = world.all_units();
@@ -520,6 +532,9 @@ public static class Netcode
             if (!slot.ok || !slot.a.has("pos")) continue;
             var a = slot.a;
             int r = slot.row;
+            int et = a.has("etype") ? a.get_u8("etype", r) : 0;
+            if (et == Defs.ETYPE_CIV || et == Defs.ETYPE_CORPSE || a.has("person")) continue;
+            if (!shared_unit(world, faction, a, r, eid)) continue;
             _w16(s, off + 0, (int)(a.get_f("pos", r, 0) / CONTACT_QUANT));
             _w16(s, off + 2, (int)(a.get_f("pos", r, 2) / CONTACT_QUANT));
             s[off + 4] = _b(a, r, "faction");
@@ -546,6 +561,7 @@ public static class Netcode
             var slot = e.slot(eid);
             if (!slot.ok || !slot.a.has("pos")) continue;
             int et = slot.a.has("etype") ? slot.a.get_u8("etype", slot.row) : 0;
+            if (!v.all && !shared_unit(world, v.faction, slot.a, slot.row, eid)) continue;
             if (!inside(slot.a, slot.row, v, tier_of_unit(et), eid)) continue;
             ku[class_of(et)].Add(eid);
         }
@@ -601,7 +617,7 @@ public static class Netcode
             s[off + 2] = _b(a, r, "etype");
             s[off + 3] = _b(a, r, "faction");
             s[off + 4] = owner_of(a, r);
-            s[off + 5] = flags_of(a, r);
+            s[off + 5] = flags_of(a, r, shared_unit(world, v.faction, a, r, eid));
             int tgt = _i(a, r, "target");
             _w16(s, off + 6, tgt < 0 ? 65535 : Math.Min(tgt, 65534));
             _wf(s, off + 8, _f(a, r, "pos", 0));
@@ -631,6 +647,12 @@ public static class Netcode
             // where the crew is looking; `yaw` / `pitch` above are the laid gun
             _wf(s, off + 66, _f(a, r, "sight_yaw"));
             _wf(s, off + 70, _f(a, r, "sight_pitch"));
+            // where the crew's *aperture* points, which for a mech crew is a
+            // different bearing from the gun's head above (`Systems/AI/Watch.cs`).
+            // A hull with no crew has no aperture: its eyes are its gun, so the
+            // gun's line is written and no client has to ask which it is looking at
+            _w16(s, off + 74, _angle(a.has("gaze_yaw") ? _f(a, r, "gaze_yaw")
+                                                      : _f(a, r, "sight_yaw")));
             off += ROW_MECH;
         }
 
@@ -645,7 +667,7 @@ public static class Netcode
             s[off + 2] = _b(a, r, "etype");
             s[off + 3] = _b(a, r, "faction");
             s[off + 4] = owner_of(a, r);
-            s[off + 5] = flags_of(a, r);
+            s[off + 5] = flags_of(a, r, shared_unit(world, v.faction, a, r, eid));
             int tgt = _i(a, r, "target");
             _w16(s, off + 6, tgt < 0 ? 65535 : Math.Min(tgt, 65534));
             _wf(s, off + 8, _f(a, r, "pos", 0));
@@ -658,6 +680,8 @@ public static class Netcode
             _wf(s, off + 36, _f(a, r, "vel", 1));
             _wf(s, off + 40, _f(a, r, "vel", 2));
             _w16(s, off + 44, _u16(_f(a, r, "hp")));
+            _w16(s, off + 46, _angle(a.has("gaze_yaw") ? _f(a, r, "gaze_yaw")
+                                                       : _f(a, r, "turret_yaw")));
             off += ROW_VEHICLE;
         }
 
@@ -727,7 +751,11 @@ public static class Netcode
             s[off + 2] = _b(a, r, "proj_kind");
             s[off + 3] = _b(a, r, "proj_wid");
             s[off + 4] = _b(a, r, "faction");
-            s[off + 5] = 0;                       // the old gap, written as zero
+            int kind = _b(a, r, "proj_kind");
+            bool shared = (kind == 2 || kind == 3)
+                          && (_b(a, r, "faction") == v.faction
+                              || Systems.Datalink.missile_known(world, v.faction, eid));
+            s[off + 5] = shared ? (byte)1 : (byte)0; // bit0: shared guided-round observation
             s[off + 6] = 0;
             s[off + 7] = 0;
             _wf(s, off + 8, _f(a, r, "pos", 0));

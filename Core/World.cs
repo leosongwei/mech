@@ -101,6 +101,11 @@ public sealed class World
     // tick, built by `Threats.run` and read by the alarm and the intercept aim
     public Systems.AI.ThreatTable? threats;
     public int _threat_tick = -1;
+    // the alarm pass's reused tables (`Systems/AI/Suppress.cs`): one set per world, so
+    // a tick allocates nothing once they have grown
+    public Systems.AI.SuppressScratch? suppress;
+    // guided rounds directly observed by each faction's vehicles this tick
+    public readonly HashSet<int>[] linked_missiles = { new(), new() };
     public int[] lane_routes = Array.Empty<int>();
     public List<List<(float x, float z)>> lanes;
     public List<List<(float x, float z)>> lanes_rev;
@@ -178,7 +183,7 @@ public sealed class World
     {
         systems = new List<Action<World, float>>
         {
-            Systems.Rearm.run, Systems.PlayerInput.run,
+            Systems.Rearm.run, Systems.PlayerInput.run, Systems.Datalink.run,
         };
         systems.AddRange(mode_mod.pre_systems());
         // the crews have said where they are looking (player_input, the mode's
@@ -232,6 +237,10 @@ public sealed class World
         // system ever destroys an entity while walking its own list
         systems.AddRange(new Action<World, float>[]
         {
+            // what came too close to a crew, between the two halves it reads: the
+            // legs the flights above published, and the bursts `Blasts` is about to
+            // judge and destroy (`Systems/AI/Suppress.cs`)
+            Systems.AI.Suppress.run,
             Systems.Blasts.run, Systems.Mortality.run, Systems.Economy.run, Systems.Debris.run,
         });
         systems.AddRange(mode_mod.post_systems());
@@ -270,6 +279,7 @@ public sealed class World
         // a launcher that can fire a beam rider carries the laser's four channels
         // (`Systems/Beams.cs`), declared by the type the same way `arms` is
         if (d.tags.Contains("designator")) comps.AddRange(Components.BEAM_COMPS);
+        if (d.tags.Contains("datalink")) comps.AddRange(Components.DATALINK_COMPS);
         // the invariant a system may rely on (Components.cs): everything that
         // moves owns a place and a velocity, and a hull owns the intent too.
         // Asserted at the factory so a new entity type that forgets one dies at
@@ -285,6 +295,10 @@ public sealed class World
             if (arms) comps.Add("mech_ai");
             else if (d.tags.Contains("person")) comps.Add("foot_ai");
             comps.AddRange(Components.CREW_FCS_COMPS);
+            // a warning receiver is an instrument on a machine's roof: a man has none,
+            // so his crew carries no wheel for a near miss, a laser or a sighting
+            // (`Systems/AI/Support/Wheel.cs`, `Components.ALARM_COMPS`)
+            if (!d.tags.Contains("person")) comps.AddRange(Components.ALARM_COMPS);
         }
         if (extra != null) comps.AddRange(extra);
         int eid = e.create(comps);
@@ -302,6 +316,13 @@ public sealed class World
         // swing its hull round to nothing on its first tick
         e.fv("sight_yaw")[eid] = yaw;
         e.fv("sight_pitch")[eid] = 0f;
+        // a crew's aperture starts looking the way the machine faces, so its first
+        // search sector is one turn away and not a swing out of nowhere
+        if (crew)
+        {
+            e.fv("gaze_yaw")[eid] = yaw;
+            e.fv("gaze_cmd")[eid] = yaw;
+        }
         e.uv("etype")[eid] = (byte)etype;
         e.uv("faction")[eid] = (byte)faction;
         e.iv("owner")[eid] = owner;

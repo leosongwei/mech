@@ -8,8 +8,8 @@
 > `INFANTRY_TARGETS` / `SQUAD_*`）、`Modes/Range/Bunkers.cs`、
 > `Modes/Range/Interceptor.cs`、`Modes/Range/Record.cs`、
 > `Core/Terrain.cs`（`generate_range` / `RANGE_TILES` / `RANGE_SPAWN` /
-> `RANGE_HILL` / `RANGE_POSTS`）
-> **核对**：1.39.0 / 2026-11-20
+> `RANGE_HILL` / `RANGE_POSTS`）、`Harness/DatalinkCheck.cs`
+> **核对**：1.45.0 / 2026-11-25
 
 ## 1. 规则
 
@@ -163,6 +163,23 @@
 HUD 与战斗模式完全一致，只有顶栏两处不同：`WAVE n` 换成 **`RANGE`**，其下多一行
 **`TARGETS n`**——当前存活的蓝方 APC 数，正常是 **12**。巡逻机甲、步兵班、碉堡与
 哨位都不在这一格里。见 [../hud/hud.md](../hud/hud.md)。
+
+### 1.11 数据链验证场景
+
+靶场用 `debug_spawn` 放一台同阵营观察车，再放一台敌方 APC；中间放烟幕或利用主山山脊，
+即可把"直接观察"与"仅数据链观察"分开：
+
+1. 观察车看不到目标时，敌军目标框只剩绿色虚线；同阵营第二台观察车能看到时接触保持，
+   两台都看不到时虚线当 tick 消失。
+2. 友军车辆直接可见时画蓝色实线目标框，仅数据链可见时画蓝色虚线；两者都没有预判圈或
+   吸附。友军制导弹是蓝圈，敌军制导弹是绿圈，来源线型与车辆相同。
+3. 对仅链路可见的 APC 取得 SACLOS 与攻顶候选并发射；直接 / 链路轨迹刷新等价，但烟后的
+   `beam_lit` 仍为假，RWR 不因数据链告警。
+4. 断开所有同阵营观察后，已有锁定按原记忆规则工作；恢复直接或链路观察时跳回真身。
+
+无头回归用 `./dotnet.sh run -- --check datalink`，覆盖观察、并集失效、快照 / contacts
+过滤、友军共享、导弹能力位与两类制导获取；判词与读数见
+[../../dev/checks.md](../../dev/checks.md)。
 
 ## 2. 数值表
 

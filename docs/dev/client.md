@@ -1,18 +1,25 @@
 # 客户端工程
 
 > **读者**：维护者（写客户端 / 在浏览器里验证的人）
-> **一句话**：`frontend/src` 怎么分层、一帧和一次绘制按什么顺序跑、场景的局部坐标与放置约定，
-> 以及构建、图标、质量档这类"只影响画面"的常驻约定。
+> **一句话**：`frontend/src` 怎么分层、一帧和一次绘制按什么顺序跑、three 的场景图与各层怎么
+> 接起来、场景的局部坐标与放置约定，以及构建、图标、质量档这类"只影响画面"的常驻约定。
 > **代码**：`frontend/src/`（`core/`、`render/`、`app/`、`scene/`）、`frontend/scripts/`、
 > `frontend/webpack.config.js`
-> **核对**：1.39.0 / 2026-11-20
+> **核对**：1.42.0 / 2026-11-24
 
 ## 1. 构建与 `assets/`
 
 ```bash
-cd frontend && npm install && npm run build     # -> ../assets/
-./dev.sh build                                  # 同上，共用 npm cache
+./npm.sh install                # 依赖 -> frontend/node_modules
+./npm.sh run build              # -> assets/（三步，见下）
+./dev.sh build                  # 两者连跑
 ```
+
+* npm 一律经 `./npm.sh`：缓存、日志、`TMPDIR` 与 HOME 都指向 `frontend/.npm/`
+  （已 gitignore），参数原样交给 npm，所以 `./npm.sh run check:deps` 就是
+  `npm run check:deps`。一次构建在仓库外不留任何东西。
+* 同一个脚本把构建放进 bwrap：整个文件系统只读，只有本仓库可写。调用方已经提供了
+  这层保护时（外层 bwrap，或 `$HOME` 只读的沙箱）不套第二层；`MECH_NO_BWRAP=1` 跳过。
 
 * `npm run build` 是三步：`node scripts/depgraph.mjs`（层规则，见 §2）→
   `node --experimental-vm-modules scripts/syntax.mjs`（把 `src` 里每个文件当模块解析一遍，
@@ -20,7 +27,7 @@ cd frontend && npm install && npm run build     # -> ../assets/
   前两步各有一条 `npm run check:deps` / `check:syntax`，单独跑一条不用等打包。
 * 产物落在 `../assets`（`output.path` 指过去，`clean: true` 每次先清）：
   `bundle.js`、`index.html`（`html-webpack-plugin` 从 `src/index.html` 生成）、
-  `vendor/material-symbols-outlined.woff2`（§8）。`publicPath` 是 `/static/`，
+  `vendor/material-symbols-outlined.woff2`（§10）。`publicPath` 是 `/static/`，
   服务端在 `/` 与 `/static/*` 上发同一批文件。
 * 改前端**只需要重新打包**：静态文件按请求读盘，服务器不用重启；只有改后端才要
   `./dev.sh stop && ./dev.sh start`。
@@ -37,7 +44,7 @@ cd frontend && npm install && npm run build     # -> ../assets/
 | 层 | 目录 / 文件 | 是什么 |
 | --- | --- | --- |
 | 0 | `core/` | 纯函数：常量、矩阵与角度、火控定律、localStorage 包装 |
-| 1 | `net/` `map/` `audio/` `render/` `input/` | 领域层：线上格式、地图与碰撞、声音图、GL、输入 |
+| 1 | `net/` `map/` `audio/` `render/` `input/` | 领域层：线上格式、地图与碰撞、声音图、three 与各层、输入 |
 | 2 | `scene/` `hud/` `fx/` | 视图层：单位模型、HUD、粒子与事件分发 |
 | 3 | `app/` | 应用层：`game.js`、`frame.js`、`systems/`、`panels.js` |
 | 4 | `main.js` | 引导：造 `Game`、挂 `window.__game`、`loadIcons()`、`boot()` |
@@ -57,7 +64,7 @@ cd frontend && npm install && npm run build     # -> ../assets/
 | `net/` | 二进制与 JSON 的解析、插值后的图 | `client.js`（`send` / `meta` / `entities` / `contacts` / `ack`）、`wire.js`、`rows.js`、`view.js` |
 | `map/` | 地图数据与两条碰撞规则 | `field.js`（`MapData` / `heightAt`）、`solid.js`（弹）、`sight.js`（眼）、`predict.js`（客户端弹道预测）、`tiles.js`（地块词汇、树）、`paint.js` |
 | `audio/` | 声音图与声部 | `index.js`（`GameAudio`）、`graph.js`、`field.js`（声音场）、`cues.js`、`alarms.js` |
-| `render/` | GL 资源与 pass | `renderer.js`、`passes.js`、`batch.js`、`terrain.js`、`roads.js`、`props.js`、`overlay.js`、`mesh-table.js` |
+| `render/` | 设备、场景图、各层 | `index.js`（`Renderer`、`ORDER`）、`instances.js`、`primitives.js`、`materials.js`、`ground.js`、`roads.js`、`props.js`、`sky.js`、`overlay.js`、`textures.js`、`camera.js`（§5、§7） |
 | `input/` | 指针、键位、机身系摇杆 | `index.js`、`sight.js`（`moveVector`、`viewYaw`）、`bindings.js`、`pointer.js` |
 | `scene/` | 单位模型，从基本体搭 | `index.js`（`emitUnits` / `emitProjectiles` / `emitSmoke`）、`helpers.js`（§6）、`arms.js`（管阵） |
 | `hud/` | 全部 2D 绘制 | `index.js`（`draw` / `_project`）、`layout.js`、`canvas.js` |
@@ -87,25 +94,33 @@ cd frontend && npm install && npm run build     # -> ../assets/
 * 一个阶段只读写 `app` 和共享的 `ctx`（`own` / `cam` / `dt` / `now`），把一段抽掉或插进来
   都不碰邻居。新增"每帧要做的一件事"就加一行。
 
-## 5. 绘制顺序是 `render/passes.js` 的一个数组
+## 5. 绘制顺序是 `render/index.js` 的 `ORDER`
 
-`PASSES = [sky, terrain, props, world, particles, overlay]`，`drawFrame(R, cam, emit)` 先
-`beginFrame(cam)`（视口、清屏、本帧的世界 uniform）再逐个 `draw`：
+场景图是 one scene、六个层，层的先后写在那张 `ORDER` 表里，落成每个 mesh 的
+`renderOrder`——"哪一层先画"是拥有那一层的模块的属性，不是绘制函数里的一行顺序：
 
-1. `sky` —— 一个全屏三角形，`uInvVP` 反向投影，不开深度。
-2. `terrain` —— 远 LOD 网格 + 近地块补丁，然后**同一次** `draw` 里贴上道路（§8、§9）。
-3. `props` —— 树、房子、石头；每张图一个实例 buffer 按 640 m 分块，静态，每帧零上传。
-4. `world` —— 全局唯一一次 `emit`：`emitUnits` / `emitProjectiles` / `emitSmoke` /
-   `particles.emit` 写进实例批，然后 `flushOpaque()`。车在树前面还是后面属于同一道题，
-   所以它们是同一个 pass。
-5. `particles` —— 冲击粒子，质量档决定混合还是抖动（§10）。
-6. `overlay` —— 屏幕空间叠层（告警箭头），用自己的一套 program（§7）。
+| 层 | 画什么 | 深度 |
+| --- | --- | --- |
+| `sky` | 一个全屏三角形，`uInvVP` 反向投影（`sky.js`） | 不测不写 |
+| `ground` | 远 LOD 网格 + 近地块补丁（`ground.js`，§8） | 测、写 |
+| `roads` | 贴地的沥青（`roads.js`，§9） | 测、写 |
+| `props` | 树、房子、石头；按 640 m 分块，静态（`props.js`） | 测、写 |
+| `bodies` | 会动的一切：车、零件、弹体、烟罐 | 测、写 |
+| `particles` | 冲击粒子，质量档决定混合还是抖动（§10） | 测、不写 |
+
+* `Renderer.draw(cam, emit)` 的顺序是：写本帧的 uniform（§7）→ 把 `emit` 交给模型
+  （`emitUnits` / `emitProjectiles` / `emitSmoke` / `particles.emit`）→ 发布实例 →
+  两个 cull（§7）→ `device.render(scene, camera)`。
+* 告警箭头是**第二个 scene**：它画在 HUD 自己的像素里，在世界之后、清掉深度缓冲再画一次
+  （§7）。所以它是整帧的第七个动作，而不是第六层的兄弟层。
+* 车在树前面还是后面属于同一道题，所以 `bodies` 与 `props` 分开只为 cull 方式不同
+  （静态分块 vs 每帧写），深度把它们排在一起。
 
 ## 6. 场景的局部坐标：+X 前、+Y 上、+Z 右
 
 `core/math.js` 的 `compose` / `composeInto` 写出的列主序矩阵就是这个朝向：局部 +X 是前方，
 +Y 是上，+Z 是右。一个 Y 轴的基本体要躺到炮管上，就用 `helpers.FORWARD`（`-PI/2`）当 pitch；
-pitch 已经在手上时用 `FORWARD + p`。`b.put(MESH.BOX, p, yaw, pitch, sx, sy, sz, …)` 的缩放
+pitch 已经在手上时用 `FORWARD + p`。`b.put(PRIM.BOX, p, yaw, pitch, sx, sy, sz, …)` 的缩放
 三分量对应 **sx 沿炮口、sy 竖直、sz 横向**——最后两个写反就是一根躺下的吊舱。
 
 放置一块零件有两条路，`scene/helpers.js` 各给一个：
@@ -118,35 +133,52 @@ pitch 已经在手上时用 `FORWARD + p`。`b.put(MESH.BOX, p, yaw, pitch, sx, 
   出发的偏移（`right` / `up` / `fwd`，含俯仰）跟着 `syaw` / `spitch` 转——塔是绕柱子转，
   而绕着车公转就错了：把视角的角传给 `at` 画出来，头和柱子能差出一米半。`meshPitch`
   留空时网格的俯仰就取 `spitch`。
+* **`postAt(b, mesh, e, hullYaw, faceYaw, ox, oy, oz, fx, …)`**：一根柱子上的另一具头。
+  柱子的位置按 `hullYaw`（车身或炮塔）算，头自己的朝向按 `faceYaw` 算，`fx` 再让它沿**自己
+  的**朝向往前挪一点——观瞄头前面的那块玻璃就在那儿。机组的**孔径**（`e.gaze`）画在这条路
+  上：它与炮口是两根轴（[../product/systems/ai.md](../product/systems/ai.md) §1.4），所以
+  炮塔转到别处时它自己扫，这是玩家判断"对面看没看见我"的唯一读法。机甲在头顶柱子旁 0.86 m
+  处（`scene/units/mech.js`），装甲车在炮塔顶上（`scene/units/vehicle.js`）；步兵不画，因为
+  人体模型上没有可转的部件，而步兵行也不上线这个字段。
 * `SIGHT_Y`（5.05，与 `defs.MECH_EYE` 同一个数）是塔的光轴高度，座舱眼正坐在那里，
   所以自己的观瞄头不进绘制列表（`scene/units/mech.js` 的 `own`），别人的都画。
 
-## 7. 实例批、`WEBGL_multi_draw`、屏幕空间叠层
+## 7. 实例、three、屏幕空间叠层
 
-* `render/batch.js` 的 `Batches` 有三套实例集合：`opaque`（不透明体）、`blended`（粒子与
-  混合体）、`overlay`（两件叠层网格）。每条实例是 20 个 float：16 个矩阵 + 4 个颜色，
+客户端用 **three.js**（`frontend/package.json` 里唯一的运行时依赖）做设备、场景图与绘制调用，
+但每个 program 都是项目自己的 GLSL 3.00 源码（`render/shaders/`）：这个游戏的画面是一组
+具体的方程——对数深度、雾、平面着色的地面、抖动过的粒子——用 stock 材质反而要把它们重建
+一遍。three 负责的是管道：上下文、program 缓存、attribute 绑定、状态切换、draw call。
+
+* `render/primitives.js` 把十二个基本体建成 `BufferGeometry`，并带上每个基本体的两个事实
+  （`facade` 画窗户、`unlit` 不参与光照）与它的 `cap`。基本体有一份顶点缓冲，
+  同一个基本体的每一层（不透明 / 混合）只多一条实例缓冲。
+* `render/instances.js` 的 `Layer` 是一条实例缓冲：每条实例 20 个 float（16 矩阵 + 4 颜色），
+  一个 `InstancedInterleavedBuffer` 同时喂 `iMatrix`（mat4）与 `iColor`（vec4）两个属性。
   `put` 直接写进 `count * STRIDE_FLOATS`；`composeInto` 就是为了这条路存在——早先每条实例
   建一个 `Float32Array` 视图，是客户端最大的每帧分配。
-* 每套按网格各有一个 `cap`，写满就丢（`count >= cap` 直接返回），所以一帧的实例数有上限；
-  `reset()` 只在帧首把计数归零，buffer 不重建。
-* `renderer.submit(mesh, vbo, cmds)`：一个基本体、一条实例 buffer、一串 `{first,count}` run。
-  WebGL2 没有间接绘制，所以整串交给 `WEBGL_multi_draw` 的
-  `multiDrawArraysInstancedWEBGL`（一次调用画完一个网格）；扩展不在或有单条命令时才逐条画。
-  四个 `Int32Array` 是这次提交的暂存，按需长一次再复用。扩展调用抛错就整体退回逐条画。
-* `overlay` pass 画告警箭头，用的是世界自己的网格、buffer 与 shader，只是把
-  `uViewProj` 换成 HUD 自己的矩阵（`renderer.overlayOrigin` / `overlaySun` /
-  `screenArrow`）。三件事是实测定的：透视除法的原点取环心（也是每支箭的尾），否则有深度
-  的箭头会斜着抹开；这一趟清并测深度缓冲，因为锥底会穿过自己的侧面；`uFar = 2` 把 shader
-  的对数深度压成 `log2(w)`，正好对 1~1.1 的 w 单调。整层一个矩阵，所以三支箭仍是两次
-  `_submit`（轴 + 头）。
+* 每层按基本体各有一个 `cap`，写满就丢（`slot()` 返回 -1），所以一帧的实例数有上限；
+  `reset()` 只在帧首把计数归零，buffer 不重建。上传只传用到的区间
+  （`addUpdateRange(0, count * STRIDE_FLOATS)`），所以四十个 box 就只上行四十个 box。
+* `props.js` 的静态实例一层一个 640 m 块（`StaticLayer`），几何的 `boundingSphere` 就是那一块，
+  于是 cull 有两条：`update(cam)` 的距离盒（4600 m）与 three 自己的视锥剔除。
+  `mesh.visible` 说的是"这一帧画不画"，实例数据一次也不重传。
+* `overlay` 层画告警箭头，用的是世界自己的基本体，只是把 `uViewProj` 换成 HUD 自己的矩阵
+  （`renderer.overlayOrigin` / `overlaySun` / `screenArrow`）。三件事是实测定的：透视除法的
+  原点取环心（也是每支箭的尾），否则有深度的箭头会斜着抹开；这一趟清并测深度缓冲，因为
+  锥底会穿过自己的侧面；`uFar = 2` 把 shader 的对数深度压成 `log2(w)`，正好对 1~1.1 的 w
+  单调。整层一个矩阵，所以三支箭仍是一条实例缓冲里的六条实例。
+* 一次 `Layer` 的顶点缓冲属于基本体、被它的每一层共用，所以释放一层时要先把共用的属性从
+  几何上摘下来（`Layer.dispose`），否则会连带删掉别的层还在画的缓冲。
 
 ## 8. 地形两遍
 
-`render/terrain.js`：远景是**一张径向 LOD 网格**，随眼在整块地块上重新居中，高度在顶点
+`render/ground.js`：远景是**一张径向 LOD 网格**，随眼在整块地块上重新居中，高度在顶点
 shader 里取纹理，16 km 的地图一次也不上 CPU；近景是**一块跟着眼走的地块补丁**
 （`TILE_PATCH` = 48 块地，即 96×96 格），每个顶点都是地块角，所以它的面就是地块的面，
 OpenTTD 那种坡面才读得出来。远程序用 `uNear` 把补丁那块矩形从自己身上 `discard` 掉，
-补丁再盖上去——两种分辨率是交叠的，不是拼接的。
+补丁再盖上去——两种分辨率是交叠的，不是拼接的。补丁自己编成 `PATCH`（`shaders/ground.js`），
+不带这条 `discard`：它的边界就是那条切缝，一个共享的 `uNear` 只给远程序读。
 
 `TERRAIN_LOD` 四档随光学倍率（`renderer.setZoomLevel`）：
 
@@ -169,7 +201,7 @@ OpenTTD 那种坡面才读得出来。远程序用 `uNear` 把补丁那块矩形
 切一刀，两半各投到所属的那个三角面上——不切的话一个三角形跨在两面之间，会沉到地面以下，
 那正是路肩上闪动的细条。`LIFT` 0.06 让沥青微微浮在草上，半宽 5 m 即 10 m 路面；
 `map.heightAt` 与服务器 `Terrain.height_at` 是同一条两三角规则，所以路面顶点落在补丁画的
-那个平面上。几何每张地图建一次，随后由 `terrain` pass 在地面之后画。
+那个平面上。几何每张地图建一次，由 `roads` 层在地面之后、道具之前画。
 
 ## 10. 图标与粒子质量档
 
@@ -180,11 +212,11 @@ OpenTTD 那种坡面才读得出来。远程序用 `uNear` 把补丁那块矩形
   `drawIcon()` 返回 `false`，调用方保留自己的基本体画法顶最初几帧。
 * **质量档**：设置面板里的 `EFFECTS` 写 `app.quality`，`systems/settings.js::setQuality`
   同时写 `renderer.quality` 与 `localStorage`（`QUALITY_KEY`，`core/config.js`）。
-  `particles` pass 读它：`quality` 是历来的样子——alpha 混合、不写深度；`performance` 把同一批
-  实例按不透明画，每个片元用 shader 的逐像素噪声（`uDither`，交织梯度噪声）整片留下或整片
-  丢掉。一个体的透明度变成一片斑点的密度，丢掉的像素由后层填上；两档都不写粒子的深度，
+  混合层有两个材质（`materials.js::bodyMaterial`）：`quality` 是历来的样子——alpha 混合、
+  不写深度；`performance` 把同一批实例编上 `DITHER`，按不透明画，每个片元用逐像素噪声
+  （交织梯度噪声）整片留下或整片丢掉。一个体的透明度变成一片斑点的密度，丢掉的像素由后层填上；两档都不写粒子的深度，
   所以层的先后仍是粒子池发出的顺序，斑点是混合的无偏图像——同样的亮度、同样的轮廓。
-  `discard` 花 early-Z，这个 pass 本来就吃不了带宽，所以这一档在独显上是一种观感，
+  `discard` 花 early-Z，这一层本来就吃不了带宽，所以这一档在独显上是一种观感，
   而不是一档帧率。
 
 ## 11. 火控只有一份，在 `core/fcs.js`

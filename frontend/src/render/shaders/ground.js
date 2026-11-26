@@ -2,16 +2,20 @@
 //
 // The far mesh is a radial LOD grid around the eye whose heights are sampled
 // from the height texture in the vertex shader, so the 16 km map never touches
-// the CPU.  The near mesh is a patch of the tile grid that follows the eye; its
-// vertices are tile corners, so the facets are the tiles.  The far program cuts
+// the CPU. The near mesh is a patch of the tile grid that follows the eye; its
+// vertices are tile corners, so the facets are the tiles. The far program cuts
 // the patch's rectangle out of its own surface (`uNear`), and the patch clears
 // that cut, which is what makes them one continuous ground with two
 // resolutions.
+//
+// Both meshes carry their cell index in `position.xy` - the third component is
+// unused - because the vertex count three derives a draw call from is that
+// attribute's count.
 
 import { HEAD_SAMPLER2D, HEAD_USAMPLER2D, SUN_DIFFUSE, groundLight, fogAt, logDepth } from './chunks.js';
 
-export const TERRAIN_VS = `${HEAD_SAMPLER2D}
-in vec2 aCell;
+export const FAR_VS = `${HEAD_SAMPLER2D}
+in vec3 position;
 uniform mat4 uViewProj;
 uniform sampler2D uHeight;
 uniform vec2 uMapSize;
@@ -39,17 +43,16 @@ float texH(vec2 p){
 }
 
 void main(){
-  vec2 c = aCell;
+  vec2 c = position.xy;
   vec2 a = abs(c);
   vec2 sg = sign(c);
   float G = uG;
   float kk = uTile * G / 0.6931472;
   // Up to uA0 rings out the grid keeps the plain tile spacing - one quad per
   // 16 m cell, nothing merged - and only past that does the spacing start to
-  // double every G rings.  The far hills are drawn at tile resolution out to
+  // double every G rings. The far hills are drawn at tile resolution out to
   // 3 km at 20x optics, which is where the sight actually looks.
   vec2 d = max(a - uA0, 0.0);
-  vec2 spacing = uTile * exp2(d / G);
   // Step the grid with the eye in whole *tiles* instead of sliding it
   // continuously: every vertex then sits on a fixed world point until the eye
   // crosses a tile, and the far hills stay put instead of crawling over the
@@ -57,9 +60,9 @@ void main(){
   //
   // One lattice for the whole mesh, at the finest spacing, and not one per band:
   // a band that snapped to its own (coarser) grid put its vertices on a lattice
-  // with a different phase, and at every band boundary the quad that straddles it
-  // was stretched by up to a whole local cell - hundreds of metres out at the far
-  // rings, and re-phased every time the eye crossed a cell, so the tear moved.
+  // with a different phase, and at every band boundary the quad that straddled
+  // it was stretched by up to a whole local cell - hundreds of metres out at the
+  // far rings, and re-phased every time the eye crossed a cell, so the tear moved.
   vec2 base = floor(uCam.xz / uTile) * uTile;
   vec2 off = sg * (uTile * min(a, vec2(uA0)) + kk * (exp2(d / G) - 1.0));
   vec2 world = base + off;
@@ -72,8 +75,8 @@ void main(){
   vDist = distance(wp, uCam);
 }`;
 
-export const TILE_VS = `${HEAD_SAMPLER2D}
-in vec2 aCell;
+export const PATCH_VS = `${HEAD_SAMPLER2D}
+in vec3 position;
 uniform mat4 uViewProj;
 uniform sampler2D uHeight;
 uniform vec2 uMapSize;
@@ -85,7 +88,7 @@ out float vViewZ;
 out float vDist;
 
 void main(){
-  vec2 cell = clamp(uOrigin + aCell, vec2(0.0), uMapSize - 1.0);
+  vec2 cell = clamp(uOrigin + position.xy, vec2(0.0), uMapSize - 1.0);
   float h = texelFetch(uHeight, ivec2(cell), 0).r;
   vec3 wp = vec3(cell.x * uTile, h, cell.y * uTile);
   vec4 clip = uViewProj * vec4(wp, 1.0);
@@ -97,7 +100,7 @@ void main(){
 
 // Shared ground shading: flat per-triangle normals (derivatives), OpenTTD-ish
 // tile colours, the tile seam drawn only while a tile is big enough on screen.
-export const TERRAIN_FS = `${HEAD_USAMPLER2D}
+export const GROUND_FS = `${HEAD_USAMPLER2D}
 in vec3 vWP;
 in float vViewZ;
 in float vDist;
@@ -116,10 +119,13 @@ float hash21(vec2 p){
 }
 
 void main(){
-  // the tile patch covers this fragment: skip the coarse mesh under it
+#ifndef PATCH
+  // the tile patch covers this fragment: skip the coarse mesh under it. The
+  // patch itself is compiled without this branch - its own bounds are the cut
   if (uNear.z > uNear.x &&
       vWP.x > uNear.x && vWP.x < uNear.z &&
       vWP.z > uNear.y && vWP.z < uNear.w) discard;
+#endif
 
   // ground faces up; the derivative is constant over a facet, so a tile is
   // one flat shade and its sloped neighbour is a different one

@@ -7,11 +7,12 @@
 // is the state they live in, and the one owner of what a frame did *not* mention.
 
 import { wrapPi } from '../core/math.js';
-import { CLASSES, decodeRow, measureAccel, newEntity, resetRow, ROWS } from './rows.js';
+import { CLASSES, decodeRow, measureAccel, newEntity, PROJ_TARGET_LINK, resetRow, ROWS } from './rows.js';
 import { CLOCK, CONTACT_QUANT, CONTACT_STRIDE, HEADER, PROJ_STRIDE, SMOKE_STRIDE, setBuffer } from './wire.js';
 
 export class View {
   constructor() {
+    this.datalink = false;       // the init payload's optional capability declaration
     this.entities = new Map();
     this.projectiles = [];
     this.smoke = [];            // canisters in flight and deployed puffs
@@ -42,7 +43,7 @@ export class View {
           this.entities.set(id, e);
         }
         resetRow(e, cls);
-        off = decodeRow(e, dv, off, cls);
+        off = decodeRow(e, dv, off, cls, this.datalink);
         measureAccel(e, this.tick);
         e.gen = gen;
       }
@@ -63,11 +64,13 @@ export class View {
     const proj = [];
     const nProj = dv.getUint16(CLOCK + 10, true);
     for (let k = 0; k < nProj; k++) {
+      const flags = dv.getUint8(off + 5);
       proj.push({
         id: dv.getUint16(off, true),
         kind: dv.getUint8(off + 2),
         wid: dv.getUint8(off + 3),
         faction: dv.getUint8(off + 4),
+        link: this.datalink && !!(flags & PROJ_TARGET_LINK),
         x: dv.getFloat32(off + 8, true),
         y: dv.getFloat32(off + 12, true),
         z: dv.getFloat32(off + 16, true),
@@ -158,6 +161,7 @@ export class View {
       e.leg += wrapPi(e.tleg - e.leg) * alpha;
       e.syaw += wrapPi(e.tsyaw - e.syaw) * alpha;
       e.spitch += (e.tspitch - e.spitch) * alpha;
+      e.gaze += wrapPi(e.tgaze - e.gaze) * alpha;
     }
   }
 }

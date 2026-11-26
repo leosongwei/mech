@@ -1,7 +1,7 @@
 # MECH — 16 km Front
 
 A browser based mech shooter: a C# (.NET 10 / ASP.NET Core) archetype-ECS
-server, a WebGL2 client with indirect (multi-draw) instanced rendering, three
+server, a three.js client that draws the world as instanced primitives, three
 lanes, two factions and physically flown projectiles.
 
 ```
@@ -27,11 +27,11 @@ Net/                   # Netcode.cs: init payload / snapshots / meta
                        # Server.cs:   websockets + static files + 30 Hz loop
 Harness/               # headless checks: ./dotnet.sh run -- --check battle|range
 assets/                # compiled client (webpack output, gitignored)
-frontend/              # webpack + WebGL2 client
-  src/renderer.js      # tiled terrain (near patch + far LOD), roads, instancing
-  src/map.js           # client copy of terrain + identical ballistics
-  src/scene.js         # unit models built from primitives
-  src/hud.js           # crosshairs, lock box, module health, minimap
+frontend/              # webpack + three.js client
+  src/render/          # device, scene graph, the six layers, own GLSL
+  src/map/             # client copy of terrain + identical ballistics
+  src/scene/           # unit models built from primitives
+  src/hud/             # crosshairs, lock box, module health, minimap
 ```
 
 ## Install (.NET 10 on Ubuntu 26.04)
@@ -289,10 +289,9 @@ and the enemy command base (6500 HP) as the win condition.
   rebuilds the grid with a larger `uG` and a finer index grid as the sight
   magnifies.
 * Units, props and projectiles are instanced primitives (`box`, `sphere`,
-  `cone`, `cylinder`). Prop chunks (640 m) are frustum/distance culled on the
-  CPU and submitted as a command list through `WEBGL_multi_draw`
-  (`multiDrawArraysInstancedWEBGL`), with a per-command instanced fallback when
-  the extension is missing.
+  `cone`, `cylinder`, ...) drawn by three.js from one interlaced instance buffer
+  per primitive per layer. Props are built once per map into one static layer
+  per 640 m chunk and culled by distance and by three's own frustum test.
 * Logarithmic depth in every shader keeps a 1 m … 32 km view stable.
 
 ## License

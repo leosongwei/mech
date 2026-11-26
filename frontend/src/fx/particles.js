@@ -6,7 +6,7 @@
 // live particle into the frame's batch, and the pass that carries them decides
 // the GL state.
 
-import { MESH } from '../render/mesh-table.js';
+import { PRIM } from '../render/primitives.js';
 
 const DUST = [0.56, 0.49, 0.38];
 const DUST_LIGHT = [0.68, 0.62, 0.50];
@@ -31,7 +31,7 @@ function makeSlot() {
     fade: FADE,                 // s of it over which the body fades out
     size: 0, grow: 0, drag: 0, grav: 0,
     col: DUST, alpha: 0,
-    mesh: MESH.SPHERE,
+    mesh: PRIM.SPHERE,
     prev: -1, next: -1,         // the age list: this slot's neighbours in it
   };
 }
@@ -78,7 +78,7 @@ export class Particles {
   // life, size, grow, drag, gravity, colour, alpha, and the primitive it is drawn
   // as (a shard is the only thing that is not a dot).  The fade window is derived
   // from the life rather than passed (see `p.fade` below).
-  _add(px, py, pz, vx, vy, vz, life, size, grow, drag, grav, col, alpha, mesh = MESH.SPHERE) {
+  _add(px, py, pz, vx, vy, vz, life, size, grow, drag, grav, col, alpha, mesh = PRIM.SPHERE) {
     let slot;
     if (this.free > 0) {
       // a slot nothing is using: no particle is lost
@@ -160,7 +160,7 @@ export class Particles {
           0.2, 16,
           Math.random() < 0.5 ? DUST : DUST_LIGHT,
           1,
-          MESH.CONE,
+          PRIM.CONE,
         );
       }
     }
@@ -370,11 +370,11 @@ export class Particles {
       const a = Math.max(0, Math.min(1, p.life / p.fade)) * p.alpha;
       if (a <= 0.01) continue;
       const c = p.col;
-      if (p.mesh === MESH.CONE) {
+      if (p.mesh === PRIM.CONE) {
         // a shard is the same shape the cone draw was: 1.6x taller than wide
-        b.putA(MESH.CONE, p.x, p.y, p.z, 0, 0, p.size, p.size * 1.6, p.size, c[0], c[1], c[2], a);
+        b.putA(PRIM.CONE, p.x, p.y, p.z, 0, 0, p.size, p.size * 1.6, p.size, c[0], c[1], c[2], a);
       } else {
-        b.putA(MESH.SPHERE, p.x, p.y, p.z, 0, 0, p.size, p.size, p.size, c[0], c[1], c[2], a);
+        b.putA(PRIM.SPHERE, p.x, p.y, p.z, 0, 0, p.size, p.size, p.size, c[0], c[1], c[2], a);
       }
     }
   }

@@ -1,7 +1,7 @@
-// Pre-aim: the hull that was picked up gets a white box, and each arm gets a
-// circle on the point it has to be pointed at to hit it, joined to the box by a
-// line in the arm's own colour.  The circles differ - a rocket is in the air far
-// longer than a shell - so the pilot reads the ring, not the hull.
+// Targets and pre-aim: a vehicle gets a target box and a guided round gets a
+// missile circle.  Blue means friendly and green means hostile; a solid outline
+// is direct sight and a dashed outline is datalink.  Enemy ballistic solutions
+// keep the arm colours on their rings and leaders.
 //
 // With the aim assist on the circles are `LEAD_RING * ringScale` wide and are
 // the thing the cross is caught by, so they double as pickers: a target's two
@@ -10,7 +10,7 @@
 // and where the two overlap each one keeps only the arc outside its partner -
 // the pair is divided by a white line, `ringCut`.
 
-import { ARM_COLORS, LEAD_COLOR, LEAD_RING, MISSILE_RING, TAU } from './layout.js';
+import { ARM_COLORS, ENEMY_TARGET, FRIENDLY_TARGET, LEAD_RING, MISSILE_RING, TAU } from './layout.js';
 
 // The two cuts of one pair, reused: a target's rings are cut once per frame each
 // and the frame is 16 ms long, so two objects serve every pair on the screen.
@@ -19,24 +19,13 @@ const CUT_B = { a0: 0, a1: 0, x0: 0, y0: 0, x1: 0, y1: 0 };
 // and the pair of cuts itself, in `marks` order
 const CUTS = [null, null];
 
-// Our own guided rounds, in the air and on their way: one small circle each, in
-// the same white as the box an enemy hull gets - a circle instead of a box
-// because it is not a target, it is a machine of ours being steered into one.
-// The coordinate is the wire's own (`net.projectiles` is rebuilt from every
-// snapshot, un-interpolated), so the mark steps at 15 Hz like the round does.
-export function friendlyMissiles(ctx, s) {
-  const list = s.missiles;
-  if (!list || !list.length) return;
-  ctx.save();
-  ctx.strokeStyle = LEAD_COLOR;
-  ctx.lineWidth = 1.2;
-  ctx.globalAlpha = 0.85;
-  for (const m of list) {
-    ctx.beginPath();
-    ctx.arc(m.x, m.y, MISSILE_RING, 0, TAU);
-    ctx.stroke();
-  }
-  ctx.restore();
+// Pure style contract for a projected target record.  Direct observation wins
+// upstream; only a datalink source gets a dashed outline.
+export function targetStyle(t, playerFaction) {
+  return {
+    color: t.faction === playerFaction ? FRIENDLY_TARGET : ENEMY_TARGET,
+    dash: t.source === 'datalink' ? [3, 3] : [],
+  };
 }
 
 export function leads(ctx, s) {
@@ -45,9 +34,20 @@ export function leads(ctx, s) {
   ctx.save();
   ctx.lineWidth = 1.2;
   for (const t of list) {
+    const style = targetStyle(t, s.playerFaction);
+    ctx.save();
     ctx.globalAlpha = 0.85;
-    ctx.strokeStyle = LEAD_COLOR;
-    ctx.strokeRect(t.x - t.hw, t.y - t.hh, t.hw * 2, t.hh * 2);
+    ctx.strokeStyle = style.color;
+    ctx.lineWidth = 1.2;
+    ctx.setLineDash(style.dash);
+    ctx.beginPath();
+    if (t.kind === 'missile') ctx.arc(t.x, t.y, MISSILE_RING, 0, TAU);
+    else ctx.strokeRect(t.x - t.hw, t.y - t.hh, t.hw * 2, t.hh * 2);
+    ctx.stroke();
+    ctx.restore();
+    // The dashed target outline never carries into the arm-coloured rings,
+    // leaders or pair divider.
+    ctx.setLineDash([]);
     // an overlapping pair is one shape cut in two: the arcs stop at the white
     // line, which is the same line the near-centre picker decides on.  One
     // cut per ring, in `marks` order.

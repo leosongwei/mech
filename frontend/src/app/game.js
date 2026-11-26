@@ -62,7 +62,7 @@ export class Game {
     this.fps = 60;
     this.lastHpSum = -1;
     this.crosshairs = [null, null];
-    this.leads = [];                // pre-aim boxes, projected for this frame
+    this.leads = [];                // target boxes and pre-aim rings, projected
     this.helpOpen = false;
     this.started = false;
     this.ready = false;

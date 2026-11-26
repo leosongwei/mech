@@ -1,10 +1,10 @@
 # 验证：构建、测试与量测
 
 > **读者**：维护者（跑验证的人）
-> **一句话**：服务端怎么建、单元测试证什么、13 个 `--check` 各自量什么、在靶场上怎么量一个
+> **一句话**：服务端怎么建、单元测试证什么、各项 `--check` 分别量什么、在靶场上怎么量一个
 > 机制——一页可操作的手册，读数都标着版本与命令。
 > **代码**：`Program.cs`、`Harness/`、`tests/`、`run_tests.sh`、`dev.sh`、`dotnet.sh`
-> **核对**：1.42.0 / 2026-11-24
+> **核对**：1.45.0 / 2026-11-25
 
 ## 1. 构建与重启
 
@@ -92,6 +92,7 @@
 | `beam` | 驾束弹全链路：命中、烟幕、激光被切断、锥角、通道、涂照、信念、幽灵、弹道 | 每行 `hits` / `miss m`，末行 `profile` 的速度-距离 |
 | `fcs` | 同一批场景下 AI 车组与飞行员各打一遍（`FireControl` 的集成半边） | `crew` 与 `pilot` 两列的脱靶量差 |
 | `gaze` | 机组的观瞄孔径：正前方/正后方的发现、150 °/s 的转速、近失弹的来向、两向交替、激光照住的认定与断续照射、目击记忆、威胁度算例 | 每行的秒数与方位，末行判词 |
+| `datalink` | 车辆观察的红蓝独立、多人并集、丢视野失效、快照 / contacts 过滤、友军共享、导弹来源位、SACLOS / 攻顶链路锁定 | `observe` 至 `link-top` 各行 `ok` |
 | `diag --minutes N` | 每 300 tick 打印 6 台 combat unit 的一行状态 | 车队在做什么：`target`、`state`、`mag`、`mem`、`pull` |
 | `net --minutes 20 --from 8` | 一个脚本飞行员的下载量，按分钟 | 每分钟 kB/s、末尾 `mean` 与分项占比 |
 | `tiers --minutes 14 --from 8` | 同一场战斗里兴趣球分层（6/4.5/4/3/2 km）省了什么 | `snapshot X kB/s -> Y kB/s (Z%)` |
@@ -138,20 +139,23 @@
 `arsenal`（7 套 AI 装备模板各自左右臂的发射数——主臂必须开火、副臂必须填满装填空档）、
 `pull`（2.40 测成 2.40）、`smoke`（烟前 4 发、记忆点 3 发、烟后 0 发）。
 
-**`gaze`** —— 十四行，一行一个事实：`front`（正前方 1500 m 在一次扫描里被找到）、`behind`
+**`gaze`** —— 原有十四行加三行数据链：`front`（正前方 1500 m 在一次扫描里被找到）、`behind`
 （正后方 900 m 在 20 s 里从未被找到，孔径只扫 −90°..+90°）、`slew`（90 度 = 0.60 s）、
 `bullet`（近失弹在分格表里留下 0.47 s 的格，孔径 1.13 s 后转到该格）、`burst`（同方向 12 发
 只换 0 次格）、`two-way`（+z 与 −z 交替来袭：两格都到过，44 % 的时间在转场）、`mark`
-（一串弹不推开已记下的弹，一束激光会推开）、`laser`（正后方 900 m 的设计ator 把激光压在
-机体上，0.50 s 认定、1.33 s 转到光斑方位）、`laser-off`（0.30 s 照 / 0.30 s 断：峰值 0.00 s，
-状态留在 `SWEEP`）、`laser-cross`（两台设计ator 在两个方位交替：最好的一格 0.00 s ——
-单槽计数器的误报在这里，现在没有了）、`sighting`（目标 0.07 s 被杀后回到目击方位，随后恢复
-扫视）、`target-first`（已进 `TARGET` 时来一发正后方的弹，状态**不**换）、`foot`（步兵没有
-轮盘、照样扫视）、`score`（`ThreatScore` 的算例表）。1.44.0 / seed 7 十四行全 `ok`。
-**改 `Watch` 或 `Suppress` 的常数先跑这一条**：它是这个机制唯一的定点读数。两处布景事实：
-这条检查把 `Modes.Range.Targets.run` 与 `Modes.Range.Interceptor.run` 从系统表里摘掉（靶标
-会把机组打成 `TARGET`、导弹会往场景里加弹）；`Crew()` 出来的机组**不武装**，否则它会打掉
-正后方的设计ator、光束随之中断。
+（一串弹不推开已记下的弹，一束激光会推开）、`laser`、`laser-off`、`laser-cross`、`sighting`、
+`target-first`、`foot`、`score`；`link-wheel` 验证烟后低权重方位使孔径转向并取得目标，
+`link-direct` 验证同方向直接目标优先，`link-memory` 验证链路失效后回记忆并遗忘。
+**改 `Watch`、`Suppress` 或数据链权重先跑这一条**。这条检查把
+`Modes.Range.Targets.run` 与 `Modes.Range.Interceptor.run` 从系统表里摘掉（靶标会把机组
+打成 `TARGET`、导弹会往场景里加弹）；`Crew()` 出来的机组**不武装**，否则它会打掉正后方的
+设计ator、光束随之中断。
+
+**`datalink`** —— 数据链的定点验收：`observe` 验证红蓝独立与步兵不挂载；`union-loss` 用真实
+烟幕与第二台观察车验证并集和当 tick 失效；`filter` / `restore` 验证未知敌方装甲不进快照与
+contacts、恢复后能力位正确；`friendly` 验证友军位置共享；`missile` 验证制导弹来源位；
+`link-lock` / `link-saclos` / `link-top` 验证隔烟获取、SACLOS 轨迹刷新与物理照射分离、攻顶
+链路种子。每行都必须为 `ok`，结尾执行 `ecs.validate()`。
 
 **`diag`** —— 没有判词，只有观测。`target=-1`、`state=0`、`pull=0.0` 一起出现就是"这台车组既没
 目标也没在动"，是查 AI 的第一站（`--check stuck` 查的是它的必然结果）。

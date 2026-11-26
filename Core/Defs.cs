@@ -1128,7 +1128,7 @@ public static partial class Defs
                 blast = new[] { DEATH_BLAST.ed, DEATH_BLAST.er }, loud = "blast",
                 wreck = new[] { (float)ETYPE_DEBRIS, WRECK_TIME, 1f },
             },
-            tags = new[] { "unit", "combat", "lockable", "moves", "vehicle", "designator" },
+            tags = new[] { "unit", "combat", "lockable", "moves", "vehicle", "designator", "datalink" },
         },
         // hull pool 120 (chassis + torso), one arm 50 each; armour of a light tank.  The
         // hull was 100 until the autocannon went to 300 rpm: 120 is what keeps a
@@ -1159,7 +1159,7 @@ public static partial class Defs
                 blast = new[] { DEATH_BLAST.ed, DEATH_BLAST.er }, loud = "blast",
                 wreck = new[] { (float)ETYPE_DEBRIS, WRECK_TIME, 2f },
             },
-            tags = new[] { "unit", "combat", "lockable", "moves", "designator" },
+            tags = new[] { "unit", "combat", "lockable", "moves", "designator", "datalink" },
         },
         // the objective: a target, but it never moves and cannot be locked.  4000 hp
         // behind 80 of plate: neither 80 mm rockets (AP 40) nor 30 mm rounds (AP 15) get

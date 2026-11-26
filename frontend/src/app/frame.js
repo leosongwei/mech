@@ -21,8 +21,8 @@
 //   sense   the receiver, then the rings it feeds, then the two trills
 //   render  emit the world into the instance batches and draw it, then the HUD
 //
-// `sense` is after `aim` because the pre-aim boxes are drawn on what the receiver
-// has placed, and because an arrow springs from the eye the sight is mounted on.
+// `sense` is after `aim` because target boxes and their pre-aim rings use the
+// settled sight pose, and because an arrow springs from the mounted eye.
 
 import { TICK_HZ } from '../core/config.js';
 import { emitProjectiles, emitSmoke, emitUnits } from '../scene/index.js';
@@ -149,7 +149,7 @@ function aimStage(app) {
 }
 
 function senseStage(app) {
-  // the radar first: the pre-aim boxes are drawn on what it has seen
+  // The receiver keeps its own hearing rules; target boxes read the snapshot.
   app.rwr.update(app, ctx.own);
   app.lead.update(ctx.own);
   app.lead.screen(ctx.own);

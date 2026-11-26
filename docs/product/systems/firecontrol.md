@@ -6,8 +6,9 @@
 > **数值出处**：`Core/Defs.cs` 的 `MECH_EYE` / `MECH_SIGHT_Z` / `MECH_HULL_RATE` /
 > `MECH_ARM_RATE` / `MECH_PITCH_MIN|MAX` / `ZERO_*` / `AI_MASTER_ARM` /
 > `MECH_ARM_MUZZLE` / `MECH_ARM_REACH`；定律在 `Core/FireControl.cs` 与
-> `Core/Ballistics.cs`，客户端同解在 `frontend/src/core/fcs.js`
-> **核对**：1.39.0 / 2026-11-20
+> `Core/Ballistics.cs`，客户端同解在 `frontend/src/core/fcs.js`；目标知识来源在
+> `Systems/Visibility.cs` / `Systems/Datalink.cs`，出膛播种在 `Systems/Weapons.cs`
+> **核对**：1.45.0 / 2026-11-25
 
 ## 1. 规则
 
@@ -107,6 +108,13 @@ APC 与人没有这段滞后：车身的 `yaw` 归驾驶员、炮归炮塔，所
 有 `ai_range` 与每条臂自己的 `range` 两道距离门，那是机组的交战决策，见
 [ai.md](ai.md)。
 
+### 1.6 数据链改变目标输入，不改变定律
+
+`FireControl.solve` 的输入仍是位置、真实速度、实测加速度与要打的高度，不接收"目标来源"。
+直接观察和当前同阵营数据链都提供当前真身与速度；两者都失效后，玩家与机组使用各自维护的
+信念点。获取、刷新与失效归 [sight.md](sight.md)，攻顶弹的出膛优先级归
+[seekers.md](seekers.md) §1.5。提前量公式、调零、发射几何与两端同解均不因数据链改变。
+
 ## 2. 数值表
 
 | 项目 | 数值 |
@@ -143,8 +151,9 @@ APC 与人没有这段滞后：车身的 `yaw` 归驾驶员、炮归炮塔，所
 * **目标只喂一样东西**：位置、真实速度（`vel`，不是 `vel_cmd`）、实测加速度、打多高。
   打多高是**目标自己**的 `height * 0.5`（车体几何中心），两边同一把尺子——曾经用
   射手自己的车高，400 m 上就高出步枪兵头顶 1.7 m。
-* **机组喂进去的是信念**（`ai_tgt`），不是位置列：烟幕挡住的是炮，不只是画面。
-  见 [ai.md](ai.md) 与 [sight.md](sight.md)。
+* **机组喂进去的是信念**（`ai_tgt`），不是位置列：直接观察或当前数据链刷新真身，两者都
+  失效后才走记忆。玩家侧由客户端 `Beliefs` 维护同一形状的点与速度。见 [ai.md](ai.md) 与
+  [sight.md](sight.md)。
 
 ## 4. 两端同解
 

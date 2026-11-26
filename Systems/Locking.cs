@@ -190,7 +190,7 @@ public static class Locking
             var aim = _sight_point(tp, etype[tid]);
             var (ang, _) = _angle_to(aim, origin, d);
             if (ang >= best_ang) continue;
-            if (!Sight.clear(world, origin, aim, LOS_STEP)) continue;
+            if (Visibility.source(world, eid, tid, aim) == VisibilitySource.None) continue;
             best = tid;
             best_ang = ang;
         }

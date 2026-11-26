@@ -136,9 +136,11 @@ public static class Beams
                 var body = e.fv("pos").get3(tid);
                 float h = Defs.UNIT_DEFS[e.uv("etype")[tid]].height * 0.5f;
                 var at = new Vec3(body.x, body.y + h, body.z);
-                bool visible = _in_window(eye, sight, cone, at)
-                               && Sight.clear(world, eye, at, Sight.LOS_STEP);
-                if (visible)
+                bool known = _in_window(eye, sight, cone, at)
+                             && Visibility.source(world, eid, tid, at) != VisibilitySource.None;
+                bool physical = _in_window(eye, sight, cone, at)
+                                && Sight.clear(world, eye, at, Sight.LOS_STEP);
+                if (known)
                 {
                     _sample(world, eid, ch, tid, dt);
                 }
@@ -175,7 +177,7 @@ public static class Beams
                 // the beam leads hard enough, a screen, or a body in between all put
                 // the beam off it, and the receiver stays quiet while the channel walks
                 // on a guess
-                lit.set(eid, ch, visible && body_hit(world, eye, _dir(eye, point), tid, eid, hulls,
+                lit.set(eid, ch, physical && body_hit(world, eye, _dir(eye, point), tid, eid, hulls,
                                                      out _) ? (byte)1 : (byte)0);
             }
         }

@@ -3,7 +3,7 @@
 > **读者**：机制维护者 / 调参
 > **一句话**：屏幕右上角那个盘上画什么、什么时候响——五层判据怎么从不完整的回波里回答"这一发会不会打到我"，每一条阈值是从哪儿来的，以及为什么它们不做平滑。
 > **数值出处**：`frontend/src/app/systems/rwr.js`（五条判据与 `rayMiss`）、`frontend/src/core/config.js`（`RWR_RANGE` / `ALARM_*` / `WARN_*` / `BEAR_*` / `STEADY_T` / `RWR_ARROWS` / `RWR_TONE_S`）、`frontend/src/audio/levels.js` 与 `alarms.js`（两种告警音）、`Systems/Beams.cs`（`painting`）与 `Core/Defs.cs`（`LASER_SPHERE` / `LASER_RANGE`）；雷达本身（`radar_strength` / `radar_k` / 发现距离）归 [../rules/units.md](../rules/units.md)
-> **核对**：1.44.0 / 2026-11-25
+> **核对**：1.45.0 / 2026-11-25
 
 **盘面长什么样、画在屏幕哪里、箭头怎么画**：[../hud/hud.md](../hud/hud.md) §8、§9。本页只管
 判据、阈值、推导与实测。
@@ -58,7 +58,7 @@
 | --- | --- | --- | --- | --- | --- |
 | 1 | 无 | — | 方位线 | 静 | — |
 | 2 | 无 | `steady` | 方位线 | **闪 / 响** | — |
-| 3 | 有 | `warn` 或 `aim` | 红点 | **闪 / 响** | 预瞄框 + 提前量线 |
+| 3 | 有 | `warn` 或 `aim` | 红点 | **闪 / 响** | 目标框 + 提前量线 |
 | 4 | 有 | 会掠过 | 红点 | 静 | 同上 |
 
 即

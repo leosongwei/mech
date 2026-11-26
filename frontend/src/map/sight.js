@@ -2,7 +2,7 @@
 // `systems/sight.py`, and the one line of sight the game has: the field
 // (ground, buildings, tree canopies - `sightAt`) and the deployed smoke puffs
 // hide.  A trunk alone never does, and the leaves and the smoke stop the eye
-// and nothing else.  The HUD asks it before it draws a pre-aim box, so a hull
+// and nothing else.  The HUD asks it before it draws a target box, so a hull
 // the seeker could not lock is a hull the pilot gets no marker on either.
 
 import { TILE_BUILDING, inRoots } from './tiles.js';

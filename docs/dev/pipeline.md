@@ -4,8 +4,9 @@
 > **一句话**：`World.update` 里系统按什么顺序跑、每一段为什么排在那里——顺序本身就是语义，
 > 新系统插错位置是一个安静的行为改动。
 > **代码**：`Core/World.cs`（`_build_pipeline` / `update`）、`Net/Server.cs`（`game_loop`）、
-> `Modes/Mode.cs`、`Systems/AI/Support/Pipeline.cs`、`Systems/Sweep.cs`、`Systems/Impact.cs`
-> **核对**：1.42.0 / 2026-11-24
+> `Modes/Mode.cs`、`Systems/AI/Support/Pipeline.cs`、`Systems/Datalink.cs`、
+> `Systems/Visibility.cs`、`Systems/Sweep.cs`、`Systems/Impact.cs`
+> **核对**：1.45.0 / 2026-11-25
 
 玩家看得见的那部分（一 tick 的价值、命中怎么判）不在这里：索引见
 [../product/README.md](../product/README.md)。
@@ -28,12 +29,13 @@ public void update(float dt) {
 
 跑完之后 tick 循环做广播，并把 `world.tick` 交给网络层；`broadcast` 不在 `World` 里。
 
-## 2. shared 段：`rearm` → `player_input`
+## 2. shared 段：`rearm` → `player_input` → `datalink`
 
 | 系统 | 为什么在前 |
 | --- | --- |
 | `Rearm.run` | 换装工时先走一秒，`work_remaining_time` 归零的那一刻**本 tick** 就装上 |
 | `PlayerInput.run` | 飞行员的意图写进组件（`sight_yaw`/`sight_pitch`、`vel_cmd`、`trigger`），后面所有人读它 |
+| `Datalink.run` | 玩家输入已落位；用 tick 起始网格重建车辆观察并集，AI 与快照同 tick 消费 |
 
 `player_input` 在工时未归零时把移动与两个扳机位清零，所以"换装"是一次真的停火——它必须在
 `weapons` 之前，否则本 tick 已经打出去了。
@@ -47,6 +49,7 @@ battle 的块是 `Systems.AI.Pipeline.battle()`，一个扁平列表，顺序写
 ```
 Threats  本 tick 的制导弹丸，全场只算一次     → ai_threat
 Intercept 谁有弹冲着自己来                    → ai_cover / ai_threat
+Sense.link_wheel 扫描钟到点的机组写数据链方位    → tgt（低权重，不存目标 ID）
 Watch.run 注意力用上一 tick 的信念决定看哪儿    → ai_gaze / gaze_cmd，并读四张方位轮盘
 Watch.turn 孔径按 150 °/s 转过去               → gaze_yaw
 Sense     每机组一次瞭望，只在这个窗口里找      → ai_tgt（信念）与 target

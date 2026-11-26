@@ -63,6 +63,9 @@ public static class Components
         // (`Components.BEAM_COMPS`), which is what a machine that can steer a round
         // has and a machine that cannot has nothing of
         ecs.register("designator", Kind.U8);
+        ecs.register("datalink", Kind.U8);               // a vehicle that observes and shares armour contacts
+        ecs.register("link_seen", Kind.U8, 2, 0);        // current direct observation, by faction
+        ecs.register("link_seen_tick", Kind.I, 2, -1);   // last direct observation tick, by faction
         ecs.register("person", Kind.U8);                // a man on foot: a prox fuse goes off on him
         ecs.register("invulnerable", Kind.U8);          // rounds stop, damage does nothing
         // what it is *called*: an index into `World.names`, 0 for a hull with no
@@ -352,6 +355,9 @@ public static class Components
         "beam_tgt", "beam_age", "beam_seen", "beam_mem",
         "beam_vel", "beam_acc", "beam_pv", "beam_ok", "beam_lit",
     };
+
+    /// <summary>Current and last direct observation by each faction, owned by vehicles.</summary>
+    public static readonly string[] DATALINK_COMPS = { "link_seen", "link_seen_tick" };
 
     /// <summary>...and the one byte a beam rider needs to know which line of the
     /// laser it is riding (`Systems/Flights.cs::Saclos`).</summary>

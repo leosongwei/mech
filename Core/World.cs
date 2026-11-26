@@ -104,6 +104,8 @@ public sealed class World
     // the alarm pass's reused tables (`Systems/AI/Suppress.cs`): one set per world, so
     // a tick allocates nothing once they have grown
     public Systems.AI.SuppressScratch? suppress;
+    // guided rounds directly observed by each faction's vehicles this tick
+    public readonly HashSet<int>[] linked_missiles = { new(), new() };
     public int[] lane_routes = Array.Empty<int>();
     public List<List<(float x, float z)>> lanes;
     public List<List<(float x, float z)>> lanes_rev;
@@ -181,7 +183,7 @@ public sealed class World
     {
         systems = new List<Action<World, float>>
         {
-            Systems.Rearm.run, Systems.PlayerInput.run,
+            Systems.Rearm.run, Systems.PlayerInput.run, Systems.Datalink.run,
         };
         systems.AddRange(mode_mod.pre_systems());
         // the crews have said where they are looking (player_input, the mode's
@@ -277,6 +279,7 @@ public sealed class World
         // a launcher that can fire a beam rider carries the laser's four channels
         // (`Systems/Beams.cs`), declared by the type the same way `arms` is
         if (d.tags.Contains("designator")) comps.AddRange(Components.BEAM_COMPS);
+        if (d.tags.Contains("datalink")) comps.AddRange(Components.DATALINK_COMPS);
         // the invariant a system may rely on (Components.cs): everything that
         // moves owns a place and a velocity, and a hull owns the intent too.
         // Asserted at the factory so a new entity type that forgets one dies at

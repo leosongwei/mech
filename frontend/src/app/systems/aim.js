@@ -275,7 +275,7 @@ export class Aim {
     return LEAD_RING * (app.aimAssist ? app.assistRing : 1);
   }
 
-  // The optics' own field of view, smoothed: what the pre-aim boxes are sized
+  // The optics' own field of view, smoothed: what the target boxes are sized
   // against.
   fov() {
     return clamp(BASE_FOV / this.app.zoom, 0.02, BASE_FOV);

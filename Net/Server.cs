@@ -419,10 +419,10 @@ public static class Server
     {
         if (CONNECTIONS.Count == 0) return;
         bool snap_tick = tick % SNAP_EVERY == 0;
-        // the minimap block is one list for everybody and does not need 15 Hz:
-        // built once here, appended to each pilot's frame on the way out
-        byte[]? contacts = tick % Netcode.CONTACT_EVERY == 0
-            ? Netcode.contacts_bytes(world) : null;
+        // The minimap is shared knowledge, so there is one contact list per faction.
+        bool contact_tick = tick % Netcode.CONTACT_EVERY == 0;
+        byte[]? contacts_red = contact_tick ? Netcode.contacts_bytes(world, Defs.FACTION_RED) : null;
+        byte[]? contacts_blue = contact_tick ? Netcode.contacts_bytes(world, Defs.FACTION_BLUE) : null;
         List<Dictionary<string, object?>>? fx = null;
         if (world.events.Count > 0)
         {
@@ -447,6 +447,7 @@ public static class Server
                 if (!client.held)
                 {
                     client.view.at(world, pl);
+                    byte[]? contacts = pl.faction == Defs.FACTION_RED ? contacts_red : contacts_blue;
                     client.offer("b", Netcode.snapshot_bytes(world, client.view, contacts));
                 }
                 else

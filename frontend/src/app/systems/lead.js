@@ -1,45 +1,40 @@
-// The pre-aim rings: where each arm's round has to be aimed to hit a hull on the
-// move, drawn as a picker the pilot can put the cross inside of.
+// Target boxes and pre-aim rings: the target layer says which vehicles and
+// guided rounds are known; the pre-aim layer says where each ballistic arm has
+// to point.  They share one record so a target box remains useful without a
+// ballistic weapon, while friendly targets never acquire rings or aim snaps.
 //
-// Three steps, and the split between them is what makes the rings usable:
+// Three steps keep the two layers separate:
 //
-//   1. `update`  - per snapshot, in world space.  Which hulls are worth a ring,
-//                  which arm gets which lead, one `leadPoint` per arm per
-//                  target.  Runs only when the snapshot sequence moves.
-//   2. `screen`  - per frame.  Projects those world points, sizes the box, asks
-//                  `layout` where each ring is *drawn*.
-//   3. `layout`  - per frame, screen space.  Pairs that would overlap are laid
-//                  out as a pair on the line their own two solutions make, and
-//                  the ring under the centre cross is picked: that pick is the
-//                  sight (`aimSnap`).
+//   1. `update`  - per snapshot, in world space.  Build target records from the
+//                  wire, then add one `leadPoint` per arm per enemy target.
+//   2. `screen`  - per frame.  Project those world points and size the target
+//                  boxes and rings.
+//   3. `layout`  - per frame, screen space.  Lay out overlapping enemy rings and
+//                  pick the ring under the centre cross (`aimSnap`).
 //
-// The split exists because a ring is a *picker* (drawn where the eye can use it)
-// and a pre-aim solution is a *point* (where the round has to go).  `wx/wy/wz`
-// is the point; `x/y` is where it is drawn.
+// A ring is a *picker* (drawn where the eye can use it) and a pre-aim solution is
+// a *point* (where the round has to go).  `wx/wy/wz` is the point; `x/y` is where
+// it is drawn.
 
 import { LEAD_TARGETS } from '../../core/config.js';
 import { clamp } from '../../core/math.js';
-import { LEAD_PAIR_SEP } from '../../hud/index.js';
+import { LEAD_PAIR_SEP } from '../../hud/layout.js';
 import { leadPoint } from '../../core/fcs.js';
 import { sightBlocked } from '../../map/index.js';
 
 export class Lead {
   constructor(app) {
     this.app = app;
-    this.world = [];       // this snapshot's solutions, in world space
+    this.world = [];       // this snapshot's target records, in world space
     this.seq = -1;         // the snapshot they were computed for
     this.leads = [];       // the same, projected for this frame
     this.pairDir = new Map();   // per target: the line its two rings lie on
   }
 
-  // The boxes a pilot lines the sights up with to hit a hull on the move: the
-  // point each arm's round has to be aimed at.  The sight is zeroed to a fixed
-  // range, so the round needs `range / vel` seconds to reach anything it is laid
-  // on and the lead is the hull's own motion over that time - put the centre
-  // cross on the box at that range and the shot lands.  A gun and a rocket pod
-  // need very different leads, so every arm gets its own box.  Recomputed per
-  // snapshot and kept in world space (`world`), so the box stays glued to the
-  // hull while the pilot slews the sight.
+  // Target records are built before looking at the arms.  Vehicles keep the
+  // existing 25 m - 4 km and nearest-four rule; guided rounds keep the snapshot
+  // tier.  Direct sight wins over a datalink bit; friendly rows carry the shared
+  // position bit and use the same solid/dashed source rule.
   update(own) {
     const { app } = this;
     if (app.net.seq === this.seq) return;
@@ -50,17 +45,61 @@ export class Lead {
     // the smoke that is actually up: a canister still in the air is a charge,
     // not a screen (the server only ever tests deployed puffs)
     const puffs = app.net.smoke.filter((s) => !s.canister);
-    // two poses, and the difference is the point of the whole solve.  The *eye*
+    const eye = app.aim.sightEye(own);
+
+    const cand = [];
+    for (const e of app.net.entities.values()) {
+      if (e.type !== 3 && e.type !== 4) continue;           // APC / MECH only
+      const ud = app.defs.units[e.type] || {};
+      const d = Math.hypot(e.x - own.x, e.z - own.z);
+      if (d < 25 || d > zero.range) continue;              // out of the fire control
+      const half = (ud.height || 3) * 0.5;
+      if (!app.hud._project(e.x, e.y + half, e.z)) continue;
+      cand.push({ e, ud, d, half });
+    }
+    cand.sort((a, b) => a.d - b.d);
+
+    const targets = [];
+    for (const c of cand.slice(0, LEAD_TARGETS)) {
+      const e = c.e;
+      const friendly = e.faction === own.faction;
+      const blocked = sightBlocked(app.map,
+        eye[0], eye[1], eye[2], e.x, e.y + c.half, e.z, puffs);
+      const source = !blocked ? 'direct' : e.link ? 'datalink' : null;
+      if (!source) continue;
+      targets.push({
+        id: e.id, kind: 'vehicle', faction: e.faction, source, src: e,
+        x: e.x, y: e.y + c.half, z: e.z,
+        rx: c.ud.radius || 2, ry: c.half, marks: [],
+      });
+    }
+
+    // Guided rounds come from the snapshot, not the RWR's placed-threat list:
+    // the receiver keeps its own hearing and alarm rules, while this layer draws
+    // every known friendly round and every directly seen or linked enemy round.
+    for (const p of app.net.projectiles) {
+      if (p.kind !== 2 && p.kind !== 3) continue;
+      if (!app.hud._project(p.x, p.y, p.z)) continue;
+      const friendly = p.faction === own.faction;
+      const blocked = sightBlocked(app.map,
+        eye[0], eye[1], eye[2], p.x, p.y, p.z, puffs);
+      const source = !blocked ? 'direct' : p.link ? 'datalink' : null;
+      if (!source) continue;
+      const wd = app.defs.weapons[p.wid] || {};
+      targets.push({
+        id: p.id, kind: 'missile', faction: p.faction, source,
+        x: p.x, y: p.y, z: p.z, vx: p.vx, vy: p.vy, vz: p.vz,
+        rx: wd.hit_r || 0, ry: wd.hit_r || 0, marks: [],
+      });
+    }
+    this.world = targets;
+    if (!targets.length) return;
+
+    // Two poses, and the difference is the point of the whole solve.  The *eye*
     // is what the pilot sees and the line of sight is taken from, so it is the
     // drawn one; the *muzzle* is where the round will actually leave from, so it
     // is the fire-tick pose.  A ring solved from the drawn pose lands a metre
-    // behind a driving pilot and a metre short of a moving hull - at 600 m, both
-    // of them a miss.
-    const lag = app.aim.fireLag();
-    const eye = app.aim.sightEye(own);
-    const pose = app.aim.firePose(own);
-    const aimEye = app.aim.sightEye(own, pose);
-
+    // behind a driving pilot and a metre short of a moving hull.
     const arms = [];
     for (let arm = 0; arm < 2; arm++) {
       const wd = app.defs.weapons[own.weapon[arm]];
@@ -68,85 +107,42 @@ export class Lead {
       // only rounds that fly ballistically need the lead: the SACLOS and the
       // top-attack missile steer themselves onto whatever the sight marks
       if (!wd || (wd.kind !== 'bullet' && wd.kind !== 'rocket')) continue;
-      arms.push({ arm, wd, m: app.aim.muzzle(own, arm, pose) });
-    }
-    // A missile the radar has *seen* gets the same treatment as a hull: a box on
-    // the ball it is, and one ring per arm at the point the round has to be aimed
-    // at.  It is the one target that cannot be hit by aiming where it *is* - a
-    // round crosses 20 m in a tick and the fuse arm is 4 m - so the lead matters
-    // more here than anywhere.  Same line of sight rule as the hulls below: a
-    // round behind a ridge or a screen of smoke is not boxed.
-    for (const t of app.rwr.threats || []) {
-      if (!t.seen || !(t.hit_r > 0)) continue;
-      if (sightBlocked(app.map, eye[0], eye[1], eye[2], t.x, t.y, t.z, puffs)) continue;
-      const m = { id: t.id, ball: true, x: t.x, y: t.y, z: t.z,
-                  rx: t.hit_r, ry: t.hit_r, marks: [] };
-      for (const a of arms) {
-        const p = leadPoint(a.wd, app.zeroRange, zero.max_elev,
-          a.m[0], a.m[1], a.m[2], aimEye[0], aimEye[1], aimEye[2], t.x, t.y, t.z,
-          t.vx || 0, t.vz || 0, t.vy || 0);
-        if (p) m.marks.push({ arm: a.arm, x: p.x, y: p.y, z: p.z, tof: p.tof });
-      }
-      this.world.push(m);
+      arms.push({ arm, wd });
     }
     if (!arms.length) return;
+    const lag = app.aim.fireLag();
+    const pose = app.aim.firePose(own);
+    const aimEye = app.aim.sightEye(own, pose);
+    for (const a of arms) a.m = app.aim.muzzle(own, a.arm, pose);
 
-    // Enemy hulls on screen, nearest first: the four closest get a box, the rest
-    // is clutter.  Every one of them gets a ring, moving or not: with a fixed
-    // zero the ring no longer means "lead the target" but "put the centre cross
-    // here", and a standing hull 2 km out needs just as much of a lift as a
-    // driving one needs lead.
-    const cand = [];
-    for (const e of app.net.entities.values()) {
-      if (e.type !== 3 && e.type !== 4) continue;           // APC / MECH only
-      if (e.faction === own.faction) continue;
-      const ud = app.defs.units[e.type] || {};
-      const d = Math.hypot(e.x - own.x, e.z - own.z);
-      if (d < 25 || d > zero.range) continue;              // out of the fire control
-      if (!app.hud._project(e.x, e.y + (ud.height || 3) * 0.5, e.z)) continue;
-      cand.push({ e, ud, d });
-    }
-    if (!cand.length) return;
-    cand.sort((a, b) => a.d - b.d);
-
-    for (const c of cand.slice(0, LEAD_TARGETS)) {
-      const e = c.e;
-      const half = (c.ud.height || 3) * 0.5;               // hull centre above the ground
-      // no line of sight, no box: a hull behind a ridge, a building, a tree stand
-      // or a screen of smoke is one the seeker cannot lock either, and a marker
-      // floating on it would be a wallhack.  Same rule the server's AI and IR
-      // seeker obey.
-      if (sightBlocked(app.map, eye[0], eye[1], eye[2], e.x, e.y + half, e.z, puffs)) continue;
-      const t = {
-        id: e.id, src: e,
-        x: e.x, y: e.y + half, z: e.z,
-        rx: c.ud.radius || 2, ry: half,
-        marks: [],
-      };
+    for (const t of targets) {
+      if (t.faction === own.faction) continue;
       for (const a of arms) {
-        // the lead is solved against the hull's real velocity, which is what the
-        // wire carries (`vel`); `mv*` is the same number smoothed.  The pull is
-        // `ax` / `az`, the acceleration `net` measures off two velocity samples:
-        // a hull still accelerating into the shot, or braking out of one, is
-        // further on (or shorter) than its speed alone says by the time the round
-        // arrives.  A measurement older than half a second says nothing about
-        // now - a hull that was tiered out or held off the wire is ringed at its
-        // velocity alone.
-        const fresh = e.avt !== undefined && app.net.tick - e.avt <= 15;
-        const p = leadPoint(a.wd, app.zeroRange, zero.max_elev,
-          a.m[0], a.m[1], a.m[2], aimEye[0], aimEye[1], aimEye[2],
-          e.px + e.vx * lag, e.py + half, e.pz + e.vz * lag,
-          e.mvx === undefined ? e.vx : e.mvx, e.mvz === undefined ? e.vz : e.mvz,
-          e.mvy === undefined ? e.vy : e.mvy, fresh ? e.ax : 0, fresh ? e.az : 0);
+        let p;
+        if (t.kind === 'missile') {
+          p = leadPoint(a.wd, app.zeroRange, zero.max_elev,
+            a.m[0], a.m[1], a.m[2], aimEye[0], aimEye[1], aimEye[2],
+            t.x, t.y, t.z, t.vx || 0, t.vz || 0, t.vy || 0);
+        } else {
+          const e = t.src;
+          const half = t.ry;
+          // The pull is trusted only while `net`'s two-sample measurement is
+          // fresh; a held or tiered row falls back to velocity alone.
+          const fresh = e.avt !== undefined && app.net.tick - e.avt <= 15;
+          p = leadPoint(a.wd, app.zeroRange, zero.max_elev,
+            a.m[0], a.m[1], a.m[2], aimEye[0], aimEye[1], aimEye[2],
+            e.px + e.vx * lag, e.py + half, e.pz + e.vz * lag,
+            e.mvx === undefined ? e.vx : e.mvx, e.mvz === undefined ? e.vz : e.mvz,
+            e.mvy === undefined ? e.vy : e.mvy, fresh ? e.ax : 0, fresh ? e.az : 0);
+        }
         if (p) t.marks.push({ arm: a.arm, x: p.x, y: p.y, z: p.z, tof: p.tof });
       }
-      // the box stands on its own: a hull can be in view while the point to aim
-      // at is off the edge of the screen
-      this.world.push(t);
     }
   }
 
-  // Put the pre-aim solutions on the screen as it stands this frame.
+  // Put the target boxes and pre-aim solutions on the screen as it stands this
+  // frame.  The target metadata survives projection unchanged; only enemy
+  // records carry marks into layout.
   screen(own) {
     const { app } = this;
     this.leads = [];
@@ -161,15 +157,16 @@ export class Lead {
       if (!box) continue;
       const dist = Math.hypot(t.x - own.x, t.y - eyeY, t.z - own.z);
       const pxm = app.hud.h / (2 * Math.max(dist, 1) * tanHalf);   // pixels per metre
-      // a missile's box is sized by its own ball (`hit_r`, carried in `rx`) and
-      // has a floor of its own: a 0.08 m round is well under a pixel at a
-      // kilometre, and a mark too small to see is not a pre-aim box
-      const hw = clamp(t.rx * pxm, t.ball ? 8 : 6, 70);
+      // A missile's target box is sized by its own ball (`hit_r`, carried in
+      // `rx`) and has a floor of its own: a 0.08 m round is well under a pixel
+      // at a kilometre, and a mark too small to see is not useful.
+      const hw = clamp(t.rx * pxm, t.kind === 'missile' ? 8 : 6, 70);
       const out = {
-        id: t.id, src: t.src || null,
+        id: t.id, kind: t.kind, faction: t.faction, source: t.source,
+        src: t.src || null,
         x: box[0], y: box[1],
         hw,
-        hh: t.ball ? hw : clamp(t.ry * pxm, 5, 70),
+        hh: t.kind === 'missile' ? hw : clamp(t.ry * pxm, 5, 70),
         dist,
         marks: [],
       };
@@ -250,6 +247,7 @@ export class Lead {
     const prev = this.pairDir;
     const next = new Map();
     for (const t of this.leads) {
+      if (!t.marks.length) continue;
       const [a, b] = t.marks;
       if (!b) continue;
       const dx = b.x - a.x, dy = b.y - a.y;
@@ -274,6 +272,7 @@ export class Lead {
     const cx = app.hud.w / 2, cy = app.hud.h / 2;
     let best = null;
     for (const t of this.leads) {
+      if (!t.marks.length) continue;
       const [a, b] = t.marks;
       if (!a) continue;
       let hit = null;

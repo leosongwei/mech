@@ -109,7 +109,7 @@ export class Rwr {
       // heard: the alarm's own floor, 12 dB under the tracker's
       if (d * d > ALARM_GAIN * k * vc) continue;
       // one line of sight, the same door the AI's lookout, the IR lock and the
-      // pre-aim box go through: terrain, a canopy or a screen of smoke hides a
+      // target box go through: terrain, a canopy or a screen of smoke hides a
       // round from the receiver exactly as it hides a hull
       if (sightBlocked(app.map, eye[0], eye[1], eye[2], p.x, p.y, p.z, puffs)) continue;
 

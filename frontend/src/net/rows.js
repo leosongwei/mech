@@ -25,6 +25,9 @@ const ACC_JUMP = 25;            // m/s^2, against a mech's 9.3 and an APC's 8
 
 const SIZE = { u8: 1, u16: 2, f32: 4 };
 
+export const TARGET_LINK = 1 << 6;       // MECH / APC flags: shared target observation
+export const PROJ_TARGET_LINK = 1 << 0;  // projectile +5: shared guided-round observation
+
 export const CLASSES = [
   {
     name: 'mech',               // everything: hull, arms, magazines, the sight head
@@ -176,7 +179,7 @@ for (const c of CLASSES) {
 // class may write, and the two-slot arrays a mech or an APC fills.
 export function newEntity(id) {
   return { id, x: 0, y: 0, z: 0, yaw: 0, pitch: 0, turret: 0, leg: 0, syaw: 0, spitch: 0,
-    gaze: 0, tgaze: 0,
+    gaze: 0, tgaze: 0, link: false,
     vx: 0, vy: 0, vz: 0, hp: [0, 0, 0, 0], ammo: [0, 0], mag: [0, 0], weapon: [0, 0] };
 }
 
@@ -187,7 +190,7 @@ export function resetRow(e, cls) {
 }
 
 // One unit row, in its class's own layout; the offset of the row after it.
-export function decodeRow(e, dv, off, cls) {
+export function decodeRow(e, dv, off, cls, datalink = false) {
   const fields = CLASSES[cls].fields;
   for (let i = 0; i < fields.length; i++) {
     const f = fields[i];
@@ -197,6 +200,7 @@ export function decodeRow(e, dv, off, cls) {
     for (let k = 0; k < n; k++) put(e, dv, off + k * size, k);
     off += size * n;
   }
+  e.link = datalink && (cls === 0 || cls === 1) && !!(e.flags & TARGET_LINK);
   e.tpitch = e.pitch;
   e.tturret = e.turret;
   e.tleg = e.leg;

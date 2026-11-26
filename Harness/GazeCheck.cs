@@ -3,7 +3,8 @@
 // Every line is one rule of `Systems/AI/Watch.cs` + `Systems/AI/Support/Wheel.cs` on
 // the range map, with the field cleared down to what the line is about - the rule
 // `FcsCheck` and `BeamCheck` follow (`Check.aim_east` points the four angles at the
-// target so a row measures the thing it is named after).
+// target so a row measures the thing it is named after).  The datalink rows use a
+// real smoke screen and a second vehicle to separate shared knowledge from sight.
 //
 //   ./dotnet.sh run -- --check gaze
 
@@ -331,6 +332,131 @@ public static class GazeCheck
             Clean(world, -1);
         }
 
+        // ---- datalink-wheel: smoke hides a hull outside the window, a friendly
+        // observer keeps the contact live, and the weak bearing turns the head ----
+        {
+            int crew = Crew(world, sx, sz);
+            Clean(world, crew);
+            float bearing = MathF.PI, distance = 1500f;
+            var (target, _, _) = LinkTarget(world, crew, bearing, distance);
+            int slot = Wheel.slot_of(bearing);
+            float t = 0f;
+            bool turned = false;
+            while (t < 5f && e.iv("target")[crew] != target)
+            {
+                Step(world, crew); t += DT;
+                if (State(world, crew) is AiGaze.ALARM or AiGaze.ALARM_TURN) turned = true;
+            }
+            var (eye, _, _) = Weapons.aim_of(world, crew);
+            var at = Body(world, target);
+            bool screened = Sight.why(world, eye, at) == "smoke";
+            bool linked = Datalink.known(world, Defs.FACTION_RED, target);
+            bool only = Visibility.source(world, crew, target, at) == VisibilitySource.Datalink;
+            bool acquired = e.iv("target")[crew] == target;
+            bool fresh = acquired && e.fv("ai_tgt").get(crew, 6) == 0f;
+            bool on = acquired && MathF.Abs(MathUtil.wrap_pi(Gaze(world, crew) - bearing))
+                      <= Watch.CONE;
+            var tp = e.fv("pos").get3(target);
+            var td = Defs.UNIT_DEFS[Defs.ETYPE_APC];
+            float dx = tp.x - eye.x, dy = tp.y + td.height * 0.5f - eye.y;
+            float dz = tp.z - eye.z;
+            float expected = Wheel.TGT_W
+                             * ThreatScore.of(Defs.ETYPE_APC, MathF.Sqrt(dx * dx + dy * dy + dz * dz),
+                                              Defs.UNIT_DEFS[Defs.ETYPE_MECH].sight)
+                             * Sense.DATALINK_THREAT;
+            float weight = e.fv("tgt").get(crew, slot * 2 + 1);
+            bool weak = MathF.Abs(weight - expected) < 1e-4f;
+            Line("link-wheel", $"smoke {screened}, source {(only ? "datalink" : "other")},"
+                                + $" turned {turned}, acquired {acquired} at {t:0.00} s,"
+                                + $" fresh {fresh}, wheel {weight:0.000}/{expected:0.000}",
+                 screened && linked && only && turned && acquired && fresh && on && weak, ref bad);
+            Clean(world, -1);
+        }
+
+        // ---- datalink-direct: a direct hull in the same bearing replaces a held
+        // datalink belief, and its stronger evidence owns their shared wheel slot -
+        {
+            int crew = Crew(world, sx, sz);
+            Clean(world, crew);
+            float bearing = 5f * MathF.PI / 180f, direct_bearing = 15f * MathF.PI / 180f;
+            float distance = 1500f;
+            var (linked, _, _) = LinkTarget(world, crew, bearing, distance);
+            float t = 0f;
+            while (t < 5f && e.iv("target")[crew] != linked)
+            {
+                Step(world, crew); t += DT;
+            }
+            bool linked_first = e.iv("target")[crew] == linked;
+            int direct = Hull(world, crew, direct_bearing, distance);
+            float switch_t = 0f;
+            while (switch_t < 3f && e.iv("target")[crew] != direct)
+            {
+                Step(world, crew); switch_t += DT;
+            }
+            bool switched = e.iv("target")[crew] == direct;
+            bool visible = Visibility.source(world, crew, direct, Body(world, direct))
+                           == VisibilitySource.Direct;
+            int slot = Wheel.slot_of(bearing);
+            bool same_slot = slot == Wheel.slot_of(direct_bearing);
+            var (eye, _, _) = Weapons.aim_of(world, crew);
+            var tp = e.fv("pos").get3(direct);
+            var td = Defs.UNIT_DEFS[Defs.ETYPE_APC];
+            float dx = tp.x - eye.x, dy = tp.y + td.height * 0.5f - eye.y;
+            float dz = tp.z - eye.z;
+            float expected = Wheel.TGT_W
+                             * ThreatScore.of(Defs.ETYPE_APC, MathF.Sqrt(dx * dx + dy * dy + dz * dz),
+                                              Defs.UNIT_DEFS[Defs.ETYPE_MECH].sight);
+            float weight = e.fv("tgt").get(crew, slot * 2 + 1);
+            bool strong = MathF.Abs(weight - expected) < 1e-4f;
+            Line("link-direct", $"linked first {linked_first}, direct won {switched} after"
+                                 + $" {switch_t:0.00} s, same slot {same_slot},"
+                                 + $" wheel {weight:0.000}/{expected:0.000}",
+                 linked_first && switched && visible && same_slot && strong, ref bad);
+            Clean(world, -1);
+        }
+
+        // ---- datalink-memory: the current bit clears with its last observer; the
+        // belief walks for Crew.MEMORY instead of receiving a hidden TTL refresh ----
+        {
+            int crew = Crew(world, sx, sz);
+            Clean(world, crew);
+            var (target, observer, _) = LinkTarget(world, crew, 0f, 1500f);
+            float t = 0f;
+            while (t < 5f && e.iv("target")[crew] != target)
+            {
+                Step(world, crew); t += DT;
+            }
+            bool acquired = e.iv("target")[crew] == target;
+            var remembered = new Vec3(e.fv("ai_tgt").get(crew, 0), e.fv("ai_tgt").get(crew, 1),
+                                      e.fv("ai_tgt").get(crew, 2));
+            e.destroy(observer);
+            var truth = e.fv("pos").get3(target);
+            e.fv("pos").set3(target, truth.x + 100f, truth.y, truth.z);
+            e.fv("vel").set3(target, 0f, 0f, 0f);
+            e.fv("vel_cmd").set3(target, 0f, 0f, 0f);
+            float memory_t = 0f;
+            while (memory_t < 0.75f)
+            {
+                Step(world, crew); memory_t += DT;
+            }
+            bool dropped = !Datalink.known(world, Defs.FACTION_RED, target);
+            var walked = new Vec3(e.fv("ai_tgt").get(crew, 0), e.fv("ai_tgt").get(crew, 1),
+                                  e.fv("ai_tgt").get(crew, 2));
+            bool walking = e.iv("target")[crew] == target && e.fv("ai_tgt").get(crew, 6) >= 0.5f
+                           && MathUtil.dist(walked, remembered) < 0.01f;
+            float walked_age = e.fv("ai_tgt").get(crew, 6);
+            while (memory_t < 3.5f)
+            {
+                Step(world, crew); memory_t += DT;
+            }
+            bool forgot = e.iv("target")[crew] < 0 && e.fv("ai_tgt").get(crew, 7) < 0.5f;
+            Line("link-memory", $"acquired {acquired}, link dropped {dropped}, walked"
+                                 + $" {walking} at {walked_age:0.00} s,"
+                                 + $" forgot by {memory_t:0.00} s {forgot}",
+                 acquired && dropped && walking && forgot, ref bad);
+            Clean(world, -1);
+        }
+
         // ---- foot: a man carries no wheel, and still sweeps --------------------
         {
             int crew = world.spawn_unit(Defs.ETYPE_INF_RIFLE, Defs.FACTION_RED, sx, sz, -1,
@@ -359,8 +485,9 @@ public static class GazeCheck
                  ok, ref bad);
         }
 
+        e.validate();
         Console.WriteLine(bad == 0
-            ? "gaze: the head sweeps the front half, answers the wheel, and one bearing is one slot"
+            ? "gaze: the head answers direct and datalink bearings, and one bearing is one slot"
             : $"gaze: {bad} gap(s) - a head that looks where nothing is, or a wheel that forgets");
         return bad;
     }
@@ -460,6 +587,60 @@ public static class GazeCheck
         Pin(world, crew);
     }
 
+    /// <summary>A stationary hostile APC on a bearing from the crew.</summary>
+    private static int Hull(World world, int crew, float bearing, float distance)
+    {
+        var p = world.ecs.fv("pos").get3(crew);
+        return world.spawn_unit(Defs.ETYPE_APC, Defs.FACTION_BLUE,
+                                p.x + MathF.Cos(bearing) * distance,
+                                p.z + MathF.Sin(bearing) * distance, -1,
+                                weapons: new[] { Defs.WID_NONE, Defs.WID_NONE }, crew: false);
+    }
+
+    /// <summary>The 60-percent body point every AI visibility query asks about.</summary>
+    private static Vec3 Body(World world, int target)
+    {
+        var e = world.ecs;
+        var p = e.fv("pos").get3(target);
+        float height = Defs.UNIT_DEFS[e.uv("etype")[target]].height;
+        return new Vec3(p.x, p.y + height * 0.6f, p.z);
+    }
+
+    /// <summary>A live faction contact hidden from the crew by one real smoke puff.
+    /// The friendly observer stands beside the hull, beyond the screen, and rebuilds
+    /// `link_seen` on every tick until the row destroys it.</summary>
+    private static (int target, int observer, int puff) LinkTarget(World world, int crew,
+                                                                   float bearing, float distance)
+    {
+        var e = world.ecs;
+        int target = Hull(world, crew, bearing, distance);
+        var tp = e.fv("pos").get3(target);
+        float cx = MathF.Cos(bearing), cz = MathF.Sin(bearing);
+        int observer = world.spawn_unit(Defs.ETYPE_MECH, Defs.FACTION_RED,
+                                        tp.x - cz * 100f, tp.z + cx * 100f, -1,
+                                        weapons: new[] { Defs.WID_NONE, Defs.WID_NONE },
+                                        crew: false);
+        Check.aim_east(world, observer);
+        var (eye, _, _) = Weapons.aim_of(world, crew);
+        var at = Body(world, target);
+        var mid = new Vec3((eye.x + at.x) * 0.5f, (eye.y + at.y) * 0.5f,
+                           (eye.z + at.z) * 0.5f);
+        int puff = Puff(world, mid, Defs.SMOKE_FLAT[0]);
+        return (target, observer, puff);
+    }
+
+    /// <summary>One deployed puff, with the same component set as a real smoke charge.</summary>
+    private static int Puff(World world, Vec3 at, float radius)
+    {
+        var e = world.ecs;
+        int sid = e.create(Components.PUFF_COMPS);
+        e.fv("pos").set3(sid, at);
+        e.fv("smoke_r").set3(sid, radius, radius * 1.1f, radius);
+        e.fv("smoke_t")[sid] = Defs.SMOKE_LIFE;
+        e.fv("smoke_s")[sid] = 1f;
+        return sid;
+    }
+
     private static void Clean(World world, params int[] keep)
     {
         var e = world.ecs;
@@ -468,6 +649,7 @@ public static class GazeCheck
         foreach (int id in e.query())
         {
             if (Array.IndexOf(keep, id) >= 0) continue;
+            if (e.has(id, "smoke")) { e.destroy(id); continue; }
             if (!e.has(id, "etype")) continue;
             if (e.uv("etype")[id] == Defs.ETYPE_BASE) continue;
             e.destroy(id);

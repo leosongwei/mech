@@ -26,7 +26,8 @@ export const KILL_H = 17;
 export const ARM_COLORS = ['#5fe6ff', '#ffb04a'];
 export const ARM_NAMES = ['L', 'R'];
 export const FAR_COLOR = '#ff4a4a';        // distance past the fire control's reach
-export const LEAD_COLOR = '#f2f6f4';       // the box round a hull with a pre-aim solution
+export const FRIENDLY_TARGET = 'rgb(30,30,255)';   // own-side target box / missile circle
+export const ENEMY_TARGET = 'rgb(30,255,30)';      // hostile target box / missile circle
 export const LEAD_RING = 7;         // px, radius of a pre-aim circle; the aim
                                     // assist widens it (`game._ringPx`)
 // How close the two centres of one target's pair may come, as a multiple of the
@@ -35,10 +36,9 @@ export const LEAD_RING = 7;         // px, radius of a pre-aim circle; the aim
 // cut by one white line, and the cross no longer has to travel two full radii
 // out to the side to pick one.
 export const LEAD_PAIR_SEP = 1.0;
-// A round of our own in the air that is being steered: a circle, where an enemy
-// hull gets a box.  It marks a *machine*, so an unguided rocket - which is not
-// steered by anything - gets nothing at all.
-export const MISSILE_RING = 5;      // px, radius of the circle round a friendly missile
+// A guided round in the air: a circle, where a vehicle gets a target box.  It
+// marks a *machine*, so an unguided rocket gets nothing at all.
+export const MISSILE_RING = 5;      // px, radius of the circle round a guided missile
 export const RADAR_PX = 78;                // px, outer radius of the threat circle
 export const RADAR_MARGIN = 22;            // px between the dial and the screen edges
 export const GEAR_EDGE = 8;                // px from the top and right edges to the gear

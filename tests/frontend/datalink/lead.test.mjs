@@ -72,6 +72,25 @@ test('only enemy targets receive ballistic marks and datalink targets participat
   assert.notEqual(app.aimSnap.id, 2);
 });
 
+test('a missile ring hands the snap its world row, not its pixels', () => {
+  const missile = projectile(201, 1, 800, { vx: -300, vy: 20, vz: 0 });
+  const { app, own } = testApp([], [missile]);
+  own.weapon = [1, 0];
+  app.defs.weapons[1] = { kind: 'bullet', vel: 1080, g: 9.81, life: 9.3 };
+  app.aimAssist = true;
+  const lead = new Lead(app);
+
+  lead.update(own);
+  lead.screen(own);
+  assert.equal(app.aimSnap.id, 201);
+  // the ring is a picker drawn in pixels; the sight is solved again from the
+  // round's own row in world space (`Aim.ringSolve`), which is what it is handed
+  assert.equal(app.aimSnap.e, null);
+  assert.equal(app.aimSnap.fly, lead.world[0]);
+  assert.equal(app.aimSnap.fly.x, 800);
+  assert.equal(app.aimSnap.fly.vy, 20);
+});
+
 test('friendly vehicles and missiles use dashed outlines when only linked', () => {
   const friend = vehicle(2, 0, 100, { link: true });
   const missile = projectile(201, 0, 100, { link: true });

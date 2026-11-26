@@ -149,8 +149,12 @@ export class Aim {
       // flat reads 0 and nothing changes)
       vy = e.mvy === undefined ? e.vy : e.mvy;
     } else if (a.fly) {
+      // a round's row is the newest snapshot's, walked to the fire tick the same
+      // way on all three axes: a missile climbing at 150 m/s is metres high by
+      // the time the burst leaves, and the fuse is 2.5 m wide
       const f = a.fly;
-      tx = f.x + (f.vx || 0) * lag; ty = f.y; tz = f.z + (f.vz || 0) * lag;
+      tx = f.x + (f.vx || 0) * lag; ty = f.y + (f.vy || 0) * lag;
+      tz = f.z + (f.vz || 0) * lag;
       vx = f.vx || 0; vz = f.vz || 0; vy = f.vy || 0;
     } else return null;
     const pose = this.firePose(own);

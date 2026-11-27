@@ -36,9 +36,9 @@ export const LEAD_RING = 7;         // px, radius of a pre-aim circle; the aim
 // cut by one white line, and the cross no longer has to travel two full radii
 // out to the side to pick one.
 export const LEAD_PAIR_SEP = 1.0;
-// A guided round in the air: a circle, where a vehicle gets a target box.  It
-// marks a *machine*, so an unguided rocket gets nothing at all.
-export const MISSILE_RING = 5;      // px, radius of the circle round a guided missile
+// A round in the air: a circle, where a vehicle gets a target box.  Every round
+// with an airframe gets one - the rocket pod's own rounds included.
+export const MISSILE_RING = 5;      // px, radius of the circle round a round
 export const RADAR_PX = 78;                // px, outer radius of the threat circle
 export const RADAR_MARGIN = 22;            // px between the dial and the screen edges
 export const GEAR_EDGE = 8;                // px from the top and right edges to the gear

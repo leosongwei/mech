@@ -78,12 +78,12 @@ public static class Datalink
             {
                 if (!e.is_alive(pid) || faction[pid] == mine) continue;
                 int kind = e.uv("proj_kind")[pid];
-                // a guided round is worth sharing with the rest of the side: the beam
-                // rider and the top attack have always been, and the loitering
-                // munition is the third - it is the one a crew most wants to see
-                // coming, because it is the one that is not aimed at anything yet
-                if (kind != Defs.PROJ_SACLOS && kind != Defs.PROJ_TOP
-                    && kind != Defs.PROJ_DRONE) continue;
+                // every round with a motor and an airframe is worth sharing with the
+                // rest of the side: the rocket pod's, the beam rider's, the top
+                // attack's and the loitering munition's.  A bullet is not - it is a
+                // tracer that is gone before a report could be passed on
+                if (kind != Defs.PROJ_ROCKET && kind != Defs.PROJ_SACLOS
+                    && kind != Defs.PROJ_TOP && kind != Defs.PROJ_DRONE) continue;
                 if (world.linked_missiles[mine].Contains(pid)) continue;
                 var p = pos.get3(pid);
                 float dx = p.x - eye.x, dy = p.y - eye.y, dz = p.z - eye.z;

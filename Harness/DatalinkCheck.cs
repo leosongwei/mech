@@ -139,6 +139,26 @@ public static class DatalinkCheck
         bool loiter_bit = lr >= 0 && (loiterFrame[lr + 5] & 1) != 0;
         Line("munition", $"closing {loiter_link}, wire bit {loiter_bit}, opening {away_link}",
              loiter_link && loiter_bit && !away_link, ref bad);
+
+        // the rocket pod's rounds are on the same footing: they carry an airframe and
+        // a motor like the three guided ones, so a receiver places them and the side
+        // shares them - a rocket closing at 300 m/s is a loud echo
+        int rocket = world.spawn_round(-1, Defs.FACTION_BLUE, Defs.WID_ROCKET,
+                                       Defs.PROJ_ROCKET,
+                                       new Vec3(tp.x - 400f, tp.y + 60f, tp.z),
+                                       new Vec3(-300f, 0f, 0f), 16.4f, -1);
+        int rocketAway = world.spawn_round(-1, Defs.FACTION_BLUE, Defs.WID_ROCKET,
+                                           Defs.PROJ_ROCKET,
+                                           new Vec3(tp.x - 400f, tp.y - 60f, tp.z),
+                                           new Vec3(300f, 0f, 0f), 16.4f, -1);
+        world.update(DT);
+        bool rocket_link = Datalink.missile_known(world, Defs.FACTION_RED, rocket);
+        bool rocket_away = Datalink.missile_known(world, Defs.FACTION_RED, rocketAway);
+        byte[] rocketFrame = Netcode.snapshot_bytes(world, view);
+        int rr = FindProjectile(rocketFrame, rocket);
+        bool rocket_bit = rr >= 0 && (rocketFrame[rr + 5] & 1) != 0;
+        Line("rocket", $"closing {rocket_link}, wire bit {rocket_bit}, opening {rocket_away}",
+             rocket_link && rocket_bit && !rocket_away, ref bad);
         Guidance(ref bad);
         Fire(ref bad);
 

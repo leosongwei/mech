@@ -761,11 +761,13 @@ public static class Netcode
             s[off + 3] = _b(a, r, "proj_wid");
             s[off + 4] = _b(a, r, "faction");
             int kind = _b(a, r, "proj_kind");
-            bool shared = (kind == Defs.PROJ_SACLOS || kind == Defs.PROJ_TOP
-                           || kind == Defs.PROJ_DRONE)
-                          && (_b(a, r, "faction") == v.faction
-                              || Systems.Datalink.missile_known(world, v.faction, eid));
-            s[off + 5] = shared ? (byte)1 : (byte)0; // bit0: shared guided-round observation
+            // bit0 asks one question of every round with an airframe: is this one
+            // ours, or has a receiver on our side placed it
+            bool own = _b(a, r, "faction") == v.faction;
+            bool shared = own
+                          || (kind != Defs.PROJ_BULLET
+                              && Systems.Datalink.missile_known(world, v.faction, eid));
+            s[off + 5] = shared ? (byte)1 : (byte)0; // bit0: shared round observation
             s[off + 6] = 0;
             s[off + 7] = 0;
             _wf(s, off + 8, _f(a, r, "pos", 0));

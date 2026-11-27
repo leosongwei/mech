@@ -19,7 +19,7 @@
 import { clamp } from '../../core/math.js';
 import { LEAD_PAIR_SEP } from '../../hud/layout.js';
 import { leadPoint } from '../../core/fcs.js';
-import { isGuidedRound } from '../../net/rows.js';
+import { isAirRound } from '../../net/rows.js';
 import { sightBlocked } from '../../map/index.js';
 
 export class Lead {
@@ -89,7 +89,7 @@ export class Lead {
     const placed = new Set();
     for (const t of app.rwr.threats) if (t.seen) placed.add(t.id);
     for (const p of app.net.projectiles) {
-      if (!isGuidedRound(p.kind)) continue;
+      if (!isAirRound(p.kind)) continue;
       const friendly = p.faction === own.faction;
       if (!friendly && !placed.has(p.id) && !p.link) continue;
       if (!app.hud._project(p.x, p.y, p.z)) continue;

@@ -6,7 +6,7 @@
 // the last time it was seen.  While the lock holds, both are refreshed every tick
 // off the live hull; the moment something cuts the sight line (a puff, a ridge, a
 // tree, or the hull dying) the stare point keeps walking at that last velocity,
-// and *guidance never notices*: `Flight.step` is handed a point and a velocity, and
+// and *guidance never notices*: the arc law is handed a point and a velocity, and
 // a stale point is a point like any other.
 //
 // That is the whole of the difference between a missile and a rock, and it is

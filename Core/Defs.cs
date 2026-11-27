@@ -467,7 +467,7 @@ public static partial class Defs
         // drag left real (39 m/s^2 of it alone at 600 m/s) a 100 m/s^2 motor needs
         // 7.3 s to net the 560 m/s, and the round is at the `maxvel` clamp exactly as
         // it burns out, 2.6 km down range.  A 5.5 s burn would want 124 m/s^2.
-        // From there it is an *aeroplane*: `Flight.direct` flies the airframe, so the
+        // From there it is an *aeroplane*: the beam law flies the airframe, so the
         // motor's burnout is the moment the flight starts to decay.  Drag (`cd0` 0.6
         // plus the transonic rise) bleeds 600 m/s down to ~400 by the far end of the
         // wire, and holding altitude costs a real angle of attack

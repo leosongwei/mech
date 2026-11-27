@@ -1,23 +1,29 @@
-// `--check airframe`: does the eleven-stage flight block fly the same law as the pure
-// function?
+// `--check airframe`: do the seven airframe stages add up to the airframe the fire
+// control integrates?
 //
 // One round of each winged kind is fired into the range's open plain and flown by the
-// world for thirty seconds.  On every tick the harness reads the state the round had
-// *before* the tick (position, velocity, age, distance flown) and the demand the
-// guidance wrote into the round's components, and steps the pure function
-// (`Flight.step` / `Flight.direct` / `Flight.slide`) from the same state.  What it
-// prints is how far the two readings of that one tick ended up apart.
+// world.  On every tick the harness reads the state the round had *before* the tick
+// (position, velocity, age) - and, for a guided round, the demand this tick's guidance
+// wrote into the round's own `a_dir` / `a_want` - and flies the same tick with the terms
+// called back to back (`Flight.airframe`, `Flight.slide`).  What it prints is how far
+// the two readings of that one tick ended up apart.
 //
-// This is not a baseline comparison: the two sides are the same law written twice (the
-// stages in `Systems/Flights/`, the closed form in `Core/Flight.cs`), so the reading
-// answers "are they still the same law" and nothing else.  The tolerance is 1 mm over
-// a whole flight - three orders of magnitude below the 30 mm round's own dispersion and
-// below any hit sphere in the game.
+// This is not a baseline comparison: the two sides are one law written twice - the seven
+// passes that file their intermediate values in components, and the six terms called in
+// the order `Core/Flight.cs` gives them - so the reading answers "are they still the
+// same law" and nothing else.  The fire control's integrator *is* that second side, so
+// what this row really guards is "the round lands where the barrel was aimed".
 //
-// The beam rider's row flies *unilluminated*: a round with no line asks nothing of the
-// wing, so this row measures the airframe's own terms at their hardest - the heaviest
-// body, the longest motor burn - against `Flight.direct` with the same empty demand.
-// The beam's demand and the crosswind it carries are what `--check beam` measures.
+// The tolerance is 1 mm for a whole tick, three orders of magnitude below the 30 mm
+// round's own dispersion and below any hit sphere in the game.
+//
+// The two unguided rows fly *straight up* and with nothing asked of the wing: a 600 m/s
+// round leaves the range's 4 km in a few seconds, and an unguided round is the airframe
+// with `a_dir` zero.  The top attack's row is the one that carries a lift demand - its
+// guidance's output is read back from the round - so between them the rows cover the
+// four forces with and without a pull.  The crosswind a beam rider carries is written
+// into the accumulator rather than into the demand, so it is not part of either side of
+// this comparison: `--check beam` is what measures it.
 //
 //   ./dotnet.sh run -- --check airframe
 
@@ -30,12 +36,14 @@ public static class AirframeCheck
 {
     private const float DT = 1f / 30f;
     private const float DURATION = 30f;         // s of flight compared per row
-    private const float UP = MathF.PI * 0.5f;   // a launch with no guidance climbs
     private const float TOL_POS = 1e-3f;        // m
     private const float TOL_VEL = 1e-3f;        // m/s
+    private const float UP = MathF.PI * 0.5f;   // a launch with no guidance climbs
 
-    /// <summary>Which pure function the row is compared against.</summary>
-    private enum Law { Slide, Arc, Beam }
+    /// <summary>What the tick is compared against: `Flight.slide` for a round the wing
+    /// is not steering, `Flight.airframe` with the demand read back off the round for
+    /// one that is.</summary>
+    private enum Law { Slide, Wing }
 
     private sealed class Row
     {
@@ -46,19 +54,16 @@ public static class AirframeCheck
 
     public static int run()
     {
-        Console.WriteLine("round        law     seconds   max |dpos| m   max |dvel| m/s  note");
+        Console.WriteLine("round        reference  seconds   max |dpos| m   max |dvel| m/s  note");
         int bad = 0;
         // the range's open plain, a kilometre clear of the missile-defence post (whose
         // pass is off anyway) - a fired round is measured here, not in a battle
         var launcher = new Vec3(2000f, 0f, 800f);
-        // the two rows with no guidance are fired straight up: an unguided round
-        // does 600 m/s, so a level shot leaves the range's 4 km in a few seconds and
-        // the comparison would stop at the edge of the map
         Report("rocket", Law.Slide, Defs.WID_ROCKET, Defs.PROJ_ROCKET,
                launcher, dist: 0f, climb: UP, ref bad);
-        Report("saclos", Law.Beam, Defs.WID_SACLOS, Defs.PROJ_SACLOS,
+        Report("saclos", Law.Slide, Defs.WID_SACLOS, Defs.PROJ_SACLOS,
                launcher, dist: 0f, climb: UP, ref bad);
-        Report("topattack", Law.Arc, Defs.WID_TOPATTACK, Defs.PROJ_TOP,
+        Report("topattack", Law.Wing, Defs.WID_TOPATTACK, Defs.PROJ_TOP,
                launcher, dist: 1800f, climb: 0f, ref bad);
         Console.WriteLine(bad == 0
             ? "\nairframe: the stages and the closed form are the same law"
@@ -100,52 +105,36 @@ public static class AirframeCheck
                            MathF.Sin(yaw) * flat);
         int round = world.spawn_round(-1, Defs.FACTION_BLUE, wid, kind, start, vel,
                                       wd.life, target);
-        float seed = e.fv("proj_seed")[round];
 
         var row = new Row();
-        var last = new Vec3(0f, 0f, 0f);
-        float lastAge = 0f, lastTrav = 0f;
         for (int t = 0; (float)t * DT < DURATION; t++)
         {
-            var (p0, v0, age0, trav0, _) = State(e, round, out bool alive);
+            var (p0, v0, age0) = State(e, round, out bool alive);
             if (!alive) break;
-            last = p0;
-            lastAge = age0;
-            lastTrav = trav0;
             world.update(DT);
-            var (p1, v1, _, _, hit_t) = State(e, round, out alive);
+            var (p1, v1, _) = State(e, round, out alive);
             // a round that has run into something, run out of battery or been shot at
             // stops where it stands, and the tick it stopped in is not a leg to compare
-            if (!alive || !Flights.flying(hit_t))
+            if (!alive || !Flights.flying(Hit_t(e, round)))
             {
                 row.note = $"stopped at {t * DT:0.0} s";
                 break;
             }
             var want = Vec3.zero;
-            bool comparable = true;
-            switch (law)
+            if (law == Law.Wing)
             {
-                case Law.Arc:
-                    // the stare point this tick's seeker refreshed, and the velocity
-                    // it walks at: what `arc_demand` was handed
-                    var spot = e.fv("tgt_mem").get3(round);
-                    if (spot.x == 0f && spot.y == 0f && spot.z == 0f)
-                    {
-                        row.note = "no lock to compare against";
-                        comparable = false;
-                        break;
-                    }
-                    want = Flight.step(p0, v0, age0, trav0, spot,
-                                       e.fv("tgt_vel").get3(round), wd, DT);
+                var dir = Demand(e, round, out float mag);
+                if (mag == 0f)
+                {
+                    row.note = "no demand to compare against";
                     break;
-                case Law.Beam:
-                    want = Flight.direct(p0, v0, age0, Vec3.zero, null, wd, DT, seed);
-                    break;
-                default:
-                    want = Flight.slide(v0, age0, wd, DT);
-                    break;
+                }
+                want = Flight.airframe(v0, age0, wd, DT, dir, mag);
             }
-            if (!comparable) break;
+            else
+            {
+                want = Flight.slide(v0, age0, wd, DT);
+            }
             var wp = new Vec3(p0.x + want.x * DT, p0.y + want.y * DT, p0.z + want.z * DT);
             row.dpos = MathF.Max(row.dpos, (p1 - wp).len);
             row.dvel = MathF.Max(row.dvel, (v1 - want).len);
@@ -153,29 +142,42 @@ public static class AirframeCheck
         }
         bool ok = row.seconds > 1f && row.dpos <= TOL_POS && row.dvel <= TOL_VEL;
         if (!ok) bad++;
-        Console.WriteLine($"{label,-12} {law,-7} {row.seconds,7:0.0}   {row.dpos,12:E2}   "
+        Console.WriteLine($"{label,-12} {law,-9} {row.seconds,7:0.0}   {row.dpos,12:E2}   "
                           + $"{row.dvel,14:E2}  {row.note}"
                           + (ok ? "" : "  <-- out of tolerance"));
-        if (!ok && row.seconds > 1f)
-            Console.WriteLine($"{"",-12} last state of the flight: {last.x:0.0}, {last.y:0.0}, "
-                              + $"{last.z:0.0} at {lastAge:0.00} s / {lastTrav:0} m");
     }
 
-    /// <summary>The round's state as the flight stages see it: position, velocity, the
-    /// age it had before this tick's countdown, the distance flown, and the record (a
-    /// contact at t=0 means this tick's leg ended in something).</summary>
-    private static (Vec3 pos, Vec3 vel, float age, float trav, float hit_t) State(
-        ECS e, int round, out bool alive)
+    /// <summary>The demand this tick's guidance wrote into the round: the direction the
+    /// wing is asked to pull square to the flight path, and how hard.</summary>
+    private static Vec3 Demand(ECS e, int round, out float mag)
+    {
+        int row = e.row_of(round);
+        var a = e.arch_of(round)!;
+        mag = a.f("a_want")[row];
+        return new Vec3(a.f("a_dir")[row * 3], a.f("a_dir")[row * 3 + 1],
+                        a.f("a_dir")[row * 3 + 2]);
+    }
+
+    /// <summary>The round's state as the flight stages see it: position, velocity, and
+    /// the age it had before this tick's countdown, plus the record (a contact at t=0
+    /// means this tick's leg ended in something).</summary>
+    private static (Vec3 pos, Vec3 vel, float age) State(ECS e, int round, out bool alive)
     {
         alive = e.is_alive(round);
-        if (!alive) return (Vec3.zero, Vec3.zero, 0f, 0f, 0f);
+        if (!alive) return (Vec3.zero, Vec3.zero, 0f);
         int row = e.row_of(round);
         var a = e.arch_of(round)!;
         var pos = new Vec3(a.f("pos")[row * 3], a.f("pos")[row * 3 + 1],
                            a.f("pos")[row * 3 + 2]);
         var vel = new Vec3(a.f("vel")[row * 3], a.f("vel")[row * 3 + 1],
                            a.f("vel")[row * 3 + 2]);
-        return (pos, vel, a.f("proj_age")[row], a.f("proj_trav")[row],
-                a.f("first_hit_t")[row]);
+        return (pos, vel, a.f("proj_age")[row]);
+    }
+
+    /// <summary>The record, as `Flights.flying` reads it.</summary>
+    private static float Hit_t(ECS e, int round)
+    {
+        int row = e.row_of(round);
+        return e.arch_of(round)!.f("first_hit_t")[row];
     }
 }

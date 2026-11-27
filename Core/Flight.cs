@@ -191,10 +191,10 @@ public static class Flight
     ///     beam with no authority to get back into it.
     ///
     /// `aim` null means the beam is gone.  The round has nothing to fly to and no
-    /// lift demand, so it keeps its heading, drags down and falls.</summary>
-    /// `seed` is the round's own (`proj_seed`): it is what the crosswind below is
-    /// drawn from, so a testbed that flies the same round twice gets the same
-    /// wobble.</summary>
+    /// lift demand, so it keeps its heading, drags down and falls.
+    ///
+    /// `seed` is the round's own (`proj_seed`): it is what the crosswind is drawn
+    /// from, so a testbed that flies the same round twice gets the same wobble.</summary>
     public static Vec3 direct(Vec3 p, Vec3 v, float age, Vec3 origin, Vec3? aim,
                               WeaponDef wd, float dt, float seed)
     {

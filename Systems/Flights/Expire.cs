@@ -56,11 +56,11 @@ public static partial class Flights
     /// <summary>Re-arm every round's record and zero the flight state it is about to
     /// accumulate into.
     ///
-    /// The record half is the round's own (`_begin`), the zeroing half is the winged
+    /// The record half is the round's own (`_arm`), the zeroing half is the winged
     /// round's: `acc`, `a_dir` and `a_want` are this tick's demand and this tick's
     /// force sum, so they start at zero and nothing carries over.  A round that
-    /// `Expire` condemned is re-armed too - `_begin` leaves its record alone, and its
-    /// accumulator is never read because no stage moves it.</summary>
+    /// `Expire` condemned keeps its contact - `_arm` leaves its record alone - and its
+    /// accumulator is never read, because no stage moves a condemned round.</summary>
     public static class Arm
     {
         private static readonly string[] acc_names = { "acc", "a_dir", "a_want" };

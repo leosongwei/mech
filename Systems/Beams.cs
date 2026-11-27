@@ -5,7 +5,7 @@
 // guidance lives here and not on the round.  This system is the launcher's
 // fire-control computer: it holds up to `Defs.BEAM_CHANNELS` channels, keeps a
 // *track* on each of them, and publishes this tick's beam direction out of the
-// sight head.  `Systems/Flights.cs::Saclos` reads the channel its round is encoded
+// sight head.  `Systems/Flights/Saclos.cs` reads the channel its round is encoded
 // on and steers for a point along that line.
 //
 // Three things make the beam more than the sight line it used to be:
@@ -27,7 +27,7 @@
 //
 // What this system does *not* own: acquiring a lock (`Systems/Locking.cs`), and
 // whether the round can still see the laser (asked from the round's end, in
-// `Flights.Saclos` - a ridge between the launcher and the missile cuts the beam as
+// `Flights.Guidance.Saclos` - a ridge between the launcher and the missile cuts the beam as
 // surely as one behind the target).
 
 namespace Mech.Server.Systems;

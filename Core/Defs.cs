@@ -281,7 +281,7 @@ public sealed class WeaponDef
     public float life;              // s of flight before the round cooks off
     // what happens when `life` runs out: true = the warhead goes off where the
     // round stands, false = the round is gone and leaves nothing behind
-    // (`Systems/Flights.cs::Expire`; running out of *wire* always cooks off)
+    // (`Systems/Flights/Expire.cs`; running out of *wire* always cooks off)
     public bool expire_burst;
     public int range;               // m at which the round still carries its energy
     // m the *seeker* holds a lock to, for the kinds that need one (`@lock`).  A lock
@@ -467,7 +467,7 @@ public static partial class Defs
         // drag left real (39 m/s^2 of it alone at 600 m/s) a 100 m/s^2 motor needs
         // 7.3 s to net the 560 m/s, and the round is at the `maxvel` clamp exactly as
         // it burns out, 2.6 km down range.  A 5.5 s burn would want 124 m/s^2.
-        // From there it is an *aeroplane*: `Flight.direct` flies the airframe, so the
+        // From there it is an *aeroplane*: the beam law flies the airframe, so the
         // motor's burnout is the moment the flight starts to decay.  Drag (`cd0` 0.6
         // plus the transonic rise) bleeds 600 m/s down to ~400 by the far end of the
         // wire, and holding altitude costs a real angle of attack
@@ -678,6 +678,13 @@ public static partial class Defs
     // carries a radar cross-section (`rcs`), a collision sphere and a small pool of
     // health, so it can be shot down.
     public static readonly string[] INTERCEPT_KINDS = { "rocket", "saclos", "top" };
+
+    /// <summary>The kinds whose rounds fly on a wing: they own the airframe columns
+    /// (`Components.AIRFRAME_EXTRA`) and go through the flight stages.  A bullet is a
+    /// parabola and owns none of it.  Whether a round can be shot down
+    /// (`INTERCEPT_KINDS`) and whether it has an airframe are two questions that
+    /// happen to share their answer today.</summary>
+    public static readonly string[] AIRFRAME_KINDS = { "rocket", "saclos", "top" };
 
     /// <summary>
     /// The Python table finishes itself in a loop right after it is declared

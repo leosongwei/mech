@@ -299,6 +299,21 @@ public static class Components
         ecs.register("tgt_mem", Kind.F, 3, 0.0);
         ecs.register("tgt_vel", Kind.F, 3, 0.0);
 
+        // ---- airframe ---------------------------------------------------
+        // The state one tick of a winged round's flight is made of: an acceleration
+        // accumulator the force stages add into, the guidance's demand on it, and the
+        // derivations every force reads (`Systems/Flights/Airframe.cs`).  They sit on
+        // the round for the same reason `tgt_mem` does - they are what this tick's
+        // arithmetic produced, and the stages that produce them run in a fixed order
+        // before the stages that read them.
+        ecs.register("acc", Kind.F, 3, 0.0);              // m/s², the force sum
+        ecs.register("a_dir", Kind.F, 3, 0.0);            // unit, the lift direction asked for
+        ecs.register("a_want", Kind.F);                   // m/s², the lift magnitude asked for
+        ecs.register("vhat", Kind.F, 3, 0.0);             // unit, the flight direction
+        ecs.register("q", Kind.F);                        // Pa, dynamic pressure
+        ecs.register("cl", Kind.F);                       // the lift coefficient actually made
+        ecs.register("nose", Kind.F, 3, 0.0);             // unit, the thrust axis
+
         // ---- laser designator -------------------------------------------
         // A beam rider is not told where to fly: it flies the laser, and the
         // launcher's fire-control computer is what points the laser.  One component
@@ -325,7 +340,7 @@ public static class Components
         // a beam is steered by the launcher's computer and can sit well off the
         // cross the pilot is looking down
         ecs.register("beam_lit", Kind.U8, 4, 0);
-        // which channel a beam rider rides (`Systems/Flights.cs::Saclos`): the
+        // which channel a beam rider rides (`Systems/Flights/Saclos.cs`): the
         // laser is encoded per round, so four rounds in the air are four lines
         ecs.register("beam_ch", Kind.U8);
     }
@@ -365,7 +380,7 @@ public static class Components
     public static readonly string[] DATALINK_COMPS = { "link_seen", "link_seen_tick" };
 
     /// <summary>...and the one byte a beam rider needs to know which line of the
-    /// laser it is riding (`Systems/Flights.cs::Saclos`).</summary>
+    /// laser it is riding (`Systems/Flights/Saclos.cs`).</summary>
     public static readonly string[] BEAM_ROUND_COMPS = { "beam_ch" };
 
     /// <summary>What a crew owns on top of its hull: the fire control's answer per
@@ -422,6 +437,16 @@ public static class Components
     /// carry no such state.</summary>
     public static readonly string[] SEEKER_COMPS = Cat(PROJ_COMPS, "tgt_mem", "tgt_vel");
 
+    /// <summary>The state a winged round's flight is made of, added by the factory
+    /// when the weapon's kind is one of `Defs.AIRFRAME_KINDS`: an acceleration
+    /// accumulator, the guidance's demand on it, and the derivations the forces
+    /// read (`Systems/Flights/Airframe.cs`).  Handed out at the muzzle in one go,
+    /// because a component set is fixed for the life of the entity and every stage
+    /// of the flight block relies on its row staying put.</summary>
+    public static readonly string[] AIRFRAME_EXTRA = {
+        "acc", "a_dir", "a_want", "vhat", "q", "cl", "nose",
+    };
+
     public static readonly string[] CANISTER_COMPS = {
         "pos", "vel", "smoke_r", "smoke_t", "smoke_s", "canister",
     };
@@ -431,7 +456,7 @@ public static class Components
     };
 
     /// <summary>A component list plus tags: the query a schema is built from
-    /// (`Systems/Flights.cs` appends the round kind to the shared list).</summary>
+    /// (`Systems/Flights/Columns.cs` appends the round kind to the shared list).</summary>
     public static string[] Cat(string[] a, params string[] b)
     {
         var outv = new string[a.Length + b.Length];

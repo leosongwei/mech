@@ -1,7 +1,7 @@
 # 飞行体的 ECS 拆分：一个累加器与七个 stage
 
 这一页记下把 `Core/Flight.cs::_airframe` 拆成多个 system 的来由、拆法、必须守住的不变量，
-以及新增一种投放物（无人机）在拆分完成之后是什么形状。覆盖 1.41 开发期。
+以及新增一种投放物（无人机）在拆分完成之后是什么形状。覆盖 1.46 开发期。
 
 ## 1. 动机
 
@@ -125,12 +125,27 @@ public static Vec3 cap(Vec3 v, WeaponDef wd);
 
 ### 3.5 文件布局
 
+第一步是把 `Systems/Flights.cs` 拆成 `Systems/Flights/`：一个系统一个文件，`Flights` 类
+改为 `partial`，文件仍在 `namespace Mech.Server.Systems;` 里，所以嵌套类型
+（`Flights.RoundColumns`、`Flights.TopColumns`）与 `World.cs` 里的调用点一字不改，
+`Systems/AI/Suppress.cs::WhizColumns` 继续派生 `Flights.RoundColumns`。
+`MechServer.csproj` 的 `EnableDefaultCompileItems` 已经收录子目录，无需改工程文件。
+
+拆分之后的布局，第二步把 stage 填进去：
+
 ```
-Core/Flight.cs          常量、arc/lift_dir/pn_accel 等需求函数、六个 term、step/direct/slide
-Systems/Flights.cs      列定义（RoundColumns / AirframeColumns / 派生）、Expire、Arm、
-                        Ballistic、Guidance.Top、Guidance.Saclos
-Systems/Airframe.cs     Airflow、AoA、Lift、Drag、Thrust、Gravity、Integrate
+Core/Flight.cs                常量、arc/lift_dir/pn_accel 等需求函数、六个 term、step/direct/slide
+Systems/Flights/Flights.cs    头注释、`_begin`、`_move`、`_norm`（各 pass 共用的前后半段）
+Systems/Flights/Columns.cs    RoundColumns、RoundRow、AirframeColumns（Airflow 之后各 stage 共用）
+Systems/Flights/Expire.cs     电池与导线；`Arm` 落在它的后面
+Systems/Flights/Ballistic.cs  子弹：三行抛物线
+Systems/Flights/Rocket.cs     无制导：没有制导 tag 的飞行体
+Systems/Flights/Saclos.cs     SaclosColumns + Guidance.Saclos
+Systems/Flights/Top.cs        TopColumns + Guidance.Top
+Systems/Flights/Airframe.cs   Airflow、AoA、Lift、Drag、Thrust、Gravity、Integrate 七个 stage
 ```
+
+两步都是纯搬运，每步都独立可构建、可跑 check。
 
 列语义照现有写法：每个 stage 一个 `Columns<TRow>` 子类，`Names` 就是它查询用的那份名字表，
 `bind` 只绑它要用的缓冲区，行类型返回 `int` 行号即可（`RoundRow` 那样的大结构体留给需要
@@ -189,8 +204,12 @@ lift·a_dir) / m`，拆后算 `lift/m − drag/m + push/m`。差在浮点末位�
 
 ## 7. 迁移
 
-四个提交，每个都独立可跑：
+五个提交，每个都独立可跑：
 
+0. **拆文件夹**：`Systems/Flights.cs` → `Systems/Flights/`，一个系统一个文件（§3.5）。
+   纯搬运：类改成 `partial`、命名空间不变、`_begin`/`_move`/`_norm` 进 `Flights.cs`，
+   `_steer`（无调用点）与几处重复的 `<summary>` 块在搬运时收掉。验证只有两条：零警告构建，
+   以及 `--check hit` / `--check intercept` 读数不变。
 1. **组件与 term**：注册七列、加 `AIRFRAME_EXTRA`/`AIRFRAME_COMPS`、六个 term 纯函数化，
    `_airframe` 改成按序调用 term。世界行为不变（此时还没有 stage）。
 2. **stage 接线**：`Arm` 取代五处 `_begin`；`Airframe.cs` 七个 stage 取代三处 `_move`；
@@ -198,7 +217,8 @@ lift·a_dir) / m`，拆后算 `lift/m − drag/m + push/m`。差在浮点末位�
    按 §3.3 重排。
 3. **自检**：`Harness/AirframeCheck.cs` 与 `--check airframe`，读数记入 `docs/dev/checks.md`。
 4. **文档**：`docs/product/systems/flight.md` 的 1.3–1.5 节按 stage 重写叙述（数值一字不改），
-   `docs/dev/pipeline.md` 的 tick 表补上十一个 pass。
+   `docs/dev/pipeline.md` 的 tick 表补上十一个 pass，`AGENTS.md` 的模块地图把 `Flights`
+   换成 `Flights/{...}`。
 
 这是一次内部重构：不写 `CHANGELOG` 条目、不递增版本号。第 4 步只改文档的结构，不改任何
 玩家可读的结论。

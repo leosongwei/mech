@@ -1,7 +1,7 @@
 // The two halves of a typed query: `Columns<TRow>` is one archetype's buffers and
 // `IRow<TColumns>` is one entity's place in them.
 //
-// A system declares the pair it needs in its own file - `Systems/Flights.cs` has
+// A system declares the pair it needs in its own file - `Systems/Flights/Columns.cs` has
 // `Flights.RoundColumns` / `Flights.RoundRow` - so the components a pass reads and
 // the pass that reads them sit on one screen.  What lives here is only the
 // concept: a column object answers `n`, `ids` and "row i"; a row object answers

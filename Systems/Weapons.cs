@@ -2,7 +2,7 @@
 //
 // The system only *fires* stored intent (the trigger bits) - aiming lives in the
 // player-input / AI systems, ballistics in `Core/Ballistics.cs` and the round's
-// own flight in `Systems/Flights.cs`, and what a round runs into in
+// own flight in `Systems/Flights/`, and what a round runs into in
 // `Systems/FirstHit.cs`.
 //
 // Two headings, never one (see `aim_of` / `bore_of`): the sight is where the

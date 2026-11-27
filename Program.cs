@@ -45,7 +45,7 @@ for (int k = 0; k < args.Length; k++)
             break;
         default:
             Console.Error.WriteLine($"mech: unknown argument '{args[k]}'" +
-                                    " (usage: --host H --port N [--range] | --check terrain|nav|drive|stuck|beam|battle|range|hit|intercept|diag|net|tiers|fcs|gaze|datalink [--minutes N])");
+                                    " (usage: --host H --port N [--range] | --check terrain|nav|drive|stuck|beam|airframe|battle|range|hit|intercept|diag|net|tiers|fcs|gaze|datalink [--minutes N])");
             return 1;
     }
 }
@@ -64,6 +64,7 @@ if (check is not null)
         "diag" => Mech.Server.Harness.Check.diag(minutes),
         "stuck" => Mech.Server.Harness.StuckCheck.run(minutes),
         "beam" => Mech.Server.Harness.BeamCheck.run(),
+        "airframe" => Mech.Server.Harness.AirframeCheck.run(),
         "hit" => Mech.Server.Harness.InterceptCheck.hits(),
         "intercept" => Mech.Server.Harness.InterceptCheck.run(Environment.GetEnvironmentVariable("MECH_IC_ONLY")),
         "net" => Mech.Server.Harness.NetCheck.bandwidth(minutes, fromMin),

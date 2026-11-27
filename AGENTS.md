@@ -163,13 +163,13 @@ Systems/    每系统一个文件，`run(world, dt)`
   Rearm PlayerInput Gunnery Locking Smoke Weapons Unstick
   Movement/{Foot,Vehicle,Mech/{Steer,Thrust,Slope,Drag,Ground},Support/{Drive,Integrate}}
   Sweep Beams FirstHit Impact Blasts Mortality Economy Debris Sight Smoke
-  Flights/{Flights,Columns,Expire,Airframe,Saclos,Top,Ballistic}   # 一条飞行链的十一个 pass
+  Flights/{Flights,Columns,Expire,Airframe,Saclos,Top,Drone,Ballistic}  # 一条飞行链的十二个 pass
   AI/{Sense,Threats,Intercept,Engage*,Wander}  AI/Strategies/{Front,Raid}
   AI/Support/{Tags,Crew,Policy,Engage,ThreatTable,Pipeline}  AI/Nav/{NavMesh,NavWalk,NavRegion,NavQuery,Paths}
   Support/KillFeed.cs          # 玩家读到的一行——谁以何种武器从多远击杀了谁
-Modes/      Mode.cs  Modes.cs  Battle/  Range/
+Modes/      Mode.cs  Modes.cs  Battle/（Waves Drones）  Range/
 Harness/    Check BeamCheck AirframeCheck InterceptCheck FcsCheck NetCheck Tiers StuckCheck
-            DriveCheck TerrainCheck NavCheck
+            DriveCheck TerrainCheck NavCheck DroneCheck GazeCheck DatalinkCheck
 tests/      cases/*.json  frontend/（node:test）  backend/（控制台运行器）  compare.mjs
 frontend/   src/{core,net,map,audio,render,scene,hud,fx,input,app}（四层，单向依赖）
 assets/     编译后的客户端（已 gitignore）

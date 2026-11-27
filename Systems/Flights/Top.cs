@@ -158,31 +158,6 @@ public static partial class Flights
                 return MathF.Max(-ELEV_MAX, MathF.Min(ELEV_MAX, want));
             }
 
-            /// <summary>Unit direction square to the velocity that turns it toward
-            /// `want`.</summary>
-            private static Vec3 _lift_dir(Vec3 vhat, Vec3 want)
-            {
-                var axis = vhat.cross(want);
-                if (axis.len < 1e-6f) return Vec3.zero;
-                return axis.unit.cross(vhat).unit;
-            }
-
-            /// <summary>True proportional navigation toward `roof`: the acceleration
-            /// owed.</summary>
-            private static Vec3 _pn_accel(Vec3 p, Vec3 v, Vec3 roof, Vec3 tgt_vel,
-                                          float n_law)
-            {
-                var r = roof - p;
-                float r2 = r.len2;
-                if (r2 < 1e-6f) return Vec3.zero;
-                var rhat = r.unit;
-                var vrel = tgt_vel - v;
-                var omega = r.cross(vrel) / r2;
-                float vc = -rhat.dot(vrel);
-                var a = omega.cross(rhat);
-                float k = n_law * MathF.Max(vc, 1f);
-                return a * k;
-            }
         }
     }
 }

@@ -81,6 +81,7 @@ public static class Components
         ecs.register("unguided_missile", Kind.U8);
         ecs.register("saclos", Kind.U8);
         ecs.register("top_attack", Kind.U8);
+        ecs.register("drone", Kind.U8);
 
         // ---- health -----------------------------------------------------
         // One hull, one pool: `hp` is *the* health of the entity and `hp <= 0` is
@@ -299,6 +300,13 @@ public static class Components
         ecs.register("tgt_mem", Kind.F, 3, 0.0);
         ecs.register("tgt_vel", Kind.F, 3, 0.0);
 
+        // ---- loitering munition -----------------------------------------
+        // The point a loitering round circles for its whole life, written once at the
+        // muzzle and never again (`Systems/Weapons.cs::fire`).  The horizontal pair
+        // is the whole of it - x and z - because the height it flies at is the
+        // terrain's, not a stored one: the ground under it is sampled every tick.
+        ecs.register("orbit", Kind.F, 3, 0.0);
+
         // ---- airframe ---------------------------------------------------
         // The state one tick of a winged round's flight is made of: an acceleration
         // accumulator the force stages add into, the guidance's demand on it, and the
@@ -446,6 +454,12 @@ public static class Components
     public static readonly string[] AIRFRAME_EXTRA = {
         "acc", "a_dir", "a_want", "vhat", "q", "cl", "nose",
     };
+
+    /// <summary>What a loitering round owns beyond its airframe: the point it
+    /// circles (`Systems/Flights/Drone.cs`).  One column is the whole of its private
+    /// state - the scan phase comes from `proj_age` and the height from the terrain,
+    /// so neither is stored.</summary>
+    public static readonly string[] DRONE_COMPS = { "orbit" };
 
     public static readonly string[] CANISTER_COMPS = {
         "pos", "vel", "smoke_r", "smoke_t", "smoke_s", "canister",

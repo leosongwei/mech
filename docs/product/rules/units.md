@@ -148,7 +148,7 @@ AI 机组没有钱、不会去换装，所以出生时**按概率抽一套配置
 | 概率 | 左臂 | 右臂 |
 | --- | --- | --- |
 | **20%** | 30mm AUTOCANNON | UNGUIDED ROCKET POD（HEAT） |
-| **10%** | 30mm AUTOCANNON | HE ROCKET POD |
+| **10%** | 30mm AUTOCANNON | LOITERING MUNITION |
 | **10%** | 30mm AUTOCANNON | 30mm AUTOCANNON（双炮） |
 | **20%** | 30mm AUTOCANNON | SACLOS ATGM |
 | **15%** | 30mm AUTOCANNON | TOP-ATTACK IR ATGM |
@@ -161,8 +161,9 @@ AI 机组没有钱、不会去换装，所以出生时**按概率抽一套配置
   显式指定 `weapons`。于是：指挥部的机甲、前线增援、破袭机甲与 `debug_spawn` 放出来
   的 AI 机甲都抽签；**玩家**的机甲永远用 `DEFAULT_LOADOUT`（30mm 机炮 + 无制导火箭巢）；
   靶场的导弹防御哨位自带一份 `LOADOUT` 也不抽。
-* 两种火箭弹共用原来火箭巢那一档，HEAT 是 HE 的两倍：车道上机组打的是车，三发拆一台
-  的只有破甲弹。能拆重甲的三档（SACLOS 20 + 攻顶 15 + 105mm 15）合计 **50 %**。
+* 能拆重甲的四档（SACLOS 20 + 攻顶 15 + 105mm 15 + 游荡弹药 10）合计 **60 %**。游荡弹药
+  那一档原来是高爆火箭巢：车道上机组打的是车，一台机组上空盘旋的无人机比第二个战斗部
+  更有用。高爆火箭巢因此**不再出现在 AI 的配装表里**，玩家仍可在换装面板买到。
 * 抽签只决定右臂；两门 30mm 的机甲射速翻倍，而主臂规则会让其中一门始终站着不开火，
   见 [../systems/firecontrol.md](../systems/firecontrol.md)。
 

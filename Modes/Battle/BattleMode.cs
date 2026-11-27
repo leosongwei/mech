@@ -43,6 +43,7 @@ public sealed class BattleMode : Mode
             town.progress = 0f;
         }
         Waves.bind(world);
+        Drones.bind(world);
         Systems.AI.Raid.bind(world);
         _spawn_bases(world);
         _spawn_civilians(world);
@@ -56,7 +57,11 @@ public sealed class BattleMode : Mode
         // tick.  The raiding parties steer themselves first and shoot through
         // `ai.run` after - that system owns every crew's guns, including the
         // parties' (`ai_state`, `raider`).
-        return Systems.AI.Pipeline.battle();
+        var into = Systems.AI.Pipeline.battle();
+        // the crews have all spoken; the munition's own rhythm fires after them,
+        // because it aims at a town rather than at anything a crew engaged
+        into.Add(Drones.run);
+        return into;
     }
 
     public override List<Action<World, float>> post_systems()

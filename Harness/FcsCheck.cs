@@ -119,6 +119,16 @@ public static class FcsCheck
         Console.WriteLine("\narsenal                                      punch arm  other arm");
         foreach (var (_, loadout) in Defs.AI_LOADOUTS)
         {
+            // A loitering munition is not aimed at a hull: a mode launches it at a
+            // town on its own clock (`Modes/Battle/Drones.cs`), and the crew's sight
+            // never falls on that arm.  The pair has nothing to measure here - the gun
+            // beside it is the twin cannon's row.
+            if (Array.Exists(loadout, w => Defs.WEAPONS[w].kind == "drone"))
+            {
+                Console.WriteLine($"{ArsenalName(loadout),-44} "
+                                  + "(launched at towns, not aimed)  --");
+                continue;
+            }
             var a = ArsenalRow(world, sx, sz, loadout);
             // the punch arm has to fire; the gun has to fire too when the punch arm
             // spends more than the hand-off between rounds (a reload, a launch gap) -

@@ -97,6 +97,9 @@ public static partial class Defs
     // the S-8 pod's blast-fragmentation round: same airframe, motor and tubes as
     // the shaped-charge one, a warhead for soft targets (see the entry in WEAPONS)
     public const int WID_ROCKET_HE = 10;
+    // the loitering munition: fired with or without a lock, it circles one point
+    // instead of flying at a hull (see the entry in WEAPONS and `docs/plans/drone.md`)
+    public const int WID_LOITER = 11;
 }
 
 // A launcher that carries its rounds in tubes is described once, here, and both
@@ -244,6 +247,14 @@ public static partial class Defs
     public static readonly RackSpec RACK_SACLOS = rack(4, 4, 16, bore: 0.24f, pitch: 0.28f,
                                                       length: 1.70f, centre: 0.0f,
                                                       end: 0.25f, frame: 0.025f, elev: 0.18f);
+    // The loitering munition's rack: four tubes, folded wings and all, at the top
+    // attack's tube size and elevation.  A tube is a tube - what leaves it is the
+    // round's own body (`body`), and the launcher only has to be wide enough that
+    // four of them fit.
+    public static readonly RackSpec RACK_LOITER = rack(2, 2, 4, bore: 0.24f, pitch: 0.28f,
+                                                      length: 1.70f, centre: 0.0f,
+                                                      end: 0.25f, frame: 0.025f, elev: 0.73299f,
+                                                      bolted: true);
 }
 
 // One entry of `WEAPONS`: everything the server, the client and the ballistics
@@ -293,8 +304,10 @@ public sealed class WeaponDef
     public float ammo_cost;         // $ per round of a full load
     // `lock` is a C# keyword, so the field is written `@lock` - the metadata name,
     // and therefore the JSON key, is the Python one.
-    public int @lock;                // 1 = needs a lock before it can be fired.  A lock
-                                     // is the circle being on the hull: the seeker
+    public int @lock;                // 0 = cannot be locked, 1 = needs a lock before it
+                                     // can be fired, 2 = can be locked and can be fired
+                                     // without one (`Weapons.run`, `Locking.run`).  A
+                                     // lock is the circle being on the hull: the seeker
                                      // answers, it does not settle
     /// <summary>s between two launches by an AI crew (`AI_LAUNCH_GAP` sits here, on
     /// the weapon that needs the floor).  0 = the rack's own cycle.</summary>
@@ -671,20 +684,50 @@ public static partial class Defs
             semi = 0, color = new[] { 1.0f, 0.78f, 0.32f }, cal = 80f, rcs = 0.005f,
             rack = RACK_ROCKET, desc = "40 rounds, blast-fragmentation, sighted to 1 km",
         },
+        // The loitering munition: a folded-wing round that climbs to 200 m above the
+        // ground and searches from there (`docs/plans/drone.md` has the geometry -
+        // the height band, the 250 m circle and the 4 deg cone all follow from the
+        // 45 kg airframe and the 1% of the field of view it has to fill).  Fired with
+        // a lock it stares at that hull and dives; fired without one it flies to its
+        // circle and sweeps the ground under it.
+        //
+        // Four things are unlike any other round in the table.  The motor never goes
+        // out and its window is empty (`ignite` 0, `burn` 0): the governed thrust
+        // stage is what pushes it, not the motor's own clock.  `maxvel` 90 is the
+        // structure's ceiling and the cruise is held at 41.7 by that governor, so a
+        // dive gets its speed from gravity.  `@lock = 2` is the new middle: the ring
+        // shows and is not a condition of firing.  And the warhead is the RPG
+        // launcher's - 100/40/20/3, five rounds to take an APC apart.
+        new WeaponDef
+        {
+            wid = WID_LOITER, key = "loiter", name = "LOITERING MUNITION", kind = "drone",
+            ap = 100f, ad = 40f, ed = 20f, er = 3.0f,
+            rpm = 60, mag = 4, reserve = 0, reload = 0.0f, vel = 20f, spread = 0.003f,
+            bias = 0.0f, g = 9.81f, thrust = 8.0f, maxvel = 90f, life = 300.0f,
+            expire_burst = true, maxdist = 0.0f, ignite = 0.0f, burn = 0.0f,
+            mass = 45.0f, dia = 0.50f, cd0 = 0.60f, k_cl = 0.12f,
+            cl_alpha = 15.0f, cl_max = 4.5f,
+            pn_n = 3.0f, pn_r = 400.0f, pn_v = 25.0f,
+            range = 4000, lock_range = 4000, cost = 300, ammo_cost = 30.0f,
+            @lock = 2, salvo = 0, semi = 0, ai_gap = 0.0f,
+            color = new[] { 1.0f, 0.85f, 0.45f }, cal = 500f, rcs = 0.02f,
+            rack = RACK_LOITER, body = new[] { 0.18f, 1.30f },
+            desc = "Loiters over the ground it was aimed at, dives on what it finds",
+        },
     };
 
     // ------------------------------------------------------- missiles as targets
     // A guided or rocket round is a *thing in the air*, not just a trajectory: it
     // carries a radar cross-section (`rcs`), a collision sphere and a small pool of
     // health, so it can be shot down.
-    public static readonly string[] INTERCEPT_KINDS = { "rocket", "saclos", "top" };
+    public static readonly string[] INTERCEPT_KINDS = { "rocket", "saclos", "top", "drone" };
 
     /// <summary>The kinds whose rounds fly on a wing: they own the airframe columns
     /// (`Components.AIRFRAME_EXTRA`) and go through the flight stages.  A bullet is a
     /// parabola and owns none of it.  Whether a round can be shot down
     /// (`INTERCEPT_KINDS`) and whether it has an airframe are two questions that
     /// happen to share their answer today.</summary>
-    public static readonly string[] AIRFRAME_KINDS = { "rocket", "saclos", "top" };
+    public static readonly string[] AIRFRAME_KINDS = { "rocket", "saclos", "top", "drone" };
 
     /// <summary>
     /// The Python table finishes itself in a loop right after it is declared
@@ -745,7 +788,16 @@ public static partial class Defs
     /// <summary>The `proj_kind` byte a round carries (`Components.PROJ_COMPS`):
     /// its wire value and its `Defs.WEAPONS` key.  What it *flies* as is the tag
     /// below.</summary>
-    public const byte PROJ_BULLET = 0, PROJ_ROCKET = 1, PROJ_SACLOS = 2, PROJ_TOP = 3;
+    public const byte PROJ_BULLET = 0, PROJ_ROCKET = 1, PROJ_SACLOS = 2, PROJ_TOP = 3,
+                      PROJ_DRONE = 4;
+
+    /// <summary>The kinds that own a seeker's memory (`Components.SEEKER_COMPS`):
+    /// the two that are told what to look at, whether the shooter could see it or
+    /// only believed it.</summary>
+    public static readonly string[] SEEKER_KINDS = { "top", "drone" };
+
+    /// <summary>Does this weapon's round carry `tgt_mem` / `tgt_vel`?</summary>
+    public static bool has_seeker(in WeaponDef wd) => Array.IndexOf(SEEKER_KINDS, wd.kind) >= 0;
 
     /// <summary>The tag components a weapon's rounds carry, by `kind`: identity is
     /// a component, never a `proj_kind` switch (the same rule `UNIT_DEFS.tags`
@@ -757,6 +809,7 @@ public static partial class Defs
         ["rocket"] = new[] { "unguided_missile" },
         ["saclos"] = new[] { "saclos" },
         ["top"] = new[] { "top_attack" },
+        ["drone"] = new[] { "drone" },
     };
 
     // -------------------------------------------------------------------- radar
@@ -844,7 +897,8 @@ public static partial class Defs
     // weapons a player may buy, in hotbar order - the two rocket pods side by side,
     // because they are the same launcher with two rounds
     public static readonly int[] BUYABLE =
-        { WID_AC30, WID_MG127, WID_ROCKET, WID_ROCKET_HE, WID_SACLOS, WID_TOPATTACK, WID_G105 };
+        { WID_AC30, WID_MG127, WID_ROCKET, WID_ROCKET_HE, WID_SACLOS, WID_TOPATTACK, WID_G105,
+          WID_LOITER };
 
     // what a mech leaves the lobby with: the loadout is not a menu choice - it is
     // bought back at the wrench (shop) like any other piece of equipment - and it is
@@ -858,16 +912,14 @@ public static partial class Defs
     // (`World.spawn_unit`) draws one template off this table.  Weights are shares of
     // a single draw and have to add up to 1.
     //
-    // The two rocket pods share the standard pair's 30 %: a crew draws the shaped
-    // charge twice as often as the blast round, because a crew fights hulls on the
-    // lanes and only the HEAT round takes one apart in three.  The guided arms carry
-    // 50 % between them (SACLOS 20 + top attack 15 + 105 mm 15), the share they had
-    // before the HE pod existed - the field's anti-armour capability is unchanged,
-    // only the rocket arm now has a second warhead.
+    // The guided arms carry 65 % between them (SACLOS 20 + top attack 15 + 105 mm 15
+    // + loitering munition 15), and the loiter round's share is the one the HE pod
+    // used to hold: a crew fights hulls on the lanes, and a munition that circles an
+    // enemy town is worth more to the field than a second warhead on the rocket arm.
     public static readonly (float share, int[] loadout)[] AI_LOADOUTS =
     {
         (0.20f, new[] { WID_AC30, WID_ROCKET }),        // the standard pair
-        (0.10f, new[] { WID_AC30, WID_ROCKET_HE }),     // the soft-target pod
+        (0.10f, new[] { WID_AC30, WID_LOITER }),        // a munition over their town
         (0.10f, new[] { WID_AC30, WID_AC30 }),          // twin cannon: twice the rate, no rocket
         (0.20f, new[] { WID_AC30, WID_SACLOS }),        // a beam rider in the right arm
         (0.15f, new[] { WID_AC30, WID_TOPATTACK }),     // fire and forget, over the roof
@@ -1510,6 +1562,60 @@ public static partial class Defs
     // can see inside this cone around that stare line (`Seeker.cs`).  3 deg is about the
     // angular width of the round's own dispersion.
     public const float SEEKER_CONE = 3.0f * MathF.PI / 180.0f;
+
+    // ------------------------------------------------------------ loitering round
+    // The munition that searches for its own target: the geometry is one page
+    // (`docs/plans/drone.md`) and every number below is derived there, not tuned
+    // here.  It climbs to `DRONE_AGL` and holds it, sweeps a cone of
+    // `DRONE_HALF_FOV` about an optical axis `DRONE_LOOK_DOWN` below the horizon while
+    // it flies, and takes the first enemy hull inside that cone that fills
+    // `DRONE_SIGHT_AREA` of the field of view - the recognition distance that
+    // follows for each hull type is `DRONE_RCG`, computed once at startup.
+    public const float DRONE_AGL = 200.0f;      // m above the ground it holds
+    public const float DRONE_AGL_MIN = 150.0f;  // m, the band it floats in (terrain noise)
+    public const float DRONE_AGL_MAX = 250.0f;
+    public const float DRONE_CRUISE = 41.7f;    // m/s the governor holds (150 km/h)
+    public const float DRONE_LOOK_AHEAD = 300.0f;   // m ahead: the ground it climbs to meet
+    public const float DRONE_LOOK_DOWN = 30.0f * MathF.PI / 180.0f;  // optical axis, below
+    public const float DRONE_HALF_FOV = 4.0f * MathF.PI / 180.0f;    // rad, one side
+    // Of the field of view a hull has to fill to be recognised.  The band that is
+    // "something is there" rather than "it is a tank" is 0.5-1 % of the optics'
+    // solid angle; this sits at the top of it because the *slant* range matters: the
+    // ring is 358-456 m of line of sight from 200 m up, so a hull recognised at 440 m
+    // is seen over 85 % of it and a man (147 m) is never seen at all.
+    public const float DRONE_SIGHT_AREA = 0.007f;
+    public const float DRONE_SCAN = 40.0f * MathF.PI / 180.0f;       // rad, one side
+    public const float DRONE_SCAN_RATE = 40.0f * MathF.PI / 180.0f;  // rad/s, one pass 2 s
+    public const float DRONE_ORBIT_R = 250.0f;  // m, the circle it searches from
+    public const float DRONE_REACH = 4000.0f;   // m, how far ahead an unlocked shot circles
+    /// <summary>m: the distance at which a hull of this type fills
+    /// `DRONE_SIGHT_AREA` of the seeker's field of view, so the first one that does is
+    /// a target.  Computed once, from `UNIT_DEFS`' `radius` and `height`: the
+    /// munition looks down `DRONE_LOOK_DOWN` at a box `2r` wide and `h` tall.</summary>
+    public static readonly Dictionary<int, float> DRONE_RCG = _drone_rcg();
+
+    private static Dictionary<int, float> _drone_rcg()
+    {
+        // solid angle of the cone, and the hull's apparent area seen from above at
+        // the optical axis' depression: the deck plus the visible flank
+        float cos_half = MathF.Cos(DRONE_HALF_FOV);
+        float omega = 2.0f * MathF.PI * (1.0f - cos_half);
+        float tilt = MathF.Cos(DRONE_LOOK_DOWN), side = MathF.Sin(DRONE_LOOK_DOWN);
+        var rcg = new Dictionary<int, float>();
+        foreach (var (etype, u) in UNIT_DEFS)
+        {
+            if (u.radius <= 0f || u.height <= 0f) continue;
+            float w = 2.0f * u.radius;
+            float area = w * u.height * tilt + w * w * side;
+            rcg[etype] = MathF.Sqrt(area / (DRONE_SIGHT_AREA * omega));
+        }
+        return rcg;
+    }
+
+    /// <summary>m: how far away this hull type is recognised, or 0 for a type that is
+    /// never one (a man, a wreck, a building).</summary>
+    public static float drone_rcg(int etype) =>
+        DRONE_RCG.TryGetValue(etype, out float r) ? r : 0f;
 
     // ---------------------------------------------------------------- acoustics
     // Whether a bang is worth putting on the wire is decided here, not by the client:

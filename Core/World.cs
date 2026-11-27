@@ -79,6 +79,10 @@ public sealed class World
     public int tick;
     public int wave;
     public float wave_timer = 8f;
+    // the loitering munition's launch rhythm, one per faction: seconds to the next
+    // shot, and which enemy town the last one was aimed at (`Modes/Battle/Drones.cs`)
+    public float[] drone_timer = new float[2];
+    public int[] drone_town = new int[2];
     public int winner = -1;
     public float end_timer;
     public List<Dictionary<string, object?>> events = new();
@@ -224,13 +228,17 @@ public sealed class World
             // a bullet is a parabola and integrates itself
             Systems.Flights.Ballistic.run,
             // what a guided round wants this tick, in the wing's units: no demand
-            // for an unguided rocket, which is why it has no pass here
+            // for an unguided rocket, which is why it has no pass here.  The loiter
+            // round is the one that also searches: its law takes the lock it flies at
             Systems.Flights.Guidance.Top.run, Systems.Flights.Guidance.Saclos.run,
+            Systems.Flights.Guidance.Loiter.run,
             // the airframe, seven stages over one accumulator: two derivations, four
             // forces that only add to `acc`, and the one integration that spends it
             Systems.Flights.Airflow.run, Systems.Flights.AoA.run,
             Systems.Flights.Lift.run, Systems.Flights.Drag.run,
             Systems.Flights.Thrust.run, Systems.Flights.Gravity.run,
+            // the motor that never goes out (`Systems/Flights/Drone.cs`)
+            Systems.Flights.Thrust.Commanded.run,
             Systems.Flights.Integrate.run,
             // what each leg ran into.  These only write `first_hit_record`, so the
             // order they run in decides the cost of a compare and nothing else
@@ -404,22 +412,26 @@ public sealed class World
     /// its id can already belong to the wreck it left.</summary>
     /// <param name="beam">the designator channel a beam rider rides
     /// (`Systems/Beams.cs`), -1 for a round nobody is steering.</param>
+    /// <param name="orbit">the point a loitering round circles, written once here for
+    /// the round's whole life (`Systems/Flights/Drone.cs`).</param>
     public int spawn_round(int src, int faction, int wid, int kind, Vec3 pos, Vec3 vel,
                            float life, int target, int beam = -1,
-                           Vec3? mem = null, Vec3? memVel = null)
+                           Vec3? mem = null, Vec3? memVel = null, Vec3? orbit = null)
     {
         var e = ecs;
         var wd = Defs.WEAPONS[wid];
         bool pooled = Defs.is_interceptable(wid);
         var comps = new List<string>(pooled ? Components.MISSILE_COMPS
                                             : Components.PROJ_COMPS);
-        if (kind == 3) comps.AddRange(Components.SEEKER_COMPS);
+        if (Defs.has_seeker(wd)) comps.AddRange(Components.SEEKER_COMPS);
         // a round that flies on a wing carries the airframe's own state
         if (Array.IndexOf(Defs.AIRFRAME_KINDS, wd.kind) >= 0)
             comps.AddRange(Components.AIRFRAME_EXTRA);
         // a beam rider rides one line of its launcher's laser, and the line is
         // encoded in the beam: that is what lets four rounds be steered at once
         if (wd.kind == "saclos") comps.AddRange(Components.BEAM_ROUND_COMPS);
+        // a loitering round owns the point it circles, and nothing else of its own
+        if (wd.kind == "drone") comps.AddRange(Components.DRONE_COMPS);
         if (Defs.KIND_TAGS.TryGetValue(wd.kind, out var tags)) comps.AddRange(tags);
         if (!comps.Contains("first_hit_t"))
             throw new InvalidOperationException("a round must own first_hit_record");
@@ -444,6 +456,7 @@ public sealed class World
         e.fv("proj_trav")[pid] = 0f;
         e.iv("target")[pid] = target;
         if (e.has(pid, "beam_ch")) e.uv("beam_ch")[pid] = (byte)Math.Max(0, beam);
+        if (orbit is not null) e.fv("orbit").set3(pid, orbit.Value);
         if (pooled)
         {
             e.fv("hp")[pid] = wd.aim_hp;
@@ -458,7 +471,7 @@ public sealed class World
             // point when his sight had lost it (`Weapons.fire`, a pilot's
             // `Player.belief_*`); a round with no shooter's belief to carry starts
             // on the hull itself
-            if (kind == 3 && target >= 0 && e.is_alive(target))
+            if (Defs.has_seeker(wd) && target >= 0 && e.is_alive(target))
             {
                 e.fv("tgt_mem").set3(pid, mem ?? Seeker.roof(this, target));
                 e.fv("tgt_vel").set3(pid, memVel ?? e.fv("vel").get3(target));

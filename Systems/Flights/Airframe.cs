@@ -1,11 +1,16 @@
 // The airframe as seven stages: two derivations, four forces and one integration.
 //
-// The stages are the parts of one law (`Core/Flight.cs`) spread over the tick, so
-// that "what acts on this round" is a component set rather than a branch inside a
-// function.  Airflow and the angle of attack turn the tick's *starting* velocity and
-// the guidance's demand into the values every force reads; lift, drag, thrust and
-// gravity each add their own acceleration into `acc`; `Integrate` is the only stage
-// that spends it.
+// The stages are one law spread over the tick, so that "what acts on this round" is a
+// component set rather than a branch inside a function.  Airflow and the angle of attack
+// turn the tick's *starting* velocity and the guidance's demand into the values every
+// force reads; lift, drag, thrust and gravity each add their own acceleration into
+// `acc`; `Integrate` is the only stage that spends it.
+//
+// Each force's arithmetic lives in the stage that applies it, and what passes between
+// stages is a column: that is what makes one force readable without the other three.  The
+// only other reader of this arithmetic is the fire control's integrator, which flies an
+// unguided round with no world (`Core/Flight.cs::slide`) - so what this file has to
+// agree with is that one closed form, and `--check airframe` is what holds them together.
 //
 // What this file holds to:
 //
@@ -19,10 +24,6 @@
 //      `flying(hit_t)` compare.
 //   5. `Expire` has already counted this tick's second, so a stage that reads the
 //      round's flight age reads `proj_age - dt`.
-//
-// The terms themselves are pure functions in `Core/Flight.cs`, called by these
-// stages and by `step` / `direct` / `slide` in the same order, so the world and the
-// fire control cannot drift apart.
 
 namespace Mech.Server.Systems;
 
@@ -63,9 +64,10 @@ public static partial class Flights
                 for (int i = 0; i < c.n; i++)
                 {
                     if (!flying(c.hit_t[i])) continue;
-                    var (vhat, q) = Flight.airflow(v3(c.vel, i));
-                    set3(c.vhat, i, vhat);
-                    c.q[i] = q;
+                    var vel = v3(c.vel, i);
+                    float speed = vel.len;
+                    set3(c.vhat, i, vel.unit);
+                    c.q[i] = 0.5f * Flight.RHO * speed * speed;
                 }
             }
         }
@@ -110,10 +112,27 @@ public static partial class Flights
                 {
                     if (!flying(c.hit_t[i])) continue;
                     var wd = Defs.WEAPONS[c.wid[i]];
-                    var (cl, nose) = Flight.aoa(v3(c.vhat, i), v3(c.adir, i), c.awant[i],
-                                                c.q[i], wd);
+                    var vhat = v3(c.vhat, i);
+                    float want = c.awant[i];
+                    float s = Flight.area(wd);
+                    // nothing asked for (or no air to make it in) is a nose on the
+                    // flight path and no lift: the unguided round's own case
+                    if (want <= 1e-9f || c.q[i] * s <= 1e-9f)
+                    {
+                        c.cl[i] = 0f;
+                        set3(c.nose, i, vhat);
+                        continue;
+                    }
+                    float cl = MathF.Min(wd.cl_max, wd.mass * want / (c.q[i] * s));
+                    // the needed angle of attack: the nose leads the velocity by it, so
+                    // a pull lifts the nose above the path and a pushover puts it under
+                    float alpha = cl / wd.cl_alpha;
+                    float ca = MathF.Cos(alpha), sa = MathF.Sin(alpha);
+                    var adir = v3(c.adir, i);
                     c.cl[i] = cl;
-                    set3(c.nose, i, nose);
+                    set3(c.nose, i, new Vec3(vhat.x * ca + adir.x * sa,
+                                             vhat.y * ca + adir.y * sa,
+                                             vhat.z * ca + adir.z * sa));
                 }
             }
         }
@@ -157,7 +176,7 @@ public static partial class Flights
                 for (int i = 0; i < c.n; i++)
                 {
                     if (!flying(c.hit_t[i])) continue;
-                    float lift = Flight.lift_accel(Defs.WEAPONS[c.wid[i]], c.q[i], c.cl[i]);
+                    float lift = lift_accel(Defs.WEAPONS[c.wid[i]], c.q[i], c.cl[i]);
                     add3(c.acc, i, v3(c.adir, i) * lift);
                 }
             }
@@ -199,18 +218,23 @@ public static partial class Flights
                 for (int i = 0; i < c.n; i++)
                 {
                     if (!flying(c.hit_t[i])) continue;
-                    var vel = v3(c.vel, i);
-                    float drag = Flight.drag_accel(Defs.WEAPONS[c.wid[i]], vel.len, c.q[i],
-                                                   c.cl[i]);
+                    var wd = Defs.WEAPONS[c.wid[i]];
+                    float speed = v3(c.vel, i).len;
+                    // the polar: profile drag, the induced price of the lift just
+                    // commanded (squared, so a pushover costs what a pull-up costs) and
+                    // the transonic rise
+                    float over = MathF.Max(0f, speed / Flight.MACH - 0.80f);
+                    float cd = wd.cd0 + wd.k_cl * c.cl[i] * c.cl[i] + 0.4f * over * over;
+                    float drag = c.q[i] * Flight.area(wd) * cd / wd.mass;
                     add3(c.acc, i, -v3(c.vhat, i) * drag);
                 }
             }
         }
     }
 
-    /// <summary>Thrust, along the nose, for the motor's window.  A round whose motor
-    /// burns flat out is this stage with `throttle` 1; the round's own throttle is not
-    /// a column until something flies on one.</summary>
+    /// <summary>Thrust, along the nose, for the motor's window: the motor burns flat out
+    /// between `ignite` and `ignite + burn`, and not at all at the structure's ceiling,
+    /// where the cue is already out.</summary>
     public sealed class ThrustColumns : Columns<int>
     {
         public float[] acc = null!, nose = null!, age = null!, vel = null!;
@@ -243,9 +267,13 @@ public static partial class Flights
                 for (int i = 0; i < c.n; i++)
                 {
                     if (!flying(c.hit_t[i])) continue;
-                    float push = Flight.thrust_accel(Defs.WEAPONS[c.wid[i]], c.age[i] - dt,
-                                                     v3(c.vel, i).len, 1f);
-                    if (push == 0f) continue;
+                    var wd = Defs.WEAPONS[c.wid[i]];
+                    // the age the round had when it flew this tick: `Expire` has already
+                    // counted the second, and the motor's window is `ignite` .. `+burn`
+                    float age = c.age[i] - dt;
+                    if (age <= wd.ignite || age > wd.ignite + wd.burn) continue;
+                    if (v3(c.vel, i).len >= wd.maxvel) continue;
+                    float push = wd.thrust;
                     add3(c.acc, i, v3(c.nose, i) * push);
                 }
             }
@@ -322,12 +350,17 @@ public static partial class Flights
                 foreach (var r in c)
                 {
                     if (!flying(r.hit_t)) continue;
+                    var wd = Defs.WEAPONS[r.wid];
                     var p0 = r.pos;
                     var vel = r.vel;
                     var acc = v3(c.acc, r.index);
                     var v = new Vec3(vel.x + acc.x * dt, vel.y + acc.y * dt,
                                      vel.z + acc.z * dt);
-                    _move(world, r, p0, Flight.cap(v, Defs.WEAPONS[r.wid]), dt);
+                    // the structure's ceiling, not the motor's: past `maxvel` the
+                    // velocity keeps its direction and loses the excess
+                    float speed = v.len;
+                    if (speed > wd.maxvel) v = v * (wd.maxvel / speed);
+                    _move(world, r, p0, v, dt);
                 }
             }
         }

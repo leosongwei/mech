@@ -115,7 +115,7 @@ mkdir -p /tmp/tmux-$(id -u) && chmod 700 /tmp/tmux-$(id -u)
 | `--check hit` | 全部武器对一辆停放的 APC |
 | `--check intercept` | 全部导弹对防御哨站 |
 | `--check beam` | 驾束弹：命中、掩体、被切断的激光 |
-| `--check airframe` | 十一个飞行 pass 与 `Flight.*` 纯函数逐 tick 同不同解 |
+| `--check airframe` | 七个气动 stage 与火控的 `Flight.slide` 逐 tick 同不同解 |
 | `--check fcs` | AI 乘员与玩家在相同场景下的对照，另含 chassis/pull/smoke/arsenal 场景 |
 | `--check drive` | 机甲推力模型与其自身代数解的对照 |
 | `--check terrain` | 面片坡度、兵线可通行性、采样开销 |

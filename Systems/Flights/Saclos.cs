@@ -118,9 +118,10 @@ public static partial class Flights
                                                          Vec3? aim, WeaponDef wd)
             {
                 if (aim is null) return (Vec3.zero, 0f);
-                var (vhat, q) = Flight.airflow(v);
                 float speed = v.len;
-                float lift_max = Flight.lift_accel(wd, q, wd.cl_max);
+                var vhat = v.unit;
+                float q = 0.5f * Flight.RHO * speed * speed;
+                float lift_max = lift_accel(wd, q, wd.cl_max);
                 // the beam: where the round is along it, how far off it, and how fast
                 // that gap is opening
                 var to_aim = aim.Value - origin;

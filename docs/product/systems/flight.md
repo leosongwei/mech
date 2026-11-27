@@ -195,15 +195,15 @@
 * **飞行体取代了折线**：旧实现是"沿手画路径以固定转弯率前进的点"——没有质量、没有
   攻角、没有能量，于是"拉一次要不要付速度"这个问题根本问不出来。改成这副气动外形之后，
   射程、落角、末段能不能修正，全从一个 `cl_max` 与一个 `q` 里长出来。
-* **气动外形是数据，不是开关**：两种弹只差一张参数表，六个 term（`Flight.airflow`、
-  `aoa`、`lift_accel`、`drag_accel`、`thrust_accel`、`cap`）同时飞它们；换弹种是填表。
-  两条制导律各住在自己的 pass 里（`Systems/Flights/Top.cs` 的参考弧与 PN，
-  `Systems/Flights/Saclos.cs` 的 CLOS）：它们只被那一个 pass 使用，因此不再在别处另存一份。
-* **定律是纯函数，状态在组件里**：六个 term 不读世界，只接受数值；七个 stage 把同一串调用
-  摊到一个 tick 上，中间量落在组件里。唯一需要"不搭世界就能飞一发"的调用方是火控
-  （`Ballistics.flight_at` 解仰角时要飞一遍它即将打出的无制导火箭），所以 `Core/Flight.cs`
-  保留了 `Flight.airframe` / `slide` 这条闭式路径，`--check airframe` 量的是它与
-  七个 stage 还是不是同一条定律。
+* **气动外形是数据，不是开关**：两种弹只差一张参数表，同一个 stage 同时飞它们；换弹种
+  是填表。每一项力的算式就住在施加它的那个 stage 里（`Systems/Flights/Airframe.cs`），
+  两条制导律住在各自的制导 pass 里（`Systems/Flights/Top.cs` 的参考弧与 PN，
+  `Systems/Flights/Saclos.cs` 的 CLOS）——只有一个使用者的算式不另存一份。
+* **中间量在组件里，算式在 stage 里**：stage 之间只通过组件传值（`vhat` / `q` / `cl` /
+  `nose` / `acc`），所以一条力的链条一步就能读完。唯一需要"不搭世界就能飞一发"的调用方
+  是火控（`Ballistics.flight_at` 解仰角时要飞一遍即将打出的无制导火箭），它要的那一发
+  没有升力需求，所以 `Core/Flight.cs` 只保留 `Flight.slide`（无制导那一发）与几个共用常量
+  和 `area`；`--check airframe` 量的是它与七个 stage 还是不是同一条定律。
 * **组件集合就是身份**：一颗弹的七列气动状态在出膛时一次给齐（`Components.AIRFRAME_EXTRA`，
   15 个 float），之后任何 stage 都不增删组件，所以一 tick 内的行号在十一个 pass 之间不变；
   子弹不带这些列，七个 stage 对它按构造就不存在，不需要任何 `kind` 分支。同时在飞的有翼

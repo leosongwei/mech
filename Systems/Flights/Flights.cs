@@ -44,6 +44,12 @@ public static partial class Flights
         world.sweep.add(r.eid, p0, p1);
     }
 
+    /// <summary>m/s² of lift at this coefficient, from the round's own area and mass.
+    /// At `cl_max` it is the ceiling on everything the guidance may ask for - which is
+    /// why a slow round stops answering the beam.</summary>
+    internal static float lift_accel(WeaponDef wd, float q, float cl)
+        => q * Flight.area(wd) * cl / wd.mass;
+
     /// <summary>Row `i` of a 3-float column as a vector.</summary>
     internal static Vec3 v3(float[] a, int i) => new(a[i * 3], a[i * 3 + 1], a[i * 3 + 2]);
 

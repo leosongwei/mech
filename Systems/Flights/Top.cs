@@ -77,9 +77,10 @@ public static partial class Flights
                                                          float trav, Vec3? tgt_pos,
                                                          Vec3? tgt_vel, WeaponDef wd)
             {
-                var (vhat, q) = Flight.airflow(v);
                 float speed = v.len;
-                float lift_max = Flight.lift_accel(wd, q, wd.cl_max);
+                var vhat = v.unit;
+                float q = 0.5f * Flight.RHO * speed * speed;
+                float lift_max = lift_accel(wd, q, wd.cl_max);
                 var a_dir = Vec3.zero;
                 float a_want = 0f;
                 if (tgt_pos is null) return (a_dir, a_want);

@@ -35,9 +35,10 @@ export class Lead {
   // the 25 m - 4 km range gets a box and, when hostile, a pre-aim solution per
   // usable arm: the picker is a ring the pilot has to be able to aim at, and how
   // many of them the field happens to hold is not something the sight can trade
-  // away.  Guided rounds keep the snapshot tier.  Direct sight wins over a
-  // datalink bit; friendly rows carry the shared position bit and use the same
-  // solid/dashed source rule.
+  // away.  Guided rounds are placed first: an enemy round is a target where the
+  // receiver holds a solution on it, not merely where the wire carries its row.
+  // Direct sight wins over a datalink bit; friendly rows carry the shared
+  // position bit and use the same solid/dashed source rule.
   update(own) {
     const { app } = this;
     if (app.net.seq === this.seq) return;
@@ -77,13 +78,21 @@ export class Lead {
       });
     }
 
-    // Guided rounds come from the snapshot, not the RWR's placed-threat list:
-    // the receiver keeps its own hearing and alarm rules, while this layer draws
-    // every known friendly round and every directly seen or linked enemy round.
+    // Guided rounds come from the snapshot, and an *enemy* round is only a
+    // target once the receiver has placed it: a box and a ring are a position
+    // and a velocity vector, which is exactly what the dial's `seen` means - the
+    // echo cleared the tracker's floor (`d^2 <= K * v_closing`, `rwr.js`).  Below
+    // that the round is a bearing line at best, so there is nothing here to draw.
+    // The row's shared bit stands in for the echo: a round an ally has placed is
+    // known to this pilot the same way a hull an ally has seen is (`TARGET_LINK`).
+    // A friendly round needs neither - it is ours or it is shared.
+    const placed = new Set();
+    for (const t of app.rwr.threats) if (t.seen) placed.add(t.id);
     for (const p of app.net.projectiles) {
       if (!isGuidedRound(p.kind)) continue;
-      if (!app.hud._project(p.x, p.y, p.z)) continue;
       const friendly = p.faction === own.faction;
+      if (!friendly && !placed.has(p.id) && !p.link) continue;
+      if (!app.hud._project(p.x, p.y, p.z)) continue;
       const blocked = sightBlocked(app.map,
         eye[0], eye[1], eye[2], p.x, p.y, p.z, puffs);
       const source = !blocked ? 'direct' : p.link ? 'datalink' : null;

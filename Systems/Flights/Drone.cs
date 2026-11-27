@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Logging;
+
 // The loitering munition: one round that searches for its own target, and the
 // governed motor that keeps it in the air while it does.
 //
@@ -32,12 +34,16 @@ namespace Mech.Server.Systems;
 
 public static partial class Flights
 {
+    private static readonly ILogger log = MechLog.get("mech.munition");
+
     // The guidance's gains, in the place `Guidance.Top` keeps its own (`K_H`,
     // `K_P`): what belongs to the law lives on the law, and what belongs to the
     // airframe lives in `Defs`.
     private const float K_TURN = 3.0f;    // 1/s, heading error -> demand
     private const float K_AGL = 0.15f;    // 1/s^2, height error -> acceleration
     private const float K_VY = 0.70f;     // 1/s, climb rate -> damping (2*sqrt(K_AGL))
+    private const float CLIMB_MAX = 10.0f;   // m/s^2 the height channel may ask for
+    private const float STALL = 28.6f;       // m/s, level flight at `cl_max` in 1 g
     private const float U_TRIM = 0.66f;   // throttle that holds the cruise
     private const float K_U = 0.15f;      // throttle per m/s of speed deficit
 
@@ -152,6 +158,20 @@ public static partial class Flights
                         float mag = MathF.Min(want.len, lift_max);
                         set3(c.adir, r.index, mag > 1e-6f ? want / want.len : Vec3.zero);
                         c.awant[r.index] = mag;
+                        // Every guidance law has a shape it does not like, and this one
+                        // is a round that pulls up when it has no business climbing: a
+                        // demand that is both large and upward gets a line in the log,
+                        // because from the ground it looks the same as a bug and there
+                        // is no other place to see which branch asked for it
+                        if (log.IsEnabled(LogLevel.Debug) && want.y > 0.5f * want.len
+                            && mag > 12f)
+                            log.LogDebug("munition {pid} pulling up: {climb:0.0} m/s2 "
+                                         + "of {mag:0.0} at {agl:0} m AGL, {speed:0.0} m/s, "
+                                         + "{branch}, {age:0.0} s in the air",
+                                         r.eid, want.y, mag,
+                                         p0.y - world.terrain.height_at(p0.x, p0.z), speed,
+                                         dive ? "dive" : spot is null ? "search"
+                                                                      : "cruise", age);
                     }
                 }
             }
@@ -258,7 +278,20 @@ public static partial class Flights
                 // through the band and back for as long as its battery lasted.  `K_VY`
                 // takes the climb rate out, at twice the square root of `K_AGL` - the
                 // gain that leaves the band in one approach instead of three.
-                return new Vec3(a.x, a.y + Flight.GRAVITY + K_AGL * err - K_VY * vhat.y * speed, a.z);
+                //
+                // Two limits on top of that spring, both of them about *not* spending
+                // the whole wing on it.  The demand is capped at `CLIMB_MAX`, which is
+                // more than the 8 m/s^2 the motor can hold anyway, so the cap never
+                // costs a climb it could have made - what it stops is the snap: a
+                // round that comes out of a dive with the target gone used to put the
+                // entire lift ceiling into "get back to 200 m" and stand on its tail.
+                // And it is scaled down as the speed approaches the stall, because a
+                // wing with nothing left to give will trade the last of its speed for
+                // altitude it cannot hold, which is a climb followed by a fall.
+                float climb = Math.Clamp(K_AGL * err, -CLIMB_MAX, CLIMB_MAX);
+                float spare = Math.Clamp((speed - STALL) / (0.35f * Defs.DRONE_CRUISE), 0f, 1f);
+                climb *= spare;
+                return new Vec3(a.x, a.y + Flight.GRAVITY + climb - K_VY * vhat.y * speed, a.z);
             }
         }
     }

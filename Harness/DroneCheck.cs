@@ -41,6 +41,12 @@ public static class DroneCheck
         Console.WriteLine("\n== a hull that is moving: does the dive still arrive? ==");
         _moving();
         _acquire();
+        Console.WriteLine("\n== the target goes away mid-flight ==");
+        _lost();
+        Console.WriteLine("\n== a hill in the way ==");
+        _hill();
+        Console.WriteLine("\n== a hull coming at us ==");
+        _head_on();
         Console.WriteLine("\n== the trigger: with a ring and without one ==");
         _trigger();
         Console.WriteLine("\n== what a radar sees it by ==");
@@ -383,6 +389,161 @@ public static class DroneCheck
             Console.WriteLine($"search+drive {v,4:0.0} m/s: lock at {took,5:0.0} s, "
                               + $"closest {best,4:0} m, "
                               + (hurt ? $"hit at {secs:0.0} s" : $"no hit ({secs:0} s)"));
+        }
+    }
+
+    /// <summary>The hull dies, or is lost to a ridge, while the round is on its way:
+    /// what the round does next.
+    ///
+    /// Losing the target must not cost it the sky.  The height channel is a spring and
+    /// the dive has just stopped feeding it, so this is the one moment the round can
+    /// be asked for more lift than it has speed to pay for - and a round that trades
+    /// its last 40 m/s for altitude it cannot hold climbs, stalls and falls.  What is
+    /// printed is the shape of the recovery: the height it reached, the speed it kept
+    /// and whether it ever pointed up.
+    /// </summary>
+    private static void _lost()
+    {
+        foreach (float killAt in new[] { 6f, 12f })
+        {
+            var world = _range();
+            var e = world.ecs;
+            float hx = 900f, hz = 900f;
+            var p = new Vec3(hx, world.terrain.height_at(hx, hz) + Defs.DRONE_AGL, hz);
+            int tid = world.spawn_unit(Defs.ETYPE_APC, Defs.FACTION_BLUE, hx + 900f, hz,
+                                       crew: false);
+            e.fv("vel_cmd").set3(tid, 0f, 0f, 27.8f);
+            var deck = Seeker.roof(world, tid);
+            int round = world.spawn_round(-1, Defs.FACTION_RED, WID, Defs.PROJ_DRONE, p,
+                                          new Vec3(Defs.DRONE_CRUISE, 0f, 0f), WD.life,
+                                          tid, mem: deck, memVel: new Vec3(0f, 0f, 27.8f),
+                                          orbit: new Vec3(hx + 900f, 0f, hz));
+            float hi = 0f, lo = 1e9f, slow = 1e9f, up = 0f;
+            for (int t = 0; (float)t * DT < 60f; t++)
+            {
+                float now = t * DT;
+                if (MathF.Abs(now - killAt) < 0.5f * DT && e.is_alive(tid))
+                    e.destroy(tid);          // the hull is gone, the round is not
+                var st = _state(world.ecs, round);
+                float agl = st.pos.y - world.terrain.height_at(st.pos.x, st.pos.z);
+                if (st.pos.y > 0f)
+                {
+                    hi = MathF.Max(hi, agl);
+                    lo = MathF.Min(lo, agl);
+                    slow = MathF.Min(slow, st.vel.len);
+                    up = MathF.Max(up, MathF.Asin(MathUtil.clamp(st.vel.unit.y, -1f, 1f))
+                                        * 180f / MathF.PI);
+                }
+                world.update(DT);
+                if (!world.ecs.is_alive(round)) break;
+            }
+            Console.WriteLine($"target dies at {killAt,4:0} s: AGL {lo:0}-{hi:0} m, "
+                              + $"slowest {slow:0.0} m/s, steepest climb {up:0} deg");
+        }
+    }
+
+    /// <summary>A ridge rising faster than the round can climb, taken at the cruise.
+    ///
+    /// The height channel is a proportional spring against the ground 300 m ahead, so
+    /// the steeper the rise the larger its demand - and a demand larger than the wing
+    /// can pay is a pull-up to the vertical, a stall at the top and a fall, which is
+    /// what a player sees as "it stood on its tail and dropped".  What this row prints
+    /// is the shape of the transit: the least height it kept, the least speed, and the
+    /// steepest it ever pointed up.
+    /// </summary>
+    private static void _hill()
+    {
+        var world = _range();
+        var e = world.ecs;
+        // the steepest rise on the range's map, and where to start 400 m before it
+        float bestRise = 0f, bx = 0f, bz = 0f;
+        for (float x = 400f; x < world.terrain.w * Terrain.TILE - 1200f; x += 40f)
+            for (float z = 400f; z < world.terrain.d * Terrain.TILE - 400f; z += 40f)
+            {
+                float rise = world.terrain.height_at(x + 300f, z) - world.terrain.height_at(x, z);
+                if (rise > bestRise) { bestRise = rise; bx = x; bz = z; }
+            }
+        float hx = bx - 400f, hz = bz;
+        var p = new Vec3(hx, world.terrain.height_at(hx, hz) + Defs.DRONE_AGL, hz);
+        int round = world.spawn_round(-1, Defs.FACTION_RED, WID, Defs.PROJ_DRONE, p,
+                                      new Vec3(Defs.DRONE_CRUISE, 0f, 0f), WD.life, -1,
+                                      orbit: new Vec3(hx + 4000f, 0f, hz));
+        float lo = 1e9f, slow = 1e9f, up = 0f, hi = 0f;
+        for (int t = 0; (float)t * DT < 40f; t++)
+        {
+            world.update(DT);
+            if (!world.ecs.is_alive(round)) break;
+            var st = _state(world.ecs, round);
+            float agl = st.pos.y - world.terrain.height_at(st.pos.x, st.pos.z);
+            lo = MathF.Min(lo, agl); hi = MathF.Max(hi, agl);
+            slow = MathF.Min(slow, st.vel.len);
+            up = MathF.Max(up, MathF.Asin(MathUtil.clamp(st.vel.unit.y, -1f, 1f))
+                                    * 180f / MathF.PI);
+        }
+        Console.WriteLine($"ridge rises {bestRise:0} m over 300 m: AGL {lo:0}-{hi:0} m, "
+                          + $"slowest {slow:0.0} m/s, steepest climb {up:0} deg");
+    }
+
+    /// <summary>A hull driving *down* the line of flight, at the round.
+    ///
+    /// The other crossing: the plan-view distance closes at the sum of the two
+    /// speeds, so the round arrives over the hull while it is still two hundred
+    /// metres up.  That is the geometry proportional navigation is worst at - the
+    /// line it is nulling sweeps through the vertical, and the demand it asks for on
+    /// the way past is a pull-up.  What is printed is the recovery: the most height it
+    /// gained over its band, the least speed it kept, and the steepest it pointed up.
+    /// </summary>
+    private static void _head_on()
+    {
+        Console.WriteLine("closing m/s   result   closest m   peak AGL   slowest m/s   climb deg");
+        foreach (float v in new[] { 10f, 27.8f, 40f })
+        {
+            int hits = 0;
+            var close = new List<float>();
+            float peak = 0f, slow = 1e9f, up = 0f;
+            for (int k = 0; k < 3; k++)
+            {
+                var world = _range();
+                var e = world.ecs;
+                float hx = 900f, hz = 900f;
+                var p = new Vec3(hx, world.terrain.height_at(hx, hz) + Defs.DRONE_AGL, hz);
+                // it comes at us, a little off the line on the later phases
+                int tid = world.spawn_unit(Defs.ETYPE_APC, Defs.FACTION_BLUE,
+                                           hx + 1400f, hz + k * 80f, crew: false);
+                e.fv("vel_cmd").set3(tid, -v, 0f, 0f);
+                var deck = Seeker.roof(world, tid);
+                int round = world.spawn_round(-1, Defs.FACTION_RED, WID, Defs.PROJ_DRONE, p,
+                                              new Vec3(Defs.DRONE_CRUISE, 0f, 0f), WD.life,
+                                              tid, mem: deck, memVel: new Vec3(-v, 0f, 0f),
+                                              orbit: new Vec3(hx + 1400f, 0f, hz));
+                float best = float.MaxValue;
+                for (int t = 0; (float)t * DT < 90f; t++)
+                {
+                    var st = _state(world.ecs, round);
+                    var tp = e.fv("pos").get3(tid);
+                    float d = MathUtil.dist(st.pos, new Vec3(tp.x, tp.y + 2f, tp.z));
+                    if (d < best) best = d;
+                    if (st.vel.len > 1f)
+                    {
+                        float agl = st.pos.y - world.terrain.height_at(st.pos.x, st.pos.z);
+                        peak = MathF.Max(peak, agl);
+                        slow = MathF.Min(slow, st.vel.len);
+                        // the *climb* is a rising velocity: positive `vel.y`
+                        up = MathF.Max(up, MathF.Asin(MathUtil.clamp(st.vel.unit.y, -1f, 1f))
+                                            * 180f / MathF.PI);
+                    }
+                    float hp0 = e.is_alive(tid) ? e.fv("hp")[tid] : 0f;
+                    world.update(DT);
+                    if (!world.ecs.is_alive(round) || !e.is_alive(tid))
+                    {
+                        if (e.is_alive(tid) && e.fv("hp")[tid] < hp0) hits++;
+                        break;
+                    }
+                }
+                close.Add(best);
+            }
+            Console.WriteLine($"{v,10:0.0}   {hits}/3     {_median(close),7:0}   {peak,8:0}   "
+                              + $"{slow,11:0.0}   {up,9:0}");
         }
     }
 

@@ -1,9 +1,9 @@
 // `--check drone`: the loitering munition, row by row.
 //
-// Five readings, each one a question the design page answers by geometry
-// (`docs/plans/drone.md`): the airframe's numbers at its cruise, what the optics can
-// find and how long they take to find it, the height it holds over the terrain, the
-// circle it settles into, and the dive it finishes with.
+// Each row is a question the design page answers by geometry (`docs/plans/drone.md`):
+// the airframe's numbers at its cruise, the warhead against the two hulls it hunts,
+// what the optics can find and how long they take to find it, the height it holds
+// over the terrain, the circle it settles into, and the dive it finishes with.
 //
 // Every row builds its own range world with the range's shooters taken out - the
 // dummies do not need to see the round and the defence post would shoot at it - and
@@ -28,6 +28,8 @@ public static class DroneCheck
     {
         Console.WriteLine("\n== the airframe at its cruise ==");
         _cruise();
+        Console.WriteLine("\n== the warhead, against the two hulls it hunts ==");
+        _warhead();
         Console.WriteLine("\n== the search: distance and time to the first lock ==");
         _scan();
         Console.WriteLine("\n== the height band over 2 km ==");
@@ -94,13 +96,13 @@ public static class DroneCheck
                     world.spawn_unit(etype, Defs.FACTION_BLUE, hx + 900f + k * 20f,
                                      hz + off, crew: false);
                     // the munition flies east at its cruise, over the target, and its
-                    // circle is 4 km further on: nothing but the search decides when it
+                    // circle is the reach further on: nothing but the search decides when it
                     // sees anything
                     var p = new Vec3(hx, world.terrain.height_at(hx, hz) + Defs.DRONE_AGL, hz);
                     int round = world.spawn_round(-1, Defs.FACTION_RED, WID, Defs.PROJ_DRONE,
                                                   p, new Vec3(Defs.DRONE_CRUISE, 0f, 0f),
                                                   WD.life, -1,
-                                                  orbit: new Vec3(hx + 4000f, 0f, hz));
+                                                  orbit: new Vec3(hx + Defs.DRONE_REACH, 0f, hz));
                     var (dist, secs) = _until_target(world, round, 90f);
                     if (secs < 0f) continue;
                     found++;
@@ -122,7 +124,7 @@ public static class DroneCheck
         var p = new Vec3(hx, world.terrain.height_at(hx, hz) + Defs.DRONE_AGL, hz);
         int round = world.spawn_round(-1, Defs.FACTION_RED, WID, Defs.PROJ_DRONE, p,
                                       new Vec3(Defs.DRONE_CRUISE, 0f, 0f), WD.life, -1,
-                                      orbit: new Vec3(hx + 4000f, 0f, hz));
+                                      orbit: new Vec3(hx + Defs.DRONE_REACH, 0f, hz));
         var agl = _fly(world, round, 60f, out float speed_min, out float speed_max);
         _report_band("transit", agl, speed_min, speed_max);
     }
@@ -240,11 +242,9 @@ public static class DroneCheck
             var (p0, v0) = _state(world.ecs, round);
             float flown = e.fv("proj_trav").get(round, 0);
             world.update(DT);
-            // the hull keeps driving across: the harness moves it, and no crew gave
-            // it a command to override
-            var q = e.fv("pos").get3(tid);
-            e.fv("pos").set3(tid, q.x, q.y, q.z + CROSS * DT);
-            e.fv("vel").set3(tid, 0f, 0f, CROSS);
+            // the row reads the state it had at the top of the tick - the hull is
+            // dead or the round is gone before anything is written back, because a
+            // one-round kill frees the id the drive below would write through
             if (!world.ecs.is_alive(round) || !e.is_alive(tid))
             {
                 secs = t * DT;
@@ -252,6 +252,11 @@ public static class DroneCheck
                 trav = flown;
                 break;
             }
+            // the hull keeps driving across: the harness moves it, and no crew gave
+            // it a command to override
+            var q = e.fv("pos").get3(tid);
+            e.fv("pos").set3(tid, q.x, q.y, q.z + CROSS * DT);
+            e.fv("vel").set3(tid, 0f, 0f, CROSS);
         }
         float straight = MathUtil.dist(p, deck);
         Console.WriteLine($"crossing at {CROSS:0.0} m/s: "
@@ -469,7 +474,7 @@ public static class DroneCheck
         var p = new Vec3(hx, world.terrain.height_at(hx, hz) + Defs.DRONE_AGL, hz);
         int round = world.spawn_round(-1, Defs.FACTION_RED, WID, Defs.PROJ_DRONE, p,
                                       new Vec3(Defs.DRONE_CRUISE, 0f, 0f), WD.life, -1,
-                                      orbit: new Vec3(hx + 4000f, 0f, hz));
+                                      orbit: new Vec3(hx + Defs.DRONE_REACH, 0f, hz));
         float lo = 1e9f, slow = 1e9f, up = 0f, hi = 0f;
         for (int t = 0; (float)t * DT < 40f; t++)
         {
@@ -561,8 +566,9 @@ public static class DroneCheck
     /// </summary>
     private static void _launch()
     {
-        foreach (var (locked, reach) in new[] { (true, 3000f), (false, 4000f) })
+        foreach (bool locked in new[] { true, false })
         {
+            float reach = locked ? 3000f : Defs.DRONE_REACH;
             var world = _range();
             var e = world.ecs;
             float hx = 900f, hz = 900f;
@@ -598,7 +604,7 @@ public static class DroneCheck
                     nextX += 200f;
                 }
             }
-            Console.WriteLine($"\n{(locked ? "locked 3 km" : "unlocked 4 km")}: in the band at "
+            Console.WriteLine($"\n{(locked ? "locked 3 km" : $"unlocked {reach / 1000f:0.#} km")}: in the band at "
                               + $"{(band < 0f ? "never" : $"{band:0.0} s")}, peak {peak:0} m");
             Console.WriteLine("  by time   " + string.Join("  ", byT));
             Console.WriteLine("  by ground " + string.Join("  ", byX));
@@ -741,6 +747,36 @@ public static class DroneCheck
         Console.WriteLine($"cruise {v:0.0} m/s: CL {cl:0.00}, CD {cd:0.00}, "
                           + $"thrust {need:0.0} m/s2 of {WD.thrust:0.0} "
                           + $"(throttle {need / WD.thrust:0.00}), lift ceiling {lift_max:0.0} m/s2");
+    }
+
+    /// <summary>The warhead against the two hulls it hunts, and the rack's cadence.
+    ///
+    /// Both hulls carry the same 10 / 20 plate, so the warhead's job is to land in the
+    /// gap between their health: an APC's 100 hp goes in one round - including from
+    /// the far edge of a three-metre burst - while a mech's 120 hp survives one.  What
+    /// is printed is the health left after a direct hit and after near misses, which
+    /// is the only way to read "one round, and not two".
+    /// </summary>
+    private static void _warhead()
+    {
+        Console.WriteLine("hull      hp   direct   1 m   2 m  2.9 m");
+        foreach (var (name, etype) in new[] { ("apc", Defs.ETYPE_APC), ("mech", Defs.ETYPE_MECH) })
+        {
+            var left = new List<string>();
+            foreach (float dist in new[] { 0f, 1f, 2f, 2.9f })
+            {
+                var world = _range();
+                var e = world.ecs;
+                int tid = world.spawn_unit(etype, Defs.FACTION_BLUE, 900f, 900f, crew: false);
+                Combat.hit(world, tid, -1, WD, new HitAttributions(-1, null, WID, -1f), dist);
+                left.Add($"{MathF.Max(0f, e.fv("hp")[tid]),4:0}");
+            }
+            float hp = Defs.UNIT_DEFS[etype].hp;
+            Console.WriteLine($"{name,-8} {hp,4:0}  " + string.Join("  ", left));
+        }
+        float cycle = 60f / MathF.Max(WD.rpm, 1f);
+        Console.WriteLine($"rack: {WD.mag} rounds at {cycle:0.00} s a round, "
+                          + $"empty in {WD.mag * cycle:0.0} s");
     }
 
     // ------------------------------------------------------------------ plumbing

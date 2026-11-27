@@ -697,13 +697,16 @@ public static partial class Defs
         // stage is what pushes it, not the motor's own clock.  `maxvel` 90 is the
         // structure's ceiling and the cruise is held at 41.7 by that governor, so a
         // dive gets its speed from gravity.  `@lock = 2` is the new middle: the ring
-        // shows and is not a condition of firing.  And the warhead is the RPG
-        // launcher's - 100/40/20/3, five rounds to take an APC apart.
+        // shows and is not a condition of firing.  And the warhead is sized to the
+        // gap between the two hulls it hunts: 110 against the same 10/20 plate both
+        // of them carry, so one round takes an APC's 100 hp apart and leaves a mech's
+        // 120 with ten.  The rack is a burst, not a magazine: sixteen tubes at 0.1 s
+        // put the whole nest out in a second and a half.
         new WeaponDef
         {
             wid = WID_LOITER, key = "loiter", name = "LOITERING MUNITION", kind = "drone",
-            ap = 100f, ad = 40f, ed = 20f, er = 3.0f,
-            rpm = 60, mag = 16, reserve = 0, reload = 0.0f, vel = 20f, spread = 0.003f,
+            ap = 100f, ad = 100f, ed = 30f, er = 3.0f,
+            rpm = 600, mag = 16, reserve = 0, reload = 0.0f, vel = 20f, spread = 0.003f,
             bias = 0.0f, g = 9.81f, thrust = 8.0f, maxvel = 90f, life = 300.0f,
             expire_burst = true, maxdist = 0.0f, ignite = 0.0f, burn = 0.0f,
             mass = 45.0f, dia = 0.50f, cd0 = 0.60f, k_cl = 0.12f,
@@ -1588,7 +1591,7 @@ public static partial class Defs
     public const float DRONE_SCAN = 40.0f * MathF.PI / 180.0f;       // rad, one side
     public const float DRONE_SCAN_RATE = 40.0f * MathF.PI / 180.0f;  // rad/s, one pass 2 s
     public const float DRONE_ORBIT_R = 250.0f;  // m, the circle it searches from
-    public const float DRONE_REACH = 4000.0f;   // m, how far ahead an unlocked shot circles
+    public const float DRONE_REACH = 3000.0f;   // m, how far ahead an unlocked shot circles
     /// <summary>m: the distance at which a hull of this type fills
     /// `DRONE_SIGHT_AREA` of the seeker's field of view, so the first one that does is
     /// a target.  Computed once, from `UNIT_DEFS`' `radius` and `height`: the

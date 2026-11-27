@@ -109,7 +109,8 @@ public static partial class Flights
 
                         // ---- what it wants ------------------------------------
                         var want = Vec3.zero;
-                        if (spot is not null && _plan(p0, spot.Value) <= wd.pn_r)
+                        bool dive = spot is not null && _plan(p0, spot.Value) <= wd.pn_r;
+                        if (dive)
                         {
                             // the terminal dive: the same law the top attack flies
                             // inside its own `pn_r`, and no height channel at all.  The
@@ -117,7 +118,7 @@ public static partial class Flights
                             // *after the projection below* is only the part that would
                             // curve the flight path - taken out here, or the round
                             // over-dives and arrives in the dirt short of the hull
-                            want = _pn_accel(p0, vel, spot.Value, c.tvel_at(r.index),
+                            want = _pn_accel(p0, vel, spot!.Value, c.tvel_at(r.index),
                                              wd.pn_n) + new Vec3(0f, Flight.GRAVITY, 0f);
                         }
                         else
@@ -126,16 +127,20 @@ public static partial class Flights
                                            c.orbit_at(r.index), wd);
                         }
 
-                        // the wing answers a lift, square to the flight path, capped
-                        // by what the airframe can make at this speed.  When it cannot
-                        // make all of it, the height channel is paid first and the turn
-                        // gets what is left: a bank that eats the lift it needs to stay
-                        // up spirals into the ground, and unloading it is what a pilot
-                        // does with the same choice
+                        // The wing answers a lift square to the flight path, capped by
+                        // what the airframe can make at this speed.  What the cap is
+                        // *spent* on depends on what the round is doing.  Cruising, the
+                        // height channel is paid first and the turn gets the rest: a
+                        // bank that eats the lift it needs to stay up spirals into the
+                        // ground.  Diving, the whole demand is one turn onto the
+                        // intercept - there is no height left to protect - so the cap
+                        // scales the demand about its own size and the lateral pull it
+                        // needs survives.  Giving the descent priority in the dive too
+                        // was the whole of "it cannot hit a hull that is moving".
                         want = want - vhat * want.dot(vhat);
                         float q = 0.5f * Flight.RHO * speed * speed;
                         float lift_max = lift_accel(wd, q, wd.cl_max);
-                        if (want.len > lift_max)
+                        if (want.len > lift_max && !dive)
                         {
                             float budget = MathF.Sqrt(MathF.Max(0f, lift_max * lift_max
                                                                 - want.y * want.y));

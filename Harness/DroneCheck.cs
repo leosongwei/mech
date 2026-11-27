@@ -38,6 +38,9 @@ public static class DroneCheck
         _dive();
         Console.WriteLine("\n== the crossing hull: what the cruise costs ==");
         _crossing();
+        Console.WriteLine("\n== a hull that is moving: does the dive still arrive? ==");
+        _moving();
+        _acquire();
         Console.WriteLine("\n== the trigger: with a ring and without one ==");
         _trigger();
         Console.WriteLine("\n== what a radar sees it by ==");
@@ -251,6 +254,136 @@ public static class DroneCheck
                                 + "over the straight line)"
                               : "")
                           + $", target hp {(e.is_alive(tid) ? e.fv("hp")[tid] : 0f):0}");
+    }
+
+    /// <summary>A hull driving across the line of flight at the range the ring
+    /// hands it over at: the dive, not the chase.
+    ///
+    /// This is the engagement a player actually gets - the optics take a hull four
+    /// hundred metres out, on the band, and the round has four or five seconds to
+    /// put a 200 m descent through a point that is moving sideways at thirty metres a
+    /// second.  What is printed is the miss distance as well as the hit count,
+    /// because "did it hit" alone cannot tell an over-correction from an
+    /// under-correction.
+    /// </summary>
+    private static void _moving()
+    {
+        Console.WriteLine("range m   target m/s   result   closest m   time s   speed m/s");
+        foreach (float range in new[] { 350f, 550f, 800f })
+        {
+            foreach (float v in new[] { 0f, 15f, 27.8f, 50f })
+            {
+                int hits = 0;
+                var close = new List<float>();
+                var times = new List<float>();
+                var speeds = new List<float>();
+                for (int k = 0; k < 3; k++)
+                {
+                    var world = _range();
+                    var e = world.ecs;
+                    float hx = 900f, hz = 900f;
+                    var p = new Vec3(hx, world.terrain.height_at(hx, hz) + Defs.DRONE_AGL, hz);
+                    // it crosses the line of flight `range` metres ahead, its last
+                    // hundred metres of road depending on the phase
+                    int tid = world.spawn_unit(Defs.ETYPE_APC, Defs.FACTION_BLUE,
+                                               hx + range, hz - k * 120f, crew: false);
+                    // it drives itself: a carrier without a crew keeps the command the
+                    // harness wrote, so its `vel` - and therefore the `tgt_vel` the
+                    // seeker reads - is the real thing, not a teleport
+                    e.fv("vel_cmd").set3(tid, 0f, 0f, v);
+                    var deck = Seeker.roof(world, tid);
+                    int round = world.spawn_round(-1, Defs.FACTION_RED, WID,
+                                                  Defs.PROJ_DRONE, p,
+                                                  new Vec3(Defs.DRONE_CRUISE, 0f, 0f),
+                                                  WD.life, tid, mem: deck,
+                                                  memVel: new Vec3(0f, 0f, v),
+                                                  orbit: new Vec3(hx + range, 0f, hz));
+                    float best = float.MaxValue, secs = -1f, arrive = 0f;
+                    for (int t = 0; (float)t * DT < 60f; t++)
+                    {
+                        var st = _state(world.ecs, round);
+                        var tp = e.fv("pos").get3(tid);
+                        float d = MathUtil.dist(st.pos, new Vec3(tp.x, tp.y + 2f, tp.z));
+                        if (d < best) best = d;
+                        float hp0 = e.is_alive(tid) ? e.fv("hp")[tid] : 0f;
+                        if (Environment.GetEnvironmentVariable("MECH_DRONE_DBG") == "1"
+                            && range == 550f && v == 27.8f && k == 0 && t % 6 == 0
+                            && (float)t * DT > 6f)
+                        {
+                            var a0 = world.ecs.arch_of(round);
+                            int r0 = world.ecs.row_of(round);
+                            float ang = MathF.Atan2(-st.vel.y, MathF.Sqrt(st.vel.x * st.vel.x
+                                                      + st.vel.z * st.vel.z)) * 180f / MathF.PI;
+                            Console.WriteLine($"   t={(float)t * DT,5:0.0} plan={MathF.Sqrt((st.pos.x-tp.x)*(st.pos.x-tp.x)+(st.pos.z-tp.z)*(st.pos.z-tp.z)),5:0} "
+                                + $"agl={st.pos.y - world.terrain.height_at(st.pos.x, st.pos.z),4:0} ang={ang,5:0} "
+                                + $"spd={st.vel.len,4:0.0} awant={a0!.f("a_want")[r0],5:0.0} "
+                                + $"adiry={a0.f("a_dir")[r0*3+1],5:0.00} adirz={a0.f("a_dir")[r0*3+2],5:0.00} "
+                                + $"lock={e.iv("target")[round],3} d={d,5:0} tvel={e.fv("tgt_vel").get(round, 2),4:0.0}");
+                        }
+                        world.update(DT);
+                        if (!world.ecs.is_alive(round) || !e.is_alive(tid))
+                        {
+                            secs = t * DT;
+                            arrive = st.vel.len;
+                            if (e.is_alive(tid) && e.fv("hp")[tid] < hp0) hits++;
+                            break;
+                        }
+                    }
+                    close.Add(best);
+                    if (secs >= 0f) { times.Add(secs); speeds.Add(arrive); }
+                }
+                Console.WriteLine($"{range,7:0}   {v,10:0.0}   {hits}/3    "
+                                  + $"{_median(close),7:0}   {_median(times),6:0.0}   "
+                                  + $"{_median(speeds),8:0.0}");
+            }
+        }
+    }
+
+    /// <summary>And the same engagement with nobody having picked the target: the
+    /// munition circles, the optics take the driving hull, and the dive is what the
+    /// search hands over.  The two halves of that - the cone and the lead - are the
+    /// two places this can go wrong, so they are measured apart.</summary>
+    private static void _acquire()
+    {
+        foreach (float v in new[] { 0f, 27.8f })
+        {
+            var world = _range();
+            var e = world.ecs;
+            float hx = 900f, hz = 900f;
+            var p = new Vec3(hx, world.terrain.height_at(hx, hz) + Defs.DRONE_AGL, hz);
+            // the hull drives across the band, 400 m off the point the munition was
+            // told to circle - the ring looks ahead of the round, so anything sitting
+            // *under* its own circle is never in it
+            int tid = world.spawn_unit(Defs.ETYPE_APC, Defs.FACTION_BLUE, hx + 600f,
+                                       hz + 400f, crew: false);
+            e.fv("vel_cmd").set3(tid, 0f, 0f, v);
+            int round = world.spawn_round(-1, Defs.FACTION_RED, WID, Defs.PROJ_DRONE, p,
+                                          new Vec3(Defs.DRONE_CRUISE, 0f, 0f), WD.life,
+                                          -1, orbit: new Vec3(hx + 600f, 0f, hz));
+            float best = float.MaxValue, took = -1f, secs = -1f;
+            bool hurt = false;
+            for (int t = 0; (float)t * DT < 120f; t++)
+            {
+                var st = _state(world.ecs, round);
+                var tp = e.fv("pos").get3(tid);
+                float d = MathUtil.dist(st.pos, new Vec3(tp.x, tp.y + 2f, tp.z));
+                if (d < best) best = d;
+                float hp0 = e.is_alive(tid) ? e.fv("hp")[tid] : 0f;
+                int had = world.ecs.is_alive(round) ? e.iv("target")[round] : -1;
+                world.update(DT);
+                if (took < 0f && world.ecs.is_alive(round) && e.iv("target")[round] >= 0
+                    && had < 0) took = t * DT;
+                if (!world.ecs.is_alive(round) || !e.is_alive(tid))
+                {
+                    secs = t * DT;
+                    hurt = e.is_alive(tid) && e.fv("hp")[tid] < hp0;
+                    break;
+                }
+            }
+            Console.WriteLine($"search+drive {v,4:0.0} m/s: lock at {took,5:0.0} s, "
+                              + $"closest {best,4:0} m, "
+                              + (hurt ? $"hit at {secs:0.0} s" : $"no hit ({secs:0} s)"));
+        }
     }
 
     /// <summary>The two ways a pilot lets one go: with the ring on a hull, and with

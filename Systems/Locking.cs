@@ -136,7 +136,11 @@ public static class Locking
             // pilot chooses a hull and is then free to move his sight where the shot
             // needs it - another hull under the circle takes over as the candidate
             int cand = _candidate(world, eid, wd, cone, ids, origin, d);
-            pl.lock_target = _hold(world, eid, pl.lock_target, cand, wd);
+            // a weapon that can fire without a lock lets go of the hull the moment the
+            // circle leaves it: the pilot's next pull is then either "at that hull" or
+            // "at nothing", and "at nothing" is a shot he means
+            bool release = wd.@lock == 2;
+            pl.lock_target = _hold(world, eid, pl.lock_target, cand, wd, release);
         }
     }
 
@@ -202,12 +206,17 @@ public static class Locking
     /// it is a live enemy hull inside the weapon's lock range.
     ///
     /// The cross is for *choosing*.  A candidate that evaporated the moment the
-    /// sight moved would make the weapon unusable the way a trigger that only works
-    /// while the cross is on the mark is: the shot has to be aimed, and aiming means
-    /// looking somewhere else.</summary>
-    private static int _hold(World world, int eid, int cur, int cand, WeaponDef wd)
+    /// sight moved would make a lock weapon unusable the way a trigger that only
+    /// works while the cross is on the mark is: the shot has to be aimed, and aiming
+    /// means looking somewhere else.  A weapon that can *also* be fired without a
+    /// lock is the other case: there the candidate is released with the circle
+    /// (`release`), so a pilot aiming at a hull can still say "nothing" by taking his
+    /// cross off it.</summary>
+    private static int _hold(World world, int eid, int cur, int cand, WeaponDef wd,
+                             bool release)
     {
         if (cand >= 0) return cand;
+        if (release) return -1;
         var e = world.ecs;
         if (cur < 0 || !e.is_alive(cur) || !e.has(cur, "lockable")) return -1;
         if (e.uv("faction")[cur] == e.uv("faction")[eid]) return -1;

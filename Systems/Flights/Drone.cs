@@ -122,8 +122,8 @@ public static partial class Flights
                         }
                         else
                         {
-                            want = _cruise(world, p0, vhat, speed, spot,
-                                           c.orbit_at(r.index));
+                            want = _cruise(world, p0, vel, spot, c.tvel_at(r.index),
+                                           c.orbit_at(r.index), wd);
                         }
 
                         // the wing answers a lift, square to the flight path, capped
@@ -199,12 +199,22 @@ public static partial class Flights
             /// (`docs/plans/drone.md` §3.5).  The two are added as vectors and the
             /// result is one demand: a banking round that is also climbing is exactly
             /// the vector sum of the two, and `lift_max` is what limits it.</summary>
-            private static Vec3 _cruise(World world, Vec3 p0, Vec3 vhat, float speed,
-                                        Vec3? spot, Vec3 orbit)
+            private static Vec3 _cruise(World world, Vec3 p0, Vec3 vel, Vec3? spot,
+                                        Vec3 tvel, Vec3 orbit, WeaponDef wd)
             {
+                float speed = vel.len;
+                var vhat = speed > 1e-3f ? vel / speed : new Vec3(1f, 0f, 0f);
                 var a = Vec3.zero;
                 bool circle = spot is null && _plan(p0, orbit) <= Defs.DRONE_ORBIT_R;
-                if (circle)
+                if (spot is not null)
+                {
+                    // a hull it has taken, still far out: null the rotation of the line
+                    // to it, the same law the dive ends in - turning onto the hull's
+                    // current bearing instead would fly a curve, and at 41.7 m/s the
+                    // curve is most of the motor
+                    a = _pn_level(p0, vel, spot.Value, tvel, wd.pn_n);
+                }
+                else if (circle)
                 {
                     // A circle is followed as a tangent plus a radial correction: the
                     // track turns to run round the point, and the error on the radius
@@ -227,9 +237,9 @@ public static partial class Flights
                 }
                 else
                 {
-                    // at the point it is chasing (a hull it has locked) or at the one
-                    // it was told to circle, level
-                    a = _turn(vhat, speed, (spot ?? orbit) - p0);
+                    // at the point it was told to circle, level: a stationary point is
+                    // a straight line, and pursuit of one costs nothing
+                    a = _turn(vhat, speed, orbit - p0);
                 }
                 // the height channel: the ground it is about to fly over, plus the band
                 var hdir = new Vec3(vhat.x, 0f, vhat.z);

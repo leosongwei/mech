@@ -432,6 +432,9 @@ public static class Netcode
         public float x, z;
         public int faction = -1;
         public int mech = -1;
+        // the pilot's own number, so the frame can carry every round he fired
+        // whatever the interest sphere says about where it has flown to
+        public int pid = -1;
         // the clock block's per-pilot fields, filled by `Client` before a frame
         // is built: the ack to echo back, and this pilot's loss last second
         public int echo = -1;
@@ -444,6 +447,7 @@ public static class Netcode
         public void at(World world, Player pl)
         {
             faction = pl.faction;
+            pid = pl.pid;
             mech = world.ecs.is_alive(pl.mech) ? pl.mech : -1;
             if (mech >= 0)
             {
@@ -571,7 +575,12 @@ public static class Netcode
             var slot = e.slot(eid);
             if (!slot.ok || !slot.a.has("pos")) continue;
             int kind = slot.a.has("proj_kind") ? slot.a.get_u8("proj_kind", slot.row) : 0;
-            if (!inside(slot.a, slot.row, v, tier_of_round(kind), eid)) continue;
+            // a pilot's own rounds ride his frame wherever they fly to: a munition
+            // that circles a town 4 km out for five minutes is still his, and losing
+            // sight of the one he just fired is not a fog-of-war rule
+            bool mine = v.pid >= 0 && slot.a.has("proj_pid")
+                        && slot.a.get_i("proj_pid", slot.row) == v.pid;
+            if (!mine && !inside(slot.a, slot.row, v, tier_of_round(kind), eid)) continue;
             kp.Add(eid);
         }
         var ks = new List<int>(sids.Length);
@@ -752,7 +761,8 @@ public static class Netcode
             s[off + 3] = _b(a, r, "proj_wid");
             s[off + 4] = _b(a, r, "faction");
             int kind = _b(a, r, "proj_kind");
-            bool shared = (kind == 2 || kind == 3)
+            bool shared = (kind == Defs.PROJ_SACLOS || kind == Defs.PROJ_TOP
+                           || kind == Defs.PROJ_DRONE)
                           && (_b(a, r, "faction") == v.faction
                               || Systems.Datalink.missile_known(world, v.faction, eid));
             s[off + 5] = shared ? (byte)1 : (byte)0; // bit0: shared guided-round observation

@@ -247,11 +247,12 @@ public static partial class Defs
     public static readonly RackSpec RACK_SACLOS = rack(4, 4, 16, bore: 0.24f, pitch: 0.28f,
                                                       length: 1.70f, centre: 0.0f,
                                                       end: 0.25f, frame: 0.025f, elev: 0.18f);
-    // The loitering munition's rack: four tubes, folded wings and all, at the top
-    // attack's tube size and elevation.  A tube is a tube - what leaves it is the
+    // The loitering munition's rack: sixteen tubes, four across and four high, at the
+    // top attack's tube size and elevation.  A tube is a tube - what leaves it is the
     // round's own body (`body`), and the launcher only has to be wide enough that
-    // four of them fit.
-    public static readonly RackSpec RACK_LOITER = rack(2, 2, 4, bore: 0.24f, pitch: 0.28f,
+    // four rows of four fit.  Bolted at the top attack's quadrant, because these
+    // rounds climb before they have any speed to fly on.
+    public static readonly RackSpec RACK_LOITER = rack(4, 4, 16, bore: 0.24f, pitch: 0.28f,
                                                       length: 1.70f, centre: 0.0f,
                                                       end: 0.25f, frame: 0.025f, elev: 0.73299f,
                                                       bolted: true);
@@ -702,13 +703,13 @@ public static partial class Defs
         {
             wid = WID_LOITER, key = "loiter", name = "LOITERING MUNITION", kind = "drone",
             ap = 100f, ad = 40f, ed = 20f, er = 3.0f,
-            rpm = 60, mag = 4, reserve = 0, reload = 0.0f, vel = 20f, spread = 0.003f,
+            rpm = 60, mag = 16, reserve = 0, reload = 0.0f, vel = 20f, spread = 0.003f,
             bias = 0.0f, g = 9.81f, thrust = 8.0f, maxvel = 90f, life = 300.0f,
             expire_burst = true, maxdist = 0.0f, ignite = 0.0f, burn = 0.0f,
             mass = 45.0f, dia = 0.50f, cd0 = 0.60f, k_cl = 0.12f,
             cl_alpha = 15.0f, cl_max = 4.5f,
             pn_n = 3.0f, pn_r = 400.0f, pn_v = 25.0f,
-            range = 4000, lock_range = 4000, cost = 300, ammo_cost = 30.0f,
+            range = 4000, lock_range = 4000, cost = 300, ammo_cost = 10.0f,
             @lock = 2, salvo = 0, semi = 0, ai_gap = 0.0f,
             color = new[] { 1.0f, 0.85f, 0.45f }, cal = 500f, rcs = 0.02f,
             rack = RACK_LOITER, body = new[] { 0.18f, 1.30f },

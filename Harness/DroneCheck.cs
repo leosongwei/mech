@@ -36,8 +36,12 @@ public static class DroneCheck
         _loiter();
         Console.WriteLine("\n== the dive ==");
         _dive();
+        Console.WriteLine("\n== the crossing hull: what the cruise costs ==");
+        _crossing();
         Console.WriteLine("\n== the trigger: with a ring and without one ==");
         _trigger();
+        Console.WriteLine("\n== what a radar sees it by ==");
+        _radar();
         return 0;
     }
 
@@ -195,6 +199,60 @@ public static class DroneCheck
                           + $"target hp {(world.ecs.is_alive(target) ? world.ecs.fv("hp")[target] : 0f):0}");
     }
 
+    /// <summary>A hull crossing the flight path at its own speed: the case pure
+    /// pursuit pays for.  Turning onto a hull's current bearing flies a curve where a
+    /// straight line exists, and the curve is paid for at the throttle and in the
+    /// seconds to arrival; nulling the rotation of the line to it (proportional
+    /// navigation, in the map plane) is how the cruise leg flies instead.  What this
+    /// row prints is what that buys - the path flown against the straight line, and
+    /// the time to the hit.</summary>
+    private static void _crossing()
+    {
+        var world = _range();
+        var e = world.ecs;
+        float hx = 800f, hz = 2000f;
+        var p = new Vec3(hx, world.terrain.height_at(hx, hz) + Defs.DRONE_AGL, hz);
+        // the hull runs across the munition's line of flight, timed to cross it where
+        // the munition will be when it gets there (1200 m along, 800 m to the side, at
+        // an APC's own speed)
+        const float CROSS = 27.8f;
+        int tid = world.spawn_unit(Defs.ETYPE_APC, Defs.FACTION_BLUE, hx + 1200f,
+                                   hz - 800f, crew: false);
+        var deck = Seeker.roof(world, tid);
+        int round = world.spawn_round(-1, Defs.FACTION_RED, WID, Defs.PROJ_DRONE, p,
+                                      new Vec3(Defs.DRONE_CRUISE, 0f, 0f), WD.life, tid,
+                                      mem: deck, memVel: Vec3.zero,
+                                      orbit: new Vec3(hx + 1200f, 0f, hz));
+        float secs = -1f, speed = 0f, trav = 0f;
+        for (int t = 0; (float)t * DT < 300f; t++)
+        {
+            var (p0, v0) = _state(world.ecs, round);
+            float flown = e.fv("proj_trav").get(round, 0);
+            world.update(DT);
+            // the hull keeps driving across: the harness moves it, and no crew gave
+            // it a command to override
+            var q = e.fv("pos").get3(tid);
+            e.fv("pos").set3(tid, q.x, q.y, q.z + CROSS * DT);
+            e.fv("vel").set3(tid, 0f, 0f, CROSS);
+            if (!world.ecs.is_alive(round) || !e.is_alive(tid))
+            {
+                secs = t * DT;
+                speed = v0.len;
+                trav = flown;
+                break;
+            }
+        }
+        float straight = MathUtil.dist(p, deck);
+        Console.WriteLine($"crossing at {CROSS:0.0} m/s: "
+                          + (secs < 0f ? "never caught within the battery"
+                                       : $"{secs:0.0} s to the hit, arrived at {speed:0.0} m/s")
+                          + (trav > 0f
+                              ? $", {trav:0} m flown ({100f * (trav / straight - 1f):0.0}% "
+                                + "over the straight line)"
+                              : "")
+                          + $", target hp {(e.is_alive(tid) ? e.fv("hp")[tid] : 0f):0}");
+    }
+
     /// <summary>The two ways a pilot lets one go: with the ring on a hull, and with
     /// nothing locked at all.  `@lock = 2` is the middle of the three states - the
     /// sight still answers a lock, and the trigger does not wait for one - so both
@@ -249,6 +307,72 @@ public static class DroneCheck
                               + $"target {rtgt,3} ({(rtgt == tid ? "the hull" : "none")}), "
                               + $"circle {toReach,5:0} m out, {toHull,5:0} m from the hull");
         }
+
+        // the release: a ring held on a hull, and then the cross taken off it.  A
+        // weapon that needs a lock keeps its hull (the shot still has to be aimed);
+        // this one lets go, which is what makes "fire at nothing" a thing a pilot can
+        // say while a hull is under his thumb
+        {
+            var world = new World(7, "range");
+            var e = world.ecs;
+            var pl = world.add_player("RELEASE");
+            pl.loadout = new[] { Defs.WID_AC30, WID };
+            int row = e.row_of(pl.mech);
+            var hullA = e.arch_of(pl.mech)!;
+            hullA.u8("weapon")[row * 2 + 1] = (byte)WID;
+            hullA.i("mag")[row * 2 + 1] = WD.mag;
+            var mech = e.fv("pos").get3(pl.mech);
+            int tid = world.spawn_unit(Defs.ETYPE_APC, 1 - pl.faction, mech.x + 700f,
+                                       mech.z, crew: false);
+            var tgt = e.fv("pos");
+            float held = 0f, released = 0f, reheld = 0f;
+            for (int t = 0; t < 150; t++)
+            {
+                var t0 = tgt.get3(tid);
+                var eye = MathUtil.sight_eye(e.fv("pos").get3(pl.mech),
+                                             e.fv("yaw")[pl.mech]);
+                float dx = t0.x - eye.x, dz = t0.z - eye.z, dy = t0.y + 2f - eye.y;
+                // 0-1.5 s on the hull, 1.5-3 s 0.8 rad clear of it, 3-5 s back on it
+                float now = t * DT;
+                float off = now > 1.5f && now < 3f ? 0.8f : 0f;
+                pl.in_yaw = MathF.Atan2(dz, dx) + off;
+                pl.in_pitch = MathF.Atan2(dy, MathF.Sqrt(dx * dx + dz * dz));
+                pl.fire = (false, false);
+                world.update(DT);
+                if (now > 1.4f && now < 1.5f) held = pl.lock_target;
+                if (now > 2.9f && now < 3f) released = pl.lock_target;
+                if (now > 4.9f) reheld = pl.lock_target;
+            }
+            Console.WriteLine($"release  ring held {((int)held == tid ? "yes" : "NO")}, "
+                              + $"cross off it: {((int)released < 0 ? "released" : "STILL HELD")}, "
+                              + $"cross back on it: {((int)reheld == tid ? "held again" : "not held")}");
+        }
+    }
+
+    /// <summary>The round as a radar contact: the same cross-section the beam rider
+    /// has, and the doppler term applied exactly as it is to every other round.  A
+    /// loitering hull is *crossing*, so its closing speed is near zero and the
+    /// equation answers "not seen" - the warning arrives when it turns at the hull,
+    /// which is the design, not an exemption.
+    ///
+    ///     d^2 &lt;= K * v_closing,     K = sqrt(strength * rcs) / RADAR_V_REF
+    /// </summary>
+    private static void _radar()
+    {
+        float strength = Defs.UNIT_DEFS[Defs.ETYPE_MECH].radar_strength;
+        Console.WriteLine($"rcs: saclos {Defs.WEAPONS[Defs.WID_SACLOS].rcs:0.000}, "
+                          + $"top {Defs.WEAPONS[Defs.WID_TOPATTACK].rcs:0.000}, "
+                          + $"drone {WD.rcs:0.000}"
+                          + $"   (a mech's radar: strength {strength:0.###e+0})");
+        foreach (float vc in new[] { 41.7f, 68.0f, 600.0f })
+        {
+            float d = MathF.Sqrt(Defs.radar_k(strength, WD.rcs) * vc);
+            Console.WriteLine($"   closing at {vc,5:0.0} m/s: seen from {d,5:0} m");
+        }
+        // the same equation with the beam rider's own numbers, for the comparison
+        float ds = MathF.Sqrt(Defs.radar_k(strength, Defs.WEAPONS[Defs.WID_SACLOS].rcs) * 600f);
+        Console.WriteLine($"   a beam rider closing at 600 m/s: seen from {ds,5:0} m "
+                          + $"(same K, same equation)");
     }
 
     /// <summary>The airframe's numbers where the design page derives them: level

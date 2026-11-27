@@ -113,6 +113,22 @@ public static class DatalinkCheck
         int pr = FindProjectile(missileFrame, missile);
         bool missile_bit = pr >= 0 && (missileFrame[pr + 5] & 1) != 0;
         Line("missile", $"observed {missile_link}, wire bit {missile_bit}", missile_link && missile_bit, ref bad);
+
+        // the loitering munition is the third guided round on the link: a crew wants
+        // to see the one that is not aimed at anything yet, and its own side always
+        // does (`Netcode.snapshot_bytes`' shared bit)
+        int loiter = world.spawn_round(-1, Defs.FACTION_BLUE, Defs.WID_LOITER,
+                                       Defs.PROJ_DRONE,
+                                       new Vec3(tp.x + 200f, tp.y + 250f, tp.z),
+                                       new Vec3(41.7f, 0f, 0f), 300f, -1,
+                                       orbit: new Vec3(tp.x + 4000f, 0f, tp.z));
+        world.update(DT);
+        bool loiter_link = Datalink.missile_known(world, Defs.FACTION_RED, loiter);
+        byte[] loiterFrame = Netcode.snapshot_bytes(world, view);
+        int lr = FindProjectile(loiterFrame, loiter);
+        bool loiter_bit = lr >= 0 && (loiterFrame[lr + 5] & 1) != 0;
+        Line("munition", $"observed {loiter_link}, wire bit {loiter_bit}",
+             loiter_link && loiter_bit, ref bad);
         Guidance(ref bad);
         Fire(ref bad);
 

@@ -16,7 +16,6 @@
 // a *point* (where the round has to go).  `wx/wy/wz` is the point; `x/y` is where
 // it is drawn.
 
-import { LEAD_TARGETS } from '../../core/config.js';
 import { clamp } from '../../core/math.js';
 import { LEAD_PAIR_SEP } from '../../hud/layout.js';
 import { leadPoint } from '../../core/fcs.js';
@@ -32,10 +31,12 @@ export class Lead {
   }
 
   // Target records are built before looking at the arms.  Every known vehicle in
-  // the 25 m - 4 km range gets a box; only the nearest four hostile records get
-  // pre-aim solutions.  Guided rounds keep the snapshot tier.  Direct sight wins
-  // over a datalink bit; friendly rows carry the shared position bit and use the
-  // same solid/dashed source rule.
+  // the 25 m - 4 km range gets a box and, when hostile, a pre-aim solution per
+  // usable arm: the picker is a ring the pilot has to be able to aim at, and how
+  // many of them the field happens to hold is not something the sight can trade
+  // away.  Guided rounds keep the snapshot tier.  Direct sight wins over a
+  // datalink bit; friendly rows carry the shared position bit and use the same
+  // solid/dashed source rule.
   update(own) {
     const { app } = this;
     if (app.net.seq === this.seq) return;
@@ -116,17 +117,19 @@ export class Lead {
     const aimEye = app.aim.sightEye(own, pose);
     for (const a of arms) a.m = app.aim.muzzle(own, a.arm, pose);
 
-    let aimed = 0;
     for (const t of targets) {
       if (t.faction === own.faction) continue;
-      if (aimed >= LEAD_TARGETS) continue;
-      aimed += 1;
       for (const a of arms) {
         let p;
         if (t.kind === 'missile') {
+          // the round's row is the newest snapshot's too, so it is walked to the
+          // fire tick exactly as a hull is: a missile closing at 400 m/s covers
+          // twenty metres in that time, and a ring drawn there is a ring the
+          // pilot cannot hit with
           p = leadPoint(a.wd, app.zeroRange, zero.max_elev,
             a.m[0], a.m[1], a.m[2], aimEye[0], aimEye[1], aimEye[2],
-            t.x, t.y, t.z, t.vx || 0, t.vz || 0, t.vy || 0);
+            t.x + (t.vx || 0) * lag, t.y + (t.vy || 0) * lag, t.z + (t.vz || 0) * lag,
+            t.vx || 0, t.vz || 0, t.vy || 0);
         } else {
           const e = t.src;
           const half = t.ry;
@@ -165,9 +168,13 @@ export class Lead {
       // `rx`) and has a floor of its own: a 0.08 m round is well under a pixel
       // at a kilometre, and a mark too small to see is not useful.
       const hw = clamp(t.rx * pxm, t.kind === 'missile' ? 8 : 6, 70);
+      // the record carries the snap's own input through the projection: a hull
+      // hands over its entity (`src`), a missile its world row (`fly`) - the
+      // pixels below are a picker and nothing re-solves against them
       const out = {
         id: t.id, kind: t.kind, faction: t.faction, source: t.source,
         src: t.src || null,
+        fly: t.kind === 'missile' ? t : null,
         x: box[0], y: box[1],
         hw,
         hh: t.kind === 'missile' ? hw : clamp(t.ry * pxm, 5, 70),
@@ -308,8 +315,8 @@ export class Lead {
       x: best.m.wx, y: best.m.wy, z: best.m.wz,
       arm: best.m.arm, id: best.t.id,
       wid: own.weapon[best.m.arm],
-      e: best.t.src || null,          // a hull, or a missile's own record
-      fly: best.t.src ? null : best.t,
+      e: best.t.src || null,          // a hull's entity, or nothing
+      fly: best.t.fly || null,        // a missile's world row
     };
   }
 }

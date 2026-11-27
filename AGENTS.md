@@ -26,7 +26,7 @@ C#（.NET 10）原型（archetype）ECS 服务器、WebGL2 客户端、16 km 见
 3. 在 `docs/product/CHANGELOG.md` 顶部添加带日期的条目——八行以内，
    写明玩家可见的差异及涉及的页面；
 4. `MechServer.csproj` 中的版本号：新功能递增第二位（第三位归 0），
-   玩家不可见的改动递增第三位。`frontend/package.json` 的 `version`
+   玩家不可见的改动和bug修复递增第三位。`frontend/package.json` 的 `version`
    是私有清单字段，任何流程均不读取。
 
 维持四层文档诚实的规则：
@@ -214,27 +214,30 @@ mode post-systems               # battle：波次
 每条原则只保留断言本身；具体机制、数值与实现细节由"详见"指向的页面
 及第 5 节功能索引承载。
 
-* **组件集合即实体的类型，且终生不变。** 详见 `docs/dev/ecs.md`。
+## 遵循ECS设计模式
 
-* **每个运动体只有一份 `pos`、一份 `vel`。** 详见 `docs/product/systems/movement.md`。
+* 组件集合即实体的类型，且终生不变。详见 `docs/dev/ecs.md`。
+* 每个运动体只有一份 `pos`、一份 `vel`。详见 `docs/product/systems/movement.md`。
+* ECS的基本设计原则是用组件表明身份，路由到不同系统上，而非在单系统中写类型分支。详见 `docs/dev/ecs.md`。
+* 系统面向 buffer 编写，而非经由 `View`。详见 `docs/dev/ecs.md`。
+* 模拟尽量不要依赖于遍历顺序。详见 `docs/dev/checks.md`。
+* 通过系统顺序组成流水线保持语义。详见 `docs/dev/pipeline.md`。
+* 分离控制层（AI、玩家输入）、操作层、模拟层。详见 `docs/product/systems/ai.md`。
+* 服务器和客户端的火控尽量一致，但独立实现，详见 `docs/product/systems/firecontrol.md`。
 
-* **ECS的基本设计原则是用组件表明身份，路由到不同系统上，而非在单系统中写类型分支。** 详见 `docs/dev/ecs.md`。
+## 开发流程
 
-* **系统面向 buffer 编写，而非经由 `View`。** 详见 `docs/dev/ecs.md`。
+* 计划文档写到`docs/plans`，但注意这不是最终的产品、实现文档，这个文件夹会定期清空！
+* 测试时，先在靶场中粗测，然后上harness测，最后才战斗模式测试。详见 `docs/dev/checks.md`。
+* 文档随改动更新，所有用户可感知变动都要落到产品文档。详见 `docs/product/README.md`。
+* 文档的文风上保持信息完整，禁止伪口语化、设问、凭空否定等非书面表述。
+  * 删除功能时，最容易出现凭空否定，导致文档腐烂。此时应当把旧的文档、注释删除干净，就像该功能从未存在过一样，而非留下否定的注释、文档来制造噪音。
 
-* **模拟尽量不要依赖于遍历顺序** 详见 `docs/dev/checks.md`。
+## 版本控制
 
-* **流水线即语义，其余只是开销。** 详见 `docs/dev/pipeline.md`。
-
-* **分离控制层（AI、玩家输入）、操作层、模拟层** 详见 `docs/product/systems/ai.md`。
-
-* **火控定律唯一，双端一致。** 详见 `docs/product/systems/firecontrol.md`。
-
-* **文档随改动更新。** 详见 `docs/product/README.md`。
-
-* **小编辑，先靶场后战斗。** 详见 `docs/dev/checks.md`。
-
-* **文档的文风上保持信息完整，禁止伪口语化、设问、凭空否定等非书面表述**
+* 开发新功能时，切到main分支，git pull保证main分支最新
+* 然后创建功能的开发分支，命名格式为`dev/{version}-{feature_name}`，version就是新的版本号，比如开发新的火控功能，则可以为`dev/1.99.0-fcs_update`（版本和功能名称按实际情况来即可）
+* 完成时，commit & push，并用gh命令提交github PR
 
 ## 5. 功能索引
 

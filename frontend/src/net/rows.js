@@ -27,6 +27,12 @@ const SIZE = { u8: 1, u16: 2, f32: 4 };
 
 export const TARGET_LINK = 1 << 6;       // MECH / APC flags: shared target observation
 export const PROJ_TARGET_LINK = 1 << 0;  // projectile +5: shared guided-round observation
+// The round kinds that steer themselves (`Defs.PROJ_SACLOS` / `PROJ_TOP` /
+// `PROJ_DRONE`): the ones the HUD draws a mark on, and the ones the wire's shared
+// bit above is ever set for.  A bullet and an unguided rocket are neither.
+export const GUIDED_ROUND = { SACLOS: 2, TOP: 3, DRONE: 4 };
+export const isGuidedRound = (kind) => kind === GUIDED_ROUND.SACLOS
+  || kind === GUIDED_ROUND.TOP || kind === GUIDED_ROUND.DRONE;
 
 export const CLASSES = [
   {

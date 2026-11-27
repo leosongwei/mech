@@ -19,6 +19,7 @@
 import { clamp } from '../../core/math.js';
 import { LEAD_PAIR_SEP } from '../../hud/layout.js';
 import { leadPoint } from '../../core/fcs.js';
+import { isGuidedRound } from '../../net/rows.js';
 import { sightBlocked } from '../../map/index.js';
 
 export class Lead {
@@ -80,7 +81,7 @@ export class Lead {
     // the receiver keeps its own hearing and alarm rules, while this layer draws
     // every known friendly round and every directly seen or linked enemy round.
     for (const p of app.net.projectiles) {
-      if (p.kind !== 2 && p.kind !== 3) continue;
+      if (!isGuidedRound(p.kind)) continue;
       if (!app.hud._project(p.x, p.y, p.z)) continue;
       const friendly = p.faction === own.faction;
       const blocked = sightBlocked(app.map,

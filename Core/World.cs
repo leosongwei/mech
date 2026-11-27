@@ -404,6 +404,9 @@ public sealed class World
         var comps = new List<string>(pooled ? Components.MISSILE_COMPS
                                             : Components.PROJ_COMPS);
         if (kind == 3) comps.AddRange(Components.SEEKER_COMPS);
+        // a round that flies on a wing carries the airframe's own state
+        if (Array.IndexOf(Defs.AIRFRAME_KINDS, wd.kind) >= 0)
+            comps.AddRange(Components.AIRFRAME_EXTRA);
         // a beam rider rides one line of its launcher's laser, and the line is
         // encoded in the beam: that is what lets four rounds be steered at once
         if (wd.kind == "saclos") comps.AddRange(Components.BEAM_ROUND_COMPS);

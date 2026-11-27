@@ -299,6 +299,21 @@ public static class Components
         ecs.register("tgt_mem", Kind.F, 3, 0.0);
         ecs.register("tgt_vel", Kind.F, 3, 0.0);
 
+        // ---- airframe ---------------------------------------------------
+        // The state one tick of a winged round's flight is made of: an acceleration
+        // accumulator the force stages add into, the guidance's demand on it, and the
+        // derivations every force reads (`Systems/Flights/Airframe.cs`).  They sit on
+        // the round for the same reason `tgt_mem` does - they are what this tick's
+        // arithmetic produced, and the stages that produce them run in a fixed order
+        // before the stages that read them.
+        ecs.register("acc", Kind.F, 3, 0.0);              // m/s², the force sum
+        ecs.register("a_dir", Kind.F, 3, 0.0);            // unit, the lift direction asked for
+        ecs.register("a_want", Kind.F);                   // m/s², the lift magnitude asked for
+        ecs.register("vhat", Kind.F, 3, 0.0);             // unit, the flight direction
+        ecs.register("q", Kind.F);                        // Pa, dynamic pressure
+        ecs.register("cl", Kind.F);                       // the lift coefficient actually made
+        ecs.register("nose", Kind.F, 3, 0.0);             // unit, the thrust axis
+
         // ---- laser designator -------------------------------------------
         // A beam rider is not told where to fly: it flies the laser, and the
         // launcher's fire-control computer is what points the laser.  One component
@@ -421,6 +436,16 @@ public static class Components
     /// had when it was last seen (`Core/Seeker.cs`).  A rocket and a beam rider
     /// carry no such state.</summary>
     public static readonly string[] SEEKER_COMPS = Cat(PROJ_COMPS, "tgt_mem", "tgt_vel");
+
+    /// <summary>The state a winged round's flight is made of, added by the factory
+    /// when the weapon's kind is one of `Defs.AIRFRAME_KINDS`: an acceleration
+    /// accumulator, the guidance's demand on it, and the derivations the forces
+    /// read (`Systems/Flights/Airframe.cs`).  Handed out at the muzzle in one go,
+    /// because a component set is fixed for the life of the entity and every stage
+    /// of the flight block relies on its row staying put.</summary>
+    public static readonly string[] AIRFRAME_EXTRA = {
+        "acc", "a_dir", "a_want", "vhat", "q", "cl", "nose",
+    };
 
     public static readonly string[] CANISTER_COMPS = {
         "pos", "vel", "smoke_r", "smoke_t", "smoke_s", "canister",

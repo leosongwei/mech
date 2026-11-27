@@ -679,6 +679,13 @@ public static partial class Defs
     // health, so it can be shot down.
     public static readonly string[] INTERCEPT_KINDS = { "rocket", "saclos", "top" };
 
+    /// <summary>The kinds whose rounds fly on a wing: they own the airframe columns
+    /// (`Components.AIRFRAME_EXTRA`) and go through the flight stages.  A bullet is a
+    /// parabola and owns none of it.  Whether a round can be shot down
+    /// (`INTERCEPT_KINDS`) and whether it has an airframe are two questions that
+    /// happen to share their answer today.</summary>
+    public static readonly string[] AIRFRAME_KINDS = { "rocket", "saclos", "top" };
+
     /// <summary>
     /// The Python table finishes itself in a loop right after it is declared
     /// (`for _w in WEAPONS: _w.setdefault(...)`, then `hit_r = cal / 2000`): a round

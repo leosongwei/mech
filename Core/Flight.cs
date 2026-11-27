@@ -162,7 +162,7 @@ public static class Flight
     public static Vec3 step(Vec3 p, Vec3 v, float age, float trav, Vec3? tgt_pos,
                             Vec3? tgt_vel, WeaponDef wd, float dt)
     {
-        var (a_dir, a_want) = _arc_demand(p, v, age, trav, tgt_pos, tgt_vel, wd);
+        var (a_dir, a_want) = arc_demand(p, v, age, trav, tgt_pos, tgt_vel, wd);
         return _airframe(v, age, wd, dt, a_dir, a_want);
     }
 
@@ -191,7 +191,7 @@ public static class Flight
     public static Vec3 direct(Vec3 p, Vec3 v, float age, Vec3 origin, Vec3? aim,
                               WeaponDef wd, float dt)
     {
-        var (a_dir, a_want) = _direct_demand(p, v, origin, aim, wd);
+        var (a_dir, a_want) = direct_demand(p, v, origin, aim, wd);
         return _airframe(v, age, wd, dt, a_dir, a_want);
     }
 
@@ -222,9 +222,9 @@ public static class Flight
 
     /// <summary>The arc law's demand: the reference parabola while the round is
     /// far out, proportional navigation inside `pn_r`.</summary>
-    private static (Vec3 dir, float mag) _arc_demand(Vec3 p, Vec3 v, float age, float trav,
-                                                     Vec3? tgt_pos, Vec3? tgt_vel,
-                                                     WeaponDef wd)
+    public static (Vec3 dir, float mag) arc_demand(Vec3 p, Vec3 v, float age, float trav,
+                                                   Vec3? tgt_pos, Vec3? tgt_vel,
+                                                   WeaponDef wd)
     {
         var vhat = _unit(v);
         float speed = MathF.Sqrt(_dot(v, v));
@@ -282,8 +282,8 @@ public static class Flight
 
     /// <summary>The direct law's demand: the pull back onto the laser line, plus the
     /// weight the wing is carrying.</summary>
-    private static (Vec3 dir, float mag) _direct_demand(Vec3 p, Vec3 v, Vec3 origin,
-                                                       Vec3? aim, WeaponDef wd)
+    public static (Vec3 dir, float mag) direct_demand(Vec3 p, Vec3 v, Vec3 origin,
+                                                      Vec3? aim, WeaponDef wd)
     {
         if (aim is null) return (Vec3.zero, 0f);
         var vhat = _unit(v);
@@ -332,8 +332,79 @@ public static class Flight
     }
 
     // ------------------------------------------------------------------
-    // the airframe: a demand in, a new velocity out
+    // the airframe: six terms, one per stage of the flight
     // ------------------------------------------------------------------
+    //
+    // `Systems/Flights/Airframe.cs` spreads these six over seven passes with the
+    // intermediate values parked in components; `step` / `direct` / `slide` call
+    // them back to back for the callers that have no world (the fire control's
+    // integrator, `--check fcs`).  The arithmetic is the same sequence in both, so
+    // the two readings of one law cannot drift apart except in the associativity of
+    // the mass division.
+
+    /// <summary>The velocity's direction and the dynamic pressure - what every force
+    /// below is written against.</summary>
+    public static (Vec3 vhat, float q) airflow(Vec3 v)
+    {
+        float speed = MathF.Sqrt(_dot(v, v));
+        return (_unit(v), 0.5f * RHO * speed * speed);
+    }
+
+    /// <summary>The lift coefficient the demand asks for, and the nose that follows
+    /// it: a pull lifts the nose above the flight path, a pushover puts it under, and
+    /// the thrust goes where the nose points either way.
+    ///
+    /// Nothing asked for means no lift and a nose on the flight path (`CL = 0`), so
+    /// an unguided round is this function with `a_want = 0`.</summary>
+    public static (float cl, Vec3 nose) aoa(Vec3 vhat, Vec3 a_dir, float a_want,
+                                           float q, WeaponDef wd)
+    {
+        float s = _area(wd);
+        if (a_want <= 1e-9f || q * s <= 1e-9f) return (0f, vhat);
+        float cl = MathF.Min(wd.cl_max, wd.mass * a_want / (q * s));
+        float alpha = cl / wd.cl_alpha;               // the angle of attack it costs
+        float ca = MathF.Cos(alpha), sa = MathF.Sin(alpha);
+        return (cl, new Vec3(vhat.x * ca + a_dir.x * sa,
+                             vhat.y * ca + a_dir.y * sa,
+                             vhat.z * ca + a_dir.z * sa));
+    }
+
+    /// <summary>m/s² of lift at this coefficient - the wing's own force, capped by
+    /// `cl_max` in `aoa` and by the airframe's strength in `cap`.</summary>
+    public static float lift_accel(WeaponDef wd, float q, float cl)
+        => q * _area(wd) * cl / wd.mass;
+
+    /// <summary>m/s² the drag comes off at: profile drag, the induced price of the
+    /// lift just commanded (squared, so a pushover costs what a pull-up costs) and
+    /// the transonic rise.</summary>
+    public static float drag_accel(WeaponDef wd, float speed, float q, float cl)
+    {
+        float over = MathF.Max(0f, speed / MACH - 0.80f);
+        float cd = wd.cd0 + wd.k_cl * cl * cl + 0.4f * over * over;
+        return q * _area(wd) * cd / wd.mass;
+    }
+
+    /// <summary>m/s² along the nose, while the motor is lit and the structure is not
+    /// already at its limit.  `throttle` is 1 for a motor that burns flat out for its
+    /// window and 0 for a round that has none.</summary>
+    public static float thrust_accel(WeaponDef wd, float age, float speed, float throttle)
+    {
+        if (throttle <= 0f) return 0f;
+        if (age <= wd.ignite || age > wd.ignite + wd.burn) return 0f;
+        if (speed >= wd.maxvel) return 0f;
+        return wd.thrust * throttle;
+    }
+
+    /// <summary>The airframe's own ceiling: beyond `maxvel` the velocity keeps its
+    /// direction and loses the excess.  This is the structural / motor limit, not the
+    /// motor's, so it is a clamp on the tick's result rather than a force.</summary>
+    public static Vec3 cap(Vec3 v, WeaponDef wd)
+    {
+        float speed = MathF.Sqrt(_dot(v, v));
+        if (speed <= wd.maxvel) return v;
+        float k = wd.maxvel / speed;
+        return new Vec3(v.x * k, v.y * k, v.z * k);
+    }
 
     /// <summary>One tick of the airframe all three laws share: the demand becomes a
     /// lift coefficient, the coefficient an angle of attack and an induced drag,
@@ -343,50 +414,15 @@ public static class Flight
                                   Vec3 a_dir, float a_want)
     {
         float speed = MathF.Sqrt(_dot(v, v));
-        var vhat = _unit(v);
-        float q = 0.5f * RHO * speed * speed;
-        float s = _area(wd);
-        float cl = 0f;
-        float alpha = 0f;
-        Vec3 nose;
-        if (a_want > 1e-9f && q * s > 1e-9f)
-        {
-            cl = MathF.Min(wd.cl_max, wd.mass * a_want / (q * s));
-            alpha = cl / wd.cl_alpha;             // the needed angle of attack
-            // the nose leads the velocity toward the lift: a pull lifts the nose
-            // above the flight path, a pushover puts it under, and the thrust
-            // follows it either way
-            float ca = MathF.Cos(alpha), sa = MathF.Sin(alpha);
-            nose = new Vec3(vhat.x * ca + a_dir.x * sa,
-                            vhat.y * ca + a_dir.y * sa,
-                            vhat.z * ca + a_dir.z * sa);
-        }
-        else
-        {
-            a_want = 0f;
-            nose = vhat;
-        }
-        float push = 0f;
-        if (age > wd.ignite && age <= wd.ignite + wd.burn && speed < wd.maxvel)
-            push = wd.thrust * wd.mass;                  // N along the nose
-        float mfrac = 1f / wd.mass;
-        // drag polar: profile drag, the induced price of the lift just commanded
-        // (squared, so a pushover costs what a pull-up costs) and the transonic rise
-        float over = MathF.Max(0f, speed / MACH - 0.80f);
-        float cd = wd.cd0 + wd.k_cl * cl * cl + 0.4f * over * over;
-        float drag = q * s * cd;
-        float lift = q * s * cl;                   // = a_want·m, capped by cl_max
-        float ax = (push * nose.x - drag * vhat.x) * mfrac + a_dir.x * lift * mfrac;
-        float ay = (push * nose.y - drag * vhat.y) * mfrac + a_dir.y * lift * mfrac - GRAVITY;
-        float az = (push * nose.z - drag * vhat.z) * mfrac + a_dir.z * lift * mfrac;
-        var nv = new Vec3(v.x + ax * dt, v.y + ay * dt, v.z + az * dt);
-        speed = MathF.Sqrt(_dot(nv, nv));
-        float cap = wd.maxvel;
-        if (speed > cap)                              // structural / motor limit
-        {
-            float k = cap / speed;
-            nv = new Vec3(nv.x * k, nv.y * k, nv.z * k);
-        }
-        return nv;
+        var (vhat, q) = airflow(v);
+        var (cl, nose) = aoa(vhat, a_dir, a_want, q, wd);
+        float push = thrust_accel(wd, age, speed, 1f);
+        float lift = lift_accel(wd, q, cl);
+        float drag = drag_accel(wd, speed, q, cl);
+        var acc = new Vec3(nose.x * push - vhat.x * drag + a_dir.x * lift,
+                           nose.y * push - vhat.y * drag + a_dir.y * lift - GRAVITY,
+                           nose.z * push - vhat.z * drag + a_dir.z * lift);
+        var nv = new Vec3(v.x + acc.x * dt, v.y + acc.y * dt, v.z + acc.z * dt);
+        return cap(nv, wd);
     }
 }

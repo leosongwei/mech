@@ -103,12 +103,16 @@ public static partial class Flights
     }
 
     /// <summary>A beam rider's columns: the round's, plus the line of the laser it
-    /// was encoded on (`Systems/Beams.cs` holds the channels on the launcher).</summary>
+    /// was encoded on (`Systems/Beams.cs` holds the channels on the launcher) and the
+    /// three airframe buffers its guidance writes - the demand the wing answers, and
+    /// the accumulator the crosswind goes into.</summary>
     public sealed class SaclosColumns : RoundColumns
     {
         public byte[] ch = null!;
+        public float[] adir = null!, awant = null!, acc = null!;
 
-        private static readonly string[] beam_names = Components.Cat(names, "beam_ch");
+        private static readonly string[] beam_names = Components.Cat(names, "beam_ch",
+                                                                    "a_dir", "a_want", "acc");
         public static readonly string[] OnSaclos = Components.Cat(beam_names, "saclos");
 
         public SaclosColumns(Group g) : base(g) { }
@@ -119,12 +123,14 @@ public static partial class Flights
         {
             base.bind(g);
             ch = g.u8("beam_ch");
+            adir = g.f("a_dir"); awant = g.f("a_want"); acc = g.f("acc");
         }
     }
 
     /// <summary>The top attack's columns: the round's, plus the velocity its stare
-    /// point walks at.  `Seeker` owns both halves of that memory; the airframe
-    /// reads only this one, and only to hand `Flight.step` a lead.
+    /// point walks at and the demand its guidance writes.  `Seeker` owns both halves
+    /// of that memory; the flight stages read this one, and only as the lead the arc
+    /// needs.
     ///
     /// `bind` is the only virtual call made from a constructor in the schema, and
     /// it does nothing but assign buffers, so the dispatch before the derived
@@ -132,8 +138,10 @@ public static partial class Flights
     public sealed class TopColumns : RoundColumns
     {
         public float[] tvel = null!;
+        public float[] adir = null!, awant = null!;
 
-        private static readonly string[] top_names = Components.Cat(names, "tgt_vel");
+        private static readonly string[] top_names = Components.Cat(names, "tgt_vel",
+                                                                    "a_dir", "a_want");
         public static readonly string[] OnTop = Components.Cat(top_names, "top_attack");
 
         public TopColumns(Group g) : base(g) { }
@@ -144,6 +152,7 @@ public static partial class Flights
         {
             base.bind(g);
             tvel = g.f("tgt_vel");
+            adir = g.f("a_dir"); awant = g.f("a_want");
         }
 
         /// <summary>The velocity the stare point walks at, row `i`.</summary>

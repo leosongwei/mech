@@ -22,7 +22,7 @@
 // 33 m in a tick, so a 30 m sphere tested at the tick boundaries is stepped clean over
 // and the loudest thing on the battlefield would be silent.  The leg is
 // `(proj_prev, pos)`, which the flight systems publish for exactly this reason
-// (`Systems/Flights.cs`), and the miss is the distance from the crew's centre to that
+// (`Systems/Flights/`), and the miss is the distance from the crew's centre to that
 // segment.  The bearing a round came from is its own reverse velocity - a round that
 // whistles past is a bearing, not a place - with the line from the crew to the burst
 // as the fallback for anything falling too steeply to have one.

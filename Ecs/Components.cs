@@ -340,7 +340,7 @@ public static class Components
         // a beam is steered by the launcher's computer and can sit well off the
         // cross the pilot is looking down
         ecs.register("beam_lit", Kind.U8, 4, 0);
-        // which channel a beam rider rides (`Systems/Flights.cs::Saclos`): the
+        // which channel a beam rider rides (`Systems/Flights/Saclos.cs`): the
         // laser is encoded per round, so four rounds in the air are four lines
         ecs.register("beam_ch", Kind.U8);
     }
@@ -380,7 +380,7 @@ public static class Components
     public static readonly string[] DATALINK_COMPS = { "link_seen", "link_seen_tick" };
 
     /// <summary>...and the one byte a beam rider needs to know which line of the
-    /// laser it is riding (`Systems/Flights.cs::Saclos`).</summary>
+    /// laser it is riding (`Systems/Flights/Saclos.cs`).</summary>
     public static readonly string[] BEAM_ROUND_COMPS = { "beam_ch" };
 
     /// <summary>What a crew owns on top of its hull: the fire control's answer per
@@ -456,7 +456,7 @@ public static class Components
     };
 
     /// <summary>A component list plus tags: the query a schema is built from
-    /// (`Systems/Flights.cs` appends the round kind to the shared list).</summary>
+    /// (`Systems/Flights/Columns.cs` appends the round kind to the shared list).</summary>
     public static string[] Cat(string[] a, params string[] b)
     {
         var outv = new string[a.Length + b.Length];

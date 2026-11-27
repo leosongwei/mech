@@ -219,9 +219,19 @@ public sealed class World
             Systems.Beams.run,
             // battery and wire, settled before anything moves
             Systems.Flights.Expire.run,
-            // one system per kind of round, by tag: no `proj_kind` switch
-            Systems.Flights.Ballistic.run, Systems.Flights.Rocket.run,
-            Systems.Flights.Saclos.run, Systems.Flights.Top.run,
+            // the record re-armed and the flight state zeroed, once, for every round
+            Systems.Flights.Arm.run,
+            // a bullet is a parabola and integrates itself
+            Systems.Flights.Ballistic.run,
+            // what a guided round wants this tick, in the wing's units: no demand
+            // for an unguided rocket, which is why it has no pass here
+            Systems.Flights.Guidance.Top.run, Systems.Flights.Guidance.Saclos.run,
+            // the airframe, seven stages over one accumulator: two derivations, four
+            // forces that only add to `acc`, and the one integration that spends it
+            Systems.Flights.Airflow.run, Systems.Flights.AoA.run,
+            Systems.Flights.Lift.run, Systems.Flights.Drag.run,
+            Systems.Flights.Thrust.run, Systems.Flights.Gravity.run,
+            Systems.Flights.Integrate.run,
             // what each leg ran into.  These only write `first_hit_record`, so the
             // order they run in decides the cost of a compare and nothing else
             Systems.FirstHit.Ground.run,

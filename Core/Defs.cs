@@ -281,7 +281,7 @@ public sealed class WeaponDef
     public float life;              // s of flight before the round cooks off
     // what happens when `life` runs out: true = the warhead goes off where the
     // round stands, false = the round is gone and leaves nothing behind
-    // (`Systems/Flights.cs::Expire`; running out of *wire* always cooks off)
+    // (`Systems/Flights/Expire.cs`; running out of *wire* always cooks off)
     public bool expire_burst;
     public int range;               // m at which the round still carries its energy
     // m the *seeker* holds a lock to, for the kinds that need one (`@lock`).  A lock

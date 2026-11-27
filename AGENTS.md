@@ -115,6 +115,7 @@ mkdir -p /tmp/tmux-$(id -u) && chmod 700 /tmp/tmux-$(id -u)
 | `--check hit` | 全部武器对一辆停放的 APC |
 | `--check intercept` | 全部导弹对防御哨站 |
 | `--check beam` | 驾束弹：命中、掩体、被切断的激光 |
+| `--check airframe` | 十一个飞行 pass 与 `Flight.*` 纯函数逐 tick 同不同解 |
 | `--check fcs` | AI 乘员与玩家在相同场景下的对照，另含 chassis/pull/smoke/arsenal 场景 |
 | `--check drive` | 机甲推力模型与其自身代数解的对照 |
 | `--check terrain` | 面片坡度、兵线可通行性、采样开销 |
@@ -161,13 +162,14 @@ Net/        Netcode.cs（帧、快照、meta）   Server.cs（websocket + 主循
 Systems/    每系统一个文件，`run(world, dt)`
   Rearm PlayerInput Gunnery Locking Smoke Weapons Unstick
   Movement/{Foot,Vehicle,Mech/{Steer,Thrust,Slope,Drag,Ground},Support/{Drive,Integrate}}
-  Sweep Beams Flights FirstHit Impact Blasts Mortality Economy Debris Sight Smoke
+  Sweep Beams FirstHit Impact Blasts Mortality Economy Debris Sight Smoke
+  Flights/{Flights,Columns,Expire,Airframe,Saclos,Top,Ballistic}   # 一条飞行链的十一个 pass
   AI/{Sense,Threats,Intercept,Engage*,Wander}  AI/Strategies/{Front,Raid}
   AI/Support/{Tags,Crew,Policy,Engage,ThreatTable,Pipeline}  AI/Nav/{NavMesh,NavWalk,NavRegion,NavQuery,Paths}
   Support/KillFeed.cs          # 玩家读到的一行——谁以何种武器从多远击杀了谁
 Modes/      Mode.cs  Modes.cs  Battle/  Range/
-Harness/    Check BeamCheck InterceptCheck FcsCheck NetCheck Tiers StuckCheck DriveCheck
-            TerrainCheck NavCheck
+Harness/    Check BeamCheck AirframeCheck InterceptCheck FcsCheck NetCheck Tiers StuckCheck
+            DriveCheck TerrainCheck NavCheck
 tests/      cases/*.json  frontend/（node:test）  backend/（控制台运行器）  compare.mjs
 frontend/   src/{core,net,map,audio,render,scene,hud,fx,input,app}（四层，单向依赖）
 assets/     编译后的客户端（已 gitignore）

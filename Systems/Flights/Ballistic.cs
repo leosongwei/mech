@@ -15,7 +15,7 @@ public static partial class Flights
                 var c = new RoundColumns(g);
                 foreach (var r in c)
                 {
-                    if (!_begin(r)) continue;
+                    if (!flying(r.hit_t)) continue;
                     var wd = Defs.WEAPONS[r.wid];
                     var p0 = r.pos;
                     var vel = r.vel;

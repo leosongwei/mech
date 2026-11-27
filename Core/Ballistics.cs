@@ -26,7 +26,7 @@ public static class Ballistics
     ///
     /// Null when the round expires (or never gets that far) first.  This is the
     /// integrator the fire control solves against, and it is the same 1/30 s
-    /// semi-implicit Euler the rounds themselves fly (`Systems/Flights.cs`).</summary>
+    /// semi-implicit Euler the rounds themselves fly (`Systems/Flights/`).</summary>
     public static (float y, float t)? flight_at(Vec3 origin, float yaw, float pitch, WeaponDef wd,
                                                 float dist)
     {

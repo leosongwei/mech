@@ -1,6 +1,6 @@
 // The columns every crew pass binds, and the geometry a crew shares.
 //
-// A schema declares exactly what its pass reads (`Systems/Flights.cs` does the same
+// A schema declares exactly what its pass reads (`Systems/Flights/Columns.cs` does the same
 // for a round), so a platform difference is a schema difference: `EngageMech`
 // binds `arm_hp` because a mech has arms, `EngageVehicle` / `EngageFoot` do not own
 // the buffer at all and cannot read it by accident.  This base carries the part

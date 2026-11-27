@@ -10,16 +10,20 @@
 // altitude is worth range, and pays for a hard pull in speed - which is why the
 // *pull* is the fragile thing: it is `q*S*cl_max/m`, and `q` is speed squared.
 //
-// Nothing here is state: the airframe is a pure function of (position, velocity,
-// age, target, defs).  That is what keeps the round in the archetype it was born
-// in (`Components.MISSILE_COMPS`) - no `nose`, no `fuel`, no `cl` buffer.
+// Nothing here is state: the terms take numbers and return numbers.  The world files
+// the same arithmetic as eleven passes over component columns
+// (`Systems/Flights/`: two derivations, four forces added into one accumulator, one
+// integration), and `step` / `direct` / `slide` below are the closed form of those
+// passes - the terms called back to back in the same order.  That is what lets the
+// fire control (`Ballistics.flight_at`) and `--check airframe` fly a round without a
+// world, and what keeps the two readings of one law from drifting apart.
 //
-//     v = Flight.step(p, v, age, trav, tgt_pos, tgt_vel, wd, dt)    the arc law
-//     v = Flight.direct(p, v, age, aim, aim_vel, wd, dt)            the beam law
-//     v = Flight.slide(v, age, wd, dt)                       the unguided law
+//     v = Flight.step(p, v, age, trav, tgt_pos, tgt_vel, wd, dt)        the arc law
+//     v = Flight.direct(p, v, age, origin, aim, wd, dt, seed)           the beam law
+//     v = Flight.slide(v, age, wd, dt)                                  the unguided law
 //
 // All three return the new *velocity* and nothing else; the caller advances the
-// position by it (`p1 = p0 + v * dt`), exactly as `Systems/Flights.cs` does.
+// position by it (`p1 = p0 + v * dt`), exactly as `Systems/Flights/Airframe.cs` does.
 // Only the demand differs - what the round *wants* to do this tick - and the two
 // guided demands are clipped by the same lift ceiling, so a slow round of either
 // kind stops answering.  An unguided rocket asks for nothing at all: it is the
@@ -163,7 +167,7 @@ public static class Flight
                             Vec3? tgt_vel, WeaponDef wd, float dt)
     {
         var (a_dir, a_want) = arc_demand(p, v, age, trav, tgt_pos, tgt_vel, wd);
-        return _airframe(v, age, wd, dt, a_dir, a_want);
+        return _airframe(v, age, wd, dt, a_dir, a_want, Vec3.zero);
     }
 
     /// <summary>Fly a beam rider for one tick: the DIRECT law, a command-to-line-of-
@@ -188,11 +192,15 @@ public static class Flight
     ///
     /// `aim` null means the beam is gone.  The round has nothing to fly to and no
     /// lift demand, so it keeps its heading, drags down and falls.</summary>
+    /// `seed` is the round's own (`proj_seed`): it is what the crosswind below is
+    /// drawn from, so a testbed that flies the same round twice gets the same
+    /// wobble.</summary>
     public static Vec3 direct(Vec3 p, Vec3 v, float age, Vec3 origin, Vec3? aim,
-                              WeaponDef wd, float dt)
+                              WeaponDef wd, float dt, float seed)
     {
         var (a_dir, a_want) = direct_demand(p, v, origin, aim, wd);
-        return _airframe(v, age, wd, dt, a_dir, a_want);
+        var wob = wobble_accel(wd, beam_line(origin, aim), age, seed);
+        return _airframe(v, age, wd, dt, a_dir, a_want, wob);
     }
 
     /// <summary>Fly an unguided rocket for one tick: the same airframe with nothing
@@ -214,7 +222,7 @@ public static class Flight
     /// for the fire control's integrator, which is what keeps the barrel's angle and
     /// the round's arc the same line.</summary>
     public static Vec3 slide(Vec3 v, float age, WeaponDef wd, float dt)
-        => _airframe(v, age, wd, dt, Vec3.zero, 0f);
+        => _airframe(v, age, wd, dt, Vec3.zero, 0f, Vec3.zero);
 
     // ------------------------------------------------------------------
     // the two demands: what the guidance wants, square to the flight path
@@ -406,12 +414,38 @@ public static class Flight
         return new Vec3(v.x * k, v.y * k, v.z * k);
     }
 
+    /// <summary>The line of a beam, from the launcher's aperture to the point the
+    /// laser leads to.  Zero when there is no beam, which is also what silences the
+    /// crosswind below.</summary>
+    public static Vec3 beam_line(Vec3 origin, Vec3? aim)
+    {
+        if (aim is null) return Vec3.zero;
+        var a = aim.Value;
+        return _unit(new Vec3(a.x - origin.x, a.y - origin.y, a.z - origin.z));
+    }
+
+    /// <summary>m/s² of crosswind: thrust misalignment, seeded per round, pushing
+    /// square to the sight line at `wob` amplitude.  The guidance has to chase it
+    /// down, and it is bounded because the beam always wins.  Zero for a round with
+    /// no line to be pushed across.</summary>
+    public static Vec3 wobble_accel(WeaponDef wd, Vec3 line, float age, float seed)
+    {
+        float side = MathF.Sqrt(line.x * line.x + line.z * line.z);
+        if (wd.wob == 0f || side <= 1e-3f) return Vec3.zero;
+        float f = wd.wob_f * (0.75f + 0.5f * seed);
+        float ph = seed * MathUtil.TAU;
+        float am = wd.wob * (0.7f + 0.6f * ((seed * 3.7f) % 1f))
+                   * (MathF.Sin(age * f * 2.1f + ph)
+                      + 0.55f * MathF.Sin(age * f * 5.3f + ph * 2.3f));
+        return new Vec3(-line.z / side * am, 0f, line.x / side * am);
+    }
+
     /// <summary>One tick of the airframe all three laws share: the demand becomes a
     /// lift coefficient, the coefficient an angle of attack and an induced drag,
     /// and thrust along the nose, lift square to the velocity, drag against it and
     /// gravity are integrated.</summary>
     private static Vec3 _airframe(Vec3 v, float age, WeaponDef wd, float dt,
-                                  Vec3 a_dir, float a_want)
+                                  Vec3 a_dir, float a_want, Vec3 wob)
     {
         float speed = MathF.Sqrt(_dot(v, v));
         var (vhat, q) = airflow(v);
@@ -419,9 +453,8 @@ public static class Flight
         float push = thrust_accel(wd, age, speed, 1f);
         float lift = lift_accel(wd, q, cl);
         float drag = drag_accel(wd, speed, q, cl);
-        var acc = new Vec3(nose.x * push - vhat.x * drag + a_dir.x * lift,
-                           nose.y * push - vhat.y * drag + a_dir.y * lift - GRAVITY,
-                           nose.z * push - vhat.z * drag + a_dir.z * lift);
+        var acc = wob + a_dir * lift - vhat * drag + nose * push;
+        acc = new Vec3(acc.x, acc.y - GRAVITY, acc.z);
         var nv = new Vec3(v.x + acc.x * dt, v.y + acc.y * dt, v.z + acc.z * dt);
         return cap(nv, wd);
     }

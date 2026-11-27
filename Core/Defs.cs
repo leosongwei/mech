@@ -700,13 +700,13 @@ public static partial class Defs
         // shows and is not a condition of firing.  And the warhead is sized to the
         // gap between the two hulls it hunts: 110 against the same 10/20 plate both
         // of them carry, so one round takes an APC's 100 hp apart and leaves a mech's
-        // 120 with ten.  The rack is a burst, not a magazine: sixteen tubes at 0.1 s
-        // put the whole nest out in a second and a half.
+        // 120 with ten.  The rack is a burst, not a magazine: sixteen tubes at 0.2 s
+        // put the whole nest out in a little over three.
         new WeaponDef
         {
             wid = WID_LOITER, key = "loiter", name = "LOITERING MUNITION", kind = "drone",
             ap = 100f, ad = 100f, ed = 30f, er = 3.0f,
-            rpm = 600, mag = 16, reserve = 0, reload = 0.0f, vel = 20f, spread = 0.003f,
+            rpm = 300, mag = 16, reserve = 0, reload = 0.0f, vel = 20f, spread = 0.003f,
             bias = 0.0f, g = 9.81f, thrust = 8.0f, maxvel = 90f, life = 300.0f,
             expire_burst = true, maxdist = 0.0f, ignite = 0.0f, burn = 0.0f,
             mass = 45.0f, dia = 0.50f, cd0 = 0.60f, k_cl = 0.12f,

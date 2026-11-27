@@ -12,8 +12,9 @@ public static partial class Flights
 {
     /// <summary>One in-flight round's columns: the buffers every round owns
     /// (`Components.PROJ_COMPS`) plus the `first_hit_record` the flight systems
-    /// re-arm and publish.  All four kinds bind this one schema; the kind itself
-    /// stays a query tag (`OnBullet`, `OnSaclos`, ...), never a branch.</summary>
+    /// re-arm and publish.  `Arm` and `Expire` walk every round with it; a flight
+    /// stage binds the one that suits it, and the kind stays a query tag
+    /// (`OnBullet`, `OnSaclos`, ...), never a branch.</summary>
     public class RoundColumns : Columns<RoundRow>
     {
         // bound by `bind`, which the constructor calls: hence the `null!`
@@ -32,9 +33,9 @@ public static partial class Flights
         };
 
         public static readonly string[] OnBullet = Components.Cat(names, "bullet");
-        public static readonly string[] OnRocket = Components.Cat(names, "unguided_missile");
-        // a beam rider owns one component more (the laser line it rides), so its
-        // schema and its query are `SaclosColumns` below
+        // a beam rider owns one component more (the laser line it rides) and the top
+        // attack two, so their schemas and their queries are the classes below; an
+        // unguided rocket is queryless, because it asks the wing for nothing
 
         public RoundColumns(Group g) : base(g) { bind(g); }
 

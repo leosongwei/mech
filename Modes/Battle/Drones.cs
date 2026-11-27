@@ -62,6 +62,11 @@ public static class Drones
         {
             if (e.uv("faction")[eid] != faction) continue;
             if (!e.has(eid, "weapon")) continue;
+            // a crew's rack, never a pilot's: `owner` is the pilot id and -1 is a
+            // crew (`Weapons.pull` reads the same column).  A pilot fires this
+            // round himself, or not at all - the mode must not spend his magazine
+            // on a town he never aimed at
+            if (e.iv("owner")[eid] >= 0) continue;
             for (int arm = 0; arm < 2; arm++)
             {
                 int wid = e.uv("weapon").get(eid, arm);

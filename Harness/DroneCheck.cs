@@ -45,6 +45,8 @@ public static class DroneCheck
         _lost();
         Console.WriteLine("\n== a hill in the way ==");
         _hill();
+        Console.WriteLine("\n== out of the tube: does it get up there? ==");
+        _launch();
         Console.WriteLine("\n== a hull coming at us ==");
         _head_on();
         Console.WriteLine("\n== the trigger: with a ring and without one ==");
@@ -544,6 +546,62 @@ public static class DroneCheck
             }
             Console.WriteLine($"{v,10:0.0}   {hits}/3     {_median(close),7:0}   {peak,8:0}   "
                               + $"{slow,11:0.0}   {up,9:0}");
+        }
+    }
+
+    /// <summary>Out of the tube: the round as `Weapons.fire` hands it over - twenty
+    /// metres a second up a 42 degree tube - and the shape of its climb, locked at a
+    /// hull three kilometres away and unlocked at a circle four.
+    ///
+    /// Nothing else in this file starts at the launch, and the launch is the one place
+    /// the round has no speed to spare: it leaves at 20 m/s, below the 28.6 m/s the
+    /// wing needs for level flight, so the first seconds are the motor's alone.  Both
+    /// the reading against time and the reading against the ground covered are printed,
+    /// because "did it climb" and "did it climb soon enough" are different questions.
+    /// </summary>
+    private static void _launch()
+    {
+        foreach (var (locked, reach) in new[] { (true, 3000f), (false, 4000f) })
+        {
+            var world = _range();
+            var e = world.ecs;
+            float hx = 900f, hz = 900f;
+            int tid = -1;
+            if (locked)
+                tid = world.spawn_unit(Defs.ETYPE_APC, Defs.FACTION_BLUE, hx + reach, hz,
+                                       crew: false);
+            float gy = world.terrain.height_at(hx, hz);
+            var dir = MathUtil.dir_from(0f, 0.73299f);      // the tube's own quadrant
+            var p = new Vec3(hx, gy + 1.6f, hz);
+            int round = world.spawn_round(-1, Defs.FACTION_RED, WID, Defs.PROJ_DRONE, p,
+                                          new Vec3(dir.x * 20f, dir.y * 20f, dir.z * 20f),
+                                          WD.life, tid,
+                                          mem: locked ? Seeker.roof(world, tid) : null,
+                                          memVel: Vec3.zero,
+                                          orbit: new Vec3(hx + reach, 0f, hz));
+            var byT = new List<string>();
+            var byX = new List<string>();
+            float nextX = 100f, band = -1f, peak = 0f;
+            for (int t = 0; (float)t * DT < 40f; t++)
+            {
+                world.update(DT);
+                if (!world.ecs.is_alive(round)) { byT.Add("dead"); break; }
+                var st = _state(world.ecs, round);
+                float agl = st.pos.y - world.terrain.height_at(st.pos.x, st.pos.z);
+                float gone = MathUtil.dist2d(st.pos.x, st.pos.z, hx, hz);
+                peak = MathF.Max(peak, agl);
+                if (band < 0f && agl >= Defs.DRONE_AGL_MIN) band = (t + 1) * DT;
+                if (t % 15 == 0) byT.Add($"{(float)t * DT:0}s {agl:0}");
+                if (gone >= nextX)
+                {
+                    byX.Add($"{gone:0} {agl:0}");
+                    nextX += 200f;
+                }
+            }
+            Console.WriteLine($"\n{(locked ? "locked 3 km" : "unlocked 4 km")}: in the band at "
+                              + $"{(band < 0f ? "never" : $"{band:0.0} s")}, peak {peak:0} m");
+            Console.WriteLine("  by time   " + string.Join("  ", byT));
+            Console.WriteLine("  by ground " + string.Join("  ", byX));
         }
     }
 

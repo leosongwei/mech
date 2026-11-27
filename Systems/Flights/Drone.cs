@@ -43,7 +43,6 @@ public static partial class Flights
     private const float K_AGL = 0.15f;    // 1/s^2, height error -> acceleration
     private const float K_VY = 0.70f;     // 1/s, climb rate -> damping (2*sqrt(K_AGL))
     private const float CLIMB_MAX = 10.0f;   // m/s^2 the height channel may ask for
-    private const float STALL = 28.6f;       // m/s, level flight at `cl_max` in 1 g
     private const float U_TRIM = 0.66f;   // throttle that holds the cruise
     private const float K_U = 0.15f;      // throttle per m/s of speed deficit
 
@@ -210,7 +209,18 @@ public static partial class Flights
                 float d = flat.len;
                 if (d < 1e-3f) return Vec3.zero;
                 var want = flat / d;
-                float beta = MathF.Asin(MathF.Min(1f, vhat.cross(want).len));
+                // The error is measured on the *ground track*, not on the flight path:
+                // this is a horizontal manoeuvre, and a round that has just left the
+                // tube at 42 degrees is already pointed where it is going.  Measured
+                // three-dimensionally, that climb angle reads as forty degrees of
+                // heading error, the turn spends the whole wing on a correction nobody
+                // asked for, and the projection onto the flight path takes it out of the
+                // height channel - which is why an unlocked launch used to climb at half
+                // the rate of a locked one.
+                var track = new Vec3(vhat.x, 0f, vhat.z);
+                if (track.len < 1e-3f) return Vec3.zero;
+                track = track.unit;
+                float beta = MathF.Asin(MathF.Min(1f, track.cross(want).len));
                 return _lift_dir(vhat, want) * (K_TURN * speed * beta);
             }
 
@@ -279,18 +289,17 @@ public static partial class Flights
                 // takes the climb rate out, at twice the square root of `K_AGL` - the
                 // gain that leaves the band in one approach instead of three.
                 //
-                // Two limits on top of that spring, both of them about *not* spending
-                // the whole wing on it.  The demand is capped at `CLIMB_MAX`, which is
-                // more than the 8 m/s^2 the motor can hold anyway, so the cap never
-                // costs a climb it could have made - what it stops is the snap: a
-                // round that comes out of a dive with the target gone used to put the
-                // entire lift ceiling into "get back to 200 m" and stand on its tail.
-                // And it is scaled down as the speed approaches the stall, because a
-                // wing with nothing left to give will trade the last of its speed for
-                // altitude it cannot hold, which is a climb followed by a fall.
+                // The spring is capped, and the cap is what makes the launch work: a
+                // round that has just left the tube is two metres off the ground with
+                // two hundred to go, so the proportional term asks for thirty metres a
+                // second squared and the wing answers with everything it has - which
+                // rotates the flight path past the climb the motor can hold and the
+                // round arrives over its band late and low.  At `CLIMB_MAX` the demand
+                // is still more than the 8 m/s^2 that climbs at the airframe's best
+                // rate (`docs/plans/drone.md` §3.5), and the band is reached in the
+                // sixteen seconds the design page budgets for it.
                 float climb = Math.Clamp(K_AGL * err, -CLIMB_MAX, CLIMB_MAX);
-                float spare = Math.Clamp((speed - STALL) / (0.35f * Defs.DRONE_CRUISE), 0f, 1f);
-                climb *= spare;
+
                 return new Vec3(a.x, a.y + Flight.GRAVITY + climb - K_VY * vhat.y * speed, a.z);
             }
         }

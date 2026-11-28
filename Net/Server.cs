@@ -715,6 +715,9 @@ public static class Server
                 // launched at what its shooter *knows*, so the machine that knows hands
                 // it over with his own input - the round's seeker takes it from there
                 _belief(msg, pl, world);
+                // the ground under his centre cross: [x, z], planar metres, for the
+                // loitering round a pull with no lock launches
+                _aim_ground(msg, pl, world);
                 // the newest tick this client has *seen* (a snapshot or a clock
                 // block): the frame clock reads it, and every binary frame
                 // echoes it back so the client can time a round trip.  A report
@@ -976,6 +979,27 @@ public static class Server
         pl.belief_pos = new Vec3(x, y, z);
         pl.belief_vel = new Vec3(vx, vy, vz);
         pl.belief_tick = world.tick;
+    }
+
+    /// <summary>Read the point the pilot's centre cross is standing on off his own
+    /// input message (`in.dg`): the two planar metres a loitering round circles when
+    /// the shot carries no lock.  The client is the only place the cross's ray exists
+    /// - the message's own `yaw` / `pitch` are the guns', which trail the view - so
+    /// this is a report and not a solution.  A message without the field clears the
+    /// point: "the cross is in the sky" is an answer the client gives by leaving it
+    /// out.  A point outside the field is dropped, as in `_belief`; how far the round
+    /// may be sent is the round's own business, checked where the round is made.</summary>
+    private static void _aim_ground(JsonElement msg, Player pl, World world)
+    {
+        pl.aim_ground = null;
+        if (!has(msg, "dg", out var dg) || dg.ValueKind != JsonValueKind.Array
+            || dg.GetArrayLength() < 2) return;
+        if (dg[0].ValueKind != JsonValueKind.Number || dg[1].ValueKind != JsonValueKind.Number)
+            return;
+        float x = (float)dg[0].GetDouble(), z = (float)dg[1].GetDouble();
+        float size = world.terrain.w * Terrain.TILE;
+        if (!(x >= 0f && z >= 0f && x <= size && z <= size)) return;
+        pl.aim_ground = (x, z);
     }
 
     private static bool has(JsonElement o, string key, out JsonElement v)

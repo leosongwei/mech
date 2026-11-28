@@ -22,6 +22,10 @@ import { LEAD_RING } from '../../hud/index.js';
 import { leadPoint, zeroAt } from '../../core/fcs.js';
 import { predictImpact, sightPoint, unitSpheres } from '../../map/index.js';
 
+// How far the view cranes off the sight, radians: the camera's limit, kept here
+// so the drawn cross and every readout measured under it are one ray.
+const VIEW_PITCH = 1.35;
+
 export class Aim {
   constructor(app) {
     this.app = app;
@@ -100,6 +104,20 @@ export class Aim {
       ay + (mech.eye || 5.05),
       az + s * oz,
     ];
+  }
+
+  // The centre cross's own heading: the sight plus the free look, which is what
+  // the white saltire in the middle of the screen sits on.  `sightAim` answers a
+  // different question - where the *guns* are laid, which is the assist's ring
+  // when it holds one - and with ALT down the view is free of the sight
+  // altogether.  The camera draws this ray and adds its recoil kick; a readout
+  // that has to sit under the cross reads it without one.
+  viewRay() {
+    const { app } = this;
+    return {
+      yaw: app.input.viewYaw,
+      pitch: clamp(app.input.pitch + app.input.freePitch * 0.8, -VIEW_PITCH, VIEW_PITCH),
+    };
   }
 
   // Where the crew is *actually* looking - the value the wire carries as `yaw` /

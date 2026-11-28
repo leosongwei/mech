@@ -244,6 +244,10 @@ public static partial class Flights
         internal static readonly string[] names =
             { "acc", "nose", "proj_age", "vel", "proj_wid", "first_hit_t" };
 
+        /// <summary>The same columns, worn by the round whose motor is always on: the
+        /// governed thrust stage of the loitering munition (`Drone.cs`).</summary>
+        internal static readonly string[] OnDrone = Components.Cat(names, "drone");
+
         public ThrustColumns(Group g) : base(g) { bind(g); }
 
         public override string[] Names => names;
@@ -257,7 +261,7 @@ public static partial class Flights
         public override int row(int i) => i;
     }
 
-    public static class Thrust
+    public static partial class Thrust
     {
         public static void run(World world, float dt)
         {

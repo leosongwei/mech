@@ -104,15 +104,61 @@ public static class DatalinkCheck
         bool ally_link = fr >= 0 && (allies[fr + 5] & (1 << 6)) != 0;
         Line("friendly", $"row {fr >= 0}, shared position bit {ally_link}", ally_link, ref bad);
 
+        // a round on the link is a round somebody's radar has *placed*, so it has to
+        // be closing: `d^2 <= K * v_closing` is zero for a crossing one, however
+        // plainly a crew can see it
         int missile = world.spawn_round(-1, Defs.FACTION_BLUE, Defs.WID_SACLOS, 2,
                                         new Vec3(tp.x + 200f, tp.y + 100f, tp.z),
-                                        new Vec3(0f, 0f, 100f), 5f, -1);
+                                        new Vec3(-200f, 0f, 0f), 5f, -1);
         world.update(DT);
         bool missile_link = Datalink.missile_known(world, Defs.FACTION_RED, missile);
         byte[] missileFrame = Netcode.snapshot_bytes(world, view);
         int pr = FindProjectile(missileFrame, missile);
         bool missile_bit = pr >= 0 && (missileFrame[pr + 5] & 1) != 0;
         Line("missile", $"observed {missile_link}, wire bit {missile_bit}", missile_link && missile_bit, ref bad);
+
+        // the loitering munition is the third guided round on the link, and the one
+        // the rule bites hardest: 41.7 m/s is a slow echo, so a mech's radar places
+        // it only inside ~360 m - and only while it is closing.  Two of them, one
+        // flying at the observer and one away from him.
+        int loiter = world.spawn_round(-1, Defs.FACTION_BLUE, Defs.WID_LOITER,
+                                       Defs.PROJ_DRONE,
+                                       new Vec3(tp.x - 350f, tp.y + 200f, tp.z),
+                                       new Vec3(-41.7f, 0f, 0f), 300f, -1,
+                                       orbit: new Vec3(tp.x + 4000f, 0f, tp.z));
+        int away = world.spawn_round(-1, Defs.FACTION_BLUE, Defs.WID_LOITER,
+                                     Defs.PROJ_DRONE,
+                                     new Vec3(tp.x - 200f, tp.y + 200f, tp.z),
+                                     new Vec3(41.7f, 0f, 0f), 300f, -1,
+                                     orbit: new Vec3(tp.x + 4000f, 0f, tp.z));
+        world.update(DT);
+        bool loiter_link = Datalink.missile_known(world, Defs.FACTION_RED, loiter);
+        bool away_link = Datalink.missile_known(world, Defs.FACTION_RED, away);
+        byte[] loiterFrame = Netcode.snapshot_bytes(world, view);
+        int lr = FindProjectile(loiterFrame, loiter);
+        bool loiter_bit = lr >= 0 && (loiterFrame[lr + 5] & 1) != 0;
+        Line("munition", $"closing {loiter_link}, wire bit {loiter_bit}, opening {away_link}",
+             loiter_link && loiter_bit && !away_link, ref bad);
+
+        // the rocket pod's rounds are on the same footing: they carry an airframe and
+        // a motor like the three guided ones, so a receiver places them and the side
+        // shares them - a rocket closing at 300 m/s is a loud echo
+        int rocket = world.spawn_round(-1, Defs.FACTION_BLUE, Defs.WID_ROCKET,
+                                       Defs.PROJ_ROCKET,
+                                       new Vec3(tp.x - 400f, tp.y + 60f, tp.z),
+                                       new Vec3(-300f, 0f, 0f), 16.4f, -1);
+        int rocketAway = world.spawn_round(-1, Defs.FACTION_BLUE, Defs.WID_ROCKET,
+                                           Defs.PROJ_ROCKET,
+                                           new Vec3(tp.x - 400f, tp.y - 60f, tp.z),
+                                           new Vec3(300f, 0f, 0f), 16.4f, -1);
+        world.update(DT);
+        bool rocket_link = Datalink.missile_known(world, Defs.FACTION_RED, rocket);
+        bool rocket_away = Datalink.missile_known(world, Defs.FACTION_RED, rocketAway);
+        byte[] rocketFrame = Netcode.snapshot_bytes(world, view);
+        int rr = FindProjectile(rocketFrame, rocket);
+        bool rocket_bit = rr >= 0 && (rocketFrame[rr + 5] & 1) != 0;
+        Line("rocket", $"closing {rocket_link}, wire bit {rocket_bit}, opening {rocket_away}",
+             rocket_link && rocket_bit && !rocket_away, ref bad);
         Guidance(ref bad);
         Fire(ref bad);
 

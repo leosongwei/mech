@@ -18,7 +18,9 @@ public static class Weapons
     // weapon kind -> the wire's `proj_kind` (what the round *flies* as)
     public static readonly Dictionary<string, int> KIND_ID = new()
     {
-        ["bullet"] = 0, ["rocket"] = 1, ["saclos"] = 2, ["top"] = 3,
+        ["bullet"] = Defs.PROJ_BULLET, ["rocket"] = Defs.PROJ_ROCKET,
+        ["saclos"] = Defs.PROJ_SACLOS, ["top"] = Defs.PROJ_TOP,
+        ["drone"] = Defs.PROJ_DRONE,
     };
 
     // the weapon table as one array, so a whole archetype of magazines can be
@@ -162,6 +164,10 @@ public static class Weapons
                 // cost a whole tick: 600 rpm on a 30 Hz clock is exactly 3 ticks,
                 // and 0.1 - 3 * dt rounds to a positive 1e-9
                 if (a.f("cool")[c] > 1e-4f) continue;
+                // `@lock` 1 is a weapon that has to be given a hull before it can be
+                // fired ("lock on, then launch"); 2 is one that takes the lock when
+                // there is one and flies without it otherwise, which is what the
+                // loitering munition is for.  0 is a gun
                 int target = -1;
                 if (wd.@lock != 0)
                 {
@@ -169,11 +175,9 @@ public static class Weapons
                     {
                         // the pilot's own lock (`Systems/Locking.cs`): a line already
                         // held, or the hull under his cross - which this shot then
-                        // claims a line for (`fire` below).  Nothing under the cross
-                        // and nothing held, nothing fired, which is the whole of
-                        // "lock on, then launch"
+                        // claims a line for (`fire` below)
                         Locking.pick(world, eid, wd, owner_pl, out target);
-                        if (target < 0) continue;
+                        if (target < 0 && wd.@lock == 1) continue;
                     }
                     else
                     {
@@ -181,31 +185,49 @@ public static class Weapons
                         // already on the hull it is engaging (the trigger waits for
                         // the bore), so the round leaves the rack holding that lock
                         int tid = ai_target[eid];
-                        if (tid < 0 || !e.is_alive(tid)) continue;
-                        target = tid;
+                        if (tid >= 0 && e.is_alive(tid)) target = tid;
+                        else if (wd.@lock == 1) continue;
+                        else target = -1;
                     }
                 }
-                if (!fire(world, eid, arm, wid, wd, target)) continue;
-                // the round's own archetype may have grown inside `fire`, so the
-                // buffers are read back off the hull's archetype rather than off a
-                // reference taken before the shot
-                a.i("mag")[c] -= 1;
-                float cycle = 60f / MathF.Max(wd.rpm, 1f);
-                if (wd.ai_gap > 0f && owner[eid] < 0)
-                {
-                    // an AI crew does not empty a rack of fire-and-forget rounds at
-                    // the rack's own cycle: it launches one, watches it arrive, and
-                    // only then thinks about the next.  Eight tubes at the rack's
-                    // own cycle is the whole nest gone in two and a half seconds; at
-                    // `AI_LAUNCH_GAP` a top attack is something that keeps coming
-                    // back instead.  A beam rider has no floor: its price is the
-                    // sight it is holding, not the tube
-                    cycle = MathF.Max(cycle, wd.ai_gap);
-                }
-                a.f("cool")[c] = cycle;
+                if (!pull(world, eid, arm, wid, wd, target, orbit: null)) continue;
             }
             trigger_prev[eid] = (byte)trig;
         }
+    }
+
+    /// <summary>Fire one arm and settle the pull: the round leaves, one comes off
+    /// the magazine, and the arm goes on cooldown.
+    ///
+    /// `run` reaches this through the trigger bits.  A rack that is aimed at a town
+    /// rather than at a hull is pulled by its own system (`Systems/Munitions.cs`),
+    /// because the trigger's path into `run` wants the bore already on a target and a
+    /// shot at a town has no target to lay on.  Both paths share this one piece of
+    /// bookkeeping, so a round costs a magazine round exactly once.</summary>
+    /// <param name="orbit">the point a loitering round circles: passed through to the
+    /// round's own column, and null for every kind that has none.</param>
+    public static bool pull(World world, int eid, int arm, int wid, WeaponDef wd,
+                            int target, Vec3? orbit)
+    {
+        if (!fire(world, eid, arm, wid, wd, target, orbit)) return false;
+        var e = world.ecs;
+        // the round's own archetype may have grown inside `fire`, so the buffers are
+        // read off the hull's archetype rather than off a reference taken before the
+        // shot
+        e.iv("mag").set(eid, arm, e.iv("mag").get(eid, arm) - 1);
+        float cycle = 60f / MathF.Max(wd.rpm, 1f);
+        if (wd.ai_gap > 0f && e.iv("owner")[eid] < 0)
+        {
+            // an AI crew does not empty a rack of fire-and-forget rounds at the
+            // rack's own cycle: it launches one, watches it arrive, and only then
+            // thinks about the next.  Eight tubes at the rack's own cycle is the
+            // whole nest gone in two and a half seconds; at `AI_LAUNCH_GAP` a top
+            // attack is something that keeps coming back instead.  A beam rider has
+            // no floor: its price is the sight it is holding, not the tube
+            cycle = MathF.Max(cycle, wd.ai_gap);
+        }
+        e.fv("cool").set(eid, arm, cycle);
+        return true;
     }
 
     /// <summary>The mouth a round leaves from, and the pitch its tubes are laid at.
@@ -280,7 +302,14 @@ public static class Weapons
     /// `gauss` for the pitch, then one `random()` for the round's own seed - in
     /// that order, because the battle is a replay of this sequence.
     /// Returns false when a seeker has neither a visible track nor a usable shooter belief.</summary>
-    public static bool fire(World world, int eid, int arm, int wid, WeaponDef wd, int target = -1)
+    /// <param name="orbit">the point a loitering round circles while it searches, as
+    /// this shot's aim point on the ground: the hull it was fired at, or the town
+    /// `Systems/Munitions.cs` aimed a crew at.  Null asks for the default below - the
+    /// ground the shooter's own
+    /// cross named (`Player.aim_ground`), and failing that the bore's bearing out to
+    /// `Defs.DRONE_REACH`.</param>
+    public static bool fire(World world, int eid, int arm, int wid, WeaponDef wd, int target = -1,
+                            Vec3? orbit = null)
     {
         var e = world.ecs;
         var (yaw, pitch) = bore_of(world, eid);
@@ -361,6 +390,24 @@ public static class Weapons
         // round is on which line.
         int beam = wd.kind == "saclos" ? Beams.lay(world, eid, target) : -1;
 
+        // A loitering round circles one point for its whole life: the hull it was
+        // fired at when it had a lock, the town a crew was aimed at, or - aimed at nothing
+        // in particular - the ground the pilot's centre cross is standing on, as his
+        // own client measured it (`in.dg`).  With no point on the wire the bearing out
+        // to `Defs.DRONE_REACH` answers instead, which is the same distance the client
+        // caps its own measurement at, so the two rules meet.  Only the plan position
+        // is carried; the height is the terrain-following law's business.
+        Vec3? circle = null;
+        if (wd.kind == "drone")
+        {
+            Vec3 o;
+            if (orbit is Vec3 given) o = given;
+            else if (target >= 0) o = Seeker.roof(world, target);
+            else o = aimed_ground(world, eid)
+                     ?? origin + MathUtil.dir_from(yaw, 0f) * Defs.DRONE_REACH;
+            circle = new Vec3(o.x, 0f, o.z);
+        }
+
         for (int k = 0; k < n; k++)
         {
             float sp = wd.spread * (k == 0 ? 1f : 0.6f);
@@ -374,10 +421,25 @@ public static class Weapons
             // carries a seeker - is decided once, in the factory
             world.spawn_round(eid, e.uv("faction")[eid], wid, kind,
                               origin, new Vec3(d.x * wd.vel, d.y * wd.vel, d.z * wd.vel),
-                              life, target, beam, mem, memv);
+                              life, target, beam, mem, memv, circle);
         }
         world.emit("shot", ("x", origin.x), ("y", origin.y), ("z", origin.z),
                    ("wid", wid), ("eid", eid), ("arm", arm));
         return true;
+    }
+
+    /// <summary>The ground the shooter's centre cross stood on when the trigger went
+    /// down, or null when he named none: his client leaves the point out for a cross
+    /// in the sky or off the field, and a point further than `Defs.DRONE_REACH` from
+    /// the round's own hull did not come from this machine's cross - the client's walk
+    /// stops at that distance, so the slack here is the hull's own motion between the
+    /// measurement and the shot.</summary>
+    private static Vec3? aimed_ground(World world, int eid)
+    {
+        if (!world.players.TryGetValue(world.ecs.iv("owner")[eid], out var pl)) return null;
+        if (pl.aim_ground is not (float x, float z)) return null;
+        var pos = world.ecs.fv("pos").get3(eid);
+        if (MathUtil.dist2d(pos.x, pos.z, x, z) > Defs.DRONE_REACH * 1.05f) return null;
+        return new Vec3(x, 0f, z);
     }
 }

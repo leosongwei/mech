@@ -92,8 +92,10 @@ export function camera(app, own, dt) {
   // the barrels, the hull and the muzzle flashes all sit where the rounds
   // really come out - the only piece left out of the pilot's own machine is
   // the sight head the eye sits in front of (scene.mech).
-  let yaw = app.input.viewYaw;
-  let pitch = clamp(app.input.pitch + app.input.freePitch * 0.8, -1.35, 1.35);
+  // the centre cross's own ray (`aim.viewRay`): the sight plus the free look
+  const view = app.aim.viewRay();
+  let yaw = view.yaw;
+  let pitch = view.pitch;
   if (app.shake > 0.01) {
     // angular kick, scaled by the magnification so recoil does not blind
     // the pilot through a 20x sight

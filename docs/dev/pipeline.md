@@ -111,12 +111,14 @@ Flights.Arm.run          重新装填记录，清零本 tick 的飞行状态
 Flights.Ballistic.run    子弹：自己积一条抛物线
 Flights.Guidance.Top.run    攻顶：一条参考弧与末段 PN
 Flights.Guidance.Saclos.run 驾束：骑在激光线上
+Flights.Guidance.Loiter.run 游荡：保高 + 盘旋搜索 + 末段 PN
 Flights.Airflow.run      气动一：速度方向与动压
 Flights.AoA.run          气动二：升力系数与机头
 Flights.Lift.run         力一：升力
 Flights.Drag.run         力二：阻力
-Flights.Thrust.run       力三：推力
+Flights.Thrust.run       力三：推力（点火窗口）
 Flights.Gravity.run      力四：重力
+Flights.Thrust.Commanded.run  力三之二：常开的调速器（游荡弹药）
 Flights.Integrate.run    积一步，公布这一腿
 FirstHit.{Ground,Structures,Units,Fuse}.run
 Impact.run
@@ -127,11 +129,11 @@ Impact.run
 | `Spheres` | 在 `movement` **之后**：单位的 `pos` 已经是本 tick 的终点，`prev = pos - vel*dt`；在飞行系统**之前**：弹的 `pos` 还是起点，`disp` 由速度预测。两个块是在不同时刻采的，所以球表必须夹在中间，且一 tick 只建一次（`world.sphere_table` 按 `tick` 缓存） |
 | `Beams` | 在 `movement` 之后（它按刚写完的位置跟踪），在飞行系统之前（本 tick 的驾束弹要读它） |
 | `Expire` | **在所有移动之前**：它数 `proj_age` / `proj_life`，打光电池或导线的弹在这里写一条 t=0 的接触（`HIT_EXPIRE` / `HIT_VANISH`）就站住不动了。它同时 `world.sweep.begin()`，开本 tick 的腿列表 |
-| `Arm` | 本 tick 唯一的归零点：给每一颗弹重新装填 `first_hit_record`（被 `Expire` 判死的弹保持它的接触，`first_hit_t <= 1`），把 `(proj_prev, pos)` 这条腿的起点写下来，并把有翼弹的 `acc` / `a_dir` / `a_want` 清零。因此十一个 pass 共享同一条判死规则（`Flights.flying`） |
+| `Arm` | 本 tick 唯一的归零点：给每一颗弹重新装填 `first_hit_record`（被 `Expire` 判死的弹保持它的接触，`first_hit_t <= 1`），把 `(proj_prev, pos)` 这条腿的起点写下来，并把有翼弹的 `acc` / `a_dir` / `a_want` 清零。因此十一个 pass 共享同一条判死规则（`Flights.flying`）。十一个 stage 的清单以这一段为准 |
 | `Ballistic` | 子弹没有气动外形，七列气动状态不在它的 archetype 里，所以它自己积那一步抛物线 |
-| `Guidance.*` | 按制导 tag 一个 pass 一种律，没有 `proj_kind` 分支；无制导的火箭没有这一步，`a_dir` / `a_want` 恒为零 |
+| `Guidance.*` | 按制导 tag 一个 pass 一种律，没有 `proj_kind` 分支；无制导的火箭没有这一步，`a_dir` / `a_want` 恒为零。`Guidance.Loiter` 是唯一一个自己找目标的：没有锁时它调 `Seeker.scan` 把首捕写进 `target` / `tgt_mem` / `tgt_vel`，有锁时才用 `Seeker.track` |
 | `Airflow` / `AoA` | 读的都是**同一份 tick 前状态**：`vel` 没有被动过，所以四个力是"同刻求和"，而不是分四步各改一次 `vel`。中间量（`vhat` / `q` / `cl` / `nose`）落在组件里 |
-| `Lift` / `Drag` / `Thrust` / `Gravity` | 四个力 stage **只往 `acc` 里加**，彼此不读对方。顺序因此只决定浮点加法的结合，不是语义 |
+| `Lift` / `Drag` / `Thrust` / `Gravity` | 四个力 stage **只往 `acc` 里加**，彼此不读对方。顺序因此只决定浮点加法的结合，不是语义。两个推力 stage 不冲突：`Thrust` 问的是"点火窗口开了没有"，游荡弹药没有窗口（`ignite = burn = 0`），由 `Thrust.Commanded` 按速度误差开油门 |
 | `Integrate` | 唯一改 `vel` 的地方（子弹除外）：`vel += acc*dt`，再做一次 `maxvel` 归一化，最后把 `(proj_prev, pos)` 这条腿发布给球表。它也是唯一 `sweep.add` 的地方 |
 | `FirstHit.*` | 每个只做一件事：用 `if (t < first_hit_t)` 写"这条腿最早撞到了什么、在哪"。地面是连续场（整 tick 一次批量采样），建筑是一整格（slab），树干是圆柱，单位是球。**它们什么都不销毁**，所以这四个之间的顺序只决定一次比较的开销 |
 | `Impact` | 唯一的读者。它决定接触的含义（直接命中 + 爆、墙只吃爆、引信按测到的间隙先结掉那颗弹），然后销毁这颗弹。**这是唯一结束一颗弹的地方** |

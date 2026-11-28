@@ -24,7 +24,8 @@
 // `sense` is after `aim` because target boxes and their pre-aim rings use the
 // settled sight pose, and because an arrow springs from the mounted eye.
 
-import { TICK_HZ } from '../core/config.js';
+import { DRONE_REACH, TICK_HZ } from '../core/config.js';
+import { groundPoint } from '../map/index.js';
 import { emitProjectiles, emitSmoke, emitUnits } from '../scene/index.js';
 import { missileTrails, wreckSmoke } from '../fx/dispatch.js';
 import { checkDamage, noLockFeedback, updateLockTone } from './systems/feedback.js';
@@ -111,8 +112,32 @@ function sendInput(app) {
     const r1 = (v) => Math.round(v * 10) / 10;
     msg.lb = [lockId, r1(b.x), r1(b.y), r1(b.z), r1(b.vx), r1(b.vy), r1(b.vz)];
   }
+  // the ground under the centre cross, for a round that loiters over what it was
+  // aimed at: a munition fired with no lock circles this point (`Systems/Weapons.cs`).
+  // The client is where the cross lands - the wire's own `yaw` / `pitch` are the
+  // *guns'*, which trail the view while the assist holds a ring or ALT has the head
+  // turned - so the point is measured here and sent with the trigger that uses it.
+  // Absent when the cross is in the sky, off the field, or no munition is carried:
+  // the server then takes `DRONE_REACH` along the bearing, which is also the cap.
+  if (own && carriesDrone(app, own)) {
+    const view = app.aim.viewRay();
+    const pt = groundPoint(app.map, app.sightEye(own), view.yaw, view.pitch, DRONE_REACH);
+    if (pt) msg.dg = [Math.round(pt[0]), Math.round(pt[1])];
+  }
   app.net.send(msg);
   app.input.qPressed = false;
+}
+
+// Whether either arm is carrying a loitering munition: the only kind that is told
+// where to go by a point on the ground.
+function carriesDrone(app, own) {
+  const w = app.defs.weapons || {};
+  const slots = own.weapon || [];
+  for (const arm of [0, 1]) {
+    const wd = w[slots[arm]];
+    if (wd && wd.kind === 'drone') return true;
+  }
+  return false;
 }
 
 function ownState(app) {

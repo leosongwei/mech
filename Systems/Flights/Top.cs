@@ -107,25 +107,21 @@ public static partial class Flights
                         // the climb, so a close target pulls the nose down here
                         elev = MathF.Min(elev, wd.loft);
                     }
-                    float hx, hz;
-                    if (r > 1e-3f)
-                    {
-                        hx = dx / r;
-                        hz = dz / r;
-                    }
-                    else
-                    {
-                        hx = 1f;
-                        hz = 0f;
-                    }
-                    float ce = MathF.Cos(elev), se = MathF.Sin(elev);
-                    var want = new Vec3(hx * ce, se, hz * ce);
-                    a_dir = _lift_dir(vhat, want);
-                    // the pull owed is proportional to the heading error and capped by
-                    // what the airframe can make at this speed: the round crabs onto
-                    // the arc rather than snapping onto it
-                    float beta = MathF.Asin(MathF.Min(1f, vhat.cross(want).len));
-                    a_want = K_P * speed * beta;
+                    // Two channels, summed as accelerations: the *height* is the
+                    // reference arc (a pitch error against the flight path, `K_P` per
+                    // radian), and the *track* is proportional navigation in the map
+                    // plane.  Chasing the hull's current bearing instead - pure
+                    // pursuit - flies a curve where a straight line exists, and the
+                    // curve costs induced drag for the whole cruise: on a crossing
+                    // target the round spends its motor on its own turn.
+                    float gamma = MathF.Asin(MathUtil.clamp(vhat.y, -1f, 1f));
+                    var a = _pn_level(p, v, tp, tgt_vel ?? Vec3.zero, wd.pn_n)
+                            + new Vec3(0f, K_P * speed * (elev - gamma), 0f);
+                    // the fins can only pull square to the flight path, and what the
+                    // airframe can make at this speed is the ceiling on all of it
+                    a = a - vhat * a.dot(vhat);
+                    a_want = a.len;
+                    a_dir = a_want > 1e-9f ? a.unit : Vec3.zero;
                 }
                 return (a_dir, MathF.Min(a_want, lift_max));
             }
@@ -158,31 +154,6 @@ public static partial class Flights
                 return MathF.Max(-ELEV_MAX, MathF.Min(ELEV_MAX, want));
             }
 
-            /// <summary>Unit direction square to the velocity that turns it toward
-            /// `want`.</summary>
-            private static Vec3 _lift_dir(Vec3 vhat, Vec3 want)
-            {
-                var axis = vhat.cross(want);
-                if (axis.len < 1e-6f) return Vec3.zero;
-                return axis.unit.cross(vhat).unit;
-            }
-
-            /// <summary>True proportional navigation toward `roof`: the acceleration
-            /// owed.</summary>
-            private static Vec3 _pn_accel(Vec3 p, Vec3 v, Vec3 roof, Vec3 tgt_vel,
-                                          float n_law)
-            {
-                var r = roof - p;
-                float r2 = r.len2;
-                if (r2 < 1e-6f) return Vec3.zero;
-                var rhat = r.unit;
-                var vrel = tgt_vel - v;
-                var omega = r.cross(vrel) / r2;
-                float vc = -rhat.dot(vrel);
-                var a = omega.cross(rhat);
-                float k = n_law * MathF.Max(vc, 1f);
-                return a * k;
-            }
         }
     }
 }

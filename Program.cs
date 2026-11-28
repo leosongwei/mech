@@ -65,6 +65,7 @@ if (check is not null)
         "stuck" => Mech.Server.Harness.StuckCheck.run(minutes),
         "beam" => Mech.Server.Harness.BeamCheck.run(),
         "airframe" => Mech.Server.Harness.AirframeCheck.run(),
+        "drone" => Mech.Server.Harness.DroneCheck.run(),
         "hit" => Mech.Server.Harness.InterceptCheck.hits(),
         "intercept" => Mech.Server.Harness.InterceptCheck.run(Environment.GetEnvironmentVariable("MECH_IC_ONLY")),
         "net" => Mech.Server.Harness.NetCheck.bandwidth(minutes, fromMin),

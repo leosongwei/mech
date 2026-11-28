@@ -18,7 +18,9 @@ test('target layer works without ballistic arms and direct sight wins over link'
     [friendlyMissile, directMissile, linkedMissile, oldMissile]);
   app.net.smoke = [smokeAt(300, 2, 0, 30, 3), smokeAt(400, 2, 0, 30, 3),
     smokeAt(700, 20, 0, 30, 3), smokeAt(800, 20, 0, 30, 3)];
-  app.rwr.threats = []; // missile targets must come from the snapshot, not RWR
+  // nothing is on the receiver's `seen` list, so an enemy round is a target only
+  // through the row's shared bit
+  app.rwr.threats = [];
   const lead = new Lead(app);
 
   lead.update(own);
@@ -72,9 +74,24 @@ test('only enemy targets receive ballistic marks and datalink targets participat
   assert.notEqual(app.aimSnap.id, 2);
 });
 
+test('an enemy round is a target only once the receiver has placed it', () => {
+  const placed = projectile(201, 1, 800, { vx: -300, vy: 20, vz: 0 });
+  const heardOnly = projectile(202, 1, 900, { vx: -300, vy: 20, vz: 0 });
+  const linked = projectile(203, 1, 950, { vx: -300, vy: 20, vz: 0, link: true });
+  const { app, own } = testApp([], [placed, heardOnly, linked]);
+  // the wire carries all three; the receiver holds a solution on one of them, and
+  // a bearing line is not a position - a box and a ring need one
+  app.rwr.threats = [{ id: 201, seen: true }, { id: 202, seen: false }];
+  const lead = new Lead(app);
+
+  lead.update(own);
+  assert.deepEqual(lead.world.map((t) => t.id), [201, 203]);
+});
+
 test('a missile ring hands the snap its world row, not its pixels', () => {
   const missile = projectile(201, 1, 800, { vx: -300, vy: 20, vz: 0 });
   const { app, own } = testApp([], [missile]);
+  app.rwr.threats = [{ id: 201, seen: true }];
   own.weapon = [1, 0];
   app.defs.weapons[1] = { kind: 'bullet', vel: 1080, g: 9.81, life: 9.3 };
   app.aimAssist = true;

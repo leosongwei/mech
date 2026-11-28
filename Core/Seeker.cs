@@ -167,4 +167,64 @@ public static class Seeker
         }
         return -1;
     }
+
+    /// <summary>Take the first enemy hull this round can see out of its own optics:
+    /// the search a round does when nobody has told it what to fly at.
+    ///
+    /// Four questions, cheapest first: is the hull inside `half_angle` of the line
+    /// this round is looking down, is it near enough that it fills
+    /// `Defs.DRONE_SIGHT_AREA` of that field of view (`Defs.drone_rcg` gives the
+    /// distance each type reaches), is it the nearest one that does, and is the line
+    /// from here to its deck clear.  A hull in cover is not a candidate - the same
+    /// `Sight.clear` the lock keeps asking every tick.
+    ///
+    /// What it returns is the deck the round now owns, or null; `track` has to hold
+    /// the lock from the next tick on, so this is the same memory `track` refreshes:
+    /// the search is only where the first one comes from.</summary>
+    public static Vec3? scan(World world, int pid, Vec3 p0, Vec3 look, float half_angle)
+    {
+        var e = world.ecs;
+        var ids = world.lockable_units();
+        if (ids.Length == 0) return null;
+        float n = look.len;
+        if (n < 1e-6f) return null;
+        look = look / n;
+        float cos_half = MathF.Cos(half_angle);
+        var etype = e.uv("etype");
+        var faction = e.uv("faction");
+        int mine = faction[pid];
+        var cand = new List<(float dist, int tid, Vec3 deck)>();
+        for (int k = 0; k < ids.Length; k++)
+        {
+            int tid = ids[k];
+            if (faction[tid] == mine) continue;
+            float rcg = Defs.drone_rcg(etype[tid]);
+            if (!(rcg > 0f)) continue;
+            var deck = roof(world, tid);
+            var v = deck - p0;
+            float dist = v.len;
+            if (!(dist > 1e-3f) || dist > rcg) continue;
+            if (v.dot(look) / dist < cos_half) continue;
+            cand.Add((dist, tid, deck));
+        }
+        // nearest first: a cone that has found two hulls dives on the one it reaches
+        // first, and a hull that cannot be seen costs only its own compare
+        cand.Sort((a, b) => a.dist.CompareTo(b.dist));
+        foreach (var (_, tid, deck) in cand)
+        {
+            if (!Systems.Sight.clear(world, p0, deck)) continue;
+            e.iv("target")[pid] = tid;
+            e.fv("tgt_mem").set3(pid, deck);
+            e.fv("tgt_vel").set3(pid, e.fv("vel").get3(tid));
+            if (log.IsEnabled(LogLevel.Debug))
+                log.LogDebug("munition {pid} found hull {tid} ({dist:F0} m out, "
+                             + "{age:F1} s in the air)", pid, tid, MathUtil.dist(p0, deck),
+                             e.fv("proj_age")[pid]);
+            world.emit("seeker", ("x", p0.x), ("y", p0.y), ("z", p0.z),
+                       ("faction", mine), ("tid", tid), ("proj", pid), ("why", "scan"),
+                       ("dist", MathF.Round(MathUtil.dist(p0, deck), 1)));
+            return deck;
+        }
+        return null;
+    }
 }

@@ -66,4 +66,48 @@ public static partial class Flights
     {
         a[i * 3] += v.x; a[i * 3 + 1] += v.y; a[i * 3 + 2] += v.z;
     }
+
+    // ------------------------------------------------------------------
+    // the two turns every guidance law is made of
+    // ------------------------------------------------------------------
+
+    /// <summary>Unit direction square to the velocity that turns it toward
+    /// `want`.</summary>
+    internal static Vec3 _lift_dir(Vec3 vhat, Vec3 want)
+    {
+        var axis = vhat.cross(want);
+        if (axis.len < 1e-6f) return Vec3.zero;
+        return axis.unit.cross(vhat).unit;
+    }
+
+    /// <summary>Proportional navigation in the map plane: the horizontal
+    /// acceleration that nulls the rate of the line to `aim`.
+    ///
+    /// This is the same law as `_pn_accel` with everything flattened onto the map, and
+    /// it is what a *cruise* leg wants.  Pure pursuit - turn onto the target's
+    /// bearing, hold it - flies a curve where a straight line exists, and the curve is
+    /// paid for in induced drag the whole way out: a round chasing a crossing hull
+    /// spends its motor keeping up with its own turn instead of closing.  Nulling the
+    /// line's rotation is how a round points at where the hull *will* be, and it is
+    /// one number for the whole flight rather than a gain that has to be re-tuned as
+    /// the range closes.</summary>
+    internal static Vec3 _pn_level(Vec3 p, Vec3 v, Vec3 aim, Vec3 aim_vel, float n)
+        => _pn_accel(new Vec3(p.x, 0f, p.z), new Vec3(v.x, 0f, v.z),
+                     new Vec3(aim.x, 0f, aim.z), new Vec3(aim_vel.x, 0f, aim_vel.z), n);
+
+    /// <summary>True proportional navigation toward `roof`: the acceleration
+    /// owed.</summary>
+    internal static Vec3 _pn_accel(Vec3 p, Vec3 v, Vec3 roof, Vec3 tgt_vel, float n_law)
+    {
+        var r = roof - p;
+        float r2 = r.len2;
+        if (r2 < 1e-6f) return Vec3.zero;
+        var rhat = r.unit;
+        var vrel = tgt_vel - v;
+        var omega = r.cross(vrel) / r2;
+        float vc = -rhat.dot(vrel);
+        var a = omega.cross(rhat);
+        float k = n_law * MathF.Max(vc, 1f);
+        return a * k;
+    }
 }

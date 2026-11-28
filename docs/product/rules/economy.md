@@ -49,6 +49,7 @@
 | UNGUIDED ROCKET POD（HEAT） | $50 | 0.2 | 40 | **$58** |
 | HE ROCKET POD | $50 | 0.2 | 40 | **$58** |
 | SACLOS ATGM | $200 | **$5** | 16 | **$280** |
+| LOITERING MUNITION | $300 | $10 | 16 | **$460** |
 | TOP-ATTACK IR ATGM | $550 | **$45** | 8 | **$910** |
 | 105mm SMOOTHBORE | $900 | 30 | 12 | **$1260** |
 | 5.56mm RIFLE / RPG / APC ATGM | 非卖品 | — | — | — |

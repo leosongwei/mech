@@ -27,6 +27,14 @@ const SIZE = { u8: 1, u16: 2, f32: 4 };
 
 export const TARGET_LINK = 1 << 6;       // MECH / APC flags: shared target observation
 export const PROJ_TARGET_LINK = 1 << 0;  // projectile +5: shared guided-round observation
+// The round kinds that are a *thing in the air* rather than a tracer: everything
+// with a motor and an airframe - the unguided rocket pod, the beam rider, the top
+// attack and the loitering munition.  They are the ones a radar answers to, the
+// ones the wire's shared bit above is ever set for, and the ones the HUD marks:
+// a rocket is as visible to a receiver as a beam rider, and as shootable.
+export const AIR_ROUND = { ROCKET: 1, SACLOS: 2, TOP: 3, DRONE: 4 };
+export const isAirRound = (kind) => kind === AIR_ROUND.ROCKET
+  || kind === AIR_ROUND.SACLOS || kind === AIR_ROUND.TOP || kind === AIR_ROUND.DRONE;
 
 export const CLASSES = [
   {

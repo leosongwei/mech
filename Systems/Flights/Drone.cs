@@ -176,13 +176,14 @@ public static partial class Flights
             }
 
             /// <summary>The search: the axis swings `DRONE_SCAN` either side of the
-            /// heading, one 80 deg pass in 2 s.  `_tri` has a period of two, so one
-            /// sweep out and one back is four seconds of flight.</summary>
+            /// heading at `DRONE_SCAN_RATE` - one pass across the whole span in a
+            /// second, one out-and-back in two.  `_tri`'s period is one argument, so
+            /// the cycle in seconds is what is divided out.</summary>
             private static float _swing(float age)
-                => Defs.DRONE_SCAN * _tri(age / 2.0f);
+                => Defs.DRONE_SCAN * _tri(age / (4f * Defs.DRONE_SCAN / Defs.DRONE_SCAN_RATE));
 
-            /// <summary>Triangle wave in [-1, 1], period 2: one pass from one side to
-            /// the other takes 1 (i.e. 2 s of `_swing`'s argument).</summary>
+            /// <summary>Triangle wave in [-1, 1] of period one: one pass from one side
+            /// to the other takes half of it.</summary>
             private static float _tri(float t)
             {
                 float u = t - MathF.Floor(t);

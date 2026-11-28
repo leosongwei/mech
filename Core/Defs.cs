@@ -1588,8 +1588,12 @@ public static partial class Defs
     // ring is 358-456 m of line of sight from 200 m up, so a hull recognised at 440 m
     // is seen over 85 % of it and a man (147 m) is never seen at all.
     public const float DRONE_SIGHT_AREA = 0.007f;
-    public const float DRONE_SCAN = 40.0f * MathF.PI / 180.0f;       // rad, one side
-    public const float DRONE_SCAN_RATE = 40.0f * MathF.PI / 180.0f;  // rad/s, one pass 2 s
+    public const float DRONE_SCAN = 30.0f * MathF.PI / 180.0f;       // rad, one side
+    // rad/s the axis swings at: a pass across the whole `2 · DRONE_SCAN` span takes
+    // 2 · 30° / 60°/s = 1 s, and one out-and-back two.  The search is designed to
+    // this rate (`docs/plans/drone.md` §3.3): at 41.7 m/s a pass covers 42 m of
+    // ground, well inside the ring's 114 m depth.
+    public const float DRONE_SCAN_RATE = 60.0f * MathF.PI / 180.0f;
     public const float DRONE_ORBIT_R = 250.0f;  // m, the circle it searches from
     // m: an unlocked shot circles the ground the pilot's cross is on, at most this
     // far out, and this far along the bearing when the cross is in the sky.  The

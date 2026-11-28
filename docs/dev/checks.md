@@ -84,7 +84,7 @@
 
 | 命令 | 测什么 | 看哪个数 |
 | --- | --- | --- |
-| `battle --minutes 12` | 一整场脚本化战斗（4 个 bot 按同一套脚本开火、拉烟、行驶） | 末尾 `ms/tick incl. wire`、`events:` 一行的 `death` 与 `shot` 之比，以及 `drone` 的发数（机组压城镇的节奏，12 分钟两侧合计约 84 发） |
+| `battle --minutes 12` | 一整场脚本化战斗（4 个 bot 按同一套脚本开火、拉烟、行驶） | 末尾 `ms/tick incl. wire`、`events:` 一行的 `death` 与 `shot` 之比，以及 `drone` 的发数（机组压城镇的节奏，12 分钟两侧合计约 45 发） |
 | `MECH_PERF=1 battle --minutes 12` | 同上，但关掉逐 tick 事件扫描，改印每分钟成本 | 每分钟那一行的 `ms/tick` 与其曲线 |
 | `range --minutes 2` | 靶场世界，一个飞行员每 6 s 打一发顶攻 | `shots launched`、`ecs.validate() ok` |
 | `hit` | 每种武器对一辆停着的 APC（9 行 = 4 种弹 × 2 距离 + HE 火箭一行） | `after` 与 `min` 两列 hp |

@@ -10,9 +10,10 @@
 // Two geometric choices, both per hull and both read off the state every tick:
 //
 //   * which town - the enemy-held one nearest this machine, provided it is inside
-//     the round's own reach (`range`, 4 km).  A town nobody owns has nothing to be
-//     denied, and a crew whose front is further off than that keeps its rounds: a
-//     munition sent past its reach arrives with the battery already half spent;
+//     `Defs.LOITER_TOWN_REACH` (3 km, tighter than the round's own 4 km range).  A
+//     town nobody owns has nothing to be denied, and a crew whose front is further
+//     off than that keeps its rounds: a munition sent past its reach arrives with
+//     the battery already half spent;
 //   * when - whenever the tube is ready.  There is no timer here: the arm's own
 //     cooldown *is* the clock, and `Weapons.pull` sets it to `Defs.LOITER_GAP` for
 //     a crew and to the rack's cycle for a pilot.  So a crew that has just fired
@@ -50,7 +51,8 @@ public static class Munitions
                 if (arch.i("mag")[c] <= 0) continue;
                 if (arch.f("cool")[c] > 1e-4f) continue;
                 if (arch.has("arm_hp") && arch.f("arm_hp")[c] <= 0f) continue;
-                var town = _nearest_enemy_town(world, e.uv("faction")[eid], pos, wd.range);
+                var town = _nearest_enemy_town(world, e.uv("faction")[eid], pos,
+                                               Defs.LOITER_TOWN_REACH);
                 if (town is null) continue;
                 var orbit = new Vec3(town.x, 0f, town.z);
                 if (!Weapons.pull(world, eid, arm, Defs.WID_LOITER, wd, -1, orbit)) continue;
@@ -63,9 +65,9 @@ public static class Munitions
     }
 
     /// <summary>The town this machine should deny, or null: the nearest one the
-    /// other side holds within `reach`, in map order for the ties.  The reach is the
-    /// round's own `range`, so a crew behind its own lines does not spend a tube on a
-    /// town the munition would reach with its battery half gone.</summary>
+    /// other side holds within `reach`, in map order for the ties.  A crew behind its
+    /// own lines does not spend a tube on a town the munition would reach with its
+    /// battery half gone.</summary>
     private static Town? _nearest_enemy_town(World world, byte faction, Vec3 from,
                                              float reach)
     {

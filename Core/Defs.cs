@@ -701,9 +701,9 @@ public static partial class Defs
         // gap between the two hulls it hunts: 110 against the same 10/20 plate both
         // of them carry, so one round takes an APC's 100 hp apart and leaves a mech's
         // 120 with ten.  For a pilot the rack is a burst, not a magazine: sixteen
-        // tubes at 0.2 s put the whole nest out in a little over three.  A crew's is
-        // a rhythm instead (`LOITER_GAP`), because a round that loiters for five
-        // minutes over a town is not a salvo.
+        // tubes at 0.2 s put the whole nest out in a little over three.  A crew's goes
+        // out at `LOITER_GAP` - a second a round, sixteen seconds for the nest -
+        // because what it is pressing is a town rather than a hull in front of it.
         new WeaponDef
         {
             wid = WID_LOITER, key = "loiter", name = "LOITERING MUNITION", kind = "drone",
@@ -1603,12 +1603,17 @@ public static partial class Defs
     // client's own walk stops here too (`core/config.js::DRONE_REACH`), so the cap
     // and the fallback are one number seen from two sides.
     public const float DRONE_REACH = 3000.0f;
-    // s: how often one crew's tube may put a round in the air.  A crew's launch is
-    // not a salvo - the round loiters for five minutes - so the arm is held on this
-    // clock instead of the rack's 0.2 s cycle (`Weapons.pull` reads it as `ai_gap`,
-    // and only for a crew: a pilot fires his own rack as a burst).  The launch
-    // itself is `Systems/Munitions.cs`.
-    public const float LOITER_GAP = 10.0f;
+    // s: how often one crew's tube may put a round in the air.  A crew's rack has a
+    // clock of its own instead of the rack's 0.2 s cycle (`Weapons.pull` reads it as
+    // `ai_gap`, and only for a crew - a pilot fires his own rack as a burst): at one
+    // second a round the sixteen tubes are out in sixteen.  The launch itself is
+    // `Systems/Munitions.cs`.
+    public const float LOITER_GAP = 1.0f;
+    // m: how near an enemy town has to be for a crew's rack to be worth a tube.  It
+    // is tighter than the round's own `range` because a munition sent out to the
+    // edge of its reach arrives with the battery half spent, and the rack only holds
+    // sixteen of them.
+    public const float LOITER_TOWN_REACH = 3000.0f;
     /// <summary>m: the distance at which a hull of this type fills
     /// `DRONE_SIGHT_AREA` of the seeker's field of view, so the first one that does is
     /// a target.  Computed once, from `UNIT_DEFS`' `radius` and `height`: the

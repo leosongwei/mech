@@ -90,3 +90,36 @@ export function groundHit(map, x0, y0, z0, x1, y1, z1, step) {
   }
   return { hit: false, t: 1, x: x1, y: y1, z: z1 };
 }
+
+// Where a ray meets the ground: the flat point the centre cross is standing on,
+// which is what a loitering round fired at nothing circles (`Systems/
+// Weapons.cs` takes it off the wire as `in.dg`).  Only the field is asked here:
+// a wall, a trunk, a canopy are things a round flies *over*, so they name no
+// destination, and the walk is `heightAt` and one bounds test per step.
+//
+// The step is the tile - a facet can be no finer than that - and the first
+// crossing it finds is bisected onto the surface.  Null past `max` or at the
+// edge of the field, which is the whole of "the cross points at the sky": the
+// server's own answer for that is `DRONE_REACH` along the bearing.
+export function groundPoint(map, eye, yaw, pitch, max) {
+  const cp = Math.cos(pitch);
+  const dx = Math.cos(yaw) * cp, dy = Math.sin(pitch), dz = Math.sin(yaw) * cp;
+  const step = map.tile;
+  const n = Math.ceil(max / step);
+  let prev = 0;
+  for (let k = 1; k <= n; k++) {
+    const d = Math.min(k * step, max);
+    const nx = eye[0] + dx * d, nz = eye[2] + dz * d;
+    if (!map.inside(nx, nz)) return null;
+    if (eye[1] + dy * d > map.heightAt(nx, nz)) { prev = d; continue; }
+    // half a tile of bisection is 6 cm on the facet the ray really fell on
+    let a = prev, b = d;
+    for (let it = 0; it < 8; it++) {
+      const m = (a + b) * 0.5;
+      const mx = eye[0] + dx * m, mz = eye[2] + dz * m;
+      if (map.inside(mx, mz) && eye[1] + dy * m > map.heightAt(mx, mz)) a = m; else b = m;
+    }
+    return [eye[0] + dx * b, eye[2] + dz * b];
+  }
+  return null;
+}

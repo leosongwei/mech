@@ -31,6 +31,13 @@ public sealed class Player
     public Vec3 belief_pos;
     public Vec3 belief_vel;
     public int belief_tick = int.MinValue;
+    // the ground his centre cross is standing on, as his own client measured it
+    // (`in.dg`): a loitering round fired with no lock circles this point, and the
+    // round the field log carried is the one he aimed at.  Null when the cross is in
+    // the sky or off the field, which is the client's own answer and not a puzzle for
+    // the server to solve - `Weapons.fire` then takes the bearing out to
+    // `Defs.DRONE_REACH`
+    public (float x, float z)? aim_ground;
     public int[] loadout = (int[])Defs.DEFAULT_LOADOUT.Clone();
     public int last_seq;
     public int score;

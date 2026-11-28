@@ -19,6 +19,11 @@ export const RWR_RANGE = 3000;              // m, the threat dial's face and the
                                             // display ceiling: the snapshot's guided tier
                                             // (`Netcode.TIER_ROUND`), so every mark on the
                                             // dial is a round the wire would have sent
+export const DRONE_REACH = 3000;            // m, the furthest a loitering round's aim point
+                                            // is named: the ground the centre cross is on up
+                                            // to here, and `Defs.DRONE_REACH` along the
+                                            // bearing past it - the cap and the fallback are
+                                            // one number
 
 // How long a line lives on the message stack: a kill is read *after* the fight
 // it belongs to (a battle writes one every few seconds), a notice about the

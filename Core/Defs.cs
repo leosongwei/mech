@@ -1591,7 +1591,11 @@ public static partial class Defs
     public const float DRONE_SCAN = 40.0f * MathF.PI / 180.0f;       // rad, one side
     public const float DRONE_SCAN_RATE = 40.0f * MathF.PI / 180.0f;  // rad/s, one pass 2 s
     public const float DRONE_ORBIT_R = 250.0f;  // m, the circle it searches from
-    public const float DRONE_REACH = 3000.0f;   // m, how far ahead an unlocked shot circles
+    // m: an unlocked shot circles the ground the pilot's cross is on, at most this
+    // far out, and this far along the bearing when the cross is in the sky.  The
+    // client's own walk stops here too (`core/config.js::DRONE_REACH`), so the cap
+    // and the fallback are one number seen from two sides.
+    public const float DRONE_REACH = 3000.0f;
     /// <summary>m: the distance at which a hull of this type fills
     /// `DRONE_SIGHT_AREA` of the seeker's field of view, so the first one that does is
     /// a target.  Computed once, from `UNIT_DEFS`' `radius` and `height`: the

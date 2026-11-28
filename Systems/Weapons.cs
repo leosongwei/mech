@@ -304,7 +304,8 @@ public static class Weapons
     /// Returns false when a seeker has neither a visible track nor a usable shooter belief.</summary>
     /// <param name="orbit">the point a loitering round circles while it searches, as
     /// this shot's aim point on the ground: the hull it was fired at, or the town a
-    /// mode picked.  Null asks for the default below - the sight line out to
+    /// mode picked.  Null asks for the default below - the ground the shooter's own
+    /// cross named (`Player.aim_ground`), and failing that the bore's bearing out to
     /// `Defs.DRONE_REACH`.</param>
     public static bool fire(World world, int eid, int arm, int wid, WeaponDef wd, int target = -1,
                             Vec3? orbit = null)
@@ -390,14 +391,19 @@ public static class Weapons
 
         // A loitering round circles one point for its whole life: the hull it was
         // fired at when it had a lock, the town a mode picked, or - aimed at nothing
-        // in particular - the ground its own sight line reaches.  Only the plan
-        // position is carried; the height is the terrain-following law's business.
+        // in particular - the ground the pilot's centre cross is standing on, as his
+        // own client measured it (`in.dg`).  With no point on the wire the bearing out
+        // to `Defs.DRONE_REACH` answers instead, which is the same distance the client
+        // caps its own measurement at, so the two rules meet.  Only the plan position
+        // is carried; the height is the terrain-following law's business.
         Vec3? circle = null;
         if (wd.kind == "drone")
         {
-            var o = orbit ?? (target >= 0
-                ? Seeker.roof(world, target)
-                : origin + MathUtil.dir_from(yaw, 0f) * Defs.DRONE_REACH);
+            Vec3 o;
+            if (orbit is Vec3 given) o = given;
+            else if (target >= 0) o = Seeker.roof(world, target);
+            else o = aimed_ground(world, eid)
+                     ?? origin + MathUtil.dir_from(yaw, 0f) * Defs.DRONE_REACH;
             circle = new Vec3(o.x, 0f, o.z);
         }
 
@@ -419,5 +425,20 @@ public static class Weapons
         world.emit("shot", ("x", origin.x), ("y", origin.y), ("z", origin.z),
                    ("wid", wid), ("eid", eid), ("arm", arm));
         return true;
+    }
+
+    /// <summary>The ground the shooter's centre cross stood on when the trigger went
+    /// down, or null when he named none: his client leaves the point out for a cross
+    /// in the sky or off the field, and a point further than `Defs.DRONE_REACH` from
+    /// the round's own hull did not come from this machine's cross - the client's walk
+    /// stops at that distance, so the slack here is the hull's own motion between the
+    /// measurement and the shot.</summary>
+    private static Vec3? aimed_ground(World world, int eid)
+    {
+        if (!world.players.TryGetValue(world.ecs.iv("owner")[eid], out var pl)) return null;
+        if (pl.aim_ground is not (float x, float z)) return null;
+        var pos = world.ecs.fv("pos").get3(eid);
+        if (MathUtil.dist2d(pos.x, pos.z, x, z) > Defs.DRONE_REACH * 1.05f) return null;
+        return new Vec3(x, 0f, z);
     }
 }

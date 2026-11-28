@@ -666,6 +666,54 @@ public static class DroneCheck
                               + $"circle {toReach,5:0} m out, {toHull,5:0} m from the hull");
         }
 
+        // the point a pilot names with his cross: a round fired with no lock circles
+        // the ground he was aiming at, and a point his client could not have measured -
+        // one past the reach its walk stops at - falls back to the bearing's 3 km.  The
+        // first row is the mechanic; the second is the guard on it.
+        foreach (bool inReach in new[] { true, false })
+        {
+            var world = new World(7, "range");
+            var e = world.ecs;
+            var pl = world.add_player("AIMER");
+            pl.loadout = new[] { Defs.WID_AC30, WID };
+            int row = e.row_of(pl.mech);
+            var hull = e.arch_of(pl.mech)!;
+            hull.u8("weapon")[row * 2 + 1] = (byte)WID;
+            hull.i("mag")[row * 2 + 1] = WD.mag;
+
+            var mech = e.fv("pos").get3(pl.mech);
+            float size = world.terrain.w * Terrain.TILE;
+            // what `Net/Server.cs` would have read off the wire: 600 m out, or the far
+            // corner of the field, which is further than a 3 km walk of the cross
+            var named = inReach
+                ? (x: mech.x + 600f, z: mech.z)
+                : (x: mech.x < size * 0.5f ? size - 32f : 32f,
+                   z: mech.z < size * 0.5f ? size - 32f : 32f);
+            pl.aim_ground = named;
+            int round = -1;
+            for (int t = 0; t < 120 && round < 0; t++)
+            {
+                // the cross clear of every hull by 0.8 rad, so there is no lock for
+                // the shot to take and the round's circle is the named point's
+                pl.in_yaw = MathF.Atan2(named.z - mech.z, named.x - mech.x) + 0.8f;
+                pl.in_pitch = -0.02f;
+                pl.lock_target = -1;
+                pl.fire = (false, t > 30);
+                world.update(DT);
+                if (world.projectiles().Length > 0) round = world.projectiles()[^1];
+            }
+            string what = inReach ? "cross 600 m out" : "cross past reach";
+            if (round < 0)
+            {
+                Console.WriteLine($"{what,-17} no round");
+                continue;
+            }
+            var o = e.fv("orbit").get3(round);
+            Console.WriteLine($"{what,-17} circle {MathUtil.dist2d(mech.x, mech.z, o.x, o.z),5:0} m "
+                              + $"from the hull, {MathUtil.dist2d(named.x, named.z, o.x, o.z),5:0} m "
+                              + "from the point named");
+        }
+
         // the release: a ring held on a hull, and then the cross taken off it.  A
         // weapon that needs a lock keeps its hull (the shot still has to be aimed);
         // this one lets go, which is what makes "fire at nothing" a thing a pilot can

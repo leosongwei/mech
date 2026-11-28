@@ -2,12 +2,12 @@
 //
 // The rule set the default server runs: the map is generated from the seed
 // (`Terrain.generate`), both sides start from a command base at the end of the
-// three lanes, and the war is fought over the towns strung along them.  Two
-// systems belong to this mode - `Raids` and `Waves` - and they sit on either side
-// of the shared pipeline:
+// three lanes, and the war is fought over the towns strung along them.  Three
+// systems belong to this mode and they sit on either side of the shared pipeline:
 //
-//     pre  : raids.run, ai.run     the parties steer themselves, then every crew
-//                                  (theirs included) acquires and fires
+//     pre  : raids.run, ai.run,    the parties steer themselves, every crew
+//            munitions.run        (theirs included) acquires and fires, then the
+//                                 munition racks put rounds over the towns
 //     post : waves.run             after everyone has moved: capture, columns
 //
 // `pre_systems` is where the AI has always been - it wants to run before
@@ -43,7 +43,6 @@ public sealed class BattleMode : Mode
             town.progress = 0f;
         }
         Waves.bind(world);
-        Drones.bind(world);
         Systems.AI.Raid.bind(world);
         _spawn_bases(world);
         _spawn_civilians(world);
@@ -58,9 +57,10 @@ public sealed class BattleMode : Mode
         // `ai.run` after - that system owns every crew's guns, including the
         // parties' (`ai_state`, `raider`).
         var into = Systems.AI.Pipeline.battle();
-        // the crews have all spoken; the munition's own rhythm fires after them,
-        // because it aims at a town rather than at anything a crew engaged
-        into.Add(Drones.run);
+        // the crews have all spoken; the munition racks fire after them, because a
+        // round of that kind is aimed at a town rather than at anything a crew
+        // engaged (`Systems/Munitions.cs`)
+        into.Add(Systems.Munitions.run);
         return into;
     }
 

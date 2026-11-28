@@ -86,10 +86,6 @@ public sealed class World
     public int tick;
     public int wave;
     public float wave_timer = 8f;
-    // the loitering munition's launch rhythm, one per faction: seconds to the next
-    // shot, and which enemy town the last one was aimed at (`Modes/Battle/Drones.cs`)
-    public float[] drone_timer = new float[2];
-    public int[] drone_town = new int[2];
     public int winner = -1;
     public float end_timer;
     public List<Dictionary<string, object?>> events = new();

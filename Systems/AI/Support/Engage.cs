@@ -109,8 +109,8 @@ public static class Engage
             if (wid == Defs.WID_NONE) continue;
             var wd = Defs.WEAPONS[wid];
             // the loitering munition is not aimed at a hull: it is launched at a town
-            // by the mode's own rhythm (`Modes/Battle/Drones.cs`), so the sight never
-            // falls on this arm and this crew never lays it on anything here
+            // by its own system (`Systems/Munitions.cs`), so the sight never falls on
+            // this arm and this crew never lays it on anything here
             if (wd.kind == "drone") continue;
             if (shared_only && !Defs.fires_on_link(wd)) continue;
             if (aim.dist > wd.range) continue;

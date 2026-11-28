@@ -160,14 +160,14 @@ Core/       Defs.cs（类型、武器、常量）   World.cs（玩家、tick、�
 Net/        Netcode.cs（帧、快照、meta）   Server.cs（websocket + 主循环）
             KillStream.cs（独立线路上的击杀播报）
 Systems/    每系统一个文件，`run(world, dt)`
-  Rearm PlayerInput Gunnery Locking Smoke Weapons Unstick
+  Rearm PlayerInput Munitions Gunnery Locking Smoke Weapons Unstick
   Movement/{Foot,Vehicle,Mech/{Steer,Thrust,Slope,Drag,Ground},Support/{Drive,Integrate}}
   Sweep Beams FirstHit Impact Blasts Mortality Economy Debris Sight Smoke
   Flights/{Flights,Columns,Expire,Airframe,Saclos,Top,Drone,Ballistic}  # 一条飞行链的十二个 pass
   AI/{Sense,Threats,Intercept,Engage*,Wander}  AI/Strategies/{Front,Raid}
   AI/Support/{Tags,Crew,Policy,Engage,ThreatTable,Pipeline}  AI/Nav/{NavMesh,NavWalk,NavRegion,NavQuery,Paths}
   Support/KillFeed.cs          # 玩家读到的一行——谁以何种武器从多远击杀了谁
-Modes/      Mode.cs  Modes.cs  Battle/（Waves Drones）  Range/
+Modes/      Mode.cs  Modes.cs  Battle/（Waves）  Range/
 Harness/    Check BeamCheck AirframeCheck InterceptCheck FcsCheck NetCheck Tiers StuckCheck
             DriveCheck TerrainCheck NavCheck DroneCheck GazeCheck DatalinkCheck
 tests/      cases/*.json  frontend/（node:test）  backend/（控制台运行器）  compare.mjs
@@ -180,7 +180,7 @@ tools/      gun_report.py  saclos_motor.py  smoke_lock_test.js
 
 ```
 rearm, player_input,            # 购买的作业倒计时；输入转化为意图
-mode pre-systems                # battle：AI 乘员
+mode pre-systems                # battle：AI 乘员、游荡弹药的发射
 gunnery, locking, smoke, weapons,   # 机器随意图转动，随后开火
 unstick, movement,                  # 受困机体先被移离，随后各驾驶员驱动
 sweep.spheres, beams, expire,       # 本 tick 的命中球、激光、电池到期

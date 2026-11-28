@@ -700,8 +700,10 @@ public static partial class Defs
         // shows and is not a condition of firing.  And the warhead is sized to the
         // gap between the two hulls it hunts: 110 against the same 10/20 plate both
         // of them carry, so one round takes an APC's 100 hp apart and leaves a mech's
-        // 120 with ten.  The rack is a burst, not a magazine: sixteen tubes at 0.2 s
-        // put the whole nest out in a little over three.
+        // 120 with ten.  For a pilot the rack is a burst, not a magazine: sixteen
+        // tubes at 0.2 s put the whole nest out in a little over three.  A crew's is
+        // a rhythm instead (`LOITER_GAP`), because a round that loiters for five
+        // minutes over a town is not a salvo.
         new WeaponDef
         {
             wid = WID_LOITER, key = "loiter", name = "LOITERING MUNITION", kind = "drone",
@@ -713,7 +715,7 @@ public static partial class Defs
             cl_alpha = 15.0f, cl_max = 4.5f,
             pn_n = 3.0f, pn_r = 400.0f, pn_v = 25.0f,
             range = 4000, lock_range = 4000, cost = 300, ammo_cost = 10.0f,
-            @lock = 2, salvo = 0, semi = 0, ai_gap = 0.0f,
+            @lock = 2, salvo = 0, semi = 0, ai_gap = LOITER_GAP,
             color = new[] { 1.0f, 0.85f, 0.45f }, cal = 500f, rcs = 0.02f,
             rack = RACK_LOITER, body = new[] { 0.18f, 1.30f },
             desc = "Loiters over the ground it was aimed at, dives on what it finds",
@@ -1600,6 +1602,12 @@ public static partial class Defs
     // client's own walk stops here too (`core/config.js::DRONE_REACH`), so the cap
     // and the fallback are one number seen from two sides.
     public const float DRONE_REACH = 3000.0f;
+    // s: how often one crew's tube may put a round in the air.  A crew's launch is
+    // not a salvo - the round loiters for five minutes - so the arm is held on this
+    // clock instead of the rack's 0.2 s cycle (`Weapons.pull` reads it as `ai_gap`,
+    // and only for a crew: a pilot fires his own rack as a burst).  The launch
+    // itself is `Systems/Munitions.cs`.
+    public const float LOITER_GAP = 10.0f;
     /// <summary>m: the distance at which a hull of this type fills
     /// `DRONE_SIGHT_AREA` of the seeker's field of view, so the first one that does is
     /// a target.  Computed once, from `UNIT_DEFS`' `radius` and `height`: the

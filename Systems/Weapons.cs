@@ -199,11 +199,11 @@ public static class Weapons
     /// <summary>Fire one arm and settle the pull: the round leaves, one comes off
     /// the magazine, and the arm goes on cooldown.
     ///
-    /// `run` reaches this through the trigger bits.  A mode that owns a launch of its
-    /// own (`Modes/Battle/Drones.cs`) calls it directly, because the trigger's own
-    /// path into `run` wants the bore already on a target, and a shot at a town has
-    /// no target to lay on.  Both paths share this one piece of bookkeeping, so a
-    /// round costs a magazine round exactly once.</summary>
+    /// `run` reaches this through the trigger bits.  A rack that is aimed at a town
+    /// rather than at a hull is pulled by its own system (`Systems/Munitions.cs`),
+    /// because the trigger's path into `run` wants the bore already on a target and a
+    /// shot at a town has no target to lay on.  Both paths share this one piece of
+    /// bookkeeping, so a round costs a magazine round exactly once.</summary>
     /// <param name="orbit">the point a loitering round circles: passed through to the
     /// round's own column, and null for every kind that has none.</param>
     public static bool pull(World world, int eid, int arm, int wid, WeaponDef wd,
@@ -303,8 +303,9 @@ public static class Weapons
     /// that order, because the battle is a replay of this sequence.
     /// Returns false when a seeker has neither a visible track nor a usable shooter belief.</summary>
     /// <param name="orbit">the point a loitering round circles while it searches, as
-    /// this shot's aim point on the ground: the hull it was fired at, or the town a
-    /// mode picked.  Null asks for the default below - the ground the shooter's own
+    /// this shot's aim point on the ground: the hull it was fired at, or the town
+    /// `Systems/Munitions.cs` aimed a crew at.  Null asks for the default below - the
+    /// ground the shooter's own
     /// cross named (`Player.aim_ground`), and failing that the bore's bearing out to
     /// `Defs.DRONE_REACH`.</param>
     public static bool fire(World world, int eid, int arm, int wid, WeaponDef wd, int target = -1,
@@ -390,7 +391,7 @@ public static class Weapons
         int beam = wd.kind == "saclos" ? Beams.lay(world, eid, target) : -1;
 
         // A loitering round circles one point for its whole life: the hull it was
-        // fired at when it had a lock, the town a mode picked, or - aimed at nothing
+        // fired at when it had a lock, the town a crew was aimed at, or - aimed at nothing
         // in particular - the ground the pilot's centre cross is standing on, as his
         // own client measured it (`in.dg`).  With no point on the wire the bearing out
         // to `Defs.DRONE_REACH` answers instead, which is the same distance the client

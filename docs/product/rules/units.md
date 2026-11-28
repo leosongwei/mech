@@ -147,13 +147,11 @@ AI 机组没有钱、不会去换装，所以出生时**按概率抽一套配置
 
 | 概率 | 左臂 | 右臂 |
 | --- | --- | --- |
-| **20%** | 30mm AUTOCANNON | UNGUIDED ROCKET POD（HEAT） |
-| **10%** | 30mm AUTOCANNON | LOITERING MUNITION |
-| **10%** | 30mm AUTOCANNON | 30mm AUTOCANNON（双炮） |
+| **25%** | 30mm AUTOCANNON | UNGUIDED ROCKET POD（HEAT） |
+| **20%** | 30mm AUTOCANNON | LOITERING MUNITION |
 | **20%** | 30mm AUTOCANNON | SACLOS ATGM |
-| **15%** | 30mm AUTOCANNON | TOP-ATTACK IR ATGM |
+| **20%** | 30mm AUTOCANNON | TOP-ATTACK IR ATGM |
 | **15%** | 30mm AUTOCANNON | 105mm SMOOTH BORE |
-| **10%** | 30mm AUTOCANNON | 12.7mm MACHINE GUN |
 
 * **左臂恒为 30mm**，所以每一台 AI 机甲都有一条**带引信**的手臂——诱饵、拦截都靠它，
   见 [../systems/ai.md](../systems/ai.md)。
@@ -161,11 +159,12 @@ AI 机组没有钱、不会去换装，所以出生时**按概率抽一套配置
   显式指定 `weapons`。于是：指挥部的机甲、前线增援、破袭机甲与 `debug_spawn` 放出来
   的 AI 机甲都抽签；**玩家**的机甲永远用 `DEFAULT_LOADOUT`（30mm 机炮 + 无制导火箭巢）；
   靶场的导弹防御哨位自带一份 `LOADOUT` 也不抽。
-* 能拆重甲的四档（SACLOS 20 + 攻顶 15 + 105mm 15 + 游荡弹药 10）合计 **60 %**。游荡弹药
-  那一档原来是高爆火箭巢：车道上机组打的是车，一台机组上空盘旋的无人机比第二个战斗部
-  更有用。高爆火箭巢因此**不再出现在 AI 的配装表里**，玩家仍可在换装面板买到。
-* 抽签只决定右臂；两门 30mm 的机甲射速翻倍，而主臂规则会让其中一门始终站着不开火，
-  见 [../systems/firecontrol.md](../systems/firecontrol.md)。
+* 制导弹四档（游荡弹药 20 + SACLOS 20 + 攻顶 20 + 105mm 15）合计 **75 %**：车道上机组
+  用机炮打眼前的对手，副臂买的是**够得着的距离**——一颗在上空盘旋找人的弹、一条能骑的
+  激光、一发从天而降的弹。无制导火箭巢只剩 25 %，高爆火箭巢、双联机炮与 12.7mm 都不在 AI
+  的配装表里；这三样玩家仍可在换装面板买到。
+* 携带游荡弹药的机组就是压敌方城镇的那批车（每台每 10 s 一枚，4 km 内才有目标）：
+  [../modes/battle.md](../modes/battle.md) §1.6。
 
 ### 2.6 残骸与尸体
 

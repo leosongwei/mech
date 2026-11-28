@@ -110,9 +110,9 @@ public static class FcsCheck
                               + $"{(r.killed ? "KILL" : $"-{r.hurt:0} hp"),9}  {verdict}");
         }
         // ---- a mech's second arm is a weapon, and it has to get used ---------
-        // Every AI loadout pairs the 30 mm with something: a rocket nest, a beam
-        // rider, a top attack, a 105 mm, a cheap gatling or a second cannon.  The two
-        // muzzles are 2.86 m apart and the hull can only point one way, so exactly one
+        // Every AI loadout pairs the 30 mm with something: a rocket nest, a munition
+        // rack, a beam rider, a top attack or a 105 mm.  The two muzzles are 2.86 m
+        // apart and the hull can only point one way, so exactly one
         // arm owns the sight at a time - which makes *which* arm a decision, and the
         // row asks that both of them get their turn: the punch arm (the one the policy
         // picks) and, once it cannot fire, the gun.
@@ -121,8 +121,7 @@ public static class FcsCheck
         {
             // A loitering munition is not aimed at a hull: `Systems/Munitions.cs`
             // launches it over a town, and the crew's sight never falls on that arm.
-            // The pair has nothing to measure here - the gun beside it is the twin
-            // cannon's row.
+            // The pair has nothing to measure here.
             if (Array.Exists(loadout, w => Defs.WEAPONS[w].kind == "drone"))
             {
                 Console.WriteLine($"{ArsenalName(loadout),-44} "
@@ -131,9 +130,7 @@ public static class FcsCheck
             }
             var a = ArsenalRow(world, sx, sz, loadout);
             // the punch arm has to fire; the gun has to fire too when the punch arm
-            // spends more than the hand-off between rounds (a reload, a launch gap) -
-            // the two that never need it are the twin cannon (one hull, one bearing)
-            // and the cheap secondary that the gun outranks on both counts
+            // spends more than the hand-off between rounds (a reload, a launch gap)
             bool ok = a.punch > 0 && (!a.slow_punch || a.other > 0);
             if (!ok) bad++;
             Console.WriteLine($"{ArsenalName(loadout),-44} {a.punch,9} {a.other,10}"

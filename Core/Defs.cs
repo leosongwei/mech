@@ -918,19 +918,20 @@ public static partial class Defs
     // (`World.spawn_unit`) draws one template off this table.  Weights are shares of
     // a single draw and have to add up to 1.
     //
-    // The guided arms carry 65 % between them (SACLOS 20 + top attack 15 + 105 mm 15
-    // + loitering munition 15), and the loiter round's share is the one the HE pod
-    // used to hold: a crew fights hulls on the lanes, and a munition that circles an
-    // enemy town is worth more to the field than a second warhead on the rocket arm.
+    // Five templates, and the guided arms carry 75 % between them (SACLOS 20 + top
+    // attack 20 + 105 mm 15 + loitering munition 20).  The loiter munition's share is
+    // the one the HE pod and the two unguided right arms used to hold: a crew fights
+    // hulls with its cannon, and what the field needs from the other arm is reach -
+    // a munition that circles an enemy town, a beam to ride, a roof to come down on.
+    // The share is also what sets how many carriers a side has at once, and a hull
+    // that is hit has to be worth a round.
     public static readonly (float share, int[] loadout)[] AI_LOADOUTS =
     {
-        (0.20f, new[] { WID_AC30, WID_ROCKET }),        // the standard pair
-        (0.10f, new[] { WID_AC30, WID_LOITER }),        // a munition over their town
-        (0.10f, new[] { WID_AC30, WID_AC30 }),          // twin cannon: twice the rate, no rocket
+        (0.25f, new[] { WID_AC30, WID_ROCKET }),        // the standard pair
+        (0.20f, new[] { WID_AC30, WID_LOITER }),        // a munition over their town
         (0.20f, new[] { WID_AC30, WID_SACLOS }),        // a beam rider in the right arm
-        (0.15f, new[] { WID_AC30, WID_TOPATTACK }),     // fire and forget, over the roof
+        (0.20f, new[] { WID_AC30, WID_TOPATTACK }),     // fire and forget, over the roof
         (0.15f, new[] { WID_AC30, WID_G105 }),          // 105 mm: one-round kills at 2.6 km
-        (0.10f, new[] { WID_AC30, WID_MG127 }),         // cannon left, cheap gun right
     };
 
     /// <summary>One template off `AI_LOADOUTS`, drawn with `rng.random()`.</summary>
